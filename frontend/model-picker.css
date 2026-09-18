@@ -1,0 +1,7 @@
+.model-picker-list{display:flex;flex-direction:column;gap:4px;margin:8px 0 20px}
+.model-picker-list button{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;text-align:left;padding:13px 16px;border:1px solid transparent;border-radius:9px}
+.model-picker-list button:hover{background:var(--surface)}
+.model-picker-list button.chosen{background:var(--blue-soft);color:var(--blue);border-color:var(--blue)}
+.model-load-error{color:var(--text);padding:12px 0}
+.model-load-error button{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--border);border-radius:8px;padding:8px 12px}
+.model-routing-note{color:var(--muted);font-size:12px;line-height:1.6;margin:12px 0 0}

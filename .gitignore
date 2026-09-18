@@ -1,0 +1,22 @@
+# Dependencies and generated output
+node_modules/
+dist/
+dist-ui/
+coverage/
+
+# Local secrets and authentication
+.env
+.env.*
+!.env.example
+secrets/
+
+# Local execution state; keep source fixtures outside these directories
+.runtime/
+.local/
+logs/
+
+# Local editor and operating-system files
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
