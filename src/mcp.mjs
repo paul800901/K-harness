@@ -13,8 +13,9 @@ const taskInput = z.strictObject({ requestId, task: z.string().refine((value) =>
 // Return the handoff and evidence pointers, not another copy of the full task
 // prompt or Pi conversation on every wait/inspect call.
 function handoff(state, id) {
-  const result = { requestId: state.jobId ?? id, jobDirectory: state.directory };
+  const result = { requestId: state.jobId ?? id, jobDirectory: state.directory ?? state.sourceJobDirectory };
   for (const key of ['status', 'acceptance', 'workspace', 'outputFiles', 'coding', 'historyIds', 'provider', 'model', 'thinkingLevel', 'recovery', 'files',
+    'sourceJobDirectory', 'originalTask', 'priorOutput', 'instructions',
     'output', 'partialOutput', 'sessionFile', 'modelTurns', 'toolCalls', 'toolErrors',
     'startedAt', 'finishedAt', 'cancelRequested', 'timedOut', 'note', 'error']) {
     if (state[key] !== undefined) result[key] = state[key];

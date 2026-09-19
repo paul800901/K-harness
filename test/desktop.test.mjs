@@ -124,15 +124,31 @@ test('native goal, plan, steering, token usage and compaction stay on the first-
   await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long task'});
   assert.deepEqual(await f.c.steer({text:'use the newer constraint'}),{steered:true,turnId:'turn-1'});
   const steer=f.calls.findLast(call=>call.method==='turn/steer');assert.equal(steer.p.expectedTurnId,'turn-1');assert.equal(steer.p.input[0].text,'use the newer constraint');
+  assert.equal(f.c.state.messages.filter(message=>message.text==='use the newer constraint').length,1);
+  const nativeSteer={id:'native-steer',type:'userMessage',content:[{type:'text',text:'use the newer constraint'}]};
+  f.hooks.onEvent({method:'item/started',params:{threadId:'test-thread',turnId:'turn-1',item:nativeSteer}});
+  f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',turnId:'turn-1',item:nativeSteer}});
+  assert.equal(f.c.state.messages.filter(message=>message.text==='use the newer constraint').length,1);
+  assert.equal(f.c.state.messages.find(message=>message.text==='use the newer constraint').id,'native-steer');
   f.hooks.onEvent({method:'turn/plan/updated',params:{threadId:'test-thread',turnId:'turn-1',explanation:'current',plan:[{step:'verify',status:'inProgress'}]}});
   f.hooks.onEvent({method:'thread/tokenUsage/updated',params:{threadId:'test-thread',turnId:'turn-1',tokenUsage:{total:{totalTokens:123},last:{totalTokens:23},modelContextWindow:1000}}});
-  assert.equal(f.c.state.progress.plan[0].step,'verify');assert.equal(f.c.state.progress.tokenUsage.total.totalTokens,123);
+  assert.equal(f.c.state.progress.plan[0].step,'verify');assert.equal(f.c.state.progress.tokenUsage.last.totalTokens,23);assert.equal(f.c.state.progress.tokenUsage.total.totalTokens,123);
   const set=await f.c.goal({objective:'deliver verified result'});assert.equal(set.goal.objective,'deliver verified result');assert.equal(f.c.state.goal.status,'active');
   f.hooks.onEvent({method:'item/started',params:{threadId:'test-thread',turnId:'turn-1',item:{id:'compact-1',type:'contextCompaction'}}});assert.equal(f.c.state.progress.compaction,'compacting');
   f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',turnId:'turn-1',item:{id:'compact-1',type:'contextCompaction'}}});assert.equal(f.c.state.progress.compaction,'completed');
   f.hooks.onEvent({method:'turn/completed',params:{threadId:'test-thread',turn:{id:'turn-1',status:'completed'}}});
   assert.deepEqual(await f.c.compact(),{requested:true});assert.equal(f.calls.findLast(call=>call.method==='thread/compact/start').p.threadId,'test-thread');
   await f.c.goal({clear:true});assert.equal(f.c.state.goal,null);
+ }finally{await f.c.close();}
+});
+
+test('unconfirmed steering is not added to the visible conversation',async()=>{
+ const f=await fixture();const original=f.host.request;
+ f.host.request=async(method,p)=>{if(method==='turn/steer')throw Error('connection lost');return original(method,p);};
+ try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long task'});
+  await assert.rejects(f.c.steer({text:'do not claim this was accepted'}),/connection lost/);
+  assert.equal(f.c.state.messages.some(message=>message.text==='do not claim this was accepted'),false);
  }finally{await f.c.close();}
 });
 

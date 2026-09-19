@@ -15,7 +15,7 @@ import {stopThreadTerminals} from './background-terminals.mjs';
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({root,executable,hostFactory=openCodexHost,onChange=()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null},flash:{totalTokens:0,responses:0,unconfirmed:0,pending:0}}};
- let host,turnId,submission,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0;const items=new Map(),pending=new Map(),unsentSessions=new Map();
+ let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0;const items=new Map(),pending=new Map(),unsentSessions=new Map();
  let usagePending,quotaReadAt=0;
  const changed=()=>onChange(state);
  const selectionKey=(model,workspace,policy,effort,access)=>JSON.stringify([model,workspace,policy,effort??null,access]);
@@ -30,7 +30,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   state.artifacts=[...new Set([...direct,...state.workers.flatMap(w=>w.outputFiles??[])])];
  };
- const message=(id,role,text,attachments=[],messageTurnId=null)=>{let m=state.messages.find(m=>m.id===id);if(m){m.text=text;if(messageTurnId)m.turnId=messageTurnId;}else state.messages.push({id,role,text,attachments,turnId:messageTurnId??null});};
+ const message=(id,role,text,attachments=[],messageTurnId=null,source)=>{let m=state.messages.find(m=>m.id===id);if(m){m.text=text;if(messageTurnId)m.turnId=messageTurnId;if(source)m.source=source;}else state.messages.push({id,role,text,attachments,turnId:messageTurnId??null,...(source?{source}:{})});};
+ const userItemText=i=>typeof i.text==='string'?i.text:(i.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
  const recordTool=(i,status)=>{if(!['mcpToolCall','commandExecution','fileChange','collabAgentToolCall','subAgentActivity'].includes(i.type))return;const native=i.type==='subAgentActivity';const tool={id:native?'native:'+i.agentThreadId:i.id,name:native?'GPT 子代理':i.tool??i.type,status:native?(i.kind==='started'?'running':i.kind):i.status??status,details:i.arguments??i.command??i.changes??(native?{threadId:i.agentThreadId,path:i.agentPath}:i.type==='collabAgentToolCall'?{model:i.model,threadIds:i.receiverThreadIds,states:i.agentsStates}:null),output:String(i.aggregatedOutput??'').slice(-20000)};const n=state.tools.findIndex(t=>t.id===tool.id);if(n<0)state.tools.push(tool);else state.tools[n]=tool;};
  function event(e){
   if(e.method==='account/rateLimits/updated'){quotaReadAt=0;void usage();return;}
@@ -61,6 +62,15 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const i=p.item;
    if(i.type==='contextCompaction')state.progress.compaction=e.method==='item/completed'?'completed':'compacting';
    if(i.type==='agentMessage')message(i.id,'assistant',i.text??'',[],p.turnId??turnId);
+   if(i.type==='userMessage'){
+    const text=userItemText(i),itemTurnId=p.turnId??turnId;
+    if(pendingSteer&&pendingSteer.turnId===itemTurnId&&pendingSteer.text===text)pendingSteer.itemId=i.id;
+    else{
+     const local=state.messages.find(m=>m.source==='steer'&&m.turnId===itemTurnId&&m.text===text);
+     if(local){local.id=i.id;local.source='native';}
+     else message(i.id,'user',text,[],itemTurnId,'native');
+    }
+   }
    if(['mcpToolCall','collabAgentToolCall','subAgentActivity','fileChange','commandExecution'].includes(i.type))items.set(i.id,i);
    recordTool(i,e.method==='item/completed'?'completed':'running');
    if(i.type==='fileChange')syncArtifacts();
@@ -344,11 +354,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   },
   async steer({text}){
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的修正內容。');
-   if(!host||!state.threadId||!state.busy||!turnId||opening||closing||stopping)throw new Error('目前沒有可修正的執行中回合。');
-   const expected=turnId;
-   const result=await host.request('turn/steer',{threadId:state.threadId,expectedTurnId:expected,input:[{type:'text',text:text.trim()}]});
-   if(result.turnId!==expected)throw new Error('修正未套用到目前回合；未自動重送。');
-   return {steered:true,turnId:expected};
+   if(!host||!state.threadId||!state.busy||!turnId||opening||closing||stopping||pendingSteer)throw new Error('目前沒有可修正的執行中回合。');
+   const expected=turnId,acceptedText=text.trim(),attempt={turnId:expected,text:acceptedText,itemId:null};pendingSteer=attempt;
+   try{
+    const result=await host.request('turn/steer',{threadId:state.threadId,expectedTurnId:expected,input:[{type:'text',text:acceptedText}]});
+    if(result.turnId!==expected)throw new Error('修正未套用到目前回合；未自動重送。');
+    message(attempt.itemId??'steer:'+randomUUID(),'user',acceptedText,[],expected,attempt.itemId?'native':'steer');changed();
+    return {steered:true,turnId:expected};
+   }finally{if(pendingSteer===attempt)pendingSteer=null;}
   },
   async goal({objective,status,clear=false}={}){
    if(!host||!state.threadId||opening||closing||stopping)throw new Error('請先開啟對話。');

@@ -58,6 +58,13 @@ test('real stdio discovery, scoped dispatch, wait, result and duplicate readback
   assert.equal(again.structuredContent.jobDirectory, started.structuredContent.jobDirectory);
   assert.equal(again.structuredContent.modelTurns, 3);
   assert.equal((await f.call('k_worker_inspect', { requestId: f.request.requestId })).structuredContent.status, 'completed');
+  const recovery = (await f.call('k_worker_recover', { requestId: f.request.requestId })).structuredContent;
+  assert.equal(recovery.jobDirectory, started.structuredContent.jobDirectory);
+  assert.equal(recovery.sourceJobDirectory, started.structuredContent.jobDirectory);
+  assert.equal(recovery.originalTask, f.request.task);
+  assert.equal(recovery.priorOutput, result.structuredContent.output);
+  assert.match(recovery.instructions.join('\n'), /missing tool result does not prove no write occurred/i);
+  assert.equal(recovery.recovery, 'inspection-only');
   const invalid = await f.call('k_worker_start', { ...f.request, workspace: path.dirname(f.workspace) });
   assert.equal(invalid.isError, true);
   const conflict = await f.call('k_worker_start', { ...f.request, task: 'Different task' });
