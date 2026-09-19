@@ -2,15 +2,18 @@ $ErrorActionPreference = 'Stop'
 $kRoot = Split-Path $PSScriptRoot -Parent
 $kDesktop = [Environment]::GetFolderPath('Desktop')
 $kTarget = Join-Path $kDesktop 'K HARNESS.lnk'
-if (Test-Path -LiteralPath $kTarget) { throw "Existing shortcut preserved: $kTarget" }
+$kLauncher = & (Join-Path $kRoot 'local-launcher\Build-K-Launcher.ps1')
+if (-not (Test-Path -LiteralPath $kLauncher)) { throw 'K tray launcher build did not produce an executable.' }
 $kShell = New-Object -ComObject WScript.Shell
+$kOld = if (Test-Path -LiteralPath $kTarget) { $kShell.CreateShortcut($kTarget) } else { $null }
+if ($kOld -and $kOld.TargetPath -ne $kLauncher -and $kOld.Arguments -notlike '*Start-K-Desktop.ps1*') { throw "Existing unrelated shortcut preserved: $kTarget" }
 $kLink = $kShell.CreateShortcut($kTarget)
-$kLink.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$kLink.Arguments = '-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $kRoot 'Start-K-Desktop.ps1') + '"'
+$kLink.TargetPath = $kLauncher
+$kLink.Arguments = ''
 $kLink.WorkingDirectory = $kRoot
-$kLink.Description = 'K HARNESS - local desktop frontend and backend'
-$kLink.IconLocation = (Join-Path $kRoot 'frontend\assets\k-logo.ico') + ',0'
+$kLink.Description = 'K 執行中樞 - 系統匣桌面啟動器'
+$kLink.IconLocation = $kLauncher + ',0'
 $kLink.Save()
 $kReadback = $kShell.CreateShortcut($kTarget)
-if ($kReadback.WorkingDirectory -ne $kRoot -or $kReadback.Arguments -ne $kLink.Arguments) { throw 'Shortcut verification failed.' }
+if ($kReadback.TargetPath -ne $kLauncher -or $kReadback.WorkingDirectory -ne $kRoot -or $kReadback.Arguments) { throw 'Shortcut verification failed.' }
 Write-Output $kTarget
