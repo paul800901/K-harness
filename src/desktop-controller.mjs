@@ -14,7 +14,7 @@ import {stopThreadTerminals} from './background-terminals.mjs';
 
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({root,executable,hostFactory=openCodexHost,onChange=()=>{}}) {
- const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null},flash:{totalTokens:0,responses:0,unconfirmed:0,pending:0}}};
+ const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null},flash:{totalTokens:0,responses:0,unconfirmed:0,pending:0}}};
  let host,turnId,submission,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0;const items=new Map(),pending=new Map(),unsentSessions=new Map();
  let usagePending,quotaReadAt=0;
  const changed=()=>onChange(state);
@@ -38,6 +38,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const p=e.params??{};
   if(e.method==='serverRequest/resolved'){clearQuestions(q=>q.threadId===p.threadId&&q.requestId===p.requestId);changed();return;}
   if(p.threadId!==state.threadId){if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}return;}
+  if(e.method==='thread/goal/updated'){state.goal=p.goal;changed();return;}
+  if(e.method==='thread/goal/cleared'){state.goal=null;changed();return;}
+  if(e.method==='turn/plan/updated'){state.progress.plan=p.plan??[];state.progress.explanation=p.explanation??null;changed();return;}
+  if(e.method==='thread/tokenUsage/updated'){state.progress.tokenUsage=p.tokenUsage??null;changed();return;}
+  if(e.method==='thread/compacted'){state.progress.compaction='completed';state.progress.compactions++;changed();return;}
   if(e.method==='item/autoApprovalReview/started'||e.method==='item/autoApprovalReview/completed'){
    if(!turnId||p.turnId!==turnId)return;
    const id='auto-approval-review:'+p.reviewId;
@@ -54,6 +59,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(['item/started','item/completed'].includes(e.method)){
    const i=p.item;
+   if(i.type==='contextCompaction')state.progress.compaction=e.method==='item/completed'?'completed':'compacting';
    if(i.type==='agentMessage')message(i.id,'assistant',i.text??'',[],p.turnId??turnId);
    if(['mcpToolCall','collabAgentToolCall','subAgentActivity','fileChange','commandExecution'].includes(i.type))items.set(i.id,i);
    recordTool(i,e.method==='item/completed'?'completed':'running');
@@ -142,7 +148,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if((await workers()).some(w=>w.status==='running'||w.provider==='codex'&&!w.settled))throw new Error('子代理還在執行或狀態未確認，請先停止工作再切換。');
     if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const previous=host;host=null;await previous.close();}
     viewEpoch++;requestEpoch++;clearQuestions();items.clear();unsentSessions.clear();turnId=null;
-    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],status:'idle',error:null,workerConnection:null,workerError:null});
+    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},status:'idle',error:null,workerConnection:null,workerError:null});
     state.usage.flash={totalTokens:0,responses:0,unconfirmed:0,pending:0};return {workspace};
    }finally{opening=false;changed();}
   },
@@ -246,7 +252,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
        prior={thread:{...summary.thread,turns:[]}};
       }
      }
-     clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
+     clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null};state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
@@ -268,10 +274,23 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??''});
      const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
      const config={...runtime,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{...runtime.config,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
-     const session=unsent&&unsent.selection===selection?unsent.session:await host.request(threadId?'thread/resume':'thread/start',threadId?{...config,threadId}:config);
+     let session;
+     if(unsent&&unsent.selection===selection)session=unsent.session;
+     else if(threadId){
+      try{session=await host.request('thread/resume',{...config,threadId});}
+      catch(e){
+       // Codex can retain an archived flag independently of K's local sidebar.
+       // The exact native precondition is recoverable: unarchive that same
+       // thread, then resume it once. Never retry any turn or worker work.
+       if(e.protocolMessage!==`session ${threadId} is archived. Run \`codex unarchive ${threadId}\` to unarchive it first.`)throw e;
+       await host.request('thread/unarchive',{threadId});
+       session=await host.request('thread/resume',{...config,threadId});
+      }
+     }else session=await host.request('thread/start',config);
       state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);
       state.title=saved?.title??'';
       if(!threadId)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
+      try{state.goal=(await host.request('thread/goal/get',{threadId:state.threadId})).goal??null;}catch{state.goal=null;}
       await saveMainSession(root,{...saved,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});
      const active=host,openedId=state.threadId;
      state.workerConnection='connecting';
@@ -291,8 +310,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   async send({text,attachmentIds=[],effort,accessMode,permissionConfirmed}){
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的訊息。');
    if(!host||opening||closing||stopping||state.busy||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟對話，或等待目前工作結束。');
-   if(state.workerConnection==='connecting')throw new Error('工具仍在準備中；可以閱讀對話或先輸入草稿，尚未送出訊息。');
-   if(state.workerConnection==='failed')throw new Error('工具連線失敗，請重新開啟此對話後再送出；原訊息未重送。');
+   // Flash is optional. Its connection state is shown separately and must not
+   // block direct Codex work or native GPT subagents.
    if(!Array.isArray(attachmentIds)||attachmentIds.length>8)throw new Error('每則訊息最多 8 份附件。');
    const turnEffort=effort??state.effort;
    if(turnEffort!==null&&turnEffort!==undefined&&!state.efforts.includes(turnEffort))throw new Error('指定推理程度目前不可用。');
@@ -322,6 +341,27 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
    }finally{finishSubmission();submission=null;changed();}
+  },
+  async steer({text}){
+   if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的修正內容。');
+   if(!host||!state.threadId||!state.busy||!turnId||opening||closing||stopping)throw new Error('目前沒有可修正的執行中回合。');
+   const expected=turnId;
+   const result=await host.request('turn/steer',{threadId:state.threadId,expectedTurnId:expected,input:[{type:'text',text:text.trim()}]});
+   if(result.turnId!==expected)throw new Error('修正未套用到目前回合；未自動重送。');
+   return {steered:true,turnId:expected};
+  },
+  async goal({objective,status,clear=false}={}){
+   if(!host||!state.threadId||opening||closing||stopping)throw new Error('請先開啟對話。');
+   if(clear){await host.request('thread/goal/clear',{threadId:state.threadId});state.goal=null;changed();return {goal:null};}
+   if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('目標須為 1–4000 字元。');
+   const allowed=['active','paused','blocked','complete'];if(status!==undefined&&!allowed.includes(status))throw new Error('目標狀態無效。');
+   const result=await host.request('thread/goal/set',{threadId:state.threadId,...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status})});state.goal=result.goal;changed();return result;
+  },
+  async compact(){
+   if(!host||!state.threadId||opening||closing||stopping||state.busy)throw new Error('請在回合結束後再開始壓縮。');
+   state.progress.compaction='requested';changed();
+   try{await host.request('thread/compact/start',{threadId:state.threadId});return {requested:true};}
+   catch(e){state.progress.compaction='idle';changed();throw e;}
   },
   answer({id,accept,answers}){
    const p=pending.get(id);if(!p)throw new Error('此確認已結束，未授予權限。');

@@ -70,8 +70,8 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    }
    if(url.pathname==='/api/projects')return json(200,await addProject(root,data.path));
    if(url.pathname==='/api/projects/metadata')return json(200,await updateProject(root,data,(await controller.sessions()).sessions));
-   const routes={'/api/open':'open','/api/send':'send','/api/stop':'stop','/api/answer':'answer','/api/workers':'workers','/api/upload':'upload','/api/metadata':'metadata','/api/workspace':'selectWorkspace','/api/model':'selectModel'};
-   if(routes[url.pathname])return json(200,await controller[routes[url.pathname]](...(['/api/workers','/api/stop'].includes(url.pathname)?[]:[data])));
+   const routes={'/api/open':'open','/api/send':'send','/api/steer':'steer','/api/goal':'goal','/api/compact':'compact','/api/stop':'stop','/api/answer':'answer','/api/workers':'workers','/api/upload':'upload','/api/metadata':'metadata','/api/workspace':'selectWorkspace','/api/model':'selectModel'};
+   if(routes[url.pathname])return json(200,await controller[routes[url.pathname]](...(['/api/workers','/api/stop','/api/compact'].includes(url.pathname)?[]:[data])));
    if(url.pathname==='/api/shutdown'){pickerAbort?.abort();await controller.close();json(200,{closed:true});setTimeout(()=>{for(const c of clients)c.end();server.close();},100);return;}
    json(404,{error:'Not found'});
   }catch(e){if(!res.headersSent)json(400,{error:e.message});else res.end();}

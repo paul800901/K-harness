@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
+import { inspectRecovery } from './recovery.mjs';
 
 const requestId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/u);
 const idInput = z.strictObject({ requestId });
@@ -7,12 +8,13 @@ const codingInput = z.strictObject({
   editFiles: z.array(z.string()).min(1), testFiles: z.array(z.string()).min(1),
   timeoutMs: z.number().int().min(100).max(60_000).optional(),
 });
+const taskInput = z.strictObject({ requestId, task: z.string().refine((value) => value.trim().length > 0), readFiles: z.array(z.string()).default([]), outputFiles: z.array(z.string()).default([]), coding: codingInput.optional(), historyIds: z.array(requestId).max(20).optional() });
 
 // Return the handoff and evidence pointers, not another copy of the full task
 // prompt or Pi conversation on every wait/inspect call.
 function handoff(state, id) {
   const result = { requestId: state.jobId ?? id, jobDirectory: state.directory };
-  for (const key of ['status', 'acceptance', 'workspace', 'outputFiles', 'coding', 'historyIds', 'provider', 'model', 'thinkingLevel',
+  for (const key of ['status', 'acceptance', 'workspace', 'outputFiles', 'coding', 'historyIds', 'provider', 'model', 'thinkingLevel', 'recovery', 'files',
     'output', 'partialOutput', 'sessionFile', 'modelTurns', 'toolCalls', 'toolErrors',
     'startedAt', 'finishedAt', 'cancelRequested', 'timedOut', 'note', 'error']) {
     if (state[key] !== undefined) result[key] = state[key];
@@ -25,7 +27,7 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
     instructions: [
       'K HARNESS delegates bounded nonclinical file tasks to DeepSeek. The parent owns judgment and acceptance.',
       'This Flash worker is optional, not mandatory and not the only worker route. Use it only when suitable; direct work and native GPT subagents remain available according to the parent runtime and user selection. Delegated image interpretation must use native gpt-5.6-luna, never this Flash worker.',
-      'Use one stable requestId per task. After start, wait (default 60s); do not poll or resubmit on timeout.',
+      'Use one stable requestId per task. Prefer k_worker_run for ordinary serial work; it starts once and waits up to 60s. Use start plus wait for parallel or longer work. Never poll or resubmit on timeout.',
       'Completed means the worker stopped normally, not that its output is accepted. Independently inspect outputs.',
       'Optional historyIds grants on-demand text search of those same-workspace job records only. Approve non-sensitive history before sharing; historical content may contain private data and is not current authority. Changing history grants requires a new request ID.',
       'Unresolved means inspect existing evidence; never invent a new ID to retry unknown work.',
@@ -53,9 +55,16 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
   }
 
   tool('k_worker_start', 'Start one authorized Flash task; returns before completion. Optional coding grants exact editable files and fixed .mjs tests, only with explicit task authority. Reuse the same requestId only for identical task, file lists and coding grants.',
-    z.strictObject({ requestId, task: z.string().refine((value) => value.trim().length > 0), readFiles: z.array(z.string()).default([]), outputFiles: z.array(z.string()).default([]), coding: codingInput.optional(), historyIds: z.array(requestId).max(20).optional() }),
+    taskInput,
     { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     (args) => dispatcher.start(args));
+  tool('k_worker_run', 'Start one authorized Flash task exactly once and wait for its result in the same call. If the wait expires, the returned requestId remains authoritative and the worker keeps running; inspect or wait with that same ID.',
+    taskInput.extend({ timeoutMs: z.number().int().min(0).max(60_000).default(60_000) }),
+    { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    async ({ timeoutMs, ...args }, context) => {
+      await dispatcher.start(args);
+      return dispatcher.wait(args.requestId, { timeoutMs, signal: context.mcpReq.signal });
+    });
   tool('k_worker_wait', 'Wait for completion without polling. A timeout or cancelled wait leaves the worker running; returns handoff and evidence paths.',
     z.strictObject({ requestId, timeoutMs: z.number().int().min(0).max(60_000).default(60_000) }),
     { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
@@ -63,6 +72,12 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
   tool('k_worker_inspect', 'Read an existing task without running or replaying it. Use for recovery or a requested status check, not frequent polling.',
     idInput, { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
     ({ requestId: id }) => dispatcher.inspect(id));
+  tool('k_worker_recover', 'Read current recovery evidence for an existing task without running, replaying, accepting, or reading artifact contents. Use after interruption, cancellation, failure or an unresolved result.',
+    idInput, { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    async ({ requestId: id }) => {
+      const state = await dispatcher.inspect(id);
+      return inspectRecovery(state.directory);
+    });
   tool('k_worker_cancel', 'Request cancellation of this host’s worker. Wait afterward to confirm its terminal state. Already-created files are retained.',
     idInput, { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     ({ requestId: id }) => dispatcher.cancel(id));

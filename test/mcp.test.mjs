@@ -43,7 +43,7 @@ test('real stdio discovery, scoped dispatch, wait, result and duplicate readback
   assert.equal(f.client.getServerVersion().name, 'k-flash-worker');
   assert.match(f.client.getInstructions(), /The parent owns judgment/u);
   const { tools } = await f.client.listTools();
-  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['k_worker_cancel', 'k_worker_inspect', 'k_worker_start', 'k_worker_wait']);
+  assert.deepEqual(tools.map((tool) => tool.name).sort(), ['k_worker_cancel', 'k_worker_inspect', 'k_worker_recover', 'k_worker_run', 'k_worker_start', 'k_worker_wait']);
   assert.equal(tools.find((tool) => tool.name === 'k_worker_wait').annotations.readOnlyHint, true);
   const started = await f.call('k_worker_start', f.request);
   assert.equal(started.isError, undefined);
@@ -64,6 +64,17 @@ test('real stdio discovery, scoped dispatch, wait, result and duplicate readback
   assert.equal(conflict.isError, true);
   assert.equal((await f.call('k_worker_inspect', { requestId: f.request.requestId })).structuredContent.status, 'completed');
   assert.equal(f.log(), '');
+});
+
+test('one-call worker run starts once, waits, and remains unaccepted', { timeout: 30_000 }, async (t) => {
+  const f = await fixture(t);
+  const result = await f.call('k_worker_run', { ...f.request, requestId: 'run-once' });
+  assert.equal(result.structuredContent.status, 'completed');
+  assert.equal(result.structuredContent.acceptance, 'not-reviewed');
+  assert.equal(result.structuredContent.timedOut, false);
+  const again = await f.call('k_worker_run', { ...f.request, requestId: 'run-once' });
+  assert.equal(again.structuredContent.jobDirectory, result.structuredContent.jobDirectory);
+  assert.equal(again.structuredContent.modelTurns, 3);
 });
 
 test('real MCP history grant reaches Pi and remains scoped and immutable for its request ID', { timeout: 30_000 }, async (t) => {

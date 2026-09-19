@@ -112,6 +112,30 @@ test('desktop scopes runtime to subscription and K; stream, approval, interrupti
  }finally{await c.close();}
 });
 
+test('native goal, plan, steering, token usage and compaction stay on the first-party thread',async()=>{
+ const f=await fixture();const original=f.host.request;
+ f.host.request=async(method,p)=>{
+  if(method==='turn/steer'){f.calls.push({method,p});return {turnId:p.expectedTurnId};}
+  if(method==='thread/goal/set'){f.calls.push({method,p});return {goal:{threadId:p.threadId,objective:p.objective,status:p.status??'active',tokensUsed:7,timeUsedSeconds:2,createdAt:1,updatedAt:2}};}
+  if(method==='thread/goal/clear'||method==='thread/compact/start'){f.calls.push({method,p});return {};}
+  return original(method,p);
+ };
+ try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long task'});
+  assert.deepEqual(await f.c.steer({text:'use the newer constraint'}),{steered:true,turnId:'turn-1'});
+  const steer=f.calls.findLast(call=>call.method==='turn/steer');assert.equal(steer.p.expectedTurnId,'turn-1');assert.equal(steer.p.input[0].text,'use the newer constraint');
+  f.hooks.onEvent({method:'turn/plan/updated',params:{threadId:'test-thread',turnId:'turn-1',explanation:'current',plan:[{step:'verify',status:'inProgress'}]}});
+  f.hooks.onEvent({method:'thread/tokenUsage/updated',params:{threadId:'test-thread',turnId:'turn-1',tokenUsage:{total:{totalTokens:123},last:{totalTokens:23},modelContextWindow:1000}}});
+  assert.equal(f.c.state.progress.plan[0].step,'verify');assert.equal(f.c.state.progress.tokenUsage.total.totalTokens,123);
+  const set=await f.c.goal({objective:'deliver verified result'});assert.equal(set.goal.objective,'deliver verified result');assert.equal(f.c.state.goal.status,'active');
+  f.hooks.onEvent({method:'item/started',params:{threadId:'test-thread',turnId:'turn-1',item:{id:'compact-1',type:'contextCompaction'}}});assert.equal(f.c.state.progress.compaction,'compacting');
+  f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',turnId:'turn-1',item:{id:'compact-1',type:'contextCompaction'}}});assert.equal(f.c.state.progress.compaction,'completed');
+  f.hooks.onEvent({method:'turn/completed',params:{threadId:'test-thread',turn:{id:'turn-1',status:'completed'}}});
+  assert.deepEqual(await f.c.compact(),{requested:true});assert.equal(f.calls.findLast(call=>call.method==='thread/compact/start').p.threadId,'test-thread');
+  await f.c.goal({clear:true});assert.equal(f.c.state.goal,null);
+ }finally{await f.c.close();}
+});
+
 test('quota refresh is a coalesced read, accepts account events without thread ID, and preserves stale values on failure',async()=>{
  const f=await fixture();let reads=0,failed=false;
  const original=f.host.request;

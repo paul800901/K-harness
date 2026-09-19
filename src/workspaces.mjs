@@ -2,7 +2,7 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const FLASH_TOOLS = ['k_worker_start', 'k_worker_wait', 'k_worker_inspect', 'k_worker_cancel'];
+const FLASH_TOOLS = ['k_worker_run', 'k_worker_start', 'k_worker_wait', 'k_worker_inspect', 'k_worker_recover', 'k_worker_cancel'];
 
 function samePath(left, right) {
   return path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();

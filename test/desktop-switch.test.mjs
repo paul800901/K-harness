@@ -16,12 +16,12 @@ const catalog=[
 const history=text=>({turns:[{items:[{type:'userMessage',id:`u-${text}`,content:[{type:'text',text:`要求 ${text}`}]},{type:'agentMessage',id:`a-${text}`,text:`回答 ${text}`}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[]}={}){
+async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[]}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-switch-'));
  const workspaceB=path.join(root,'workspace-b');await mkdir(workspaceB);
  const histories=new Map([['thread-a',history('A')],['thread-b',history('B')]]);
- const unsupportedTurnReads=new Set(turnListUnsupportedFor),emptySummaries=new Set();
+ const unsupportedTurnReads=new Set(turnListUnsupportedFor),emptySummaries=new Set(),archivedResumes=new Set(archivedResumeFor);
  for(const session of sessions)await saveMainSession(root,{threadId:session.threadId,model:session.model??MODEL,title:session.title??session.threadId,accessMode:session.accessMode??'workspace-write',workspace:session.workspace??(session.threadId==='thread-b'?workspaceB:root)});
 
  const hosts=[],allCalls=[];let activeHost,activeHooks,newThread=0;
@@ -43,7 +43,11 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
      if(p.includeTurns===false&&emptySummaries.has(p.threadId))return {thread:{id:p.threadId,status:{type:'idle'},preview:''}};
      return {thread:{id:p.threadId,...(histories.get(p.threadId)??{turns:[]})}};
     }
-    if(method==='thread/resume')return {thread:{id:p.threadId}};
+    if(method==='thread/resume'){
+     if(archivedResumes.has(p.threadId)){const error=new Error('archived');error.protocolMessage=`session ${p.threadId} is archived. Run \`codex unarchive ${p.threadId}\` to unarchive it first.`;throw error;}
+     return {thread:{id:p.threadId}};
+    }
+    if(method==='thread/unarchive'){archivedResumes.delete(p.threadId);return {thread:{id:p.threadId}};}
     if(method==='thread/start'){
      const id=`thread-new-${++newThread}`;unsupportedTurnReads.add(id);emptySummaries.add(id);
      return {thread:{id}};
@@ -115,19 +119,29 @@ test('saved conversations share one initialized host and read each history befor
  }finally{await f.c.close();}
 });
 
-test('restored history opens while MCP is connecting or failed, and send waits for readiness',async()=>{
+test('restored history and direct work remain available while optional Flash is connecting or failed',async()=>{
  const f=await fixture();
  try{
   await f.openSaved('thread-a');
   assert.equal(f.c.state.workerConnection,'connecting');
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
-  await assert.rejects(f.c.send({text:'尚未連線'}));
+  await f.c.send({text:'尚未連線但可直接工作'});
+  f.hooks.onEvent({method:'turn/completed',params:{threadId:'thread-a',turn:{id:'turn-thread-a',status:'completed'}}});
 
   f.settle('thread-a',0,false);
   await flush();
   assert.equal(f.c.state.workerConnection,'failed');
-  assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
-  await assert.rejects(f.c.send({text:'連線失敗'}));
+  assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A','尚未連線但可直接工作']);
+  await f.c.send({text:'Flash 失敗但可直接工作'});
+ }finally{await f.c.close();}
+});
+
+test('an exact native archived precondition is unarchived once before resume without replaying a turn',async()=>{
+ const f=await fixture({archivedResumeFor:['thread-a']});
+ try{
+  await f.openSaved('thread-a');
+  assert.deepEqual(f.activeHost.calls.filter(call=>['thread/resume','thread/unarchive'].includes(call.method)).map(call=>call.method),['thread/resume','thread/unarchive','thread/resume']);
+  assert.equal(f.activeHost.calls.some(call=>call.method==='turn/start'),false);
  }finally{await f.c.close();}
 });
 

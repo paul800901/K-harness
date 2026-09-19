@@ -31,26 +31,28 @@ test('abrupt MCP process exit leaves unresolved job; fresh host finds output wit
   const [result]=await checkMainWorkers(bridge,'reopened',['crash-once'],{stop:true,workspace});
   assert.equal(result.status,'unresolved');assert.equal(result.settled,false);assert.equal(result.acceptance,'not-reviewed');
   assert.deepEqual(result.artifacts,[{path:'output.txt',observation:'present'}]);
-  assert.deepEqual(calls,['k_worker_inspect']);
+  assert.deepEqual(calls,['k_worker_inspect','k_worker_recover']);
+  assert.equal(result.recovery.recovery,'inspection-only');
   assert.equal(await readFile(path.join(workspace,'output.txt'),'utf8'),'preserve crash output');
  }finally{await next.close();}
 });
 test('worker scope uses only exact k_flash start items and valid IDs',()=>{
  const item={type:'mcpToolCall',server:'k_flash',tool:'k_worker_start',arguments:{requestId:'known'}};
- assert.deepEqual(collectWorkerIds([item,item,{...item,server:'other'},{...item,arguments:{requestId:'../escape'}},{type:'agentMessage',text:'job-anything'}]),['known']);
+ const run={...item,tool:'k_worker_run',arguments:{requestId:'run-once'}};
+ assert.deepEqual(collectWorkerIds([item,item,run,{...item,server:'other'},{...item,arguments:{requestId:'../escape'}},{type:'agentMessage',text:'job-anything'}]),['known','run-once']);
 });
 test('stop inspects first, cancels running worker once and waits; never restarts or accepts outputs',async()=>{
  const calls=[];
  const host={request:async(method,p)=>{calls.push([method,p.tool,p.arguments]);return {structuredContent:{status:p.tool==='k_worker_wait'?'cancelled':'running',outputFiles:['partial.txt']}};}};
  const result=await checkMainWorkers(host,'thread',['known'],{stop:true});
- assert.deepEqual(calls.map(c=>c[1]),['k_worker_inspect','k_worker_cancel','k_worker_wait']);
+ assert.deepEqual(calls.map(c=>c[1]),['k_worker_inspect','k_worker_cancel','k_worker_wait','k_worker_recover']);
  assert.equal(result[0].settled,true);assert.equal(result[0].acceptance,'not-reviewed');
 });
 test('unknown prior-host state and completed jobs are inspected, never adopted, cancelled or replayed',async()=>{
  for(const status of ['unresolved','completed']){
   let count=0;const host={request:async()=>{count++;return {structuredContent:{status}};}};
   const [result]=await checkMainWorkers(host,'thread',['known'],{stop:true});
-  assert.equal(count,1);assert.equal(result.settled,status==='completed');
+  assert.equal(count,status==='unresolved'?2:1);assert.equal(result.settled,status==='completed');
  }
  const [failure]=await checkMainWorkers({request:async()=>{throw new Error('offline');}},'thread',['known'],{stop:true});
  assert.equal(failure.status,'unavailable');assert.equal(failure.settled,false);
