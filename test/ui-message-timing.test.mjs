@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {loadUiMessageTiming,turnGroupId} from '../src/ui-message-timing.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
+import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 async function fixture(root,{historyTurnStatus}={}){
   let hook,hostFactoryCalls=0;const calls=[];
@@ -38,7 +39,7 @@ async function fixture(root,{historyTurnStatus}={}){
   return {controller,calls,get hook(){return hook;},get hostFactoryCalls(){return hostFactoryCalls;}};
 }
 
-test('live timestamps and groups survive native ID reconciliation and reload without inventing old times',async()=>{
+test('live timestamps and groups survive native ID reconciliation and reload without inventing old times',async t=>{
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-timing-'));
   const f=await fixture(root);
   try{
@@ -57,14 +58,13 @@ test('live timestamps and groups survive native ID reconciliation and reload wit
     f.hook.onEvent({method:'item/started',params:{threadId:'timing-thread',turnId:'turn-live',item:{id:'tool-live',type:'commandExecution',command:'test'}}});
     const tool=f.controller.state.tools.find(t=>t.id==='tool-live');
     assert.ok(tool.createdAt);assert.equal(tool.groupId,user.groupId);assert.equal(tool.turnId,'turn-live');
+    const persisted=observeAtomicWrite(t,path.join(root,'.runtime/ui-message-timing/timing-thread.json'),record=>Boolean(record.messages['answer-live']?.completedAt));
     f.hook.onEvent({method:'item/agentMessage/delta',params:{threadId:'timing-thread',turnId:'turn-live',itemId:'answer-live',delta:'result'}});
     f.hook.onEvent({method:'turn/completed',params:{threadId:'timing-thread',turn:{id:'turn-live',status:'completed'}}});
     const answer=f.controller.state.messages.find(m=>m.id==='answer-live');assert.ok(answer.completedAt);assert.equal(answer.partial,undefined);
-    const deadline=Date.now()+5000;let saved;
-    while(!(saved=await loadUiMessageTiming(root,'timing-thread')).messages['answer-live']?.completedAt){
-      assert.ok(Date.now()<deadline,'Completed message timing was not persisted.');
-      await new Promise(resolve=>setTimeout(resolve,10));
-    }
+    await persisted;
+    assert.equal(f.controller.state.error,null);
+    const saved=await loadUiMessageTiming(root,'timing-thread');
     assert.equal(saved.messages['native-user'].createdAt,user.createdAt);
     assert.ok(saved.messages['answer-live'].completedAt);
     assert.ok(saved.tools['tool-live'].createdAt);

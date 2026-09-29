@@ -27,7 +27,15 @@ async function writeMainSession(root,{threadId,model,title='',archived=false,pin
   const temporary=`${target}.${randomUUID()}.tmp`;
   const file=await open(temporary,'wx');
   try {await file.writeFile(JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:model.startsWith('claude-')?'claude':'codex',accountType:model.startsWith('claude-')?'claude.ai':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));await file.sync();}finally{await file.close();}
-  await rename(temporary,target);
+  // Windows readers can briefly block replacement. Retry this rename only,
+  // preserving the same completed snapshot and the original error on exhaustion.
+  for(let attempt=0;;attempt++){
+    try{await rename(temporary,target);break;}
+    catch(error){
+      if(!['EPERM','EACCES','EBUSY'].includes(error.code)||attempt>=20)throw error;
+      await new Promise(resolve=>setTimeout(resolve,Math.min(5*(attempt+1),50)));
+    }
+  }
   return target;
 }
 export async function listMainSessions(root,{threadId}={}) {

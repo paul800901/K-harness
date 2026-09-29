@@ -163,18 +163,23 @@ test('idle room release keeps four recent rooms and reopens older history on its
 });
 
 test('idle release refuses rooms with pending approvals, queues, unfinished workers, or human browser control',async()=>{
- const probed=[];const f=await fixture({browserRequest:async(_root,state)=>{probed.push(state.threadId);return state.browserAccess?.mode==='human'?{available:true,mode:'human',busy:false}:{available:true,mode:'ai',busy:false};}}),c=f.controller;try{
+ const probed=[];const f=await fixture({browserRequest:async(_root,state)=>{probed.push({threadId:state.threadId,activeThreadId:c.state.threadId});return state.browserAccess?.mode==='human'?{available:true,mode:'human',busy:false}:{available:true,mode:'ai',busy:false};}}),c=f.controller;try{
   const opened=[];for(let i=0;i<7;i++){
    const room=await c.open({model:codexModel});opened.push(room);const native=f.room(room.threadId);
    if(i===0)native.state.browserAccess={enabled:true,mode:'human'};
    if(i===1)native.state.questions=[{id:'approval'}];
-   if(i===2)native.state.queuedMessages=[{text:'pending'}];
+   if(i===2){
+    await c.send({...room,text:'first'});await c.send({...room,text:'pending'});await c.stop(room);
+    assert.equal(c.state.queuePaused,true);assert.equal(native.state.busy,false);
+   }
    if(i===3)native.state.workers=[{status:'running',settled:false}];
    if(i<4)native.notify();
+   if(i===2)assert.equal(c.state.queuedMessages.length,1,'fixture must populate the actual queue');
   }
   const [browser,approval,queued,worker]=opened.slice(0,4).map(room=>f.room(room.threadId));
-  await eventually(()=>probed.includes(opened[0].threadId));
+  await eventually(()=>probed.some(row=>row.threadId===opened[0].threadId&&row.activeThreadId===opened.at(-1).threadId));
   assert.deepEqual([approval,queued,worker,browser].map(controller=>controller.closed),[0,0,0,0]);
+  assert.deepEqual(queued.calls.filter(([method])=>method==='send').map(([,data])=>data.text),['first']);
   assert.ok(c.state.conversationActivity.some(row=>row.threadId===opened[0].threadId));
  }finally{await c.close();}
 });

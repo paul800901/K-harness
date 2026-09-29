@@ -8,6 +8,7 @@ import {saveAttachment} from '../src/desktop-files.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
+import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 async function fixture() {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
@@ -114,7 +115,7 @@ test('Claude browser MCP is absent in plan mode and changes with native mode res
  }finally{await f.controller.close();}
 });
 
-test('sends one prompt, requires per-tool UI approval and persists resulting projection',async()=>{
+test('sends one prompt, requires per-tool UI approval and persists resulting projection',async t=>{
   const f=await fixture();
   try {
     await f.controller.open({});
@@ -128,12 +129,14 @@ test('sends one prompt, requires per-tool UI approval and persists resulting pro
     assert.equal(question.details.toolName,'Read');
     await f.controller.answer({id:question.id,accept:true});
     assert.deepEqual(await permission,{behavior:'allow',updatedInput:{file_path:'README.md'}});
+    const file=path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`);
+    const persisted=observeAtomicWrite(t,file,record=>record.messages.length===2);
     f.hostOptions.onMessage({type:'assistant',uuid:'assistant-1',message:{content:[{type:'text',text:'已檢查。'}]}});
     f.hostOptions.onMessage({type:'result',is_error:false});
     assert.equal(f.controller.state.status,'completed');
     assert.equal(f.controller.state.messages.at(-1).text,'已檢查。');
-    const file=path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`);
-    await waitFor(async()=>JSON.parse(await readFile(file,'utf8')).messages.length===2);
+    await persisted;
+    assert.equal(f.controller.state.error,null);
     const projection=JSON.parse(await readFile(file,'utf8'));
     assert.equal(projection.messages.length,2);
     await f.controller.send({text:'下一個正常回合'});
@@ -320,7 +323,7 @@ test('failed settings restart close remains uncertain and retains the existing h
 const tick=()=>new Promise(resolve=>setTimeout(resolve,40));
 async function waitFor(predicate){
  const deadline=Date.now()+5000;
- while(!await predicate()){
+ while(!predicate()){
   assert.ok(Date.now()<deadline,'Expected asynchronous controller result was not observed.');
   await new Promise(resolve=>setTimeout(resolve,10));
  }
