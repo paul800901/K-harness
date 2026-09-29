@@ -23,7 +23,7 @@ async function writeMainSession(root,{threadId,model,title='',archived=false,pin
   const selectedWorkspace=normalizeWorkspacePath(workspace);
   const directory=path.join(root,'.runtime/main-sessions');await mkdir(directory,{recursive:true});
   const saveOrder=Math.max(Date.now()*1000,lastSaveOrder+1);lastSaveOrder=saveOrder;
-  const target=path.join(directory,`${threadId}.json`);
+  const target=path.join(directory,`${threadId}-current.json`);
   const temporary=`${target}.${randomUUID()}.tmp`;
   const file=await open(temporary,'wx');
   try {await file.writeFile(JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:model.startsWith('claude-')?'claude':'codex',accountType:model.startsWith('claude-')?'claude.ai':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));await file.sync();}finally{await file.close();}

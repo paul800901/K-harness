@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,readdir,lstat,rename,symlink} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,readdir,lstat,rename,symlink,utimes} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {deleteArchived} from '../src/archive-delete.mjs';
+import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 
 async function fixture(){
  const root=await mkdtemp(path.join(os.tmpdir(),'k-archive-delete-'));
@@ -16,6 +17,48 @@ async function fixture(){
  };
  return {root,runtime,add};
 }
+
+for(const scenario of [
+ {name:'R2-only archived conversation can be deleted',archived:true},
+ {name:'R2 archive supersedes a legacy unarchived record when deleting',legacyArchived:false,archived:true},
+ {name:'R2 unarchive supersedes a legacy archived record and preserves all conversation files',legacyArchived:true,archived:false},
+])test(scenario.name,async()=>{
+ const f=await fixture(),threadId='archive-regression';
+ const mainDir=path.join(f.runtime,'main-sessions');
+ const record={threadId,model:'gpt-6-luna',workspace:f.root};
+ const sources=[];
+ if(scenario.legacyArchived!==undefined){
+  const legacy=path.join(mainDir,`${threadId}-1-legacy.json`);
+  await writeFile(legacy,JSON.stringify({...record,archived:scenario.legacyArchived,saveOrder:1}));
+  await utimes(legacy,new Date(0),new Date(0));sources.push(legacy);
+ }
+ sources.push(await saveMainSession(f.root,{...record,archived:scenario.archived}));
+ for(const name of ['claude-sessions','input-queues']){
+  const file=path.join(f.runtime,name,`${threadId}.json`);
+  await writeFile(file,JSON.stringify({threadId,fake:true}));sources.push(file);
+ }
+ const untouched=await saveMainSession(f.root,{...record,threadId:'keep-active',archived:false});
+ const untouchedBytes=await readFile(untouched,'utf8');
+ const before=await Promise.all(sources.map(file=>readFile(file,'utf8')));
+ assert.equal((await listMainSessions(f.root)).sessions.find(row=>row.threadId===threadId).archived,scenario.archived);
+ let recycleCalls=0,manifest;
+ const result=await deleteArchived({root:f.root,threadIds:[threadId],confirmed:true,recycler:async bundle=>{
+  recycleCalls++;manifest=JSON.parse(await readFile(path.join(bundle,'K-restore-manifest.json'),'utf8'));
+  await rename(bundle,path.join(f.runtime,'test-recycle-bin'));
+ }});
+ if(scenario.archived){
+  assert.deepEqual(result,{deletedIds:[threadId],failed:[]});assert.equal(recycleCalls,1);
+  assert.deepEqual(manifest.files.map(file=>file.originalPath).sort(),sources.map(file=>path.relative(f.runtime,file)).sort());
+  for(const file of sources)await assert.rejects(lstat(file),{code:'ENOENT'});
+  assert.equal((await listMainSessions(f.root)).sessions.some(row=>row.threadId===threadId),false);
+ }else{
+  assert.deepEqual(result.deletedIds,[]);assert.equal(result.failed.length,1);
+  assert.match(result.failed[0].error,/只能刪除已封存/);assert.equal(recycleCalls,0);
+  assert.deepEqual(await Promise.all(sources.map(file=>readFile(file,'utf8'))),before);
+  assert.equal((await listMainSessions(f.root)).sessions.find(row=>row.threadId===threadId).archived,false);
+ }
+ assert.equal(await readFile(untouched,'utf8'),untouchedBytes);
+});
 
 test('explicit confirmed archived K records are bundled to the injected recycler, including every append-only version and K projections/queue',async()=>{
  const f=await fixture();await f.add('claude_a',{versions:3,projection:true,queue:true});

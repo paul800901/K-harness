@@ -12,7 +12,7 @@ test('metadata updates use one atomic file per conversation and concurrent calls
  await saveMainSession(root,{...record,parentThreadId:'parent',parentTitle:'Original',browserSessionKey:'keep-browser'});
  await Promise.all(Array.from({length:30},(_,i)=>saveMainSession(root,{...record,title:`title-${i}`})));
  const names=await readdir(path.join(root,'.runtime/main-sessions'));
- assert.deepEqual(names,['one.json']);
+ assert.deepEqual(names,['one-current.json']);
  const {sessions,unreadable}=await listMainSessions(root);
  assert.equal(unreadable,0);assert.equal(sessions[0].title,'title-29');
  assert.equal(sessions[0].parentThreadId,'parent');assert.equal(sessions[0].browserSessionKey,'keep-browser');
