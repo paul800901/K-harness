@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {PassThrough,Writable} from 'node:stream';
+import {EventEmitter} from 'node:events';
 import {mkdtemp,mkdir,writeFile,stat,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -8,6 +9,7 @@ import {isolatedLauncherPaths,startIsolatedOwner,runIsolatedLauncherProtocol,ISO
 import {startDesktop} from '../src/desktop-server.mjs';
 import {startIsolatedDesktop} from '../src/isolated-desktop.mjs';
 import {listProjects} from '../src/projects.mjs';
+import {startElectronIsolatedLauncher} from '../src/electron-isolated-launcher.mjs';
 
 async function fixture(){
  const testRoot=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(testRoot,{recursive:true});
@@ -201,13 +203,32 @@ test('formal owner defaults to native providers without Sandboxie or workspace A
  const {p}=await fixture();let received;
  // Nonexistent Sandboxie paths must not matter on the native production route.
  p.startExe=path.join(p.root,'not-installed.exe');p.bridgePath=path.join(p.trustedRuntime,'missing-bridge.mjs');
- await startIsolatedOwner({paths:p,sourceEnv:{USERPROFILE:'C:\\Users\\Fixture',LOCALAPPDATA:'C:\\Users\\Fixture\\AppData\\Local',PATH:'C:\\Windows',SECRET_SHOULD_NOT_PASS:'x'},
+ const sourceEnv={USERPROFILE:'C:\\Users\\Fixture',LOCALAPPDATA:'C:\\Users\\Fixture\\AppData\\Local',PATH:'C:\\Windows',COMSPEC:'C:\\Windows\\System32\\cmd.exe',PATHEXT:'.COM;.EXE;.CMD',ProgramData:'C:\\ProgramData',ALLUSERSPROFILE:'C:\\ProgramData',COMPUTERNAME:'fixture',NUMBER_OF_PROCESSORS:'8',PROCESSOR_ARCHITECTURE:'AMD64',PSModulePath:'C:\\Modules',TOOL_CUSTOM_OPTION:'keep',openai_api_key:'fake-billing-key',ANTHROPIC_API_KEY:'fake-billing-key',DEEPSEEK_API_KEY:'fake-worker-key'};
+ await startIsolatedOwner({paths:p,sourceEnv,
   poolFactory:()=>{throw Error('must not initialize Sandboxie');},workspaceAccessFactory:()=>{throw Error('must not change ACL');},
   browserFactory:()=>({close:async()=>{}}),desktopFactory:async options=>{received=options;return {close:async()=>{}};}});
  assert.equal(received.native,true);assert.equal(received.pool,undefined);assert.equal(received.workspaceAccess,undefined);
  assert.equal(received.env.USERPROFILE,'C:\\Users\\Fixture');assert.equal(received.env.LOCALAPPDATA,'C:\\Users\\Fixture\\AppData\\Local');
  assert.equal(received.env.CODEX_HOME,path.join(p.agentHome,'.codex'));assert.equal(received.env.CLAUDE_CONFIG_DIR,path.join(p.agentHome,'.claude'));
- assert.equal(received.env.SECRET_SHOULD_NOT_PASS,undefined);assert.equal(received.runnerIdentity,'host');
+ for(const key of Object.keys(sourceEnv).filter(key=>!key.toUpperCase().endsWith('API_KEY')))assert.equal(received.env[key],sourceEnv[key],key);
+ for(const key of ['openai_api_key','ANTHROPIC_API_KEY','DEEPSEEK_API_KEY'])assert.equal(received.env[key],undefined);
+ assert.equal(received.runnerIdentity,'host');
+});
+
+test('Electron supervisor preserves OS and tool environment before native owner startup',async()=>{
+ const {p}=await fixture(),input=new PassThrough(),output=new PassThrough();
+ await mkdir(path.dirname(p.electronExecutable),{recursive:true});await writeFile(p.electronExecutable,'fixture');
+ const mainPath=path.join(p.trustedRuntime,'src','electron-isolated-main.cjs');await writeFile(mainPath,'fixture');
+ const env={ComSpec:'C:\\Windows\\System32\\cmd.exe',PATHEXT:'.EXE;.CMD',ProgramData:'C:\\ProgramData',PSModulePath:'C:\\Modules',TOOL_CUSTOM_OPTION:'keep',ELECTRON_RUN_AS_NODE:'1'};
+ const child=Object.assign(new EventEmitter(),{connected:true,stdio:[null,null,null,new PassThrough(),new PassThrough()],send(message,callback){callback?.();if(message.type==='owner-request')queueMicrotask(()=>child.emit('message',{type:'owner-response',id:message.id,ok:true,value:{closed:true}}));}});
+ let launched;
+ const owner=await startElectronIsolatedLauncher({paths:p,mainPath,input,output,processObject:{env,execPath:process.execPath},
+  spawnImpl:(_exe,_args,options)=>{launched=options;queueMicrotask(()=>child.emit('message',{type:'owner-ready',origin:'http://127.0.0.1:47831'}));return child;}});
+ try{
+  for(const key of ['ComSpec','PATHEXT','ProgramData','PSModulePath','TOOL_CUSTOM_OPTION'])assert.equal(launched.env[key],env[key]);
+  assert.equal(launched.env.ELECTRON_RUN_AS_NODE,undefined);
+  assert.equal(launched.windowsHide,true);
+ }finally{await owner.protocol.close();input.destroy();output.destroy();child.stdio[3].destroy();child.stdio[4].destroy();}
 });
 
 test('native desktop keeps selected project rules but not an extra isolated workspace boundary',async()=>{

@@ -69,6 +69,7 @@ test('real stdio discovery, scoped dispatch, wait, result and duplicate readback
   assert.equal(invalid.isError, true);
   const conflict = await f.call('k_worker_start', { ...f.request, task: 'Different task' });
   assert.equal(conflict.isError, true);
+  assert.match(conflict.content[0].text,/already belongs to a different request/);
   assert.equal((await f.call('k_worker_inspect', { requestId: f.request.requestId })).structuredContent.status, 'completed');
   assert.equal(f.log(), '');
 });
@@ -130,7 +131,7 @@ test('production stdio refuses implicit live operation before loading a credenti
   const child = spawnSync(process.execPath, ['src/mcp-stdio.mjs', '--workspace', root, '--model', 'deepseek-v4-flash', '--key-file', 'missing.env'], { cwd: root, encoding: 'utf8', timeout: 5000 });
   assert.equal(child.status, 1);
   assert.equal(child.stdout, '');
-  assert.match(child.stderr, /explicit --live/u);
+  assert.match(child.stderr, /explicit --live/iu);
 });
 
 test('real MCP coding dispatch exposes explicit grants, edits code, runs tests and rejects changed scopes/commands', { timeout: 30_000 }, async (t) => {

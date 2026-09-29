@@ -4,6 +4,8 @@ import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {request as httpRequest} from 'node:http';
+import childProcess from 'node:child_process';
+import {syncBuiltinESMExports} from 'node:module';
 import {createBrowserLiveSession} from '../src/browser-live-session.mjs';
 
 function fakeContext(){
@@ -33,6 +35,22 @@ function fakePage(){
 async function request(session,descriptor,route,{method='GET',body}={}){
   return fetch(`http://127.0.0.1:${descriptor.port}${route}`,{method,headers:{Authorization:`Bearer ${descriptor.token}`,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});
 }
+
+test('externally owned contexts do not probe browser processes or prepare local download history',async()=>{
+ const profile=await mkdtemp(path.join(os.tmpdir(),'k-external-no-probe-'));
+ const original=childProcess.execFile;let calls=0;
+ childProcess.execFile=(...args)=>{calls++;args.at(-1)(Error('External browsers must not require a process scan'));};
+ syncBuiltinESMExports();
+ // An external wrapper is not a Chrome profile; this must never be opened as SQLite.
+ await writeFile(path.join(profile,'History'),'not a browser profile');
+ const context=fakeContext();context._pages.push(fakePage());let session;
+ try{
+  session=await createBrowserLiveSession(profile,{controlMode:'in-process',launchContext:async()=>context});
+  assert.equal(await session.contextGetter(),context);
+  assert.equal(calls,0);
+  assert.equal(await readFile(path.join(profile,'History'),'utf8'),'not a browser profile');
+ }finally{await session?.close();childProcess.execFile=original;syncBuiltinESMExports();}
+});
 
 test('live browser API is authenticated, takeover waits for MCP work, and human tabs share context',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-'));

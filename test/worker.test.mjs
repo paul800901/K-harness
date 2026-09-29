@@ -151,6 +151,15 @@ test('observer errors do not abandon the run', async () => {
   assert.equal((await inspectJob(result.directory)).status, 'completed');
 });
 
+test('provider failure reason survives job persistence without replay',async()=>{
+ const f=await fixture([()=>{throw new Error('429 Rate limit reached (offline fixture)');}]);
+ const result=await runWorker(f.options);
+ assert.equal(result.status,'failed');
+ assert.match(result.error,/429 Rate limit reached/);
+ assert.equal((await inspectJob(result.directory)).error,result.error);
+ assert.equal(f.faux.state.callCount,1);
+});
+
 test('unfinished persisted jobs remain unresolved and are never replayed by inspection', async () => {
   const f = await fixture();
   await writeFile(path.join(f.directory, 'job.json'), JSON.stringify({ version: 1, status: 'running', task: 'pending', sessionFile: null }));

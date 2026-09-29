@@ -14,9 +14,8 @@ async function trustedFile(file,root){
   return actual;
 }
 function electronEnvironment(source){
-  const env={};
-  for(const key of ['SystemRoot','WINDIR','PATH','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA','ProgramFiles','ProgramFiles(x86)'])
-    if(typeof source[key]==='string')env[key]=source[key];
+  const env={...source};
+  delete env.ELECTRON_RUN_AS_NODE;
   return env;
 }
 

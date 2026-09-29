@@ -44,6 +44,7 @@ test('gateway is loopback-only, bearer-authenticated, and exposes fixed MCP Luna
     assert.equal(duplicate.result.structuredContent.requestId,'stable');assert.equal(f.records.size,1);
     const changed=await body(await post(config.url,token,{jsonrpc:'2.0',id:5,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'stable',task:'different'}}}));
     assert.equal(changed.result.isError,true);
+    assert.match(changed.result.content[0].text,/different task/);
     assert.equal((await post(config.url,token,{jsonrpc:'2.0',id:6,method:'tools/list',params:{}},{origin:'https://evil.example'})).status,403);
     assert.equal(await spoofHost(config.url,token),403);
     assert.equal((await fetch(config.url.replace('/mcp','/else'),{method:'POST',headers:{authorization:`Bearer ${token}`}})).status,404);

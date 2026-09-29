@@ -44,12 +44,10 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
 
   function tool(name, description, inputSchema, annotations, execute) {
     server.registerTool(name, { description, inputSchema, annotations }, async (args, context) => {
-      try { return handoff(await execute(args, context), args.requestId); } catch {
-        // Never serialize arbitrary exception messages or request arguments:
-        // either can contain user data or provider diagnostics.
+      try { return handoff(await execute(args, context), args.requestId); } catch (error) {
         return {
           isError: true,
-          content: [{ type: 'text', text: 'Request rejected or result unavailable. Check the request ID, fixed workspace and existing job evidence. Do not automatically retry under a new ID.' }],
+          content: [{ type: 'text', text: `${error.message} Inspect the same request ID and existing evidence; do not automatically retry under a new ID.` }],
         };
       }
     });

@@ -122,7 +122,7 @@ export async function createBrowserLiveSession(profile,{launchContext,downloadDi
   const getContext=async()=>{
     if(disconnected||closed)throw new Error('Browser session is unavailable.');
     if(!contextPromise)contextPromise=Promise.resolve().then(async()=>{
-      if(process.platform==='win32'){
+      if(!launchContext&&process.platform==='win32'){
         await assertProfileIdle(profile);
         await prepareBrowserDownloadHistory(profile);
       }

@@ -24,7 +24,7 @@ async function main() {
   serveWorkerStdio({ dispatcher, workspace, model: values.model });
 }
 
-main().catch(() => {
-  process.stderr.write('K worker MCP did not start. Check explicit --live, absolute workspace/key-file paths and configured model; credential values are never displayed.\n');
+main().catch(error => {
+  process.stderr.write(`K worker MCP did not start: ${error.message}\n`);
   process.exitCode = 1;
 });

@@ -62,13 +62,11 @@ export async function startIsolatedOwner({
     await checkUnder(p.vault,p.stateRoot);
   });
   // State is created by the trusted owner under the candidate vault. Existing candidate state remains untouched.
-  const env=isolatedAgentEnvironment({home:p.agentHome,source:sourceEnv});
-  // Keep K's existing subscription/history homes, but use the real OS environment
-  // for installed tools. No credential files are copied or changed.
-  if(native)for(const name of ['HOME','USERPROFILE','APPDATA','LOCALAPPDATA','TEMP','TMP','ProgramFiles','ProgramFiles(x86)','ProgramData']){
-    const key=Object.keys(sourceEnv).find(key=>key.toLowerCase()===name.toLowerCase());
-    if(key&&typeof sourceEnv[key]==='string')env[name]=sourceEnv[key];
-    else delete env[name];
+  const env=native?{...sourceEnv,CODEX_HOME:path.join(p.agentHome,'.codex'),CLAUDE_CONFIG_DIR:path.join(p.agentHome,'.claude')}
+    :isolatedAgentEnvironment({home:p.agentHome,source:sourceEnv});
+  // Keep provider subscription homes and prevent inherited API billing credentials.
+  if(native)for(const key of Object.keys(env)){
+    if(/^(OPENAI_API_KEY|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|DEEPSEEK_API_KEY)$/i.test(key))delete env[key];
   }
   let pool,browsers,app;
   try{

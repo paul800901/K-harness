@@ -160,13 +160,12 @@ export async function runWorker({
       state.status = 'cancelled';
     } else {
       state.status = 'failed';
-      state.error = 'Model stopped without a complete final answer; inspect the transcript before any retry.';
+      state.error = lastAssistant?.errorMessage || 'Model stopped without a complete final answer; inspect the transcript before any retry.';
     }
   } catch (error) {
     state.status = signal?.aborted ? 'cancelled' : 'failed';
     state.partialOutput = livePartial;
-    // Do not persist arbitrary provider exception text, which can contain request data.
-    state.error = state.status === 'cancelled' ? 'Cancellation requested.' : `Worker failed (${error?.name ?? 'Error'}); no automatic retry.`;
+    state.error = state.status === 'cancelled' ? 'Cancellation requested.' : `Worker failed: ${error.message}; no automatic retry.`;
   } finally {
     if (abortListener) signal?.removeEventListener('abort', abortListener);
     unsubscribe?.();
