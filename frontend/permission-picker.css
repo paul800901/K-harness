@@ -1,27 +1,27 @@
 .permission-picker{display:inline-flex;min-width:0}
-.permission-trigger{gap:6px;padding:6px 7px;border-radius:7px;white-space:nowrap;color:var(--text);font-size:13px}
-.permission-trigger:hover,.permission-trigger[aria-expanded=true]{background:var(--surface)}
-.permission-popover{position:fixed;inset:auto;margin:0;width:390px;padding:7px;border:1px solid var(--border);border-radius:14px;background:var(--bg);color:var(--text);box-shadow:var(--shadow);overflow:auto;font-family:inherit;font-size:14px}
+.permission-trigger{gap:6px;padding:6px 7px;border-radius:7px;white-space:nowrap;color:var(--k-ink);font-size:var(--k-text-sm)}
+.permission-trigger:hover,.permission-trigger[aria-expanded=true]{background:var(--k-sunken)}
+.permission-popover{position:fixed;inset:auto;margin:0;width:390px;padding:7px;border:1px solid var(--k-line);border-radius:14px;background:var(--k-raised);color:var(--k-ink);box-shadow:var(--k-shadow-2);overflow:auto;font-family:inherit;font-size:var(--k-text-md)}
 .permission-popover::backdrop{background:transparent}
-.permission-menu-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px 10px;color:var(--muted);font-size:12px}
-.permission-menu-heading a{color:var(--muted);text-decoration:underline;text-underline-offset:3px}
-.permission-option{display:flex;width:100%;gap:11px;align-items:center;text-align:left;padding:11px 10px;border-radius:9px;color:var(--text);background:transparent}
-.permission-option:hover,.permission-option:focus-visible{background:var(--surface)}
+.permission-menu-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 10px 10px;color:var(--k-ink-3);font-size:var(--k-text-xs)}
+.permission-menu-heading a{color:var(--k-ink-3);text-decoration:underline;text-underline-offset:3px}
+.permission-option{display:flex;width:100%;gap:11px;align-items:center;text-align:left;padding:11px 10px;border-radius:9px;color:var(--k-ink);background:transparent}
+.permission-option:hover,.permission-option:focus-visible{background:var(--k-sunken)}
 .permission-option>svg{flex:0 0 auto}
 .permission-option>span{display:flex;flex:1;min-width:0;flex-direction:column;gap:4px}
-.permission-option strong{font-size:15px;font-weight:500}
-.permission-option small{font-size:12px;line-height:1.5;color:var(--muted)}
+.permission-option strong{font-size:var(--k-text-md);font-weight:400}
+.permission-option small{font-size:var(--k-text-xs);line-height:1.5;color:var(--k-ink-3)}
 .permission-check-hidden{visibility:hidden}
-.permission-danger,.permission-danger small{color:#c64b16}
-[data-theme=dark] .permission-danger,[data-theme=dark] .permission-danger small{color:#ff9b68}
-.permission-advanced{border-top:1px solid var(--border);margin-top:6px;padding-top:4px}
-.permission-advanced>button{font-size:12px;color:var(--muted);padding:7px 10px;gap:6px}
+.permission-danger,.permission-danger small{color:var(--k-danger)}
+[data-theme=dark] .permission-danger,[data-theme=dark] .permission-danger small{color:var(--k-danger)}
+.permission-advanced{border-top:1px solid var(--k-line);margin-top:6px;padding-top:4px}
+.permission-advanced>button{font-size:var(--k-text-xs);color:var(--k-ink-3);padding:7px 10px;gap:6px}
 .permission-confirm{padding:7px 10px 10px}
-.permission-confirm>strong{display:block;font-size:17px;margin:12px 0}
-.permission-confirm p{font-size:13px;line-height:1.65;margin:10px 0}
-.permission-confirm .permission-confirm-note{font-size:12px;color:var(--muted)}
-.permission-back{gap:6px;padding:0;color:var(--muted);font-size:12px}
+.permission-confirm>strong{display:block;font-size:var(--k-text-md);margin:12px 0}
+.permission-confirm p{font-size:var(--k-text-sm);line-height:1.65;margin:10px 0}
+.permission-confirm .permission-confirm-note{font-size:var(--k-text-xs);color:var(--k-ink-3)}
+.permission-back{gap:6px;padding:0;color:var(--k-ink-3);font-size:var(--k-text-xs)}
 .permission-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
-.permission-confirm-actions button{padding:8px 12px;border-radius:8px;font-size:13px}
-.permission-enable-danger{background:#c64b16;color:white}
-.permission-enable-danger:hover{background:#a93c10}
+.permission-confirm-actions button{padding:8px 12px;border-radius:8px;font-size:var(--k-text-sm)}
+.permission-enable-danger{background:var(--k-danger);color:var(--k-sheet)}
+.permission-enable-danger:hover{background:var(--k-danger-strong)}

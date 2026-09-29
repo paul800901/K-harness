@@ -8,18 +8,18 @@ import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
 
 const ASTRA='gpt-6-astra';
 const TERRA='gpt-5.6-terra';
-const LUNA='gpt-5.6-luna';
+const LUNA='gpt-6-luna';
 const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const catalog=[
  {model:ASTRA,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
  {model:TERRA,displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
- {model:LUNA,displayName:'GPT-5.6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low',inputModalities:['text']},
+ {model:LUNA,displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low',inputModalities:['text']},
 ];
 
 const existingHistory=(threadId,text='既有要求')=>({turns:[{id:`prior-${threadId}`,items:[{type:'userMessage',id:`user-${threadId}`,content:[{type:'text',text}]},{type:'agentMessage',id:`assistant-${threadId}`,text:'既有回答'}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[],completeTurns=true}={}){
+async function fixture({sessions=[],completeTurns=true,controllerOptions={},failAt=null}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-model-switch-'));
  const histories=new Map(),unsupportedTurnReads=new Set(),calls=[],hosts=[];
@@ -47,6 +47,7 @@ async function fixture({sessions=[],completeTurns=true}={}){
      return {thread:{id:p.threadId,status:{type:'idle'},...(histories.get(p.threadId)??{turns:[]})}};
     }
     if(method==='thread/start'){
+     if(failAt==='thread/start')throw new Error('fixture thread start failure');
      const id=`model-switch-new-${++nextThread}`;
      histories.set(id,{turns:[]});unsupportedTurnReads.add(id);
      return {thread:{id}};
@@ -76,9 +77,19 @@ async function fixture({sessions=[],completeTurns=true}={}){
   };
   hosts.push(host);return host;
  };
- const makeController=()=>createDesktopController({root,executable:'fixture',hostFactory});
+ const makeController=()=>createDesktopController({root,executable:'fixture',hostFactory,...controllerOptions});
  return {root,c:makeController(),makeController,hosts,calls,histories,unsupportedTurnReads};
 }
+
+test('failed open closes the injected owner browser gateway',async()=>{
+ let browserCloseCount=0;
+ const f=await fixture({failAt:'thread/start',controllerOptions:{browserConfig:async()=>({command:'fixture',args:['browser-session','unused','owner-open-failure']}),closeBrowser:async()=>{browserCloseCount++;}}});
+ try{
+  await assert.rejects(f.c.open({model:ASTRA}),/fixture thread start failure/);
+  assert.equal(browserCloseCount,1);
+  assert.equal(f.c.state.browserAccess.enabled,false);
+ }finally{await f.c.close();}
+});
 
 test('switch confirmation can be declined, is required for existing history, and invalid choices leave settings unchanged',async()=>{
  const f=await fixture({sessions:[{threadId:'existing',accessMode:'read-only'}]});
@@ -104,7 +115,7 @@ test('switch confirmation can be declined, is required for existing history, and
 test('two model selections affect only the next turn, preserve effort policy and permissions, then persist turn attribution across reopen',async()=>{
  const f=await fixture();
  try{
-  const opened=await f.c.open({model:ASTRA,effort:'high',accessMode:'read-only',workerPolicy:{model:TERRA}});
+  const opened=await f.c.open({model:ASTRA,effort:'high',accessMode:'read-only',workerPolicy:{model:LUNA}});
   await flush();
   const threadId=opened.threadId;
   const originalWorkerPolicy=structuredClone(f.c.state.workerPolicy);

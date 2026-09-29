@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {groupProjectSessions,moveSessionOrder,searchSessions,sortSessions} from '../frontend/project-groups.mjs';
+import {groupProjectSessions,isVisibleMainSession,moveSessionOrder,searchSessions,sortSessions} from '../frontend/project-groups.mjs';
 
 const projects=[{path:'D:\\A',name:'音訊'},{path:'D:\\B',name:'研究'},{path:'D:\\C',name:'已封存工作區',archived:true}];
 const sessions=[
@@ -19,6 +19,15 @@ test('conversation search uses title, workspace and model; includes archived and
   assert.deepEqual(searchSessions(projects,[...sessions,{threadId:'hidden',workspace:'D:\\C',title:'封存工作區中的對話',model:'terra'}],'封存工作區中的對話'),[]);
   assert.deepEqual(searchSessions(projects,sessions,'child'),[]);
   assert.deepEqual(searchSessions(projects,sessions,'').map(s=>s.threadId),[]);
+});
+
+test('persisted user branches are visible while unmarked native child sessions stay hidden',()=>{
+  const userBranch={threadId:'branch',parentThreadId:'a',branchType:'user',workspace:'D:\\A',title:'使用者分支',model:'gpt-6-sol'};
+  const nativeChild={threadId:'native-child',parentThreadId:'a',workspace:'D:\\A',title:'原生子工作',model:'flash'};
+  assert.equal(isVisibleMainSession(userBranch),true);
+  assert.equal(isVisibleMainSession(nativeChild),false);
+  assert.ok(groupProjectSessions(projects,[...sessions,userBranch,nativeChild])[0].sessions.some(s=>s.threadId==='branch'));
+  assert.ok(!searchSessions(projects,[...sessions,userBranch,nativeChild],'原生子工作').some(s=>s.threadId==='native-child'));
 });
 
 test('recent and manual order both keep pinned conversations first in grouped and flat data',()=>{

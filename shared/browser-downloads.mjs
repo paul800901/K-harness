@@ -1,0 +1,1 @@
+export const MAX_DOWNLOAD_COPY_BYTES=64*1024*1024;

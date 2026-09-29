@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, readFile, readdir, writeFile, link } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawn } from 'node:child_process';
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
 import { createModelRuntime } from '../src/runtime.mjs';
 import { createCodingTools, normalizeCoding, MAX_TEST_OUTPUT_BYTES } from '../src/coding.mjs';
@@ -17,6 +18,20 @@ test.after(() => { globalThis.fetch = originalFetch; });
 const broken = 'export const add = (a, b) => a - b;\n';
 const fixed = 'export const add = (a, b) => a + b;\n';
 const assertions = "import test from 'node:test';\nimport assert from 'node:assert/strict';\nimport { add } from './code.mjs';\ntest('addition', () => assert.equal(add(2, 3), 5));\n";
+// This test-only adapter explicitly opts into local Node. Production dispatch
+// has no such default and must inject its isolated runner.
+const testRunner = {
+  env: Object.fromEntries(['SystemRoot', 'WINDIR'].filter((name) => process.env[name]).map((name) => [name, process.env[name]])),
+  spawnImpl(command, args, options) {
+    const child = spawn(command, args, options);
+    child.terminate = () => new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve({ confirmed: true });
+      child.once('close', () => resolve({ confirmed: true }));
+      child.kill('SIGKILL');
+    });
+    return child;
+  },
+};
 
 async function fixture({ code = broken, tests = assertions, timeoutMs = 10_000 } = {}) {
   const directory = await mkdtemp(path.join(testRoot, 'coding-'));
@@ -27,7 +42,7 @@ async function fixture({ code = broken, tests = assertions, timeoutMs = 10_000 }
   await writeFile(path.join(workspace, 'checks.mjs'), tests, { flag: 'wx' });
   const readFiles = ['code.mjs', 'checks.mjs'];
   const coding = normalizeCoding({ editFiles: ['code.mjs'], testFiles: ['checks.mjs'], timeoutMs }, readFiles, []);
-  const tools = await createCodingTools(workspace, coding, readFiles, jobDirectory);
+  const tools = await createCodingTools(workspace, coding, readFiles, jobDirectory, testRunner);
   return { directory, workspace, jobDirectory, readFiles, coding, tools, patch: tools[0], run: tools[1] };
 }
 
@@ -51,7 +66,7 @@ test('actual Pi coding loop reproduces failure, edits only approved code, passes
   ]);
   runtime.registerNativeProvider(faux.provider);
   const options = { task: 'Fix addition.', workspace: f.workspace, readFiles: f.readFiles, coding: f.coding,
-    modelRuntime: runtime, model: faux.getModel(), stateDir: path.join(f.directory, 'jobs'), jobId: 'one-code-job' };
+    testRunner, modelRuntime: runtime, model: faux.getModel(), stateDir: path.join(f.directory, 'jobs'), jobId: 'one-code-job' };
   const result = await runWorker(options);
   assert.equal(result.status, 'completed', result.error);
   assert.equal(result.acceptance, 'not-reviewed');

@@ -41,6 +41,9 @@ export async function checkedPath(root, name, isOutput) {
     if (last && !info.isFile()) throw new Error('Input must be a regular file.');
   }
   const actual = await realpath(target);
+  if (path.relative(credentialFile, actual) === '') {
+    throw new Error('The K HARNESS credential file must never be a worker input or output.');
+  }
   if (!inside(root, actual)) throw new Error('Resolved input is outside the workspace.');
   return actual;
 }

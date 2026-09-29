@@ -13,7 +13,7 @@ function deferred() {
 
 // One trusted host, one explicit workspace and model. No network listener,
 // credential discovery, background daemon, automatic restart or job replay.
-export async function createDispatcher({ workspace, modelRuntime, model, stateDir = DEFAULT_STATE_DIR }) {
+export async function createDispatcher({ workspace, modelRuntime, model, stateDir = DEFAULT_STATE_DIR, testRunner = null }) {
   const root = await realpath(workspace);
   if (!(await lstat(root)).isDirectory()) throw new Error('workspace must be a directory.');
   if (!model || !modelRuntime?.getModel(model.provider, model.id)) throw new Error('An explicit registered model is required.');
@@ -116,7 +116,7 @@ export async function createDispatcher({ workspace, modelRuntime, model, stateDi
         }
         await runWorker({
           task: request.task, workspace: root, readFiles: request.readFiles, outputFiles: request.outputFiles,
-          modelRuntime, model, stateDir, jobId: request.jobId, coding: request.coding, historyIds: request.historyIds,
+          modelRuntime, model, stateDir, jobId: request.jobId, coding: request.coding, historyIds: request.historyIds, testRunner,
           ...(request.requestedThinkingLevel === null ? {} : { thinkingLevel: request.requestedThinkingLevel }),
           signal: entry.controller.signal,
           onEvent(event) { if (event.type === 'job_started') entry.ready.resolve(); },

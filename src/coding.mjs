@@ -1,5 +1,4 @@
 import { mkdir, mkdtemp, open, readFile, writeFile, lstat } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { Type } from '@earendil-works/pi-ai';
@@ -23,7 +22,7 @@ export function normalizeCoding(coding, readFiles, outputFiles) {
   return { editFiles: edits, testFiles: tests, timeoutMs };
 }
 
-export async function createCodingTools(workspace, policy, readFiles, jobDirectory) {
+export async function createCodingTools(workspace, policy, readFiles, jobDirectory, testRunner = null) {
   if (!policy) return [];
   const paths = new Map();
   for (const name of readFiles) paths.set(name, await checkedPath(workspace, name, false));
@@ -85,7 +84,7 @@ export async function createCodingTools(workspace, policy, readFiles, jobDirecto
     },
   }, {
     name: 'run_tests', label: 'Run the host-approved Node tests',
-    description: `Run only the fixed host-approved Node tests, with a ${policy.timeoutMs} ms timeout and bounded output. No command or arguments can be selected. A passing process is evidence, not independent acceptance.`,
+    description: `Run only the fixed host-approved Node tests through the configured isolated runner, with a ${policy.timeoutMs} ms timeout and bounded output. No command or arguments can be selected. If no isolated runner is configured, tests fail closed; there is no host fallback. A passing process is evidence, not independent acceptance.`,
     parameters: Type.Object({}), executionMode: 'sequential',
     async execute(_id, args, signal) {
       if (Object.keys(args).length) throw new Error('The test command has no model-selectable arguments.');
@@ -95,7 +94,7 @@ export async function createCodingTools(workspace, policy, readFiles, jobDirecto
       const testPaths = [];
       for (const name of policy.testFiles) testPaths.push(await checkedPath(workspace, name, false));
       const directory = await mkdtemp(path.join(jobDirectory, 'test-'));
-      const result = await runFixedTests(workspace, allowed, testPaths, policy.timeoutMs, signal);
+      const result = await runFixedTests(workspace, allowed, testPaths, policy.timeoutMs, signal, testRunner);
       await writeFile(path.join(directory, 'result.json'), `${JSON.stringify(result, null, 2)}\n`, { flag: 'wx' });
       return { content: [{ type: 'text', text: JSON.stringify(result) }], details: { ...result, evidence: path.relative(jobDirectory, directory) } };
     },
@@ -104,10 +103,17 @@ export async function createCodingTools(workspace, policy, readFiles, jobDirecto
 
 // Defense against accidental access, NOT an OS sandbox for hostile code. Node
 // 24.14 has no network permission flag; do not claim this blocks network access.
-function runFixedTests(workspace, allowed, tests, timeoutMs, signal) {
+function runFixedTests(workspace, allowed, tests, timeoutMs, signal, testRunner) {
   signal?.throwIfAborted();
-  const env = {};
-  for (const name of ['SystemRoot', 'WINDIR']) if (process.env[name]) env[name] = process.env[name];
+  if (typeof testRunner?.spawnImpl !== 'function' || !testRunner.env || typeof testRunner.env !== 'object') {
+    return Promise.resolve({ startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), exitCode: null,
+      terminationSignal: null, status: 'runner-not-configured', output: 'No isolated test runner was configured; host execution is disabled.' });
+  }
+  // The test process gets only the explicit runner environment, never the K
+  // runtime environment. In particular, provider/API credentials are not
+  // forwarded even if a caller accidentally included one in the runner env.
+  const env = Object.fromEntries(Object.entries(testRunner.env)
+    .filter(([name, value]) => typeof value === 'string' && !/(?:API.?KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/iu.test(name)));
   // Import the exact files directly. `node --test <path>` performs directory
   // discovery on Windows, which would require unnecessarily broad read grants.
   // node:test still runs its tests and sets the process exit status on failure.
@@ -116,11 +122,44 @@ function runFixedTests(workspace, allowed, tests, timeoutMs, signal) {
     'for (const file of process.argv.slice(1)) await import(file);', ...tests.map((file) => pathToFileURL(file).href)];
   const startedAt = new Date().toISOString();
   return new Promise((resolve) => {
-    const child = spawn(process.execPath, args, { cwd: workspace, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    let child;
+    try {
+      child = testRunner.spawnImpl(process.execPath, args, { cwd: workspace, env, shell: false, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ startedAt, finishedAt: new Date().toISOString(), exitCode: null, terminationSignal: null,
+        status: 'spawn-error', output: `Isolated runner failed to start: ${error?.message ?? 'unknown error'}` });
+      return;
+    }
     const chunks = [];
     let bytes = 0;
     let stopReason = null;
-    const stop = (reason) => { stopReason ??= reason; child.kill('SIGKILL'); };
+    let settled = false;
+    const finish = (exitCode = null, terminationSignal = null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
+      const output = Buffer.concat(chunks).toString('utf8') + (stopReason === 'termination-unconfirmed' ? '\nRunner termination was not confirmed.' : '');
+      resolve({ startedAt, finishedAt: new Date().toISOString(), exitCode, terminationSignal,
+        status: stopReason ?? (exitCode === 0 ? 'passed' : 'failed'), output });
+    };
+    let stopPromise = null;
+    const stop = (reason) => {
+      stopReason ??= reason;
+      if (stopPromise) return;
+      if (typeof child.terminate !== 'function') {
+        stopReason = 'termination-unconfirmed';
+        stopPromise = Promise.resolve(false).then(() => finish());
+        return;
+      }
+      // Sandboxie adapters resolve this only after confirming the box is empty.
+      stopPromise = Promise.resolve().then(() => child.terminate(reason)).then((result) => {
+        if (result !== true && result?.confirmed !== true) throw new Error('Runner did not confirm termination.');
+        return true;
+      }).catch(() => {
+        stopReason = 'termination-unconfirmed';
+        return false;
+      }).then(() => finish());
+    };
     const onAbort = () => stop('cancelled');
     const timer = setTimeout(() => stop('timeout'), timeoutMs);
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -135,9 +174,8 @@ function runFixedTests(workspace, allowed, tests, timeoutMs, signal) {
     child.stdout.on('data', capture); child.stderr.on('data', capture);
     child.once('error', () => { stopReason ??= 'spawn-error'; });
     child.once('close', (exitCode, terminationSignal) => {
-      clearTimeout(timer); signal?.removeEventListener('abort', onAbort);
-      resolve({ startedAt, finishedAt: new Date().toISOString(), exitCode, terminationSignal,
-        status: stopReason ?? (exitCode === 0 ? 'passed' : 'failed'), output: Buffer.concat(chunks).toString('utf8') });
+      if (stopPromise) void stopPromise.then(() => finish(exitCode, terminationSignal));
+      else finish(exitCode, terminationSignal);
     });
   });
 }

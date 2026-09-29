@@ -55,7 +55,7 @@ export async function readTranscript(directory) {
 
 export async function runWorker({
   task, workspace, readFiles = [], outputFiles = [], modelRuntime, model,
-  thinkingLevel, signal, onEvent, stateDir = DEFAULT_STATE_DIR, jobId, coding = null, historyIds = [],
+  thinkingLevel, signal, onEvent, stateDir = DEFAULT_STATE_DIR, jobId, coding = null, historyIds = [], testRunner = null,
 }) {
   if (typeof task !== 'string' || !task.trim()) throw new Error('A non-empty task is required.');
   if (!model || !modelRuntime?.getModel(model.provider, model.id)) throw new Error('An explicit registered model is required.');
@@ -98,7 +98,7 @@ export async function runWorker({
   }
   notify({ type: 'job_started', directory });
   try {
-    const codingTools = await createCodingTools(files.workspace, codingPolicy, files.readFiles, directory);
+    const codingTools = await createCodingTools(files.workspace, codingPolicy, files.readFiles, directory, testRunner);
     const workerTools = [...files.tools, ...codingTools, ...historyTools];
     const agentDir = path.join(directory, 'agent');
     const settingsManager = SettingsManager.inMemory({

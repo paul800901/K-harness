@@ -1,0 +1,7 @@
+{
+  "model": "deepseek-v4-flash",
+  "workspace": "D:\\K-harness",
+  "task": "讀取 README.md，將目前工程狀態與尚未驗證事項的正體中文摘要建立在 .runtime/worker-note.txt。不要改動原文，不將離線測試說成付費模型已驗證。",
+  "readFiles": ["README.md"],
+  "outputFiles": [".runtime/worker-note.txt"]
+}

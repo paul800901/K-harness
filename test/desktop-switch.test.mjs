@@ -8,7 +8,7 @@ import {saveMainSession} from '../src/main-sessions.mjs';
 
 const MODEL='gpt-6-astra';
 const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
-const catalog=[
+const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]},
  {model:MODEL,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
  {model:'gpt-5.6-terra',displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
 ];
@@ -33,6 +33,10 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
    async close(){this.closeCount++;closeHost();},
    async request(method,p={}){
     const call={method,p};calls.push(call);allCalls.push({host:this,...call});
+    if(method==='thread/start'||method==='thread/resume')for(const server of Object.values(p.config?.mcp_servers??{})){
+     // Match native validation in a fresh home: disabled still needs transport.
+     assert.ok(typeof server.command==='string'||typeof server.url==='string','invalid MCP transport');
+    }
     if(method==='account/read')return {account:{type:'chatgpt'}};
     if(method==='model/list')return {data:catalog,nextCursor:null};
     if(method==='config/read')return {config:{}};
@@ -71,13 +75,8 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
   return host;
  };
  const c=createDesktopController({root,executable:'fixture',hostFactory});
- const settle=(threadId,index,ok,error=new Error('fixture readiness failed'))=>{
-  const matching=activeHost.waiters.filter(waiter=>waiter.threadId===threadId);
-  const waiter=matching[index];assert.ok(waiter,`missing readiness waiter ${threadId}[${index}]`);
-  if(ok)waiter.resolve({status:'ready'});else waiter.reject(error);
- };
  const openSaved=threadId=>c.open({model:MODEL,threadId});
- return {c,root,workspaceB,hosts,allCalls,histories,get activeHost(){return activeHost;},get hooks(){return activeHooks;},settle,openSaved};
+ return {c,root,workspaceB,hosts,allCalls,histories,get activeHost(){return activeHost;},get hooks(){return activeHooks;},openSaved};
 }
 
 test('reopening the same ready conversation is a no-op',async()=>{
@@ -119,23 +118,20 @@ test('saved conversations share one initialized host and read each history befor
  }finally{await f.c.close();}
 });
 
-test('restored history and direct work remain available while optional Flash is connecting or failed',async()=>{
+test('normal subscription conversations disable Flash and do not wait for its MCP startup',async()=>{
  const f=await fixture();
  try{
   await f.openSaved('thread-a');
-  assert.equal(f.c.state.workerConnection,'connecting');
+  assert.equal(f.c.state.workerConnection,'ready');
+  assert.equal(f.activeHost.waiters.length,0);
+  const resume=f.activeHost.calls.find(call=>call.method==='thread/resume').p;
+  const disabled={enabled:false,command:process.execPath,args:['--version']};
+  assert.deepEqual(resume.config.mcp_servers,{k_flash:disabled,k_browser:disabled});
+  assert.equal(resume.config.agents.default_subagent_model,'gpt-6-luna');
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
-  await f.c.send({text:'尚未連線但可直接工作'});
-  f.hooks.onEvent({method:'turn/completed',params:{threadId:'thread-a',turn:{id:'turn-thread-a',status:'completed'}}});
-
-  f.settle('thread-a',0,false);
-  await flush();
-  assert.equal(f.c.state.workerConnection,'failed');
-  assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A','尚未連線但可直接工作']);
-  await f.c.send({text:'Flash 失敗但可直接工作'});
+  await f.c.send({text:'直接工作，不啟動 Flash'});
  }finally{await f.c.close();}
 });
-
 test('an exact native archived precondition is unarchived once before resume without replaying a turn',async()=>{
  const f=await fixture({archivedResumeFor:['thread-a']});
  try{
@@ -148,8 +144,8 @@ test('an exact native archived precondition is unarchived once before resume wit
 test('events from the previous thread do not alter the active thread view or turn',async()=>{
  const f=await fixture();
  try{
-  await f.openSaved('thread-a');f.settle('thread-a',0,true);await flush();
-  await f.openSaved('thread-b');f.settle('thread-b',0,true);await flush();
+  await f.openSaved('thread-a');await flush();
+  await f.openSaved('thread-b');await flush();
   const before=structuredClone(f.c.state.messages);
   f.hooks.onEvent({method:'item/agentMessage/delta',params:{threadId:'thread-a',itemId:'late-a',delta:'舊內容'}});
   assert.deepEqual(f.c.state.messages,before);
@@ -167,10 +163,10 @@ test('events from the previous thread do not alter the active thread view or tur
 test('permissions, approval decisions, and stop remain scoped to the selected conversation',async()=>{
  const f=await fixture();
  try{
-  await f.openSaved('thread-a');f.settle('thread-a',0,true);await flush();
+  await f.openSaved('thread-a');await flush();
   assert.equal(f.activeHost.calls.find(call=>call.method==='thread/resume'&&call.p.threadId==='thread-a').p.sandbox,'read-only');
 
-  await f.openSaved('thread-b');f.settle('thread-b',0,true);await flush();
+  await f.openSaved('thread-b');await flush();
   const resumeB=f.activeHost.calls.find(call=>call.method==='thread/resume'&&call.p.threadId==='thread-b');
   assert.equal(resumeB.p.sandbox,'workspace-write');
   assert.deepEqual(resumeB.p.config.sandbox_workspace_write.writable_roots,[f.workspaceB]);
@@ -200,46 +196,24 @@ test('permissions, approval decisions, and stop remain scoped to the selected co
  }finally{await f.c.close();}
 });
 
-test('A to B to A ignores stale MCP success and failure settlements from older views',async()=>{
+test('A to B to A keeps normal workers independent of external MCP readiness',async()=>{
  const f=await fixture();
  try{
-  await f.openSaved('thread-a');
-  await f.openSaved('thread-b');
-  await f.openSaved('thread-a');
-  f.settle('thread-a',0,true);await flush();
-  assert.equal(f.c.state.threadId,'thread-a');
-  assert.equal(f.c.state.workerConnection,'connecting');
-  f.settle('thread-a',1,true);await flush();
-  assert.equal(f.c.state.workerConnection,'ready');
-  f.settle('thread-b',0,false);await flush();
+  for(const id of ['thread-a','thread-b','thread-a'])await f.openSaved(id);
   assert.equal(f.c.state.threadId,'thread-a');
   assert.equal(f.c.state.workerConnection,'ready');
-  assert.equal(f.c.state.workerError,null);
-
-  await f.openSaved('thread-b');
-  await f.openSaved('thread-a');
-  await f.openSaved('thread-b');
-  await f.openSaved('thread-a');
-  f.settle('thread-a',2,false);await flush();
-  assert.equal(f.c.state.threadId,'thread-a');
-  assert.equal(f.c.state.workerConnection,'connecting');
-  assert.equal(f.c.state.workerError,null);
-  f.settle('thread-b',2,true);await flush();
-  assert.equal(f.c.state.workerConnection,'connecting');
-  f.settle('thread-a',3,true);await flush();
-  assert.equal(f.c.state.workerConnection,'ready');
+  assert.equal(f.activeHost.waiters.length,0);
   assert.equal(f.c.state.workerError,null);
  }finally{await f.c.close();}
 });
-
 test('an unsent new conversation can leave and return on the same host without resuming',async()=>{
  const f=await fixture();
  try{
   const created=await f.c.open({model:MODEL});
   const blankId=created.threadId;
-  f.settle(blankId,0,true);await flush();
+  await flush();
   await f.openSaved('thread-a');
-  f.settle('thread-a',0,true);await flush();
+  await flush();
 
   await f.openSaved(blankId);
   assert.equal(f.c.state.threadId,blankId);
@@ -250,7 +224,7 @@ test('an unsent new conversation can leave and return on the same host without r
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/resume'&&call.p.threadId===blankId).length,0);
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/start').length,1);
 
-  f.settle(blankId,1,true);await flush();
+  await flush();
   await f.c.send({text:'回到空白對話後送出'});
   assert.equal(f.activeHost.calls.findLast(call=>call.method==='turn/start').p.threadId,blankId);
  }finally{await f.c.close();}

@@ -1,12 +1,19 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
+// Codex validates the transport even for disabled MCP entries. A bare
+// {enabled:false} only worked when an older home supplied the missing command.
+// This inert transport also overrides inherited entries without activating one.
+export function disabledCodexMcpServer() {
+  return {enabled:false,command:process.execPath,args:['--version']};
+}
+
 // Official local Codex runtime owns login and conversation state. K never reads
 // auth.json or forwards OAuth credentials to Pi or DeepSeek.
-export function openCodexHost({ executable, cwd, onEvent = () => {}, onRequest }) {
-  const child = spawn(executable, ['app-server', '--stdio'], { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, spawnImpl=spawn }) {
+  const child = spawnImpl(executable, ['app-server', '--stdio'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.resume();
-  const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false;
+  const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false;
   const startup = new Map(); const startupWaiters = new Set();
   const lines = createInterface({ input: child.stdout });
   function failAll() {
@@ -16,7 +23,18 @@ export function openCodexHost({ executable, cwd, onEvent = () => {}, onRequest }
     pending.clear();
     for (const waiter of startupWaiters) waiter.fail();
   }
-  const exited = new Promise(resolve => { child.once('exit', () => { failAll(); resolve(); }); child.once('error', () => { failAll(); resolve(); }); });
+  async function terminateChild(){
+    if(processClosed)return;
+    if(typeof child.terminate==='function'){await child.terminate();return;}
+    if(child.kill()===false&&!processClosed)throw new Error('Codex host process termination was not accepted.');
+  }
+  const exited = new Promise(resolve => {
+    const settled=(code,signal)=>{if(processClosed)return;processClosed=true;failAll();resolve({code,signal});};
+    child.once('exit', (code,signal) => settled(code,signal));
+    child.once('close', (code,signal) => settled(code,signal));
+    child.once('error', error => { failAll();processError=Object.assign(new Error('Codex host process could not start or continue.'),{cause:error}); });
+  });
+  child.once('spawn',()=>{didSpawn=true;});
   child.stdin.on('error',failAll);
   const send = message => { if (stopped) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
   lines.on('line', line => {
@@ -73,8 +91,22 @@ export function openCodexHost({ executable, cwd, onEvent = () => {}, onRequest }
       });
     },
     async close() {
-      child.stdin.end(); const timer=setTimeout(()=>child.kill(),3000);
-      await exited;clearTimeout(timer);lines.close();
+      if(!processClosed)try{child.stdin.end();}catch{}
+      if(processError){
+        if(!processClosed&&(didSpawn||typeof child.terminate==='function'))try{await terminateChild();}catch(terminationError){throw new AggregateError([processError,terminationError],'Codex host reported a process error and its runner could not confirm termination.');}
+        await exited;
+        lines.close();
+        throw processError;
+      }
+      if(processClosed){lines.close();return;}
+      let timer;
+      const graceful=processError?null:await Promise.race([exited,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),3000);})]).finally(()=>clearTimeout(timer));
+      if(!graceful){
+        await terminateChild();
+        await exited;
+      }
+      if(processError)throw processError;
+      lines.close();
     },
   };
 }

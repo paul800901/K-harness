@@ -1,14 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile} from 'node:fs/promises';
+import {createServer} from 'node:http';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
 async function fixture({catalog,modelPages}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-'));
- const calls=[];let hooks;let close;let modelPageIndex=0;
- const host={closed:new Promise(r=>{close=r;}),notify(){},waitForMcp:async()=>{},close:async()=>close(),request:async(method,p)=>{
+ const calls=[];let hooks;let close;let modelPageIndex=0,hostFactoryCalls=0,hostCloseCalls=0;
+ const host={closed:new Promise(r=>{close=r;}),notify(){},waitForMcp:async()=>{},close:async()=>{hostCloseCalls++;close();},request:async(method,p)=>{
   calls.push({method,p});
   if(method==='account/read')return {account:{type:'chatgpt'}};
   if(method==='model/list'&&modelPages)return modelPages[modelPageIndex++]??{data:[],nextCursor:null};
@@ -16,7 +18,7 @@ async function fixture({catalog,modelPages}={}){
    {model:'gpt-6-astra',displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
    {model:'gpt-5.6-sol',displayName:'GPT-5.6 Sol',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'}],defaultReasoningEffort:'medium',inputModalities:['text','image']},
    {model:'gpt-5.6-terra',displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
-   {model:'gpt-5.6-luna',displayName:'GPT-5.6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'minimal'},{reasoningEffort:'high'}],defaultReasoningEffort:'minimal',inputModalities:['text','image']},
+   {model:'gpt-6-luna',displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'minimal'},{reasoningEffort:'high'}],defaultReasoningEffort:'minimal',inputModalities:['text','image']},
    {model:'gpt-5.5',displayName:'GPT-5.5',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'}],defaultReasoningEffort:'medium',inputModalities:['text','image']},
    {model:'gpt-5.3-codex-spark',displayName:'GPT-5.3 Codex Spark',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text']},
   ]};
@@ -28,8 +30,8 @@ async function fixture({catalog,modelPages}={}){
   if(method==='mcpServer/tool/call')return {structuredContent:{status:'unresolved',outputFiles:[]}};
   return {};
  }};
- const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{hooks=options;host.closed=new Promise(r=>{close=r;});return host;}});
- return {c,calls,root,host,get hooks(){return hooks;}};
+ const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{hostFactoryCalls++;hooks=options;host.closed=new Promise(r=>{close=r;});return host;}});
+ return {c,calls,root,host,get hooks(){return hooks;},get hostFactoryCalls(){return hostFactoryCalls;},get hostCloseCalls(){return hostCloseCalls;}};
 }
 
 test('direct work permissions are workspace-scoped, persisted, and may switch back to readonly',async()=>{
@@ -45,6 +47,36 @@ test('direct work permissions are workspace-scoped, persisted, and may switch ba
   const turn=f.calls.findLast(x=>x.method==='turn/start').p;
   assert.equal(turn.sandboxPolicy.type,'workspaceWrite');assert.deepEqual(turn.sandboxPolicy.writableRoots,[f.root]);assert.equal(turn.sandboxPolicy.networkAccess,false);
   assert.equal((await f.c.sessions()).sessions[0].accessMode,'workspace-write');
+ }finally{await f.c.close();}
+});
+
+test('unloaded native thread gets a safe readback explanation without starting or changing the K record',async()=>{
+ const f=await fixture();const record={threadId:'empty-native-thread',model:'gpt-6-astra',title:'尚未送出的對話',workspace:f.root,accessMode:'workspace-write'};
+ await saveMainSession(f.root,record);const before=(await listMainSessions(f.root)).sessions;
+ const original=f.host.request;f.host.request=async(method,p)=>{
+  if(method==='thread/read'){const error=new Error('Codex request thread/read failed (code -32600).');error.protocolMessage=`thread not loaded: ${record.threadId}`;throw error;}
+  return original(method,p);
+ };
+ try{
+  await assert.rejects(f.c.open({model:record.model,threadId:record.threadId}),/無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。/);
+  assert.equal(f.calls.some(call=>call.method==='thread/start'),false);
+  assert.equal(f.calls.some(call=>call.method==='thread/resume'),false);
+  assert.deepEqual((await listMainSessions(f.root)).sessions,before);
+ }finally{await f.c.close();}
+});
+
+test('other native thread read errors remain unchanged and do not create a replacement',async()=>{
+ const f=await fixture();const record={threadId:'historical-thread',model:'gpt-6-astra',title:'既有對話',workspace:f.root,accessMode:'workspace-write'};
+ await saveMainSession(f.root,record);const before=(await listMainSessions(f.root)).sessions;
+ const original=f.host.request;f.host.request=async(method,p)=>{
+  if(method==='thread/read'){const error=new Error('Codex request thread/read failed (code -32600).');error.protocolMessage='Invalid Request';throw error;}
+  return original(method,p);
+ };
+ try{
+  await assert.rejects(f.c.open({model:record.model,threadId:record.threadId}),/Codex request thread\/read failed \(code -32600\)\./);
+  assert.equal(f.calls.some(call=>call.method==='thread/start'),false);
+  assert.equal(f.calls.some(call=>call.method==='thread/resume'),false);
+  assert.deepEqual((await listMainSessions(f.root)).sessions,before);
  }finally{await f.c.close();}
 });
 
@@ -179,7 +211,7 @@ test('desktop attachment scope and restored display survive reopen without expos
   assert.match(input[0].text,/K_ATTACHMENT_CONTEXT/);assert.equal(f.c.state.messages[0].attachments[0].id,a.id);
   await f.c.stop();const original=f.host.request;
   f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{items:[{type:'userMessage',id:'restored',content:input}]}]}}:original(method,p);
-  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread',effort:f.c.state.effort,accessMode:f.c.state.accessMode,workerPolicy:f.c.state.workerPolicy});
   assert.equal(f.c.state.messages[0].text,'請整理附件');assert.equal(f.c.state.messages[0].attachments[0].name,'測試.txt');
   assert.equal((await f.c.attachmentFile(a.id)).bytes.toString(),'合計 19');
   await assert.rejects(f.c.artifact('README.md'));
@@ -225,12 +257,12 @@ test('desktop resumes only saved K conversations and displays original history',
  }finally{await c.close();}
 });
 
-test('workspace switching binds Codex, Flash, attachments and saved history to the same folder',async()=>{
+test('workspace switching binds Codex, attachments and saved history while disabling automatic Flash',async()=>{
  const f=await fixture();const selected=path.join(f.root,'selected');await mkdir(selected);
  try{
   await f.c.selectWorkspace({path:selected});await f.c.open({model:'gpt-6-astra'});
   const start=f.calls.find(c=>c.method==='thread/start').p;
-  assert.equal(start.cwd,selected);const args=start.config.mcp_servers.k_flash.args;assert.equal(args[args.indexOf('--workspace')+1],selected);
+  assert.equal(start.cwd,selected);assert.equal(start.config.mcp_servers.k_flash.enabled,false);
   const a=await f.c.upload({threadId:'test-thread',name:'中文.txt',base64:Buffer.from('人工資料').toString('base64')});
   assert.equal((await f.c.attachmentFile(a.id)).bytes.toString(),'人工資料');
   await f.c.send({text:'人工驗收'});await assert.rejects(f.c.selectWorkspace({path:f.root}));await f.c.stop();
@@ -239,6 +271,80 @@ test('workspace switching binds Codex, Flash, attachments and saved history to t
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});assert.equal(f.c.state.workspace,selected);
   assert.equal((await f.c.sessions()).sessions[0].workspace,selected);
  }finally{await f.c.close();}
+});
+
+test('project browser opt-in adds a dedicated browser MCP profile to one Codex thread and leaves Flash disabled',async()=>{
+ const f=await fixture();
+ try{
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
+  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),'{"enabled":true}');
+  await f.c.open({model:'gpt-6-astra'});
+  const start=f.calls.find(x=>x.method==='thread/start').p;
+  assert.equal(start.config.mcp_servers.k_flash.enabled,false);
+  const browser=start.config.mcp_servers.k_browser;
+  assert.deepEqual(browser.args,[path.join(f.root,'src','browser-mcp-stdio.mjs'),path.join(f.root,'.runtime','browser-output',browser.args[1].split(path.sep).at(-1)),path.join(f.root,'.runtime','browser-profiles',browser.args[1].split(path.sep).at(-1))]);
+  assert.equal(browser.cwd,browser.args[1]);
+  assert.equal(Object.hasOwn(start.config.mcp_servers.k_browser,'env'),false);
+ }finally{await f.c.close();}
+});
+
+test('Codex browser config follows effective access mode and refreshes native thread before a read-only turn',async()=>{
+ const f=await fixture();
+ try{
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
+  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),'{"enabled":true}');
+  await f.c.open({model:'gpt-6-astra',accessMode:'workspace-write'});
+  assert.equal(f.c.state.browserAccess.enabled,true);
+  assert.ok(f.calls.find(x=>x.method==='thread/start').p.config.mcp_servers.k_browser);
+  await f.c.send({text:'以唯讀模式接續',accessMode:'read-only'});
+  const resumes=f.calls.filter(x=>x.method==='thread/resume');
+  assert.equal(resumes.length,1,'mode change reconfigures the same native thread');
+  assert.deepEqual(resumes.at(-1).p.config.mcp_servers.k_browser,{enabled:false,command:process.execPath,args:['--version']});
+  assert.equal(f.c.state.browserAccess.enabled,false);
+  assert.equal(f.calls.filter(x=>x.method==='thread/read').length,1,'native history is read, not replayed');
+  assert.equal(f.calls.filter(x=>x.method==='thread/start').length,1);
+  assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);
+ }finally{await f.c.close();}
+});
+
+test('browser fail-closed state explicitly replaces the Codex host before resuming the same thread',async()=>{
+ const f=await fixture();let server;
+ try{
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
+  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),' {"enabled":true} ');
+  await f.c.open({model:'gpt-6-astra'});
+  server=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({available:false,busy:false,recoveryRequired:true,error:'瀏覽器連線已中止。'}));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  const profile=path.join(f.root,'.runtime','browser-profiles',f.c.state.browserAccess.sessionKey);
+  await writeFile(path.join(profile,'live.json'),JSON.stringify({port:server.address().port,token:'a'.repeat(64)}));
+  f.c.state.status='completed';
+  const baselineHosts=f.hostFactoryCalls,baselineCloses=f.hostCloseCalls;
+  const beforeResume=f.calls.filter(call=>call.method==='thread/resume').length;
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread',effort:f.c.state.effort,accessMode:f.c.state.accessMode,workerPolicy:f.c.state.workerPolicy});
+  assert.equal(f.hostFactoryCalls,baselineHosts+1,'the old app-server is replaced only after the fail-closed signal');
+  assert.equal(f.hostCloseCalls,baselineCloses+1);
+  assert.equal(f.calls.filter(call=>call.method==='thread/resume').length,beforeResume+1);
+  assert.equal(f.calls.some(call=>call.method==='turn/start'),false,'recovery never replays a turn');
+  assert.equal(f.c.state.threadId,'test-thread');
+ }finally{if(server)await new Promise(resolve=>server.close(resolve));await f.c.close();}
+});
+
+test('browser not-yet-available state does not replace a ready Codex host',async()=>{
+ const f=await fixture();let server;
+ try{
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
+  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),' {"enabled":true} ');
+  await f.c.open({model:'gpt-6-astra'});
+  server=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({available:false,busy:false,recoveryRequired:false,error:'瀏覽器尚未準備好，請稍後再試。'}));});
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  await writeFile(path.join(f.root,'.runtime','browser-profiles',f.c.state.browserAccess.sessionKey,'live.json'),JSON.stringify({port:server.address().port,token:'b'.repeat(64)}));
+  const baselineHosts=f.hostFactoryCalls,baselineCloses=f.hostCloseCalls;
+  const beforeResume=f.calls.filter(call=>call.method==='thread/resume').length;
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
+  assert.equal(f.hostFactoryCalls,baselineHosts);
+  assert.equal(f.hostCloseCalls,baselineCloses);
+  assert.equal(f.calls.filter(call=>call.method==='thread/resume').length,beforeResume);
+ }finally{if(server)await new Promise(resolve=>server.close(resolve));await f.c.close();}
 });
 
 test('workspace selection rejects invalid locations without losing the current conversation',async()=>{
@@ -261,6 +367,38 @@ test('desktop HTTP denies foreign origins, unauthenticated API and implicit writ
  }finally{await app.close();}
 });
 
+test('native review and file search routes preserve the explicit local POST contract',async()=>{
+ const calls=[];
+ const app=await startDesktop({root:'test',executable:'test',port:0,controllerFactory:()=>({
+  state:{status:'ready',workspace:process.cwd()},close:async()=>{},
+  review:async data=>{calls.push(['review',data]);return {started:true};},
+  fuzzyFileSearch:async data=>{calls.push(['fuzzyFileSearch',data]);return {files:[]};},
+ })});
+ try{
+  const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+  const post=(route,body)=>fetch(app.origin+route,{method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(body)});
+  assert.equal((await fetch(app.origin+'/api/native/review')).status,403);
+  assert.deepEqual(await (await post('/api/native/review',{confirmed:true})).json(),{started:true});
+  assert.deepEqual(await (await post('/api/native/files/search',{query:'foo'})).json(),{files:[]});
+  assert.deepEqual(calls,[['review',{confirmed:true}],['fuzzyFileSearch',{query:'foo'}]]);
+ }finally{await app.close();}
+});
+
+test('dictation endpoint requires the existing explicit local POST contract and reports helper result without side effects',async()=>{
+ let calls=0;
+ const app=await startDesktop({root:'test',executable:'test',port:0,dictationFactory:()=>async()=>{calls++;return {ok:false,error:'synthetic foreground refusal'};},controllerFactory:()=>({state:{status:'idle'},close:async()=>{}})});
+ try{
+  const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+  const init={method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:'{}'};
+  assert.equal((await fetch(app.origin+'/api/dictation',init)).status,409);assert.equal(calls,1);
+  assert.deepEqual(await (await fetch(app.origin+'/api/dictation',init)).json(),{ok:false,error:'synthetic foreground refusal'});assert.equal(calls,2);
+  const noCsrf={...init,headers:{cookie,'Content-Type':'application/json'}};
+  assert.equal((await fetch(app.origin+'/api/dictation',noCsrf)).status,403);assert.equal(calls,2);
+  const foreign={...init,headers:{...init.headers,origin:'https://foreign.example'}};
+  assert.equal((await fetch(app.origin+'/api/dictation',foreign)).status,403);assert.equal(calls,2);
+ }finally{await app.close();}
+});
+
 test('HTTP attachment upload and artifact preview/download preserve bytes and reject unlisted paths',async()=>{
  const f=await fixture();await f.c.open({model:'gpt-6-astra'});
  const app=await startDesktop({root:f.root,executable:'test',port:0,controllerFactory:()=>f.c});
@@ -280,11 +418,11 @@ test('HTTP attachment upload and artifact preview/download preserve bytes and re
 test('model catalog reads every page, filters hidden entries, and does not start a thread',async()=>{
  const f=await fixture({modelPages:[
   {data:[{model:'gpt-5.6-terra',displayName:'Terra',hidden:false,inputModalities:['text'],supportedReasoningEfforts:[]},{model:'internal-hidden',displayName:'Hidden',hidden:true}],nextCursor:'page-2'},
-  {data:[{model:'gpt-5.6-luna',displayName:'Luna',hidden:false,inputModalities:['text','image'],supportedReasoningEfforts:[]}],nextCursor:null},
+  {data:[{model:'gpt-6-luna',displayName:'Luna',hidden:false,inputModalities:['text','image'],supportedReasoningEfforts:[]}],nextCursor:null},
  ]});
  try{
   const result=await f.c.models();
-  assert.deepEqual(result.models.map(item=>item.model),['gpt-5.6-terra','gpt-5.6-luna']);
+  assert.deepEqual(result.models.map(item=>item.model),['gpt-5.6-terra','gpt-6-luna']);
   assert.equal(result.models[0].displayName,'Terra');
   assert.equal(f.calls.filter(call=>call.method==='model/list').length,2);
   assert.equal(f.calls.some(call=>call.method==='thread/start'||call.method==='thread/resume'||call.method==='turn/start'),false);
@@ -298,8 +436,8 @@ test('Terra and Luna can be created with official display metadata and selected 
   assert.equal(f.c.state.model,'gpt-5.6-terra');assert.equal(f.c.state.modelDisplayName,'GPT-5.6 Terra');
   assert.deepEqual(f.c.state.inputModalities,['text','image']);assert.deepEqual(f.c.state.efforts,['low','high']);
   const terraStart=f.calls.find(call=>call.method==='thread/start');assert.equal(terraStart.p.config.model_reasoning_effort,'high');assert.equal(terraStart.p.model_reasoning_effort,undefined);
-  await f.c.open({model:'gpt-5.6-luna'});
-  assert.equal(f.c.state.model,'gpt-5.6-luna');assert.equal(f.c.state.modelDisplayName,'GPT-5.6 Luna');
+  await f.c.open({model:'gpt-6-luna'});
+  assert.equal(f.c.state.model,'gpt-6-luna');assert.equal(f.c.state.modelDisplayName,'GPT-6 Luna');
  }finally{await f.c.close();}
 });
 
@@ -328,17 +466,17 @@ test('selected GPT worker persists independently of the main model and native co
  const f=await fixture();const original=f.host.request;
  f.host.request=async(method,p)=>method==='config/read'?{config:{developer_instructions:'Existing user boundary.'}}:original(method,p);
  try{
-  await f.c.open({model:'gpt-5.6-terra',effort:'high',workerPolicy:{model:'gpt-6-astra'}});
+  await f.c.open({model:'gpt-5.6-terra',effort:'high',workerPolicy:{model:'gpt-6-luna'}});
   const start=f.calls.find(c=>c.method==='thread/start').p;
-  assert.equal(start.model,'gpt-5.6-terra');assert.equal(start.config.agents.default_subagent_model,'gpt-6-astra');
+  assert.equal(start.model,'gpt-5.6-terra');assert.equal(start.config.agents.default_subagent_model,'gpt-6-luna');
   assert.equal(start.sandbox,'workspace-write');assert.match(start.developerInstructions,/^Existing user boundary\./);
   assert.match(start.developerInstructions,/Delegation is optional/);
-  assert.match(start.developerInstructions,/gpt-5.6-luna/);
-  assert.equal((await f.c.sessions()).sessions[0].workerPolicy.model,'gpt-6-astra');
+  assert.match(start.developerInstructions,/gpt-6-luna/);
+  assert.equal((await f.c.sessions()).sessions[0].workerPolicy.model,'gpt-6-luna');
   assert.equal((await f.c.sessions()).sessions[0].effort,'high');
-  await f.c.selectModel({threadId:'test-thread',model:'gpt-5.6-luna'});
-  await f.c.open({model:'gpt-5.6-luna',threadId:'test-thread'});
-  assert.equal(f.c.state.workerPolicy.model,'gpt-6-astra');
+  await f.c.selectModel({threadId:'test-thread',model:'gpt-6-luna'});
+  await f.c.open({model:'gpt-6-luna',threadId:'test-thread'});
+  assert.equal(f.c.state.workerPolicy.model,'gpt-6-luna');
   assert.equal(f.calls.filter(c=>c.method==='thread/resume'&&c.p.threadId==='test-thread').length,0);
   assert.equal(f.calls.find(c=>c.method==='thread/start').p.config.model_reasoning_effort,'high');
   const before=f.c.state.threadId;
@@ -358,9 +496,73 @@ test('native subagent activity is tracked and a stop reaches the owned child',as
  };
  try{
   await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'fixture'});
-  f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',item:{type:'collabAgentToolCall',id:'spawn',tool:'spawnAgent',status:'completed',senderThreadId:'test-thread',receiverThreadIds:['native-child'],agentsStates:{},model:'gpt-5.6-luna'}}});
+  f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',item:{type:'collabAgentToolCall',id:'spawn',tool:'spawnAgent',status:'completed',senderThreadId:'test-thread',receiverThreadIds:['native-child'],agentsStates:{},model:'gpt-6-luna'}}});
   assert.equal(f.c.state.tools.at(-1).name,'spawnAgent');
   await f.c.stop();assert.equal(childStopped,true);
   assert.equal(f.c.state.workers.find(w=>w.threadId==='native-child').status,'cancelled');
  }finally{await f.c.close();}
 });
+
+test('native review requires confirmation, uses one inline review request, and guards a busy turn',async()=>{
+ const f=await fixture();const original=f.host.request;
+ f.host.request=async(method,p)=>{if(method==='review/start'){f.calls.push({method,p});return {reviewThreadId:p.threadId,turn:{id:'review-turn'}};}return original(method,p);};
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  await assert.rejects(f.c.review({confirmed:false}),/明確確認/);
+  assert.equal(f.calls.some(c=>c.method==='review/start'),false);
+  const result=await f.c.review({confirmed:true});
+  assert.deepEqual(f.calls.find(c=>c.method==='review/start').p,{threadId:'test-thread',target:{type:'uncommittedChanges'},delivery:'inline'});
+  assert.deepEqual(result,{reviewThreadId:'test-thread',turn:{id:'review-turn'},started:true});
+  assert.equal(f.c.state.busy,true);
+  await assert.rejects(f.c.review({confirmed:true}),/尚未就緒或仍有工作/);
+  f.hooks.onEvent({method:'turn/completed',params:{threadId:'test-thread',turn:{id:'review-turn',status:'completed'}}});
+  assert.equal(f.c.state.busy,false);assert.equal(f.c.state.status,'completed');
+  const second=await f.c.review({confirmed:true});assert.equal(second.started,true);
+  assert.equal(f.c.state.messages.some(message=>message.role==='user'),false);
+ }finally{await f.c.close();}
+});
+
+test('native review reserves the turn before awaiting and does not overwrite an early terminal event',async()=>{
+ const f=await fixture();let release;const original=f.host.request;
+ f.host.request=(method,p)=>method==='review/start'?new Promise(resolve=>{release=()=>resolve({reviewThreadId:p.threadId,turn:{id:'fast-review'}});}):original(method,p);
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  const pending=f.c.review({confirmed:true});
+  assert.equal(f.c.state.busy,true);
+  await assert.rejects(f.c.review({confirmed:true}),/仍有工作/);
+  f.hooks.onEvent({method:'turn/started',params:{threadId:'test-thread',turn:{id:'fast-review'}}});
+  f.hooks.onEvent({method:'turn/completed',params:{threadId:'test-thread',turn:{id:'fast-review',status:'completed'}}});
+  release();
+  const result=await pending;
+  assert.equal(result.started,true);assert.equal(f.c.state.busy,false);assert.equal(f.c.state.status,'completed');
+ }finally{await f.c.close();}
+});
+
+test('native file search pins the root to the active workspace and returns only safe candidate paths',async()=>{
+ const f=await fixture();const original=f.host.request;
+ f.host.request=async(method,p)=>{if(method==='fuzzyFileSearch'){f.calls.push({method,p});return {files:[
+  {root:f.root,path:path.join(f.root,'src','entry.mjs'),file_name:'entry.mjs',match_type:'file',score:8},
+  {root:f.root,path:path.resolve(f.root,'..','outside.txt'),file_name:'outside.txt',match_type:'file',score:5},
+ ]};}return original(method,p);};
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  const result=await f.c.fuzzyFileSearch({query:'  entry  '});
+  assert.deepEqual(f.calls.find(c=>c.method==='fuzzyFileSearch').p,{query:'entry',roots:[f.root]});
+  assert.deepEqual(result.files,[
+   {root:f.root,path:path.join(f.root,'src','entry.mjs'),file_name:'entry.mjs',match_type:'file',score:8},
+   {root:f.root,path:path.resolve(f.root,'..','outside.txt'),file_name:'outside.txt',match_type:'file',score:5},
+  ]);
+  await assert.rejects(f.c.fuzzyFileSearch({query:'x'.repeat(257)}),/超過 256/);
+ }finally{await f.c.close();}
+});
+
+test('settings shutdown notifies the native owner only after busy resources and HTTP are closed',async()=>{
+ let resourceClosed=false,notifications=0;
+ const app=await startDesktop({root:'test',executable:'test',port:0,controllerFactory:()=>({state:{busy:true,status:'working'},async close(){await new Promise(r=>setTimeout(r,20));resourceClosed=true;}})});
+ const notified=new Promise(resolve=>app.onClosed(()=>{notifications++;assert.equal(resourceClosed,true);resolve();}));
+ const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+ const response=await fetch(app.origin+'/api/shutdown',{method:'POST',headers:{cookie,'content-type':'application/json','X-K-Request':'1'},body:'{}'});
+ assert.equal(response.status,200);assert.equal((await response.json()).closed,true);
+ await notified;assert.equal(notifications,1);await app.close();assert.equal(notifications,1);
+});
+

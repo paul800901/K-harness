@@ -1,4 +1,5 @@
 export const projectKey = p => String(p ?? '').replaceAll(String.fromCharCode(92),'/').replace(/\/+$/,'').toLowerCase();
+export const isVisibleMainSession = session => !session?.parentThreadId || session?.branchType === 'user';
 
 const recentOrder=(a,b)=>{
   const left=Date.parse(a.lastOpenedAt??'')||0,right=Date.parse(b.lastOpenedAt??'')||0;
@@ -35,7 +36,7 @@ export function moveSessionOrder(order,sessions,visibleSessions,threadId,directi
 export function groupProjectSessions(projects, sessions, {archived=false, query='', sort='recent', order=[]}={}) {
   const search = query.trim().toLocaleLowerCase('zh-TW');
   return projects.filter(project => !project.archived).sort((a,b)=>Number(!!b.pinned)-Number(!!a.pinned)).map(project => {
-    const own = sessions.filter(s => !s.parentThreadId && projectKey(s.workspace) === projectKey(project.path) && !!s.archived === archived);
+    const own = sessions.filter(s => isVisibleMainSession(s) && projectKey(s.workspace) === projectKey(project.path) && !!s.archived === archived);
     const matchingProject = project.name.toLocaleLowerCase('zh-TW').includes(search);
     const matching = own.filter(s => matchingProject || `${s.title??''} ${s.model??''}`.toLocaleLowerCase('zh-TW').includes(search));
     return {...project, sessions:sortSessions(matching,{sort,order})};
@@ -47,5 +48,5 @@ export function searchSessions(projects,sessions,query) {
   if(!search)return [];
   const names=new Map(projects.filter(project=>!project.archived).map(project=>[projectKey(project.path),project.name]));
   const archivedProjects=new Set(projects.filter(project=>project.archived).map(project=>projectKey(project.path)));
-  return sortSessions(sessions.filter(s=>!s.parentThreadId&&!archivedProjects.has(projectKey(s.workspace))&&`${s.title??''} ${names.get(projectKey(s.workspace))??s.workspace??''} ${s.model??''}`.toLocaleLowerCase('zh-TW').includes(search)));
+  return sortSessions(sessions.filter(s=>isVisibleMainSession(s)&&!archivedProjects.has(projectKey(s.workspace))&&`${s.title??''} ${names.get(projectKey(s.workspace))??s.workspace??''} ${s.model??''}`.toLocaleLowerCase('zh-TW').includes(search)));
 }

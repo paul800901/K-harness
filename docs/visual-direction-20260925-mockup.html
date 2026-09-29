@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="zh-Hant-TW" data-theme="warm" data-scene="chat" data-font="jhenghei">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#f2ece2">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' file:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; font-src 'none'">
+<title>K 執行中樞 · 第 0 階段靜態樣稿</title>
+<style>
+:root {
+  --k-desk:#f2ece2; --k-sheet:#fbf7f0; --k-raised:#fffdf9; --k-sunken:#f3ede3;
+  --k-ink:#2b241d; --k-ink-2:#5b5146; --k-ink-3:#71665a;
+  --k-line:rgba(72,58,45,.12); --k-line-strong:rgba(72,58,45,.20);
+  --k-hover:rgba(72,58,45,.06); --k-selected:rgba(72,58,45,.09);
+  --k-brass:#9a7630; --k-brass-line:rgba(154,118,48,.55); --k-brass-wash:rgba(154,118,48,.12);
+  --k-danger:#a4432f; --k-danger-wash:rgba(164,67,47,.08); --k-warn:#8a5a14; --k-warn-wash:rgba(176,110,20,.10); --k-ok:#4d7548;
+  --k-font:"Segoe UI Variable Text","Segoe UI","Microsoft JhengHei UI","Microsoft JhengHei","PingFang TC","Noto Sans TC",sans-serif;
+  --k-font-mono:"Cascadia Code","Cascadia Mono",Consolas,"Microsoft JhengHei UI",monospace;
+  --k-dialogue-font-size:16px;
+  --k-text-xs:12px; --k-text-sm:13px; --k-text-md:14px; --k-text-body:var(--k-dialogue-font-size); --k-text-lg:20px; --k-text-xl:24px;
+  --k-radius-sm:8px; --k-radius-md:12px; --k-radius-lg:16px; --k-radius-xl:20px;
+  --k-shadow-1:0 1px 2px rgba(43,36,29,.05); --k-shadow-2:0 8px 24px rgba(43,36,29,.08),0 1px 2px rgba(43,36,29,.06); --k-shadow-3:0 24px 64px rgba(43,36,29,.18);
+}
+html[data-font="noto"] { --k-font:"Segoe UI Variable Text","Segoe UI","Noto Sans TC","Microsoft JhengHei UI","Microsoft JhengHei","PingFang TC",sans-serif; --k-font-mono:"Cascadia Code","Cascadia Mono",Consolas,"Noto Sans TC",monospace; }
+html[data-theme="light"] {
+  --k-desk:#f7f8fa; --k-sheet:#ffffff; --k-raised:#ffffff; --k-sunken:#f2f3f6; --k-ink:#24272c; --k-ink-2:#4a4f58; --k-ink-3:#656b76;
+  --k-line:rgba(36,39,44,.12); --k-line-strong:rgba(36,39,44,.20); --k-hover:rgba(36,39,44,.05); --k-selected:rgba(36,39,44,.08);
+  --k-danger:#b34b44; --k-danger-wash:rgba(179,75,68,.08); --k-ok:#3f7a45;
+}
+html[data-theme="dark"] {
+  --k-desk:#15171b; --k-sheet:#191b20; --k-raised:#20232a; --k-sunken:#252830; --k-ink:#e6e8ed; --k-ink-2:#c3c7d0; --k-ink-3:#9ba1af;
+  --k-line:rgba(230,232,237,.10); --k-line-strong:rgba(230,232,237,.18); --k-hover:rgba(230,232,237,.06); --k-selected:rgba(230,232,237,.10);
+  --k-brass:#c9a55a; --k-brass-line:rgba(201,165,90,.55); --k-brass-wash:rgba(201,165,90,.14);
+  --k-danger:#f3a69d; --k-danger-wash:rgba(243,166,157,.10); --k-warn:#e5b56a; --k-warn-wash:rgba(229,181,106,.10); --k-ok:#8fc28a;
+  --k-shadow-1:0 1px 2px rgba(43,36,29,.10); --k-shadow-2:0 8px 24px rgba(43,36,29,.16),0 1px 2px rgba(43,36,29,.12);
+}
+* { box-sizing:border-box; scrollbar-width:thin; scrollbar-color:color-mix(in srgb,var(--k-ink) 25%,transparent) transparent; }
+html,body { margin:0; height:100%; }
+body { background:var(--k-desk); color:var(--k-ink); font:400 var(--k-text-md)/1.5 var(--k-font); font-synthesis:none; }
+button,select,textarea { font:inherit; color:inherit; }
+button { display:inline-flex; align-items:center; justify-content:center; gap:8px; background:transparent; border:0; border-radius:var(--k-radius-sm); cursor:pointer; padding:0 8px; min-height:32px; }
+button:hover { background:var(--k-hover); }
+button,select,a { transition:color 150ms ease-out,background-color 150ms ease-out,border-color 150ms ease-out; }
+button:disabled { opacity:.45; cursor:default; }
+:focus-visible { outline:2px solid var(--k-brass); outline-offset:2px; }
+svg { width:18px; height:18px; flex:none; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+.icon { width:32px; height:32px; padding:0; color:var(--k-ink-3); flex:none; }
+.muted { color:var(--k-ink-3); }
+.numeric,time,table { font-variant-numeric:tabular-nums; }
+.app { display:grid; grid-template-columns:260px minmax(0,1fr); height:calc(100dvh - 52px); }
+.sidebar { padding:12px 10px 8px; display:flex; flex-direction:column; min-height:0; }
+.brand { display:flex; align-items:center; gap:8px; padding:0 4px; margin-bottom:24px; }
+.logo { object-fit:cover; border-radius:50%; }
+html[data-theme="warm"] .logo { mix-blend-mode:darken; }
+.brand-text { flex:1; min-width:0; }
+.brand-text strong { display:block; font-size:var(--k-text-md); font-weight:700; }
+.brand-text span { display:block; color:var(--k-ink-3); font-size:var(--k-text-xs); }
+.new-chat { width:100%; height:36px; justify-content:flex-start; font-weight:400; margin-bottom:24px; }
+.new-chat svg { color:var(--k-ink-2); }
+.workspace-heading { display:flex; align-items:center; padding-left:8px; margin-bottom:8px; }
+.workspace-heading span { font-size:var(--k-text-xs); color:var(--k-ink-3); flex:1; }
+.workspace-heading button { width:28px; height:28px; min-height:28px; }
+.workspace-heading svg { width:16px; height:16px; }
+.projects { overflow:auto; flex:1; }
+.project-group.open { margin-bottom:6px; }
+.row { display:flex; align-items:center; gap:8px; height:34px; border-radius:var(--k-radius-sm); padding:0 8px; }
+.row:hover { background:var(--k-hover); }
+.row .label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; }
+.folder svg { color:var(--k-ink-2); width:16px; height:16px; }
+.folder .chevron { width:12px; height:12px; color:var(--k-ink-3); margin-right:-4px; }
+.session { padding-left:48px; gap:6px; }
+.session time { font-size:var(--k-text-xs); color:var(--k-ink-3); white-space:nowrap; }
+.session.selected { background:var(--k-selected); }
+.row .more { width:20px; min-height:24px; height:24px; opacity:0; margin-right:-4px; }
+.row:hover .more,.row:focus-within .more,.row.selected .more { opacity:1; }
+.attention-label { display:flex; gap:4px; align-items:center; color:var(--k-ink-2); font-size:var(--k-text-xs); white-space:nowrap; }
+.dot { display:inline-block; width:6px; height:6px; flex:none; border-radius:50%; background:var(--k-brass); }
+.busy { animation:breathe 1.6s ease-out infinite; }
+@keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+.quota { border-top:1px solid var(--k-line); padding:16px 8px 12px; font-size:var(--k-text-xs); }
+.quota-title { color:var(--k-ink-3); margin-bottom:8px; }
+.quota-row { display:flex; justify-content:space-between; gap:8px; margin-top:4px; }
+.quota-row span:first-child { color:var(--k-ink-2); }
+.quota-row span:last-child { color:var(--k-ink-3); }
+.settings { justify-content:flex-start; height:34px; }
+.sheet { display:grid; grid-template-columns:minmax(0,1fr) 360px; min-width:0; margin:8px 8px 8px 0; border:1px solid var(--k-line); border-radius:var(--k-radius-md); background:var(--k-sheet); box-shadow:var(--k-shadow-1); overflow:hidden; }
+.conversation { display:flex; flex-direction:column; min-width:0; min-height:0; }
+.header { height:52px; padding:0 24px; display:flex; align-items:center; gap:8px; flex:none; }
+.breadcrumbs { flex:1; display:flex; align-items:center; gap:8px; min-width:0; white-space:nowrap; }
+.breadcrumbs strong { font-weight:700; overflow:hidden; text-overflow:ellipsis; }
+.status { display:flex; gap:8px; align-items:center; font-size:var(--k-text-sm); color:var(--k-ink-2); white-space:nowrap; }
+.thread { display:flex; flex-direction:column; min-height:0; flex:1; }
+.viewport { overflow:auto; min-height:0; flex:1; padding:12px 24px 24px; }
+.message-column { max-width:720px; margin:0 auto; font-size:var(--k-text-body); line-height:1.75; }
+.user-message { width:fit-content; max-width:85%; margin:0 0 24px auto; padding:10px 16px; background:var(--k-sunken); border-radius:var(--k-radius-xl); }
+.process { font-size:var(--k-text-sm); color:var(--k-ink-3); margin:0 0 12px; }
+.process summary { padding:4px 0; cursor:pointer; list-style:none; display:flex; align-items:center; gap:8px; }
+.process summary svg { width:14px; height:14px; }
+.process summary:hover { color:var(--k-ink-2); background:var(--k-hover); }
+.process p { border-left:2px solid var(--k-line); padding:8px 12px; }
+.assistant p { margin:0 0 .9em; }
+.assistant h2 { font-size:1.125em; line-height:1.4; margin:1.4em 0 .5em; font-weight:700; }
+.assistant ul { padding-left:1.4em; margin:0 0 .9em; }
+.assistant li { margin:.3em 0; }
+.assistant li::marker { color:var(--k-ink-3); }
+strong { font-weight:700; }
+code { font-family:var(--k-font-mono); font-size:.875em; background:var(--k-sunken); border-radius:5px; padding:.1em .35em; }
+table { border-collapse:collapse; width:100%; margin:0 0 .9em; font-size:.875em; }
+th,td { padding:8px 12px; text-align:right; border-bottom:1px solid var(--k-line); }
+th { color:var(--k-ink-2); border-bottom:1px solid var(--k-line-strong); font-weight:700; }
+th:first-child,td:first-child { text-align:left; }
+.code-block { background:var(--k-sunken); border-radius:var(--k-radius-md); overflow:hidden; margin-bottom:12px; }
+.code-header { display:flex; align-items:center; justify-content:space-between; font-size:var(--k-text-xs); color:var(--k-ink-3); padding:4px 12px 0; }
+.code-header button { font-size:var(--k-text-xs); min-height:28px; }
+.code-header svg { width:14px; height:14px; }
+pre { margin:0; padding:4px 12px 12px; overflow:auto; font:400 .8125em/1.6 var(--k-font-mono); }
+pre code { font:inherit; padding:0; }
+.message-actions { display:flex; align-items:center; gap:4px; color:var(--k-ink-3); font-size:var(--k-text-xs); }
+.message-actions .icon { width:28px; height:28px; min-height:28px; }
+.message-actions svg { width:15px; height:15px; }
+.composer-area { max-width:768px; width:100%; margin:0 auto; padding:8px 24px 24px; flex:none; position:relative; }
+.approval { background:var(--k-raised); border:1px solid var(--k-brass-line); box-shadow:0 0 0 3px var(--k-brass-wash); border-radius:var(--k-radius-md); padding:14px 16px; margin-bottom:12px; }
+.approval-title { display:flex; align-items:center; gap:8px; font-weight:700; margin-bottom:8px; }
+.approval-title svg { color:var(--k-brass); }
+.command { padding:8px 12px; font:400 var(--k-text-sm)/1.5 var(--k-font-mono); background:var(--k-sunken); border-radius:var(--k-radius-sm); white-space:nowrap; overflow:auto; }
+.approval-actions { display:flex; align-items:center; justify-content:flex-end; gap:8px; margin-top:8px; }
+.scope { border:1px solid var(--k-line); border-radius:999px; padding:2px 8px; font-size:var(--k-text-xs); color:var(--k-ink-3); margin-right:auto; }
+.secondary { background:var(--k-raised); border:1px solid var(--k-line-strong); padding:0 12px; }
+.primary { background:var(--k-ink); color:var(--k-sheet); padding:0 16px; }
+.primary:hover { background:var(--k-ink-2); }
+.composer { background:var(--k-raised); border:1px solid var(--k-line-strong); border-radius:var(--k-radius-xl); box-shadow:var(--k-shadow-1); padding:14px 14px 10px 18px; }
+.composer:focus-within { border-color:var(--k-brass-line); box-shadow:0 0 0 3px var(--k-brass-wash); }
+textarea { width:100%; min-height:52px; resize:none; border:0; background:transparent; padding:0; font:400 var(--k-text-body)/1.6 var(--k-font); display:block; }
+textarea:focus-visible { outline:none; }
+textarea::placeholder { color:var(--k-ink-3); opacity:1; }
+.composer-controls { display:flex; align-items:center; gap:4px; margin-top:8px; }
+.text-control { font-size:var(--k-text-sm); color:var(--k-ink-2); padding:0 8px; gap:6px; }
+.text-control svg { width:12px; height:12px; }
+.composer-controls .spacer { flex:1; }
+.send { width:32px; height:32px; border-radius:50%; padding:0; background:var(--k-ink); color:var(--k-sheet); }
+.send:disabled { background:var(--k-line-strong); opacity:1; }
+.send svg { width:20px; height:20px; }
+.panel { border-left:1px solid var(--k-line); padding:0 16px 24px; min-width:0; }
+.tabs { display:flex; align-items:center; gap:4px; height:52px; font-size:var(--k-text-sm); color:var(--k-ink-2); margin-bottom:12px; }
+.tabs button { min-height:32px; }
+.tabs .active { background:var(--k-selected); color:var(--k-ink); }
+.tab-group { display:flex; align-items:center; gap:0; }
+.tab-group .close-tab { width:20px; min-height:24px; height:24px; padding:0; }
+.close-tab svg { width:12px; height:12px; }
+.tabs .spacer { flex:1; }
+.artifact { padding:12px; background:var(--k-raised); border:1px solid var(--k-line); border-radius:var(--k-radius-md); box-shadow:var(--k-shadow-1); }
+.artifact-top { display:flex; align-items:flex-start; gap:12px; }
+.file-mark { display:grid; place-items:center; width:36px; height:36px; border-radius:var(--k-radius-sm); background:var(--k-sunken); color:var(--k-ink-2); flex:none; }
+.artifact-name { font-size:var(--k-text-md); overflow-wrap:anywhere; }
+.artifact-path,.artifact-meta { font-size:var(--k-text-xs); color:var(--k-ink-3); margin-top:4px; }
+.artifact-actions { display:flex; justify-content:flex-end; align-items:center; gap:8px; margin-top:12px; font-size:var(--k-text-sm); }
+.empty-state { text-align:center; display:none; padding-bottom:24px; }
+.empty-state .logo { width:64px; height:64px; margin-bottom:16px; }
+.empty-state h1 { font-size:var(--k-text-xl); font-weight:400; line-height:1.4; margin:0 0 12px; }
+.empty-state p { font-size:var(--k-text-md); color:var(--k-ink-3); margin:0; }
+html[data-scene="empty"] .sheet { grid-template-columns:minmax(0,1fr); }
+html[data-scene="empty"] .panel,html[data-scene="empty"] .viewport,html[data-scene="empty"] .approval,html[data-scene="empty"] .status,html[data-scene="empty"] .chat-title { display:none; }
+html[data-scene="empty"] .empty-state { display:block; }
+html[data-scene="empty"] .thread { justify-content:center; padding-bottom:52px; }
+html[data-scene="empty"] .composer-area { margin:0 auto; padding-top:0; }
+html[data-scene="chat"] .empty-title { display:none; }
+.prototype-bar { height:52px; position:fixed; bottom:0; left:0; right:0; display:flex; align-items:center; gap:16px; padding:8px 24px; border-top:1px dashed var(--k-line-strong); background:var(--k-raised); font-size:var(--k-text-xs); color:var(--k-ink-2); z-index:5; }
+.prototype-bar strong { font-size:var(--k-text-xs); padding:4px 8px; color:var(--k-sheet); background:var(--k-ink); border-radius:4px; white-space:nowrap; }
+.prototype-bar label { display:flex; align-items:center; gap:8px; white-space:nowrap; }
+.prototype-bar select { font-size:var(--k-text-xs); border:1px solid var(--k-line-strong); border-radius:6px; background:var(--k-raised); padding:4px 8px; height:30px; }
+.prototype-caption { margin-left:auto; color:var(--k-ink-3); }
+.prototype-toast { position:fixed; bottom:68px; left:50%; transform:translateX(-50%); background:var(--k-ink); color:var(--k-sheet); padding:8px 16px; border-radius:var(--k-radius-sm); font-size:var(--k-text-sm); z-index:6; box-shadow:var(--k-shadow-2); }
+.prototype-toast:empty { display:none; }
+@media(pointer:coarse) { .row .more { opacity:1; } }
+@media(max-width:1120px) { .sheet { grid-template-columns:minmax(0,1fr); position:relative; } .panel { position:absolute; top:0; right:0; bottom:0; width:320px; background:var(--k-raised); box-shadow:var(--k-shadow-2); z-index:2; } .prototype-caption { display:none; } }
+@media(max-width:680px) { .app { grid-template-columns:1fr; } .sidebar { display:none; } .sheet { margin-left:8px; } .header { padding:0 16px; } .composer-area,.viewport { padding-left:16px; padding-right:16px; } .prototype-bar { overflow:auto; padding:8px; gap:8px; } .breadcrumbs .workspace-name,.breadcrumbs .separator { display:none; } }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { animation:none!important; transition:none!important; scroll-behavior:auto!important; } }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="i-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+<symbol id="i-panel-right" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16m-7-11 3 3-3 3"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="M12 4H5a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2v-7M16 3l5 5M9 15l-1 4 4-1L22 8a2 2 0 0 0-5-5Z"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z"/><path d="M3 9h18"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="i-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 5 5"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h5m5 0h6M4 12h10m5 0h1M4 18h2m5 0h9"/><circle cx="11" cy="6" r="2"/><circle cx="16" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01" stroke-width="3"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="m9 3-.6 2.4-2 .9L4 5.6l-2 3.5 1.8 1.7v2.4L2 14.9l2 3.5 2.4-.7 2 .9L9 21h4l.6-2.4 2-.9 2.4.7 2-3.5-1.8-1.7v-2.4L20 9.1l-2-3.5-2.4.7-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></symbol>
+<symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m21 11-8 8a6 6 0 0 1-8.5-8.5l9-9a4 4 0 0 1 5.7 5.7l-9 9a2 2 0 0 1-2.8-2.8L16 5"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 3 8 3v5c0 5-4 8-8 10-4-2-8-5-8-10V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="i-file" viewBox="0 0 24 24"><path d="M14 2H5v20h14V7Z M14 2v6h5M8 12h8M8 16h8M8 19h8"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V3H3v13h5"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v5h16v-5"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 8a8 8 0 1 0 0 8M20 3v5h-5"/></symbol>
+</defs></svg>
+<div class="app">
+  <aside class="sidebar" aria-label="工作區與對話">
+    <div class="brand"><img class="logo" src="../frontend/assets/k-logo.jpg" width="30" height="30" alt="K 標誌"><div class="brand-text"><strong>K 執行中樞</strong><span>通用工作台</span></div><button class="icon" title="收合側欄（樣稿）"><svg><use href="#i-panel"/></svg></button></div>
+    <button class="new-chat" id="new-chat"><svg><use href="#i-edit"/></svg>新對話</button>
+    <div class="workspace-heading"><span>工作區</span><button class="icon" title="搜尋工作區（樣稿）"><svg><use href="#i-search"/></svg></button><button class="icon" title="檢視（樣稿）"><svg><use href="#i-sliders"/></svg></button><button class="icon" title="新增資料夾（樣稿）"><svg><use href="#i-plus"/></svg></button></div>
+    <nav class="projects">
+      <div class="project-group open"><div class="row folder"><svg class="chevron"><use href="#i-down"/></svg><svg><use href="#i-folder"/></svg><span class="label">K-harness</span><button class="icon more" title="K-harness 選單（樣稿）"><svg><use href="#i-more"/></svg></button></div>
+        <div class="row session selected" id="quotation-row"><span class="label" title="三家廠商報價比較">三家廠商報價比較</span><span class="attention-label"><i class="dot"></i>需要確認</span><button class="icon more" title="對話選單（樣稿）"><svg><use href="#i-more"/></svg></button></div>
+        <div class="row session"><span class="label">第一次開工</span><time>9/25</time><button class="icon more" title="第一次開工選單（樣稿）"><svg><use href="#i-more"/></svg></button></div>
+      </div>
+      <div class="project-group open"><div class="row folder"><svg class="chevron"><use href="#i-down"/></svg><svg><use href="#i-folder"/></svg><span class="label">專案介面驗收</span><button class="icon more" title="驗收專案選單（樣稿）"><svg><use href="#i-more"/></svg></button></div><div class="row session"><span class="label">首頁截圖檢查</span><span class="dot busy" title="處理中" role="img" aria-label="處理中"></span><button class="icon more" title="截圖檢查選單（樣稿）"><svg><use href="#i-more"/></svg></button></div></div>
+      <div class="project-group"><div class="row folder"><svg class="chevron"><use href="#i-right"/></svg><svg><use href="#i-folder"/></svg><span class="label">workspace-179023…</span><button class="icon more" title="workspace 選單（樣稿）"><svg><use href="#i-more"/></svg></button></div></div>
+      <div class="project-group"><div class="row folder"><svg class="chevron"><use href="#i-right"/></svg><svg><use href="#i-folder"/></svg><span class="label">main</span><button class="icon more" title="main 選單（樣稿）"><svg><use href="#i-more"/></svg></button></div></div>
+      <div class="project-group"><div class="row folder"><svg class="chevron"><use href="#i-right"/></svg><svg><use href="#i-folder"/></svg><span class="label">case-cYowCN</span><button class="icon more" title="case-cYowCN 選單（樣稿）"><svg><use href="#i-more"/></svg></button></div></div>
+    </nav>
+    <div class="quota"><div class="quota-title">剩餘額度</div><div class="quota-row"><span>Codex</span><span class="numeric">本週 93%</span></div><div class="quota-row"><span>Claude</span><span class="numeric">5 小時 79% · 本週 89%</span></div></div>
+    <button class="settings"><svg><use href="#i-settings"/></svg>設定</button>
+  </aside>
+  <main class="sheet">
+    <section class="conversation" aria-label="對話">
+      <header class="header"><div class="breadcrumbs"><span class="workspace-name muted" title="D:\K-harness">K-harness</span><span class="separator muted">/</span><strong class="chat-title">三家廠商報價比較</strong><strong class="empty-title">新對話</strong></div><span class="status" role="status"><i class="dot"></i>等你確認</span><button class="icon" title="成果面板（樣稿）"><svg><use href="#i-panel"/></svg></button></header>
+      <div class="thread">
+        <div class="empty-state"><img class="logo" src="../frontend/assets/k-logo.jpg" alt="K 執行中樞" width="64" height="64"><h1>這次要完成什麼工作？</h1><p>可以拖入檔案、貼上圖片，或直接描述要交付的結果。</p></div>
+        <div class="viewport" tabindex="0" aria-label="對話內容，可捲動">
+          <div class="message-column">
+            <div class="user-message">把「報價單」資料夾裡三家廠商的報價整理成比較表，標出最便宜的組合，存成 Excel。</div>
+            <details class="process"><summary><svg><use href="#i-right"/></svg>已處理 6 個步驟 · 讀取 3 個檔案</summary><p>讀取報價單、比對品項與金額，整理成比較表。此處皆為樣稿假資料，沒有執行工具。</p></details>
+            <article class="assistant">
+              <p>整理好了。三份報價單共 27 個品項，比較表存成 <code>報價比較-2026-09.xlsx</code>，在右側「成果」可以預覽或下載。</p>
+              <h2>重點</h2>
+              <ul><li>最便宜的組合是 <strong>A 廠的主機＋C 廠的螢幕與周邊</strong>，合計 NT$184,300，比全部向 A 廠購買省 NT$12,450。</li><li>B 廠有 4 個品項沒有報價（見表格「缺漏」欄）。</li><li>C 廠的報價 <strong>10 月 15 日到期</strong>。</li></ul>
+              <table aria-label="三家廠商報價比較（假資料）"><thead><tr><th>廠商</th><th>品項</th><th>合計（NT$）</th><th>缺漏</th></tr></thead><tbody><tr><td>A 廠</td><td>27</td><td>196,750</td><td>0</td></tr><tr><td>B 廠</td><td>23</td><td>172,900</td><td>4</td></tr><tr><td>C 廠</td><td>27</td><td>201,380</td><td>0</td></tr></tbody></table>
+              <p>要不要另存一份到共用資料夾？這個位置在工作區外，需要你確認：</p>
+              <div class="code-block"><div class="code-header"><span>powershell</span><button title="複製指令（樣稿）"><svg><use href="#i-copy"/></svg>複製</button></div><pre><code>Copy-Item 成果\報價比較-2026-09.xlsx D:\共用\採購\</code></pre></div>
+            </article>
+            <div class="message-actions"><button class="icon" title="複製回覆（樣稿）"><svg><use href="#i-copy"/></svg></button><button class="icon" title="重試（樣稿）"><svg><use href="#i-refresh"/></svg></button><time>19:12</time></div>
+          </div>
+        </div>
+        <div class="composer-area">
+          <section class="approval" aria-label="需要你的確認"><div class="approval-title"><svg><use href="#i-shield"/></svg>要允許寫入工作區外的資料夾嗎？</div><div class="command">Copy-Item 成果\報價比較-2026-09.xlsx D:\共用\採購\</div><div class="approval-actions"><span class="scope">僅這一次</span><button class="secondary">拒絕</button><button class="primary">核准</button></div></section>
+          <div class="composer"><textarea rows="2" placeholder="交辦工作，或把檔案拖到這裡…" aria-label="工作訊息（樣稿，不會送出）"></textarea><div class="composer-controls"><button class="icon" title="加入附件（樣稿）"><svg><use href="#i-paperclip"/></svg></button><button class="text-control" title="選擇模型（樣稿）">Claude Opus 5.5<svg><use href="#i-down"/></svg></button><button class="text-control" title="Claude Code 原生 Auto 模式（樣稿）">自動判斷<svg><use href="#i-down"/></svg></button><span class="spacer"></span><button class="icon" title="麥克風（樣稿）：按停止把文字填入輸入框；按箭頭轉錄後送出"><svg><use href="#i-mic"/></svg></button><button class="send" disabled title="送出（Enter）；換行：Shift + Enter；此為靜態樣稿"><svg><use href="#i-up"/></svg></button></div></div>
+        </div>
+      </div>
+    </section>
+    <aside class="panel" aria-label="成果預覽"><div class="tabs"><button class="active">成果</button><div class="tab-group"><button>子代理</button><button class="close-tab" title="關閉子代理分頁（樣稿）"><svg><use href="#i-close"/></svg></button></div><button class="icon" title="新增分頁（樣稿）"><svg><use href="#i-plus"/></svg></button><span class="spacer"></span><button class="icon" title="收合右側面板（樣稿）"><svg><use href="#i-panel-right"/></svg></button></div><section class="artifact"><div class="artifact-top"><div class="file-mark"><svg><use href="#i-file"/></svg></div><div><div class="artifact-name">報價比較-2026-09.xlsx</div><div class="artifact-path">成果 / 報價比較-2026-09.xlsx</div><div class="artifact-meta numeric">18 KB · 剛剛</div></div></div><div class="artifact-actions"><button class="secondary">預覽</button><button class="icon" title="下載（樣稿，無檔案）"><svg><use href="#i-download"/></svg></button></div></section></aside>
+  </main>
+</div>
+<footer class="prototype-bar" aria-label="樣稿控制列，非正式產品介面"><strong>第 0 階段 · 靜態樣稿</strong><label>畫面<select id="scene"><option value="empty">空白對話</option><option value="chat" selected>對話中</option></select></label><label>中文字型<select id="font"><option value="jhenghei">微軟正黑體</option><option value="noto">思源黑體</option></select></label><label>對話字級<select id="fs"><option value="16">16 px</option><option value="17">17 px</option><option value="18">18 px</option></select></label><label>主題<select id="theme"><option value="warm">紙色</option><option value="light">白色</option><option value="dark">深色</option></select></label><span class="prototype-caption">僅供外觀比較 · 假資料 · 不連線、不核准、不執行工作</span></footer>
+<div class="prototype-toast" role="status" aria-live="polite"></div>
+<script>
+const root=document.documentElement;
+const fields=['scene','font','fs','theme'];
+function applyHash(){
+  const parts=location.hash.slice(1).split('&');
+  const params=new URLSearchParams(parts.slice(1).join('&'));
+  const scene=parts[0]==='empty'?'empty':'chat';
+  const font=params.get('font')==='noto'?'noto':'jhenghei';
+  const fs=['16','17','18'].includes(params.get('fs'))?params.get('fs'):'16';
+  const theme=['warm','light','dark'].includes(params.get('theme'))?params.get('theme'):'warm';
+  const values={scene,font,fs,theme};
+  for(const id of fields)document.getElementById(id).value=values[id];
+  root.dataset.scene=scene;root.dataset.font=font;root.dataset.theme=theme;
+  root.style.setProperty('--k-dialogue-font-size',fs+'px');
+  document.querySelector('meta[name="theme-color"]').content={warm:'#f2ece2',light:'#f7f8fa',dark:'#15171b'}[theme];
+  document.getElementById('quotation-row').classList.toggle('selected',scene==='chat');
+  document.querySelector('.viewport').scrollTop=0;
+}
+function updateHash(){location.hash=`${document.getElementById('scene').value}&fs=${document.getElementById('fs').value}&font=${document.getElementById('font').value}&theme=${document.getElementById('theme').value}`;}
+for(const id of fields)document.getElementById(id).addEventListener('change',updateHash);
+window.addEventListener('hashchange',applyHash);applyHash();
+document.getElementById('new-chat').addEventListener('click',()=>{document.getElementById('scene').value='empty';updateHash();});
+let toastTimer;
+document.querySelectorAll('button:not(#new-chat)').forEach(button=>button.addEventListener('click',()=>{
+  const toast=document.querySelector('.prototype-toast');
+  toast.textContent='這是靜態樣稿：此按鈕不會執行工作或變更設定。';
+  clearTimeout(toastTimer);toastTimer=setTimeout(()=>toast.textContent='',2500);
+}));
+</script>
+</body>
+</html>

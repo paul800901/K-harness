@@ -43,12 +43,12 @@ export function readTheme(storage) {
     // The old two-option UI stored the beige palette as "light". Preserve
     // its actual appearance while giving white and warm distinct names.
     const legacy = source?.getItem('k-theme');
-    return legacy === 'light' ? 'warm' : legacy === 'dark' ? 'dark' : 'light';
-  } catch { return 'light'; }
+    return legacy === 'light' ? 'warm' : legacy === 'dark' ? 'dark' : 'warm';
+  } catch { return 'warm'; }
 }
 
 export function saveTheme(theme, storage) {
-  const value = THEME_OPTIONS.includes(theme) ? theme : 'light';
+  const value = THEME_OPTIONS.includes(theme) ? theme : 'warm';
   try { storageOrNull(storage)?.setItem(THEME_STORAGE_KEY, value); } catch {}
   return value;
 }

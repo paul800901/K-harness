@@ -18,8 +18,10 @@ export function Usage({state,online,onDetails}){
  const windows=(quota?.windows??[]).filter(w=>Number.isFinite(w.remainingPercent));
  return <section className="usage-compact" aria-label="額度與用量">
   <button type="button" className="usage-summary" title="查看額度與用量詳情" aria-label="查看額度與用量詳情" aria-haspopup="dialog" onClick={onDetails}>
-   <span className="usage-codex">Codex 剩餘 <b>{windows.length?windows.map(w=>`${w.minutes===10080?'週':w.minutes===300?'5h':windowName(w)} ${w.remainingPercent}%`).join(' / '):'—'}</b>{stale&&<em>舊</em>}</span>
-   <span className="usage-flash">Flash <b>{flash?.unconfirmed?'≥ ':''}{tokenCount(flash?.totalTokens??0)}</b> tok{(flash?.pending>0||flash?.unconfirmed>0)&&<em>…</em>}</span>
+   <span className="usage-label">剩餘額度</span>
+   <span className="usage-row"><span className="usage-provider">Codex</span><span className="usage-values">{windows.length?[...windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':w.minutes===300?'5 小時':windowName(w)} {w.remainingPercent}%</span></React.Fragment>):'—'}</span>{stale&&<em>舊</em>}</span>
+   <span className="usage-row"><span className="usage-provider">Claude</span><span className="usage-values">{state.usage?.claude?.windows?.some(w=>w.remainingPercent!=null)?state.usage.claude.windows.filter(w=>['five_hour','seven_day'].includes(w.key)).sort((a,b)=>a.key==='seven_day'?-1:b.key==='seven_day'?1:0).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={Number.isFinite(w.remainingPercent)&&w.remainingPercent<20?'warning':undefined}>{w.key==='five_hour'?'5 小時':'本週'} {w.remainingPercent??'—'}{w.remainingPercent==null?'':'%'}</span></React.Fragment>):'—'}</span>{(!online||state.usage?.claude?.status==='stale')&&<em>舊</em>}</span>
+   {(flash?.totalTokens>0||flash?.unconfirmed>0||flash?.pending>0)&&<span className="usage-flash">DeepSeek <b>{flash?.unconfirmed?'≥ ':''}{tokenCount(flash?.totalTokens??0)}</b> tok</span>}
   </button>
  </section>;
 }
@@ -36,6 +38,11 @@ export function UsageDetails({state,online}){
   <div className="quota-line">{quota?.windows?.some(w=>Number.isFinite(w.remainingPercent))?quota.windows.filter(w=>Number.isFinite(w.remainingPercent)||w.minutes).map(w=><span key={w.key}>{windowName(w)} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>額度暫時無法取得</span>}</div>
   <p className="usage-note">{stale?'舊資料，等待更新。':'約每分鐘更新。'}帳號共用訂閱額度，不是此對話獨享。</p>
   <div className="usage-timestamps"><span>{quota?.checkedAt?`上次取得：${new Date(quota.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(quota?.windows??[]).filter(w=>w.resetsAt).map(w=><span key={w.key}>{windowName(w)}重設：{new Date(w.resetsAt*1000).toLocaleString('zh-TW')}</span>)}</div>
+  <div className="usage-heading"><strong>Claude 訂閱剩餘額度</strong></div>
+  <div className="quota-line">{state.usage?.claude?.windows?.length?state.usage.claude.windows.map(w=><span key={w.key}>{w.label} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>官方額度暫時無法取得；可用 Claude Code /usage 核對。</span>}</div>
+  {state.usage?.claude?.extraUsageDisabled===true&&<p className="usage-note">依目前觀察到的 Claude CLI 狀態，額外用量：未啟用（額度用完即停止，不會加價計費）。</p>}
+  <p className="usage-note">{!online||state.usage?.claude?.status==='stale'?'舊資料，等待更新。':'Claude 連線中約每分鐘更新；無連線時約每 5 分鐘更新。'}直接讀取官方訂閱額度，不以 Token 推算。帳號共用，非此對話獨享。</p>
+  <div className="usage-timestamps"><span>{state.usage?.claude?.checkedAt?`上次取得：${new Date(state.usage.claude.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(state.usage?.claude?.windows??[]).map(w=><span key={w.key}>{w.label}重設：{w.resetsAt?new Date(w.resetsAt*1000).toLocaleString('zh-TW'):'官方未提供'}</span>)}</div>
   <div className="flash-line"><span>Flash · 本對話</span><strong>{flash?.unconfirmed?'至少 ':''}{(flash?.totalTokens??0).toLocaleString('zh-TW')} <small>Token</small></strong></div>
   <p className="usage-note">輸入（含快取）與輸出 Token 合計；只計已收到的用量回報，不是 DeepSeek 帳號總消費，也不代表精確帳單。</p>
   {(state.busy||flash?.pending>0||flash?.unconfirmed>0)&&<p className="usage-note">{flash?.unconfirmed?'部分用量尚未確認':'執行中；每次模型回覆後更新'}</p>}

@@ -1,0 +1,167 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import {fileURLToPath} from 'node:url';
+const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+await mkdir(base,{recursive:true});
+import path from 'node:path';
+import { CLAUDE_MODEL, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
+
+async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }) {
+  const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
+  const file = path.join(dir, 'fake-claude.mjs');
+  const code = `
+import readline from 'node:readline';
+const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('2.1.280 (Claude Code)'); process.exit(0); }
+if (args.includes('auth') && args.includes('--help')) { console.log('Commands: login logout status'); process.exit(0); }
+if (args.includes('--help')) { console.log('Commands: auth'); process.exit(0); }
+if (args.includes('auth') && args.includes('status')) {
+  const status = ${JSON.stringify(status)};
+  if (process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_BASE_URL) status.authMethod = 'apiKey';
+  console.log(JSON.stringify(status)); process.exit(${status.loggedIn ? 0 : 1});
+}
+if (!args.includes('--setting-sources') || args[args.indexOf('--setting-sources')+1] !== 'user,project,local' || !args.includes('--permission-mode') || !['manual','acceptEdits','auto','bypassPermissions','dontAsk','plan'].includes(args[args.indexOf('--permission-mode')+1]) || !args.includes('--permission-prompts') || args[args.indexOf('--permission-prompts')+1] !== 'host' || !args.includes('--append-system-prompt') || !args.includes('--permission-prompt-tool') || args[args.indexOf('--permission-prompt-tool')+1] !== 'stdio' || args.includes('--strict-mcp-config') || args.includes('--disallowedTools')) process.exit(13);
+if (!args.includes('--include-partial-messages')) process.exit(14);
+if (!args.includes('--forward-subagent-text')) process.exit(15);
+if (!args.includes('--input-format') || !args.includes('stream-json')) process.exit(12);
+const rl = readline.createInterface({ input: process.stdin });
+let init = false, asked = false;
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.type === 'control_request' && msg.request?.subtype === 'initialize') {
+    init = true;
+    console.log(JSON.stringify({ type:'control_response', response:{ subtype:'success', request_id:msg.request_id, response:{ tools:[{name:'Read'},{name:'Task'}], slash_commands:['compact'], agents:[{name:'reviewer'}], skills:['skill-a'], mcp_servers:['server-a'] } } }));
+  } else if (msg.type === 'user' && init && !asked) {
+    asked = true;
+    console.log(JSON.stringify({ type:'control_request', request_id:'permission-1', request:{ subtype:'can_use_tool', tool_name:'Read', input:{ file_path:'README.md' } } }));
+  } else if (msg.type === 'control_response' && msg.response?.request_id === 'permission-1') {
+    console.log(JSON.stringify({ type:'assistant', message:{ content:[{ type:'text', text:'permission received' }] } }));
+    console.log(JSON.stringify({ type:'result', subtype:'success', result:'done', session_id:'session-1' }));
+  } else if (msg.type === 'control_request' && msg.request?.subtype === 'interrupt') {
+    console.log(JSON.stringify({ type:'control_response', response:{ subtype:'success', request_id:msg.request_id } }));
+  }
+});
+`;
+  await writeFile(file, code, 'utf8');
+  return { dir, file, commandSpec: { command: process.execPath, argsPrefix: [file] } };
+}
+
+test('resolves the installed official native executable or npm entry without a shell', async () => {
+  const spec = await resolveClaudeCommand();
+  assert.equal(typeof spec.command, 'string');
+  assert.ok(Array.isArray(spec.argsPrefix));
+  await access(spec.command);
+  if (spec.argsPrefix.length) await access(spec.argsPrefix[0]);
+  else assert.match(spec.command.toLowerCase(), /claude\.exe$/);
+});
+
+test('auth preflight only returns allowlisted subscription fields and strips environment overrides', async t => {
+  const fake = await fakeCli();
+  const original = process.env.ANTHROPIC_API_KEY;
+  const originalBaseUrl = process.env.ANTHROPIC_BASE_URL;
+  process.env.ANTHROPIC_API_KEY = 'never-forward-this';
+  process.env.ANTHROPIC_BASE_URL = 'https://invalid.example';
+  try {
+    const result = await inspectClaude({ commandSpec: fake.commandSpec });
+    assert.equal(result.available, true);
+    assert.equal(result.version, '2.1.280');
+    assert.deepEqual(result.auth, { loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'pro', apiProvider: 'firstParty' });
+    assert.equal(JSON.stringify(result).includes('must-not-escape@example.test'), false);
+    assert.equal(JSON.stringify(result).includes('private org'), false);
+  } finally {
+    if (original === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = original;
+    if (originalBaseUrl === undefined) delete process.env.ANTHROPIC_BASE_URL;
+    else process.env.ANTHROPIC_BASE_URL = originalBaseUrl;
+  }
+});
+
+test('an authenticated older stable CLI is blocked before the unsupported Opus model request',async()=>{
+ const fake=await fakeCli();
+ await writeFile(fake.file,(await readFile(fake.file,'utf8')).replace('2.1.280','2.1.267'));
+ const result=await inspectClaude({commandSpec:fake.commandSpec});
+ assert.equal(result.auth.loggedIn,true);assert.equal(result.available,false);
+ assert.match(result.reason,/2\.1\.280/);
+ await assert.rejects(openClaudeHost({commandSpec:fake.commandSpec}),/2\.1\.280/);
+});
+
+test('rejects logged-out, non-subscription, and unknown auth states without starting a session', async t => {
+  for (const status of [
+    { loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' },
+    { loggedIn: true, authMethod: 'console', apiProvider: 'firstParty', subscriptionType: 'pro' },
+    { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'bedrock', subscriptionType: 'pro' },
+    { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'mystery' },
+  ]) {
+    const fake = await fakeCli(status);
+    const result = await inspectClaude({ commandSpec: fake.commandSpec });
+    assert.equal(result.available, false);
+    assert.equal(typeof result.reason, 'string');
+  }
+});
+
+test('refuses settings-based provider auth overrides without exposing their values',async()=>{
+  const fake=await fakeCli();
+  const config=path.join(fake.dir,'.claude');await mkdir(config,{recursive:true});
+  const secret='FAKE_NOT_A_REAL_KEY_12345';
+  await writeFile(path.join(config,'settings.json'),JSON.stringify({env:{ANTHROPIC_API_KEY:secret}}),'utf8');
+  const result=await inspectClaude({commandSpec:fake.commandSpec,cwd:fake.dir});
+  assert.equal(result.available,false);assert.match(result.reason,/ANTHROPIC_API_KEY/);
+  assert.equal(result.reason.includes(secret),false);
+});
+
+test('all official permission modes, normal settings, native MCP and effort are launched without K tool filtering',async()=>{
+  const fake=await fakeCli();
+  for(const mode of ['claude-manual','claude-acceptEdits','claude-auto','claude-bypassPermissions','claude-dontAsk','claude-plan']){
+    const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,mcpConfig:{mcpServers:{}},accessMode:mode,effort:'low'});
+    assert.deepEqual(host.nativeCapabilities.tools,['Read','Task']);
+    assert.deepEqual(host.nativeCapabilities.commands,['compact']);
+    await host.close();
+  }
+});
+
+test('does not call auth status when CLI help lacks its support', async t => {
+  const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
+  const file = path.join(dir, 'old-claude.mjs');
+  await writeFile(file, `
+const args=process.argv.slice(2);
+if(args.includes('--version')) console.log('1.0.90');
+else if(args.includes('auth') && args.includes('--help')) console.log('Commands: login logout');
+else if(args.includes('--help')) console.log('Commands: auth doctor update');
+else if(args.includes('status')) { console.error('status must not run'); process.exit(44); }
+`, 'utf8');
+  const result = await inspectClaude({ commandSpec: { command: process.execPath, argsPrefix: [file] } });
+  assert.equal(result.available, false);
+  assert.equal(result.version, '1.0.90');
+  assert.match(result.reason, /read-only auth status/);
+});
+
+test('runs one persistent stream, waits for initialize, routes approval, and pins Opus', async t => {
+  const fake = await fakeCli();
+  const messages = [];
+  const permissions = [];
+  const host = await openClaudeHost({
+    commandSpec: fake.commandSpec,
+    cwd: fake.dir,
+    mcpConfig: { mcpServers: { bridge: { command: 'node', args: ['bridge.mjs'], env: { K_BRIDGE_TOKEN: 'sensitive' } } } },
+    onMessage: message => messages.push(message),
+    onPermission: async request => { permissions.push(request); return { behavior: 'allow', updatedInput: request.input }; },
+  });
+
+  await host.start('Read the README');
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(permissions.length, 1);
+  assert.deepEqual(permissions[0], { toolName: 'Read', input: { file_path: 'README.md' } });
+  assert.ok(messages.some(message => message.type === 'result' && message.result === 'done'));
+  assert.equal(CLAUDE_MODEL, 'claude-opus-5-5');
+  await host.close();
+  assert.deepEqual(await host.closed, { code: 0, signal: null });
+});
+
+test('official quota normalization preserves missing values instead of inventing zeros',async()=>{
+ const {claudeQuota}=await import('../src/claude-host.mjs');
+ const result=claudeQuota({rate_limits_available:true,subscription_type:'pro',rate_limits:{five_hour:{utilization:100,resets_at:'2026-09-24T09:00:00Z'},seven_day:{utilization:null,resets_at:null}}});
+ assert.equal(result.windows[0].remainingPercent,0);assert.equal(result.windows[0].resetsAt,1790240400);
+ assert.equal(result.windows[1].remainingPercent,null);assert.equal(result.windows[1].resetsAt,null);
+ assert.equal(claudeQuota({rate_limits_available:false,rate_limits:{five_hour:{utilization:0}}}).status,'unavailable');
+});

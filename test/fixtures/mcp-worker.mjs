@@ -1,4 +1,5 @@
 import { fauxProvider, fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai';
+import { spawn } from 'node:child_process';
 import { createModelRuntime } from '../../src/runtime.mjs';
 import { createDispatcher } from '../../src/dispatcher.mjs';
 import { serveWorkerStdio } from '../../src/mcp-transport.mjs';
@@ -45,5 +46,19 @@ faux.setResponses(mode === 'history' ? [
   },
 ]);
 modelRuntime.registerNativeProvider(faux.provider);
-const dispatcher = await createDispatcher({ workspace, stateDir, modelRuntime, model: faux.getModel() });
+// Explicit local test adapter only. Production coding has no host-spawn
+// fallback; it receives its Sandboxie runner from the trusted owner launcher.
+const testRunner = {
+  env: Object.fromEntries(['SystemRoot', 'WINDIR'].filter((name) => process.env[name]).map((name) => [name, process.env[name]])),
+  spawnImpl(command, args, options) {
+    const child = spawn(command, args, options);
+    child.terminate = () => new Promise((resolve) => {
+      if (child.exitCode !== null || child.signalCode !== null) return resolve({ confirmed: true });
+      child.once('close', () => resolve({ confirmed: true }));
+      child.kill('SIGKILL');
+    });
+    return child;
+  },
+};
+const dispatcher = await createDispatcher({ workspace, stateDir, modelRuntime, model: faux.getModel(), testRunner });
 serveWorkerStdio({ dispatcher, workspace, model: faux.getModel().id });

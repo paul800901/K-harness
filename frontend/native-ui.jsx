@@ -1,0 +1,34 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {Copy,Check} from 'lucide-react';
+import {visibleNativeNotices} from './native-notices.mjs';
+export function CopyFeedback({text}){
+ const [status,setStatus]=useState('idle');const timer=useRef(null),mounted=useRef(true);
+ useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;clearTimeout(timer.current);};},[]);
+ const copy=async()=>{clearTimeout(timer.current);setStatus('pending');try{await navigator.clipboard.writeText(text??'');if(!mounted.current)return;setStatus('copied');timer.current=setTimeout(()=>setStatus('idle'),2000);}catch{if(mounted.current)setStatus('failed');}};
+ const label=status==='copied'?'已複製':status==='failed'?'複製失敗，請重試':status==='pending'?'複製中':'複製';
+ return <button type="button" title={label} aria-label={label} disabled={status==='pending'} onClick={copy}>{status==='copied'?<Check size={15}/>:<Copy size={15}/>} <span aria-live="polite">{label}</span></button>;
+}
+export function NativeNotices({state}){
+ const [dismissed,setDismissed]=useState([]);useEffect(()=>setDismissed([]),[state.threadId]);
+ return <div className="native-notices">{visibleNativeNotices(state.notices).filter(n=>!dismissed.includes(n.id)).map(n=><div key={n.id} className={n.level==='error'?'alert':'notice'} role={n.level==='error'?'alert':'status'}><span>{n.message}</span><button aria-label="關閉此通知" onClick={()=>setDismissed(d=>[...d,n.id])}>知道了</button></div>)}</div>;
+}
+export function NativeReasoning({state,group}){
+ if(state.capabilities?.reasoningSummary===false)return <small>此供應商尚未接入可顯示的原生推理摘要。</small>;
+ const rows=(state.reasoning??[]).filter(r=>r.groupId===group.id||group.messages.some(m=>m.turnId&&m.turnId===r.turnId));
+ return rows.map(r=><section key={r.id}><strong>原生推理摘要</strong><pre>{r.text}</pre></section>);
+}
+export function NativeDiffs({state}){
+ return <section className="native-diffs"><h3>回合檔案差異</h3>{state.capabilities?.turnDiffs===false?<p>此供應商尚無已接入的原生差異來源。</p>:!(state.turnDiffs??[]).length?<p>尚未收到原生檔案差異；不代表檔案沒有改動。</p>:(state.turnDiffs??[]).map(d=><details key={d.turnId}><summary>回合 {d.turnId}</summary><pre>{d.diff}</pre></details>)}{(state.tools??[]).filter(t=>t.patchChanges?.length).map(t=><details key={t.id}><summary>檔案變更 {t.name}</summary>{t.patchChanges.map((c,i)=><section key={i}><strong>{c.path}</strong><pre>{c.diff}</pre></section>)}</details>)}<small>唯讀檢視，不會還原檔案或回溯對話。</small></section>;
+}
+
+export function NativeFilePicker({state,draft,onSelect,request}){
+ const match=/(?:^|\s)@([^\s]*)$/.exec(draft),query=match?.[1];const [result,setResult]=useState({}),[dismissed,setDismissed]=useState(null);
+ useEffect(()=>{let alive=true;if(query===undefined||!query.trim()||state.capabilities?.fileSearch===false||state.provider==='claude'){setResult({});return()=>{alive=false;};}setResult({loading:true});const timer=setTimeout(()=>{request('native/files/search',{query}).then(r=>{if(alive)setResult({files:r.files??[]});}).catch(e=>{if(alive)setResult({error:e.message});});},200);return()=>{alive=false;clearTimeout(timer);};},[query,state.threadId,state.workspace,state.capabilities?.fileSearch]);
+ if(query===undefined||dismissed===draft)return null;
+ return <section className="native-file-picker" aria-label="工作區檔案搜尋"><header><strong>工作區檔案</strong><button type="button" onClick={()=>setDismissed(draft)}>關閉</button></header>{state.provider==='claude'||state.capabilities?.fileSearch===false?<p>此供應商尚未接入原生檔案搜尋。</p>:!query.trim()?<p>請在 @ 後輸入檔名。</p>:result.loading?<p>搜尋中…</p>:result.error?<p role="alert">{result.error}</p>:<>{!(result.files??[]).length&&<p>沒有符合的檔案。</p>}{(result.files??[]).map(f=><button type="button" key={f.path} onClick={()=>{onSelect(draft.slice(0,draft.lastIndexOf('@'))+JSON.stringify(f.path)+' ');setDismissed(null);}}>{f.path}</button>)}</>}<small>只插入檔案路徑，不自動讀取內容或送出。</small></section>;
+}
+export function NativeReview({state,request,action}){
+ const [confirm,setConfirm]=useState(false);useEffect(()=>setConfirm(false),[state.threadId]);
+ if(state.provider==='claude'||state.capabilities?.review===false)return <p>此供應商尚未接入等價的原生程式碼審查。</p>;
+ return <section><h3>原生程式碼審查</h3><p>審查目前工作區尚未提交的改動；會啟動新的原生回合並使用訂閱額度。</p>{confirm?<><button onClick={()=>setConfirm(false)}>取消</button><button disabled={state.busy} onClick={()=>action(async()=>{await request('native/review',{confirmed:true});setConfirm(false);})}>確認開始審查</button></>:<button disabled={!state.threadId||state.busy} onClick={()=>setConfirm(true)}>審查未提交改動</button>}</section>;
+}

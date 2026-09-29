@@ -1,0 +1,221 @@
+/* Shared K palette and type scale. Component styles only consume these tokens. */
+:root {
+  color-scheme: light;
+  --k-desk: #f2ece2;
+  --k-sheet: #fbf7f0;
+  --k-raised: #fffdf9;
+  --k-sunken: #f3ede3;
+  --k-ink: #2b241d;
+  --k-ink-2: #5b5146;
+  --k-ink-3: #71665a;
+  --k-line: rgba(72, 58, 45, .12);
+  --k-line-strong: rgba(72, 58, 45, .20);
+  --k-hover: rgba(72, 58, 45, .06);
+  --k-selected: rgba(72, 58, 45, .09);
+  --k-brass: #9a7630;
+  --k-brass-line: rgba(154, 118, 48, .55);
+  --k-brass-wash: rgba(154, 118, 48, .12);
+  --k-danger: #a4432f;
+  --k-danger-wash: rgba(164, 67, 47, .08);
+  --k-danger-strong: #8e3928;
+  --k-warn: #8a5a14;
+  --k-warn-wash: rgba(176, 110, 20, .10);
+  --k-ok: #4d7548;
+  --k-font: "Segoe UI Variable Text", "Segoe UI", "Microsoft JhengHei UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans TC", sans-serif;
+  --k-font-mono: "Cascadia Code", "Cascadia Mono", Consolas, "Microsoft JhengHei UI", monospace;
+  --k-text-xs: 12px;
+  --k-text-sm: 13px;
+  --k-text-md: 14px;
+  --k-text-body: var(--k-dialogue-font-size);
+  --k-text-lg: 20px;
+  --k-text-xl: 24px;
+  --k-dialogue-font-size: 18px;
+  --k-ui-scale: 1;
+  --k-radius-sm: 8px;
+  --k-radius-md: 12px;
+  --k-radius-lg: 16px;
+  --k-radius-xl: 20px;
+  --k-shadow-1: 0 1px 2px rgba(43, 36, 29, .05);
+  --k-shadow-2: 0 8px 24px rgba(43, 36, 29, .08), 0 1px 2px rgba(43, 36, 29, .06);
+  --k-shadow-3: 0 24px 64px rgba(43, 36, 29, .18);
+  --k-scroll-thumb: color-mix(in srgb, var(--k-ink) 25%, transparent);
+  --k-browser-screen: #171a20;
+  --k-browser-screen-text: #e6e8ed;
+  --k-browser-human: #2d5b48;
+  --k-browser-human-text: #d5f0df;
+  --k-browser-error: #8e3928;
+  --k-dialog-backdrop: rgba(43, 36, 29, .32);
+  --k-dialog-backdrop-dark: rgba(0, 0, 0, .5);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --k-desk: #f7f8fa;
+  --k-sheet: #fff;
+  --k-raised: #fff;
+  --k-sunken: #f2f3f6;
+  --k-ink: #24272c;
+  --k-ink-2: #4a4f58;
+  --k-ink-3: #656b76;
+  --k-line: rgba(36, 39, 44, .12);
+  --k-line-strong: rgba(36, 39, 44, .20);
+  --k-hover: rgba(36, 39, 44, .05);
+  --k-selected: rgba(36, 39, 44, .08);
+  --k-brass: #9a7630;
+  --k-brass-line: rgba(154, 118, 48, .55);
+  --k-brass-wash: rgba(154, 118, 48, .12);
+  --k-danger: #b34b44;
+  --k-danger-wash: rgba(179, 75, 68, .08);
+  --k-warn: #8a5a14;
+  --k-warn-wash: rgba(176, 110, 20, .10);
+  --k-ok: #3f7a45;
+  --k-shadow-1: 0 1px 2px rgba(36, 39, 44, .05);
+  --k-shadow-2: 0 8px 24px rgba(36, 39, 44, .08), 0 1px 2px rgba(36, 39, 44, .06);
+  --k-shadow-3: 0 24px 64px rgba(36, 39, 44, .18);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --k-desk: #15171b;
+  --k-sheet: #191b20;
+  --k-raised: #20232a;
+  --k-sunken: #252830;
+  --k-ink: #e6e8ed;
+  --k-ink-2: #c3c7d0;
+  --k-ink-3: #9ba1af;
+  --k-line: rgba(230, 232, 237, .10);
+  --k-line-strong: rgba(230, 232, 237, .18);
+  --k-hover: rgba(230, 232, 237, .06);
+  --k-selected: rgba(230, 232, 237, .10);
+  --k-brass: #c9a55a;
+  --k-brass-line: rgba(201, 165, 90, .55);
+  --k-brass-wash: rgba(201, 165, 90, .14);
+  --k-danger: #f3a69d;
+  --k-danger-wash: rgba(243, 166, 157, .10);
+  --k-danger-strong: #b75d54;
+  --k-warn: #e5b56a;
+  --k-warn-wash: rgba(229, 181, 106, .10);
+  --k-ok: #8fc28a;
+  --k-shadow-1: 0 1px 2px rgba(0, 0, 0, .22);
+  --k-shadow-2: 0 8px 24px rgba(0, 0, 0, .28), 0 1px 2px rgba(0, 0, 0, .18);
+  --k-shadow-3: 0 24px 64px rgba(0, 0, 0, .50);
+  --k-browser-screen: #101114;
+  --k-browser-screen-text: #e6e8ed;
+  --k-browser-human: #244b3c;
+  --k-browser-human-text: #b8f4d7;
+  --k-browser-error: #8e3928;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+:root[data-theme="warm"] {
+  color-scheme: light;
+}

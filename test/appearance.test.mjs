@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
 import {
   APPEARANCE_STORAGE_KEY,
   DEFAULT_APPEARANCE,
@@ -60,7 +59,7 @@ test('appearance settings apply scale and dialogue font size to the document roo
 test('three theme choices preserve legacy beige without overriding a new white selection', () => {
   const storage = memoryStorage();
   assert.deepEqual(THEME_OPTIONS, ['light', 'warm', 'dark']);
-  assert.equal(readTheme(storage), 'light');
+  assert.equal(readTheme(storage), 'warm');
   storage.setItem('k-theme', 'light');
   assert.equal(readTheme(storage), 'warm');
   for (const theme of THEME_OPTIONS) {
@@ -74,16 +73,13 @@ test('three theme choices preserve legacy beige without overriding a new white s
   assert.equal(readTheme(dark), 'dark');
 });
 
-test('stylesheet keeps distinct white, warm, dark themes and responsive controls', async () => {
-  const css = await readFile(new URL('../frontend/style.css', import.meta.url), 'utf8');
-  assert.match(css, /--bg:#fffcf8/);
-  assert.match(css, /--side:#f8f3e9/);
-  assert.match(css, /--blue:#007acc/);
-  assert.match(css, /\[data-theme=dark\]/);
-  assert.match(css, /:root\[data-theme=warm\]\{--bg:#fffcf8/);
-  assert.match(css, /--bg:#fff;/);
-  assert.doesNotMatch(css, /:root:not\(\[data-theme=dark\]\)\{--bg:#fffcf8/);
-  assert.match(css, /zoom:var\(--k-ui-scale,1\)/);
-  assert.match(css, /--k-dialogue-font-size/);
-  assert.match(css, /flex-wrap:wrap/);
+test('visual refresh preserves saved font sizes and scale without migration', () => {
+  const storage=memoryStorage();
+  storage.setItem(APPEARANCE_STORAGE_KEY,JSON.stringify({interfaceScale:110,dialogueFontSize:18}));
+  const before=storage.getItem(APPEARANCE_STORAGE_KEY);
+  assert.deepEqual(readAppearance(storage),{interfaceScale:110,dialogueFontSize:18});
+  assert.equal(storage.getItem(APPEARANCE_STORAGE_KEY),before);
+  assert.equal(DEFAULT_APPEARANCE.dialogueFontSize,18);
+  assert.equal(saveTheme('invalid',storage),'warm');
+  assert.equal(readTheme({getItem(){throw Error('unavailable');}}),'warm');
 });

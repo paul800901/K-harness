@@ -1,77 +1,195 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {Bot,Check,ChevronDown,RefreshCw,Search} from 'lucide-react';
-import {PermissionPicker,permissionModes} from './permission-picker.jsx';
+import {Check,RefreshCw} from 'lucide-react';
+import {PermissionPicker} from './permission-picker.jsx';
+import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login-url.mjs';
 
 export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
+const modelProvider=model=>model?.provider==='claude'||model?.model?.startsWith('claude-')?'claude':'codex';
+const modelsByProvider={codex:new Set(['gpt-6-astra','gpt-6-sol','gpt-6-luna']),claude:new Set(['claude-opus-5-5'])};
+const providerLabel=provider=>provider==='claude'?'Claude':'GPT';
+const providerSubscription=provider=>provider==='claude'?'Claude 訂閱':'Codex 訂閱';
+const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
 
-export function ModelPicker({currentModel,currentWorkerModel,currentEffort,mode='create',hasHistory=false,disabled,loadModels,onCatalog,onClose,onCreate}){
- const [models,setModels]=useState([]),[model,setModel]=useState(''),[effort,setEffort]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
- const [workerModel,setWorkerModel]=useState(currentWorkerModel||'deepseek-v4-flash');
- const [accessMode,setAccessMode]=useState('workspace-write');
- const [permissionConfirmed,setPermissionConfirmed]=useState(false);
- const [pickerOpen,setPickerOpen]=useState(false),[query,setQuery]=useState('');
- const pickerRef=useRef(null),triggerRef=useRef(null),searchRef=useRef(null);
+export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory=false,disabled,loadModels,onCatalog,onClose,onCreate}){
+ const [models,setModels]=useState([]),[provider,setProvider]=useState(mode==='switch'?modelProvider({model:currentModel}):'codex'),[model,setModel]=useState(''),[effort,setEffort]=useState(undefined),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
+ const [claudeStatus,setClaudeStatus]=useState(null),[claudeLoading,setClaudeLoading]=useState(true),[claudeAction,setClaudeAction]=useState(false);
+ const [claudeCode,setClaudeCode]=useState(''),[claudeLoginNotice,setClaudeLoginNotice]=useState('');
+ const [codexStatus,setCodexStatus]=useState(null),[codexLoading,setCodexLoading]=useState(true),[codexAction,setCodexAction]=useState(false);
+ const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
+ const initializedProvider=useRef(mode==='switch'?modelProvider({model:currentModel}):'codex');
+
+ const refreshClaudeStatus=async({refreshModels=false}={})=>{
+  setClaudeLoading(true);
+  try{
+   const response=await fetch('/api/claude/auth',{cache:'no-store'});
+   if(!response.ok)throw new Error();
+   const next=await response.json();setClaudeStatus(next);
+   if(refreshModels&&next.available===true){try{const catalog=await loadModels(),list=catalog.models??[];setModels(list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model))));onCatalog(list,catalog.warnings??[]);}catch{}}
+  }catch{setClaudeStatus({available:false,reason:'無法讀取 Claude 登入狀態。',login:{status:'idle'}});}
+  finally{setClaudeLoading(false);}
+ };
+ const refreshCodexStatus=async({refreshModels=false}={})=>{
+  setCodexLoading(true);
+  try{
+   const response=await fetch('/api/codex/auth',{cache:'no-store'});
+   if(!response.ok)throw new Error();
+   const next=await response.json();setCodexStatus(next);
+   if(refreshModels&&next.available===true){try{
+    const catalog=await loadModels(),list=catalog.models??[],supported=list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model)));
+    setModels(supported);onCatalog(list,catalog.warnings??[]);setError('');setLoading(false);
+    const currentProvider=modelProvider({model:currentModel}),choices=mode==='switch'?supported.filter(item=>modelProvider(item)===currentProvider):supported;
+    const initial=choices.find(item=>item.model===currentModel)?.model??choices.find(item=>item.isDefault&&item.available!==false)?.model??choices.find(item=>item.available!==false&&modelProvider(item)==='codex')?.model??choices[0]?.model??'';
+    if(!model||!supported.some(item=>item.model===model)){setModel(initial);if(initial)setProvider(modelProvider({model:initial}));setEffort(undefined);}
+   }catch{}}
+  }catch{setCodexStatus({available:false,reason:'無法讀取 Codex 登入狀態。',login:{status:'idle'}});}
+  finally{setCodexLoading(false);}
+ };
+ useEffect(()=>{refreshClaudeStatus();refreshCodexStatus();},[]);
+ const updateClaudeLogin=async(route,data={})=>{
+  setClaudeAction(true);setClaudeLoginNotice('');setClaudeCode('');
+  try{
+   const response=await fetch(`/api/claude/${route}`,{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(data)});
+   const result=await response.json();if(!response.ok)throw new Error(result.error||'無法更新登入，請刷新狀態。');
+   setClaudeStatus(current=>({...current,...result}));
+  }catch(cause){setClaudeLoginNotice(cause.message||'無法更新登入，請刷新狀態。');}
+  finally{setClaudeAction(false);}
+ };
+ const copyClaudeLogin=async()=>{
+  const url=officialLoginUrl(claudeStatus?.login?.url);if(!url)return;
+  try{await navigator.clipboard.writeText(url);setClaudeLoginNotice('已複製登入連結，請貼到你原本的 Chrome 網址列。');}
+  catch{setClaudeLoginNotice('未能複製，請右鍵「開啟官方登入頁」並複製連結網址。');}
+ };
+ useEffect(()=>{
+  if(claudeStatus?.login?.status!=='running')return;
+  let disposed=false,timer;
+  const poll=async()=>{
+   try{
+    const response=await fetch('/api/claude/login',{cache:'no-store'});if(!response.ok)throw new Error();
+    const next=await response.json();if(disposed)return;
+    setClaudeStatus(current=>({...current,...next}));
+    if(next.login?.status!=='running'){setClaudeCode('');await refreshClaudeStatus({refreshModels:true});return;}
+   }catch{if(!disposed)setClaudeLoginNotice('暫時無法更新登入進度，請按刷新狀態確認。');}
+   if(!disposed)timer=setTimeout(poll,2000);
+  };
+  void poll();return()=>{disposed=true;clearTimeout(timer);};
+ },[claudeStatus?.login?.status]);
+ const updateCodexLogin=async route=>{
+  setCodexAction(true);
+  try{
+   const response=await fetch(`/api/codex/${route}`,{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:'{}'});
+   if(!response.ok)throw new Error();setCodexStatus(await response.json());
+  }catch{setCodexStatus(current=>current?{...current,login:{status:'error'}}:{available:false,reason:'無法讀取 Codex 登入狀態。',login:{status:'error'}});}
+  finally{setCodexAction(false);}
+ };
  useEffect(()=>{
   let cancelled=false;setLoading(true);setError('');
-  loadModels().then(({models:list})=>{
+  loadModels().then(({models:list,warnings=[]})=>{
    if(cancelled)return;
-   setModels(list);onCatalog(list);
-   setModel(list.some(item=>item.model===currentModel)?currentModel:list.find(item=>item.isDefault)?.model??list[0]?.model??'');
+   const supported=list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model)));
+   setModels(supported);onCatalog(list,warnings);
+   const currentProvider=modelProvider({model:currentModel});
+   const choices=mode==='switch'?supported.filter(item=>modelProvider(item)===currentProvider):supported;
+   const initial=choices.find(item=>item.model===currentModel)?.model??choices.find(item=>item.isDefault&&item.available!==false)?.model??choices.find(item=>item.available!==false&&modelProvider(item)==='codex')?.model??choices[0]?.model??'';
+   setModel(initial);
+   const initialItem=choices.find(item=>item.model===initial);
+   setEffort(mode==='switch'&&initial===currentModel&&initialItem&&currentEffort!=null&&initialItem.supportedReasoningEfforts?.some(item=>item.reasoningEffort===currentEffort)?currentEffort:mode==='switch'&&initial===currentModel&&currentEffort==null?null:undefined);
+   if(initialItem)setProvider(modelProvider(initialItem));
   }).catch(cause=>{if(!cancelled)setError(cause.message);}).finally(()=>{if(!cancelled)setLoading(false);});
   return()=>{cancelled=true;};
  },[revision]);
- useEffect(()=>{
-  if(!pickerOpen)return;
-  const close=event=>{if(!pickerRef.current?.contains(event.target)&&!triggerRef.current?.contains(event.target))setPickerOpen(false);};
-  const escape=event=>{if(event.key==='Escape'){setPickerOpen(false);triggerRef.current?.focus();}};
-  document.addEventListener('pointerdown',close);document.addEventListener('keydown',escape);
-  requestAnimationFrame(()=>searchRef.current?.focus());
-  return()=>{document.removeEventListener('pointerdown',close);document.removeEventListener('keydown',escape);};
- },[pickerOpen]);
+
  const selected=models.find(item=>item.model===model);
+ const auth=claudeStatus?.auth;
+ const codexAuth=codexStatus?.auth;
+ const codexVerified=codexStatus?.available===true&&codexAuth?.loggedIn===true&&codexAuth?.authMethod==='chatgpt';
+ const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
+ const isAvailable=item=>item?.available!==false&&(modelProvider(item)!=='claude'||claudeVerified);
+ const claudeUnavailableReason='尚未登入 Claude 訂閱，請先完成官方登入。';
+ const claudeStatusText=()=>claudeLoading?'正在讀取登入狀態…':claudeVerified?`已確認 Claude.ai ${auth.subscriptionType} 訂閱${claudeStatus.version?` · Claude Code ${claudeStatus.version}`:''}`:auth?.loggedIn===false?claudeUnavailableReason:claudeStatus?.reason||claudeUnavailableReason;
+ const codexStatusText=()=>codexLoading?'正在讀取登入狀態…':codexVerified?`已確認 ChatGPT${codexAuth.planType?` ${codexAuth.planType} 訂閱`: ' 訂閱'}`:codexAuth?.loggedIn===false?'尚未登入 ChatGPT 訂閱，請先完成官方登入。':codexStatus?.reason||'尚未確認 Codex 訂閱狀態。';
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
  const inheritedEffort=mode==='switch'&&supportedEfforts.some(item=>item.reasoningEffort===currentEffort)?currentEffort:selected?.defaultReasoningEffort;
- const shownEffort=effort||inheritedEffort;
- const filtered=models.filter(item=>displayModel(item).toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()));
- const workerEntry=models.find(item=>item.model===workerModel);
- const workerLabel=workerModel==='deepseek-v4-flash'?'DeepSeek Flash':workerEntry?displayModel(workerEntry):workerModel||'未設定';
- const chooseModel=next=>{setModel(next.model);setEffort('');setQuery('');};
- const chooseEffort=next=>{setEffort(next);setPickerOpen(false);triggerRef.current?.focus();};
+ const visibleModels=models.filter(item=>modelsByProvider[provider]?.has(item.model));
+
+ useEffect(()=>{
+  if(!model)return;
+  const nextProvider=modelProvider({model});
+  setProvider(current=>current===nextProvider?current:nextProvider);
+  if(initializedProvider.current!==nextProvider){
+   initializedProvider.current=nextProvider;
+   setAccessMode(providerDefaultPermission(nextProvider));setPermissionConfirmed(false);
+  }
+ },[model]);
+
+ const chooseProvider=next=>{
+  if(mode==='switch'&&next!==modelProvider({model:currentModel}))return;
+  setProvider(next);
+  const first=models.find(item=>modelsByProvider[next]?.has(item.model));
+  if(next!==provider){setAccessMode(providerDefaultPermission(next));setPermissionConfirmed(false);initializedProvider.current=next;}
+  if(first){setModel(first.model);setEffort(undefined);}else{setModel('');setEffort(undefined);}
+ };
+ const chooseModel=next=>{
+  if(!next||!isAvailable(next))return;
+  const nextProvider=modelProvider(next);
+  if(mode==='switch'&&nextProvider!==modelProvider({model:currentModel}))return;
+  if(nextProvider!==provider){setProvider(nextProvider);setAccessMode(providerDefaultPermission(nextProvider));setPermissionConfirmed(false);initializedProvider.current=nextProvider;}
+  setModel(next.model);setEffort(undefined);
+ };
+ const chooseEffort=next=>setEffort(next);
+ const selectedProvider=modelProvider(selected);
+ const switchProvider=modelProvider({model:currentModel});
+ const hasReasoningOptions=supportedEfforts.length>0;
+ const claudeLogin=claudeStatus?.login;
+ const codexLogin=codexStatus?.login;
+
+ const permissionValue=selectedProvider==='claude'?(accessMode==='workspace-write'?'claude-manual':accessMode==='read-only'?'claude-plan':accessMode):accessMode;
+ const permissionForSubmit=selectedProvider==='claude'?(accessMode==='workspace-write'?'claude-manual':accessMode==='read-only'?'claude-plan':accessMode):accessMode;
  return <>
-  {loading?<p className="modal-description" role="status">正在載入模型…</p>:error?<div role="alert" className="model-load-error"><p>{error}</p><button onClick={()=>setRevision(value=>value+1)}><RefreshCw size={15}/>重新載入</button></div>:<>
-   {selected&&<section className="main-agent-setting" aria-labelledby="main-agent-label">
-    <div className="model-setting-copy"><strong id="main-agent-label">主代理</strong><span>模型和推理程度在同一處設定。</span></div>
-    <div className="model-selector">
-     <button ref={triggerRef} type="button" className="model-selector-trigger" aria-haspopup="dialog" aria-expanded={pickerOpen} onClick={()=>setPickerOpen(open=>!open)}>
-      <span className="model-mark"><Bot size={19}/></span><span className="model-selector-copy"><strong>{displayModel(selected)}</strong><small>負責目前對話的理解、判斷與整合</small></span><span className="model-badges"><b>主代理</b><b>推理：{effortName[shownEffort]??shownEffort??'模型預設'}</b></span><ChevronDown className={pickerOpen?'open':''} size={16}/>
-     </button>
-     {pickerOpen&&<div ref={pickerRef} className="model-selector-popover" role="dialog" aria-label="選擇主代理模型與推理程度">
-      <label className="model-search"><Search size={15}/><input ref={searchRef} value={query} onChange={event=>setQuery(event.target.value)} placeholder="搜尋主代理模型" aria-label="搜尋主代理模型"/></label>
-      <div className="model-selector-columns">
-       <div className="model-option-group"><strong>選擇模型</strong><div className="model-options">{filtered.map(item=><button key={item.model} type="button" className={item.model===model?'selected':''} aria-pressed={item.model===model} onClick={()=>chooseModel(item)}><span>{displayModel(item)}<small>{item.inputModalities?.includes('image')?'支援文字與圖片':'支援文字'} · {item.supportedReasoningEfforts?.length??0} 種推理程度</small></span>{item.model===model&&<Check size={16}/>}</button>)}{!filtered.length&&<p>沒有符合的模型。</p>}</div></div>
-       <div className="model-option-group"><strong>這個主代理的推理程度</strong><div className="effort-options"><button type="button" className={!effort?'selected':''} aria-pressed={!effort} onClick={()=>chooseEffort('')}><span>模型預設<small>{inheritedEffort?`目前為${effortName[inheritedEffort]??inheritedEffort}`:'由執行環境決定'}</small></span>{!effort&&<Check size={16}/>}</button>{supportedEfforts.map(item=><button key={item.reasoningEffort} type="button" className={effort===item.reasoningEffort?'selected':''} aria-pressed={effort===item.reasoningEffort} onClick={()=>chooseEffort(item.reasoningEffort)}><span>{effortName[item.reasoningEffort]??item.reasoningEffort}</span>{effort===item.reasoningEffort&&<Check size={16}/>}</button>)}</div><p>只影響主代理，不會套用到子代理。</p></div>
-      </div>
-     </div>}
+  {(mode==='create')&&<section className="provider-auth-status" aria-label="提供者登入狀態">
+   <div className="provider-auth-row"><div className="provider-auth-copy"><strong>GPT / Codex 訂閱</strong><span>{codexStatusText()}</span></div><div className="provider-auth-actions">
+    {codexLogin?.status==='running'?<><span role="status">等待完成官方登入。</span>{officialCodexLoginUrl(codexLogin.url)&&<a href={officialCodexLoginUrl(codexLogin.url)} target="_blank" rel="noreferrer">開啟官方登入頁</a>}<button type="button" disabled={codexAction} onClick={()=>updateCodexLogin('login/cancel')}>停止登入</button></>:<button type="button" disabled={disabled||codexAction||codexLoading||codexVerified} onClick={()=>updateCodexLogin('login')}>登入 GPT / Codex</button>}
+    <button type="button" disabled={codexAction||codexLoading} onClick={()=>refreshCodexStatus({refreshModels:true})}><RefreshCw size={14}/>刷新狀態</button>{codexLogin?.status==='error'&&<small role="status">登入未成功；刷新狀態後可再試一次。</small>}{codexLogin?.status==='complete'&&!codexVerified&&<small role="status">登入流程已結束，但目前尚未確認可用的 ChatGPT 訂閱。</small>}
+   </div></div>
+   <div className="provider-auth-row"><div className="provider-auth-copy"><strong>Claude 訂閱</strong><span>{claudeStatusText()}</span></div><div className="provider-auth-actions">
+    {claudeLogin?.status==='running'?<><span role="status">{claudeLogin.codeSubmitted?'已交付官方驗證，尚未確認登入完成。':'等待你完成官方登入。'}</span>{officialLoginUrl(claudeLogin.url)?<>
+     <a href={officialLoginUrl(claudeLogin.url)} target="_blank" rel="noreferrer">開啟官方登入頁</a><button type="button" onClick={copyClaudeLogin}>複製登入連結</button>
+     <small>要沿用原本的 Chrome，請從這裡複製連結再貼到 Chrome；不必從隔離視窗複製。官方顯示授權碼後，貼到下方，不要貼進聊天。</small>
+     {!claudeLogin.codeSubmitted&&<div className="claude-code-entry"><label>Claude 官方授權碼<input type="password" autoComplete="off" spellCheck={false} value={claudeCode} maxLength={4096} onChange={event=>setClaudeCode(event.target.value)} onKeyDown={event=>{if(event.key==='Enter')event.preventDefault();}} placeholder="貼上這次登入的完整授權碼"/></label><button type="button" disabled={claudeAction||!claudeCode.trim()} onClick={()=>updateClaudeLogin('login/code',{code:claudeCode})}>交付官方驗證</button></div>}
+    </>:<small>正在等候官方登入連結…</small>}<button type="button" disabled={claudeAction} onClick={()=>updateClaudeLogin('login/cancel')}>停止登入</button></>:<button type="button" disabled={disabled||claudeAction||claudeLoading||claudeVerified} onClick={()=>updateClaudeLogin('login')}>登入 Claude 訂閱</button>}
+    {claudeLoginNotice&&<small role="status">{claudeLoginNotice}</small>}
+    <button type="button" disabled={claudeAction||claudeLoading} onClick={()=>refreshClaudeStatus({refreshModels:true})}><RefreshCw size={14}/>刷新狀態</button>{claudeLogin?.status==='error'&&<small role="status">登入未成功；刷新狀態後可再試一次。</small>}{claudeLogin?.status==='complete'&&!claudeVerified&&<small role="status">登入流程已結束，但目前尚未確認可用的 Claude 訂閱。</small>}
+   </div></div>
+  </section>}
+  {loading?<p className="modal-description" role="status">正在載入模型…</p>:error?<div role="alert" className="model-load-error"><p>{error}</p><button type="button" onClick={()=>setRevision(value=>value+1)}><RefreshCw size={15}/>重新載入</button></div>:<>
+   <section className="main-agent-setting" aria-labelledby="main-agent-label">
+    <div className="model-setting-copy"><strong id="main-agent-label">主代理</strong><span>依序選提供者、模型與推理程度。</span></div>
+    <div className="model-picker-flow">
+     <fieldset className="model-picker-step provider-step"><legend><span>1</span>提供者</legend><div className="model-choice-row" role="group" aria-label="選擇主代理提供者">
+      {['codex','claude'].map(item=><button type="button" key={item} className={`model-choice ${provider===item?'selected':''}`} aria-pressed={provider===item} disabled={disabled||(mode==='switch'&&item!==switchProvider)} onClick={()=>chooseProvider(item)}>{providerLabel(item)}{provider===item&&<Check size={15}/>}</button>)}
+     </div>{mode==='switch'&&<small className="step-hint">既有對話只能切換相同提供者的模型；更換提供者請建立新對話。</small>}</fieldset>
+
+     <fieldset className="model-picker-step"><legend><span>2</span>模型</legend><div className="model-choice-row model-choice-models" role="group" aria-label="選擇主代理模型">
+      {visibleModels.map(item=><button key={item.model} type="button" className={`model-choice ${item.model===model?'selected':''}`} disabled={disabled||!isAvailable(item)} aria-pressed={item.model===model} title={!isAvailable(item)?(modelProvider(item)==='claude'?claudeUnavailableReason:item.unavailableReason||'目前不可用'):undefined} onClick={()=>chooseModel(item)}><span>{displayModel(item)}{item.model===model&&<small>{providerSubscription(provider)}</small>}</span>{item.model===model&&<Check size={15}/>}</button>)}
+      {!visibleModels.length&&<p className="step-hint">目前帳號未提供此提供者的支援模型。</p>}
+     </div></fieldset>
+
+     <fieldset className="model-picker-step effort-step"><legend><span>3</span>推理程度</legend>{hasReasoningOptions?<div className="model-choice-row effort-choice-row" role="group" aria-label="選擇主代理推理程度">
+      <button type="button" className={`model-choice ${effort===undefined||effort===null?'selected':''}`} aria-pressed={effort===undefined||effort===null} disabled={disabled} onClick={()=>chooseEffort(null)}><span>模型預設{inheritedEffort&&<small>目前預設：{effortName[inheritedEffort]??inheritedEffort}</small>}</span>{(effort===undefined||effort===null)&&<Check size={15}/>}</button>
+      {supportedEfforts.map(item=><button key={item.reasoningEffort} type="button" className={`model-choice ${effort===item.reasoningEffort?'selected':''}`} aria-pressed={effort===item.reasoningEffort} disabled={disabled} onClick={()=>chooseEffort(item.reasoningEffort)}>{effortName[item.reasoningEffort]??item.reasoningEffort}{effort===item.reasoningEffort&&<Check size={15}/>}</button>)}
+     </div>:<p className="step-hint">此模型目前未提供推理程度選項，將使用模型預設。</p>}</fieldset>
+
+     {mode==='create'&&<section className="setting-section permission-section" aria-labelledby="permission-setting-label"><div className="model-setting-copy"><strong id="permission-setting-label">操作權限</strong><span>權限與模型選擇分開。</span></div><div><PermissionPicker label="新對話操作權限" value={permissionValue} provider={selectedProvider==='claude'?'claude':'codex'} disabled={disabled} onChange={(value,confirmed)=>{setAccessMode(value);setPermissionConfirmed(confirmed);}}/><p className="model-routing-note">{selectedProvider==='claude'?'選用 Claude Code 原生模式；各模式行為由 Claude Code 決定。':'由 Codex 訂閱執行；不改變工作區與子代理權限。'}</p></div></section>}
     </div>
-    <p className="model-selection-summary">目前：<strong>{displayModel(selected)} · 推理 {effortName[shownEffort]??shownEffort??'模型預設'}</strong></p>
-   </section>}
+   </section>
    {!models.length&&<p className="modal-description">目前沒有可用模型。</p>}
    {mode==='switch'?<>
     {hasHistory&&model!==currentModel?<p className="model-switch-warning" role="note">中途切換模型可能影響接續品質，上下文也可能自動壓縮。原對話與檔案保留，但不保證所有細節都能無損接續。需要完全獨立的工作時，可另開新對話。</p>:<p className="model-routing-note">從下一則訊息開始使用；不會立即執行工作。</p>}
     <p className="model-routing-note">只變更主代理與推理程度；工作區、子代理與操作權限不變。</p>
-   </>:<>
-   <section className="setting-section" aria-labelledby="worker-setting-label">
-    <div className="model-setting-copy"><strong id="worker-setting-label">子代理</strong><span>需要派工時才使用，不是每個對話都要調整。</span></div>
-    <details className="worker-settings"><summary><span><strong>派工設定（進階）</strong><small>一般：{workerLabel} · 圖像：GPT-5.6 Luna</small></span><ChevronDown size={16}/></summary><div className="worker-settings-body">
-     <label><span>預設一般工人</span><select aria-label="預設一般子代理" value={workerModel} onChange={event=>setWorkerModel(event.target.value)}><option value="deepseek-v4-flash">DeepSeek Flash</option>{!models.some(item=>item.model===workerModel)&&workerModel!=='deepseek-v4-flash'&&<option value={workerModel} disabled>{workerModel}（目前不可用）</option>}{models.map(item=><option key={item.model} value={item.model}>{displayModel(item)}</option>)}</select></label>
-     <div className="worker-setting-readonly"><span>圖像判讀工人</span><strong>GPT-5.6 Luna</strong></div>
-     <div className="worker-effort-note"><span>子代理推理程度</span><p>不在新對話畫面固定。原生 GPT 子代理由主代理派工時依任務指定；DeepSeek Flash 沿用自己的工作路徑與設定。</p></div>
-    </div></details>
-   </section>
-   <section className="setting-section permission-section" aria-labelledby="permission-setting-label"><div className="model-setting-copy"><strong id="permission-setting-label">操作權限</strong><span>權限與模型選擇分開。</span></div><div><PermissionPicker label="新對話操作權限" value={accessMode} disabled={disabled} onChange={(value,confirmed)=>{setAccessMode(value);setPermissionConfirmed(confirmed);}}/><p className="model-routing-note">{permissionModes[accessMode].description}</p></div></section>
-   </>}
+   </>:<section className="setting-section worker-section" aria-labelledby="worker-setting-label"><div className="model-setting-copy"><strong id="worker-setting-label">子代理</strong><span>需要派工時才使用。</span></div><div className="worker-setting-readonly"><span>一般工人</span><strong>GPT-6 Luna · 高（橋接工人）</strong></div></section>}
   </>}
-  <div className="modal-actions"><button onClick={onClose}>取消</button><button className="primary" disabled={disabled||loading||!!error||!selected||(mode==='create'&&workerModel!=='deepseek-v4-flash'&&!models.some(item=>item.model===workerModel))} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode,permissionConfirmed,workerPolicy:{model:workerModel}}),...effort?{effort}:{}})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
+  <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy:{model:'gpt-6-luna'}}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </>;
 }
+
+function officialCodexLoginUrl(value){try{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='auth.openai.com'?url.href:null;}catch{return null;}}
