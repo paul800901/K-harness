@@ -60,8 +60,11 @@ test('live timestamps and groups survive native ID reconciliation and reload wit
     f.hook.onEvent({method:'item/agentMessage/delta',params:{threadId:'timing-thread',turnId:'turn-live',itemId:'answer-live',delta:'result'}});
     f.hook.onEvent({method:'turn/completed',params:{threadId:'timing-thread',turn:{id:'turn-live',status:'completed'}}});
     const answer=f.controller.state.messages.find(m=>m.id==='answer-live');assert.ok(answer.completedAt);assert.equal(answer.partial,undefined);
-    await new Promise(resolve=>setTimeout(resolve,40));
-    const saved=await loadUiMessageTiming(root,'timing-thread');
+    const deadline=Date.now()+5000;let saved;
+    while(!(saved=await loadUiMessageTiming(root,'timing-thread')).messages['answer-live']?.completedAt){
+      assert.ok(Date.now()<deadline,'Completed message timing was not persisted.');
+      await new Promise(resolve=>setTimeout(resolve,10));
+    }
     assert.equal(saved.messages['native-user'].createdAt,user.createdAt);
     assert.ok(saved.messages['answer-live'].completedAt);
     assert.ok(saved.tools['tool-live'].createdAt);

@@ -260,7 +260,7 @@ async function terminateChild(child) {
  * Start a persistent official Claude Code stream-json session.
  * This is async so auth is verified before creating a model process.
  */
-export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, runnerIdentity='host', sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, sharedKnowledgeInstructions='', onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
+export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, runnerIdentity='host', sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
   if((captureImpl===runCapture)!==(spawnImpl===spawn)||(spawnImpl===spawn)!==(runnerIdentity==='host'))
     throw new Error('Claude Code auth preflight and session must use the same explicit runner; no session was started.');
   const spec = normalizeCommandSpec(commandSpec ?? await resolveClaudeCommand({env:sourceEnv}));
@@ -278,7 +278,7 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     ...SETTINGS_ARGS, '--settings', HOST_SETTINGS,
     '--mcp-config', config,
     '--model', CLAUDE_MODEL, '--permission-mode', permissionMode, '--permission-prompts', 'host', '--permission-prompt-tool', 'stdio',
-    '--append-system-prompt', HOST_INSTRUCTIONS+(sharedKnowledgeInstructions?'\n\n'+sharedKnowledgeInstructions:''),
+    '--append-system-prompt', HOST_INSTRUCTIONS,
   ];
   if(effort)args.push('--effort',effort);
   if(forkFrom){if(!/^[0-9a-f-]{36}$/i.test(forkFrom)||!sessionId||resume)throw new Error('Invalid native fork.');args.push('--resume',forkFrom,'--fork-session','--session-id',sessionId);}

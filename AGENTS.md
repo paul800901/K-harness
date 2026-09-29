@@ -77,3 +77,7 @@
 - 使用者明確要求 K 只作薄接殼，移除額外 Sandboxie 執行／資料夾限制；保留工作區規則、Claude Code／Codex 原生權限模式。此決定優先於上方舊候選及正式隔離規則。
 - 正式入口改用兩家原生 host/spawn；Codex 不得再送 externalSandbox，也不得把未授權的模式改成 danger-full-access；Claude 保留原生 permission mode。
 - 保留既有 K 專用 CODEX_HOME、CLAUDE_CONFIG_DIR、對話與瀏覽器資料位置，不搬登入憑證、不改 API 計費。舊 Sandboxie 試驗檔保留，但不是正式必要元件；不為本次切換順手卸載系統元件。
+
+## 2026-09-30 共享知識暫留實驗（使用者確認）
+- 使用者因實測不滿意，明確要求共享知識僅留實驗，不納入本次 R2 正式升級候選或正式 K；不得因整批複製來源而順帶啟用。R2 以現用 R1 加本批修正為準，移除共享知識接線，不以預設關閉取代排除。
+- 原試驗來源、資料及版本保留；未獲新的明確要求前，不將共享知識部署至正式版。工程狀態見 docs/r2-archive-compat-no-shared-knowledge-20260930.md。

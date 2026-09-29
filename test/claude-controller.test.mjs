@@ -130,10 +130,10 @@ test('sends one prompt, requires per-tool UI approval and persists resulting pro
     assert.deepEqual(await permission,{behavior:'allow',updatedInput:{file_path:'README.md'}});
     f.hostOptions.onMessage({type:'assistant',uuid:'assistant-1',message:{content:[{type:'text',text:'已檢查。'}]}});
     f.hostOptions.onMessage({type:'result',is_error:false});
-    await new Promise(resolve=>setTimeout(resolve,30));
     assert.equal(f.controller.state.status,'completed');
     assert.equal(f.controller.state.messages.at(-1).text,'已檢查。');
     const file=path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`);
+    await waitFor(async()=>JSON.parse(await readFile(file,'utf8')).messages.length===2);
     const projection=JSON.parse(await readFile(file,'utf8'));
     assert.equal(projection.messages.length,2);
     await f.controller.send({text:'下一個正常回合'});
@@ -320,7 +320,7 @@ test('failed settings restart close remains uncertain and retains the existing h
 const tick=()=>new Promise(resolve=>setTimeout(resolve,40));
 async function waitFor(predicate){
  const deadline=Date.now()+5000;
- while(!predicate()){
+ while(!await predicate()){
   assert.ok(Date.now()<deadline,'Expected asynchronous controller result was not observed.');
   await new Promise(resolve=>setTimeout(resolve,10));
  }
