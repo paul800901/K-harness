@@ -300,13 +300,20 @@ test('failed settings restart close remains uncertain and retains the existing h
 });
 
 const tick=()=>new Promise(resolve=>setTimeout(resolve,40));
+async function waitFor(predicate){
+ const deadline=Date.now()+5000;
+ while(!predicate()){
+  assert.ok(Date.now()<deadline,'Expected asynchronous controller result was not observed.');
+  await new Promise(resolve=>setTimeout(resolve,10));
+ }
+}
 test('Luna completion wakes the original Claude once after the current turn; no wait or inspect',async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'delegate bounded work'});
   await f.gatewayOptions.bridge.start({requestId:'notify',task:'bounded'});
   const record={parentId:f.controller.state.threadId,requestId:'notify',settled:true,status:'completed',output:'done',outputFiles:[]};
   f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,1);
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
   assert.equal(f.host.startCalls.length,2);assert.match(f.host.startCalls[1][0].text,/K 工人完成通知/);
   f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await tick();
   assert.equal(f.host.startCalls.length,2);
@@ -328,7 +335,7 @@ test('uncertain completion delivery is not automatically retried',async()=>{
   await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'uncertain',task:'bounded'});
   f.host.start=async()=>{throw Error('pipe uncertain');};
   const r={parentId:f.controller.state.threadId,requestId:'uncertain',settled:true,status:'completed',output:'done'};
-  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.controller.state.status==='uncertain');
   assert.equal(f.controller.state.status,'uncertain');assert.match(f.controller.state.error,/未重送/);
   f.bridgeOptions.onChange(r);await tick();assert.equal(f.controller.state.status,'uncertain');
  }finally{await f.controller.close();}
@@ -416,7 +423,7 @@ test('unresolved observation does not consume final completion notification',asy
   await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'later',task:'bounded'});
   const r={parentId:f.controller.state.threadId,requestId:'later',settled:false,status:'unresolved'};
   f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,1);
-  f.bridgeOptions.onChange({...r,settled:true,status:'completed',output:'done'});await tick();assert.equal(f.host.startCalls.length,2);
+  f.bridgeOptions.onChange({...r,settled:true,status:'completed',output:'done'});await waitFor(()=>f.host.startCalls.length===2);assert.equal(f.host.startCalls.length,2);
   assert.equal(f.controller.state.messages.at(-1).kind,'worker-completion');
  }finally{await f.controller.close();}
 });
@@ -424,7 +431,7 @@ test('pre-send result preparation failure keeps conversation usable without repl
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'bad',task:'bounded'});
   const r={parentId:f.controller.state.threadId,requestId:'bad',settled:true,status:'completed',output:'x'.repeat(5000),workspace:'relative-invalid'};
-  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.controller.state.error?.includes('luna_inspect'));
   assert.equal(f.controller.state.status,'completed');assert.equal(f.controller.state.busy,false);assert.match(f.controller.state.error,/luna_inspect/);
   assert.equal(f.host.startCalls.length,1);f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,1);
   await f.controller.send({text:'continue normally'});assert.equal(f.host.startCalls.length,2);
@@ -455,7 +462,7 @@ test('manual unfinished inspection keeps automatic completion armed',async()=>{
   await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'running',task:'bounded'});
   f.gatewayOptions.bridge.resultReady({requestId:'running'},{settled:false,status:'running'});
   f.bridgeOptions.onChange({parentId:f.controller.state.threadId,requestId:'running',settled:true,status:'completed',output:'done'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,2);
+  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);assert.equal(f.host.startCalls.length,2);
  }finally{await f.controller.close();}
 });
 test('manual cancel disarms before an uncertain cancellation result',async()=>{
