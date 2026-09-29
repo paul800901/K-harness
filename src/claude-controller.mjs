@@ -17,12 +17,13 @@ const nativeId = value => typeof value === 'string' && /^claude-[0-9a-f-]{36}$/i
 const uiId = value => `claude-${value}`;
 const inside = (root,target) => {const relative=path.relative(root,target);return relative!==''&&!relative.startsWith(`..${path.sep}`)&&relative!=='..'&&!path.isAbsolute(relative);};
 
-async function readRecords(root) {
+async function readRecords(root,threadId) {
   const directory = path.join(root, SESSION_DIR);
   await mkdir(directory, {recursive:true});
   const sessions = [], unreadable = [];
   for (const name of await (await import('node:fs/promises')).readdir(directory)) {
     if (!name.endsWith('.json')) continue;
+    if (threadId!==undefined&&name!==`${threadId}.json`) continue;
     try {
       const item = JSON.parse(await readFile(path.join(directory, name), 'utf8'));
       if (nativeId(item.threadId) !== item.nativeSessionId || !Array.isArray(item.messages)) throw new Error('invalid projection');
@@ -76,8 +77,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const generation=++activeGeneration;
     active.closed.then(()=>{if(host===active&&generation===activeGeneration){settleNativeChildrenAfterHostClose();if(!closing&&!opening&&!stopping&&!restartingHost){markActiveAssistantPartial();host=null;state.busy=false;state.status='offline';state.error='Claude Code 已中斷；先重開原對話確認原生歷史，不要直接重送。';clearQuestions();changed();}}});
   };
-  const persisted = async () => (await readRecords(root)).sessions;
-  const currentRecord = async () => (await persisted()).find(x => x.threadId === state.threadId) ?? null;
+  const persisted = async threadId => (await readRecords(root,threadId)).sessions;
+  const currentRecord = async () => (await persisted(state.threadId)).find(x => x.threadId === state.threadId) ?? null;
   const enqueuePersist = operation => {
     const next=persistChain.catch(()=>{}).then(operation);persistChain=next;
     return next.then(value=>{persistError=null;return value;},error=>{persistError=error;state.error=`對話投影保存失敗：${error.message}`;changed();throw error;});
@@ -85,7 +86,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   const saveCurrent = async () => {
     const snapshot={threadId:state.threadId,title:state.title,workspace:state.workspace,accessMode:state.accessMode,messages:clone(state.messages),tools:clone(state.tools),artifacts:[...state.artifacts],workerNotifications:clone(workerNotifications),sharedKnowledgeInjectedIds:[...sharedKnowledgeInjectedIds],lastOpenedAt:new Date().toISOString()};
     const policy=clone(state.workerPolicy);
-    return enqueuePersist(async()=>{const record=(await persisted()).find(item=>item.threadId===snapshot.threadId);if(!record)return;const projection={...record,...snapshot,effort:state.effort};await saveRecord(root,projection);await saveMainSession(root,{threadId:snapshot.threadId,model:CLAUDE_MODEL,title:projection.title,archived:projection.archived,pinned:projection.pinned,workspace:projection.workspace,workerPolicy:policy,accessMode:projection.accessMode,effort:state.effort});});
+    return enqueuePersist(async()=>{const record=(await persisted(snapshot.threadId)).find(item=>item.threadId===snapshot.threadId);if(!record)return;const projection={...record,...snapshot,effort:state.effort};await saveRecord(root,projection);await saveMainSession(root,{threadId:snapshot.threadId,model:CLAUDE_MODEL,title:projection.title,archived:projection.archived,pinned:projection.pinned,workspace:projection.workspace,workerPolicy:policy,accessMode:projection.accessMode,effort:state.effort});});
   };
   const flushPersist=async()=>{await persistChain;if(persistError)throw persistError;};
   const appendMessage = (role,text,id=randomUUID()) => {
@@ -460,7 +461,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(archived!==undefined&&typeof archived!=='boolean')throw new Error('封存狀態無效。');
       if(pinned!==undefined&&typeof pinned!=='boolean')throw new Error('釘選狀態無效。');
       const policy=clone(state.workerPolicy);let updated;
-      await enqueuePersist(async()=>{const record=(await persisted()).find(item=>item.threadId===threadId);if(!record)throw new Error('K Claude 對話不存在。');updated={...record,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};await saveRecord(root,updated);await saveMainSession(root,{threadId,model:CLAUDE_MODEL,title:updated.title,archived:updated.archived,pinned:updated.pinned,workspace:updated.workspace,workerPolicy:policy,accessMode:updated.accessMode});});if(threadId===state.threadId){state.title=updated.title;changed();}return updated;
+      await enqueuePersist(async()=>{const record=(await persisted(threadId)).find(item=>item.threadId===threadId);if(!record)throw new Error('K Claude 對話不存在。');updated={...record,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};await saveRecord(root,updated);await saveMainSession(root,{threadId,model:CLAUDE_MODEL,title:updated.title,archived:updated.archived,pinned:updated.pinned,workspace:updated.workspace,workerPolicy:policy,accessMode:updated.accessMode});});if(threadId===state.threadId){state.title=updated.title;changed();}return updated;
     },
     async open({model=CLAUDE_MODEL,threadId,accessMode='claude-manual',effort,forkFrom}={}){
       if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
@@ -470,8 +471,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       try {
         await flushPersist();await closeWorkers();if(old){await old.close();settleNativeChildrenAfterHostClose();}
         host=null;previousClosed=true;
-        const saved=threadId?(await persisted()).find(item=>item.threadId===threadId):null;
-        const source=forkFrom?(await persisted()).find(item=>item.threadId===forkFrom):null;
+        const saved=threadId?(await persisted(threadId)).find(item=>item.threadId===threadId):null;
+        const source=forkFrom?(await persisted(forkFrom)).find(item=>item.threadId===forkFrom):null;
         if(forkFrom&&!source)throw Error('找不到原生分支來源。');
         if(threadId&&!saved)throw new Error('只能開啟 K 清單中的 Claude 對話。');
         const chosenAccess=normalizeClaudeAccessMode(saved?.accessMode??accessMode);

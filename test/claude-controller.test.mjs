@@ -6,6 +6,8 @@ import {fileURLToPath} from 'node:url';
 import {createClaudeController} from '../src/claude-controller.mjs';
 import {saveAttachment} from '../src/desktop-files.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 
 async function fixture() {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
@@ -24,6 +26,22 @@ async function fixture() {
     gatewayFactory:async options=>{gatewayOptions=options;return gateway;}});
   return {root,uuid,controller,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
 }
+
+test('saving one Claude conversation does not read other conversation projections',async()=>{
+ const f=await fixture();const original=fs.readFile;let otherReads=0;
+ try{
+  const {threadId}=await f.controller.open({});
+  const projection=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${threadId}.json`),'utf8'));
+  const id='claude-123e4567-e89b-42d3-a456-426614174099';
+  const other=path.join(f.root,'.runtime/claude-sessions',`${id}.json`);
+  await writeFile(other,JSON.stringify({...projection,threadId:id,nativeSessionId:id.slice(7),messages:[{role:'user',text:'unrelated'.repeat(10000)}]}));
+  fs.readFile=(file,...args)=>{if(String(file)===other)otherReads++;return original(file,...args);};syncBuiltinESMExports();
+  await f.controller.send({text:'only this conversation'});
+  await f.controller.close();
+  assert.equal(otherReads,0);
+  assert.equal(JSON.parse(await original(other,'utf8')).threadId,id);
+ }finally{fs.readFile=original;syncBuiltinESMExports();await f.controller.close();}
+});
 
 test('owned Luna artifacts are shown without accepting work or allowing foreign paths',async()=>{
  const f=await fixture();

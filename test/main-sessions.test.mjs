@@ -1,9 +1,40 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,writeFile,readFile,utimes} from 'node:fs/promises';
+import {mkdtemp,mkdir,writeFile,readFile,utimes,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+
+test('metadata updates use one atomic file per conversation and concurrent calls retain call order',async()=>{
+ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const root=await mkdtemp(path.join(base,'bounded-sessions-'));
+ const record={threadId:'one',model:'gpt-6-luna'};
+ await saveMainSession(root,{...record,parentThreadId:'parent',parentTitle:'Original',browserSessionKey:'keep-browser'});
+ await Promise.all(Array.from({length:30},(_,i)=>saveMainSession(root,{...record,title:`title-${i}`})));
+ const names=await readdir(path.join(root,'.runtime/main-sessions'));
+ assert.deepEqual(names,['one.json']);
+ const {sessions,unreadable}=await listMainSessions(root);
+ assert.equal(unreadable,0);assert.equal(sessions[0].title,'title-29');
+ assert.equal(sessions[0].parentThreadId,'parent');assert.equal(sessions[0].browserSessionKey,'keep-browser');
+ await assert.rejects(saveMainSession(root,{...record,model:''}));
+ await saveMainSession(root,{...record,title:'after failure'});
+ assert.equal((await listMainSessions(root)).sessions[0].title,'after failure');
+});
+
+test('legacy snapshots stay intact and their lineage survives fixed-file updates',async()=>{
+ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const root=await mkdtemp(path.join(base,'legacy-sessions-')),dir=path.join(root,'.runtime/main-sessions');await mkdir(dir,{recursive:true});
+ const old=JSON.stringify({threadId:'legacy',model:'gpt-6-luna',workspace:root,title:'old',parentThreadId:'parent',parentTitle:'Original',browserSessionKey:'legacy-browser',saveOrder:1});
+ const oldPath=path.join(dir,'legacy-1-snapshot.json');await writeFile(oldPath,old);await utimes(oldPath,new Date(0),new Date(0));
+ await writeFile(path.join(dir,'other-broken.json'),'{invalid');
+ await saveMainSession(root,{threadId:'legacy',model:'gpt-6-luna',title:'updated'});
+ const one=await listMainSessions(root,{threadId:'legacy'});
+ assert.equal(one.unreadable,0);assert.equal(one.sessions.length,1);
+ assert.equal(one.sessions[0].title,'updated');assert.equal(one.sessions[0].parentThreadId,'parent');
+ assert.equal(one.sessions[0].browserSessionKey,'legacy-browser');
+ assert.equal(await readFile(oldPath,'utf8'),old);
+ assert.equal((await listMainSessions(root)).unreadable,1);
+});
 test('Claude native permission modes survive common metadata readback without changing Codex modes',async()=>{
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'native-permissions-'));
