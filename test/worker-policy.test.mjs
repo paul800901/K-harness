@@ -31,7 +31,7 @@ test('explicit manual defaults remain configured and can still be overridden tas
  const config=workerPolicyConfig({model:'gpt-6.1-sol',effort:'ultra'},{models});
  assert.deepEqual(config.agents,{enabled:true,default_subagent_model:'gpt-6.1-sol',default_subagent_reasoning_effort:'ultra'});
  assert.match(config.developer_instructions,/Default native subagent: gpt-6\.1-sol, reasoning effort ultra/);
- assert.throws(()=>workerPolicyConfig({model:'gpt-6-astra',effort:'high'}),/未自動換模/);
+ assert.throws(()=>workerPolicyConfig({model:'gpt-6-astra',effort:'high'},{models}),/未自動換模/);
 });
 
 test('Sol and Luna accept every advertised effort; unsupported selections are rejected',()=>{

@@ -14,10 +14,9 @@ const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).m
 function createMcpServer(bridge) {
   const server = new McpServer({name:'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   const policy=bridge.workerPolicy;
-  const workerOptions=(bridge.workerOptions??[]).map(option=>`${option.model}: ${(option.efforts??[]).join(', ')}`).join('; ');
-  const selectionGuidance=policy?.model==='auto'&&policy?.effort==='auto'
-    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇。官方可用選項：${workerOptions||'請依目前工具列出的官方模型與推理程度選擇'}。`
-    : `目前預設為 ${policy?.model??'GPT-6 Luna'} / ${policy?.effort??'high'}；可省略欄位沿用預設，也可依任務明確改選。`;
+  const selectionGuidance=policy.model==='auto'
+    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇 Sol 或 Luna 及官方支援的推理程度。`
+    : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
     try {
       const value=await lunaResult(await execute(args));

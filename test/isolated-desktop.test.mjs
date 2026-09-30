@@ -167,6 +167,10 @@ test('Claude Luna bridge launches its Codex host through the same isolated runne
   assert.ok(init.ok, `MCP initialize should succeed (${init.status})`);
   await init.text();
   await fetch(luna.url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} }) });
+  const listed = await fetch(luna.url, {method:'POST',headers,body:JSON.stringify({jsonrpc:'2.0',id:9,method:'tools/list'})});
+  const description=await listed.text();
+  assert.match(description,/AI 自動選擇目前啟用/);
+  assert.doesNotMatch(description,/目前預設為 GPT-6 Luna/);
   const inspect = await fetch(luna.url, { method: 'POST', headers, body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call',
     params: { name: 'luna_inspect', arguments: { requestId: 'missing-request' } } }) });
   assert.ok(inspect.ok, `Luna inspect should succeed (${inspect.status})`);

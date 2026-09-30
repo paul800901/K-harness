@@ -355,6 +355,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     };
     const disarm=requestId=>{workerArmed.delete(requestId);workerQueue.delete(requestId);};
     const lazyBridge={
+      workerPolicy:state.workerPolicy,
       async start(args){workerArmed.add(args.requestId);return (await ensureBridge()).start(args);},
       inspect:args=>ensureBridge().then(value=>value.inspect(args)),
       wait:args=>ensureBridge().then(value=>value.wait(args)),

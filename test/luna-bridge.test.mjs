@@ -290,10 +290,9 @@ test('AI-auto bridge requires explicit concrete model and effort, then forwards 
  const {bridge,fixture}=await make({models,workerPolicy:{model:'auto',effort:'auto'}});
  try{
   assert.deepEqual(bridge.workerPolicy,{model:'auto',effort:'auto'});
-  assert.deepEqual(bridge.workerOptions,[{model:'gpt-6-luna',efforts:['high']},{model:'gpt-6.1-sol',efforts:['low','ultra']}]);
   await assert.rejects(bridge.start({requestId:'missing',task:'fake'}),/明確指定 GPT-6.1 Sol 或 GPT-6 Luna/);
   await assert.rejects(bridge.start({requestId:'partial',task:'fake',model:'gpt-6-luna'}),/AI 自動選擇/);
-  await assert.rejects(bridge.start({requestId:'auto-model',task:'fake',model:'auto',effort:'auto'}),/必須指定 GPT-6.1 Sol 或 GPT-6 Luna/);
+  await assert.rejects(bridge.start({requestId:'auto-model',task:'fake',model:'auto',effort:'auto'}),/明確指定 GPT-6.1 Sol 或 GPT-6 Luna/);
   assert.equal(fixture.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);
   for(const [requestId,model,effort] of [['sol-auto','gpt-6.1-sol','ultra'],['luna-auto','gpt-6-luna','high']]){
    const record=await bridge.start({requestId,task:'choose for this task',model,effort});

@@ -8,7 +8,7 @@ import {listMainModels} from './main-models.mjs';
 import {stopThreadTerminals} from './background-terminals.mjs';
 import {checkedPath} from './files.mjs';
 
-import {normalizeWorkerPolicy,validateWorkerPolicy,WORKER_MODELS} from './worker-policy.mjs';
+import {normalizeWorkerPolicy,validateWorkerPolicy} from './worker-policy.mjs';
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
 const clone = value => structuredClone(value);
 
@@ -183,10 +183,9 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   async function start({requestId, task, model, effort}) {
     if (closed || closing) throw new Error('Luna bridge 正在關閉或已關閉。');
     if (!safeId(requestId) || typeof task !== 'string' || !task.trim() || task.length > 32000) throw new Error('requestId 或 task 無效。');
-    const automatic=defaults.model==='auto'&&defaults.effort==='auto';
-    if(automatic&&(!model||!effort))throw new Error('目前是「AI 自動選擇」：請依這項工作的難度，明確指定 GPT-6.1 Sol 或 GPT-6 Luna，以及該模型支援的推理程度；沒有自動 fallback 或重送。');
-    const policy=validateWorkerPolicy({model:model??defaults.model,effort:effort??defaults.effort},models);
-    if(!WORKER_MODELS.includes(policy.model))throw new Error('派工時必須指定 GPT-6.1 Sol 或 GPT-6 Luna，不能把「AI 自動選擇」當成執行模型。');
+    const choice={model:model??defaults.model,effort:effort??defaults.effort};
+    if(choice.model==='auto'||choice.effort==='auto')throw new Error('目前是「AI 自動選擇」：請依這項工作的難度，明確指定 GPT-6.1 Sol 或 GPT-6 Luna，以及該模型支援的推理程度；尚未開始工作。');
+    const policy=validateWorkerPolicy(choice,models);
     const existing = await inspect({requestId});
     if (existing) {
       if (existing.task !== task||existing.model!==policy.model||existing.effort!==policy.effort) throw new Error('相同 requestId 已綁定不同 task 或模型設定；拒絕重送。');
@@ -307,7 +306,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     return Promise.all([...ids].map(requestId => refresh?inspect({requestId}):load(requestId)));
   }
   return {
-    start, inspect, cancel, workerPolicy:clone(defaults), workerOptions:models.filter(item=>WORKER_MODELS.includes(item.model)).map(item=>({model:item.model,efforts:(item.supportedReasoningEfforts??[]).map(option=>option.reasoningEffort)})),
+    start, inspect, cancel, workerPolicy:clone(defaults),
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
       const deadline = Date.now() + timeoutMs;

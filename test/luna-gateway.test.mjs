@@ -7,7 +7,6 @@ function fixture() {
   const records=new Map();let closeCount=0;
   const bridge={
     workerPolicy:{model:'auto',effort:'auto'},
-    workerOptions:[{model:'gpt-6.1-sol',efforts:['low','high','ultra']},{model:'gpt-6-luna',efforts:['low','high']}],
     async start({requestId,task}) { const old=records.get(requestId);if(old){if(old.task!==task)throw Error('different task');return old;}const record={requestId,provider:'codex',model:'gpt-6-luna',status:'running',settled:false,acceptance:'not-reviewed',task,output:'',outputFiles:[]};records.set(requestId,record);return record; },
     async wait({requestId}) {const r=records.get(requestId);if(r){r.status='completed';r.settled=true;r.output='done';}return r??null;},
     async inspect({requestId}) {return records.get(requestId)??null;},
@@ -41,7 +40,6 @@ test('gateway is loopback-only, bearer-authenticated, and exposes fixed MCP Luna
     const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}}));
     assert.deepEqual(listed.result.tools.map(tool=>tool.name).sort(),['luna_cancel','luna_inspect','luna_start','luna_wait']);
     assert.match(listed.result.tools.find(tool=>tool.name==='luna_start').description,/AI 自動選擇目前啟用/);
-    assert.match(listed.result.tools.find(tool=>tool.name==='luna_start').description,/gpt-6\.1-sol: low, high, ultra/);
     const started=await body(await post(config.url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'stable',task:'bounded'}}}));
     assert.equal(started.result.structuredContent.model,'gpt-6-luna');
     const duplicate=await body(await post(config.url,token,{jsonrpc:'2.0',id:4,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'stable',task:'bounded'}}}));
@@ -99,7 +97,7 @@ test('MCP start forwards both worker choices and an explicit effort to the bridg
 });
 
 test('MCP tool description reflects a concrete user default without implying AI-auto',async()=>{
- const f=fixture();f.bridge.workerPolicy={model:'gpt-6.1-sol',effort:'ultra'};f.bridge.workerOptions=[];
+ const f=fixture();f.bridge.workerPolicy={model:'gpt-6.1-sol',effort:'ultra'};
  const gateway=await createLunaGateway({bridge:f.bridge});
  try{
   const config=gateway.mcpConfig.mcpServers.k_luna,token=config.headers.Authorization.slice(7);
