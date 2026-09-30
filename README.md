@@ -4,7 +4,7 @@
 
 ## 目前狀態
 
-R3-2 候選：移除 DeepSeek／Pi、Sandboxie 執行、內嵌瀏覽器及 standard 舊入口；子代理可選 GPT-6.1 Sol／GPT-6 Luna 與原生 effort，Claude 加入 Sonnet 5.5。驗證與正式部署狀態以 [本批紀錄](docs/r3-2-cleanup-20260930.md) 為準。
+R3-2 已於 2026-09-30 20:09 正式套用並重開：移除 DeepSeek／Pi、Sandboxie 執行、內嵌瀏覽器及 standard 舊入口；子代理可選 GPT-6.1 Sol／GPT-6 Luna 與官方 effort，K 專用 Claude Code 2.1.285 原生目錄已提供 Sonnet 5.5。乾淨相依樹 497/497，正式檔案、服務及目錄讀回通過；真模型任務未另跑。詳見 [本批紀錄](docs/r3-2-cleanup-20260930.md)。
 
 ### 現行入口
 - 使用 `Start-K-Desktop.ps1`／`local-launcher/dist/K桌面啟動器.exe` 開啟 K。正式服務由原生桌面管理。
