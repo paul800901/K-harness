@@ -104,14 +104,6 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const current=state.progress.tokenUsage??{};
     return {last:{totalTokens,inputTokens,cacheReadInputTokens,cacheCreationInputTokens,measurement:'latest-native-request-input',source:'Claude Code stream-json message_start usage'},...(Number.isFinite(current.modelContextWindow)?{modelContextWindow:current.modelContextWindow}:{})};
   };
-  const noticeTime = message => typeof message?.timestamp==='string'&&!Number.isNaN(Date.parse(message.timestamp))?message.timestamp:new Date().toISOString();
-  const addNotice = (message, level, kind, text) => {
-    if(typeof text!=='string'||!text)return;
-    const id=typeof message?.uuid==='string'?`claude-${message.uuid}`:`claude-${randomUUID()}`;
-    if(state.notices.some(notice=>notice.id===id))return;
-    state.notices.push({id,level,message:text,kind,turnId:currentTurnId,createdAt:noticeTime(message)});
-    if(state.notices.length>200)state.notices.splice(0,state.notices.length-200);
-  };
   const recordNativeRequestUsage = message => {
     const tokenUsage=nativeTokenUsage(message?.event);
     if(tokenUsage)state.progress.tokenUsage=tokenUsage;
@@ -272,7 +264,6 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     } else if(message?.type==='rate_limit_event') {
       const rate=claudeRateStatus({status:state.usage.claude.rateLimitStatus,extraUsageDisabled:state.usage.claude.extraUsageDisabled},message);
       if(rate.status){state.usage.claude.rateLimitStatus=rate.status;state.usage.claude.extraUsageDisabled=rate.extraUsageDisabled;}
-      if(rate.notice)addNotice(message,rate.notice.level,rate.notice.kind,rate.notice.message);
     } else if(message?.type==='stream_event') {
       recordNativeRequestUsage(message);
       streamText(message);

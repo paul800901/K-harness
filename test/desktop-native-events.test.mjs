@@ -4,6 +4,7 @@ import {mkdtemp,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 
 async function fixture({readiness='ready'}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
@@ -48,8 +49,25 @@ test('native notifications are normalized, thread-scoped, and never change the s
   assert.equal(f.c.state.notices.some(n=>n.kind==='nativeError'),false);
   emit({method:'error',params:{threadId:'native-events-thread',turnId:'turn-1',willRetry:true,error:{message:'transient upstream failure'}}});
   assert.equal(f.c.state.notices.at(-1).level,'error');
-  assert.match(f.c.state.notices.at(-1).message,/Codex 原生將重試；K 不會另行重送/);
+  assert.equal(f.c.state.notices.at(-1).message,'transient upstream failure');
   assert.deepEqual({busy:f.c.state.busy,status:f.c.state.status},beforeErrorState);
+ }finally{await f.c.close();}
+});
+
+test('Codex rate-limit and completion events present the original error once without K boilerplate',async()=>{
+ const f=await fixture();
+ try{
+  await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>typeof x.onEvent==='function').onEvent;
+  emit({method:'account/rateLimits/updated',params:{rateLimits:{primary:{usedPercent:100}}}});
+  await f.c.usage();assert.deepEqual(f.c.state.notices,[]);
+  const message='Native quota limit reached';
+  emit({method:'error',params:{threadId:'native-events-thread',turnId:'turn-1',willRetry:false,error:{message}}});
+  assert.equal(f.c.state.notices.at(-1).message,message);
+  assert.equal(visibleNativeNotices(f.c.state.notices,f.c.state.error).length,1);
+  emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'turn-1',status:'failed',error:{message}}}});
+  assert.equal(f.c.state.error,message);
+  assert.equal(visibleNativeNotices(f.c.state.notices,f.c.state.error).length,0);
+  assert.equal(f.calls.some(c=>c.method==='turn/start'),false);
  }finally{await f.c.close();}
 });
 

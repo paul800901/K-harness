@@ -1,4 +1,5 @@
 import {CopyFeedback,NativeNotices,NativeReasoning,NativeDiffs,NativeFilePicker,NativeReview} from './native-ui.jsx';
+import {localizeNativeNotice} from './native-notices.mjs';
 import React,{useState,useEffect,useLayoutEffect,useRef,useContext,createContext,useMemo,useId} from 'react';
 import {createRoot} from 'react-dom/client';
 import {AssistantRuntimeProvider,useExternalStoreRuntime,ThreadPrimitive,ComposerPrimitive,MessagePrimitive,SelectionToolbarPrimitive,ActionBarPrimitive,useAuiState} from '@assistant-ui/react';
@@ -253,8 +254,8 @@ function App(){
    <div className="sidebar-bottom"><Usage state={state} online={online} onDetails={()=>setModal({type:'usage'})}/><button title="設定" onClick={()=>setModal({type:'settings'})}><Settings size={16}/> 設定</button></div>
   </aside>
   <main>{state.connectionOpening&&<div role="status" className="connection-loading">正在載入對話… <button type="button" onClick={()=>api('stop',{cancelOpening:true}).catch(e=>setError(e.message))}>取消連線</button></div>}<header><div className="header-title">{!sidebar&&<IconButton title="展開側欄" onClick={()=>setSidebar(true)}><PanelLeft size={18}/></IconButton>}<div><div className="header-breadcrumb">{state.threadId&&<><span title={state.workspace}>{workspaceDisplayName(state.workspace)}</span><span aria-hidden="true">/</span></>}<h1>{state.threadId?(state.title||'新對話'):'通用工作台'}</h1></div>{state.parentThreadId&&<small className="branch-parent">分支自：{state.parentTitle||'原對話'}</small>}</div></div><div className="header-actions"><span className={`status ${headerStatus?.kind??''}`} role="status">{headerStatus&&<>{headerStatus.kind!=='muted'&&<i/>}{headerStatus.text}</>}</span><IconButton title="切換工具與成果面板" onClick={()=>chooseInspector(!inspector)}><PanelRight size={19}/></IconButton></div></header>
-  {(error||state.error||!online)&&<div className="alert" role="alert"><span>{error||state.error||'介面暫時斷線。原工作不會重送；請等待連線或重開啟動器。'}</span><IconButton title="關閉提示" onClick={()=>setError('')}><X size={15}/></IconButton></div>}{notice&&<div className="notice">{notice}<button onClick={()=>setNotice('')}>知道了</button></div>}
-   <NativeNotices state={state}/>
+  {(error||state.error||!online)&&<div className="alert" role="alert"><span>{localizeNativeNotice(error||state.error||'介面暫時斷線。原工作不會重送；請等待連線或重開啟動器。',state.provider)}</span><IconButton title="關閉提示" onClick={()=>setError('')}><X size={15}/></IconButton></div>}{notice&&<div className="notice">{notice}<button onClick={()=>setNotice('')}>知道了</button></div>}
+   <NativeNotices state={state} error={error||state.error}/>
    {state.workerConnection==='failed'&&<div className="notice" role="status">{state.workerError||'子代理目前不可用。'} 主代理工作不受影響。<button onClick={()=>open({threadId:state.threadId,model:state.model})}>重新連線</button></div>}
   <Chat key={state.threadId||'empty'} blocked={busy||!online} onChooseModel={()=>setModal({type:'model',threadId:state.threadId})} modelLabel={modelName(state.model)} modelButtonLabel={modelButtonLabel(state.model)} {...{state,uploads,setUploads,upload,action,effort,setEffort,accessMode,permissionConfirmed}} setAccessMode={choosePermission}/>
   </main>

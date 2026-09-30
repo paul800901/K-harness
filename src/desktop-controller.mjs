@@ -119,8 +119,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(e.method==='error'){
    if(p.threadId!==state.threadId)return;
-   const message=`Codex 回合錯誤：${p.error.message}${p.willRetry?'（Codex 原生將重試；K 不會另行重送。）':'（未標示 Codex 原生重試；K 不會重送。）'}`;
-   addNotice('error',message,'nativeError',p.turnId);changed();return;
+   addNotice('error',p.error.message,'nativeError',p.turnId);changed();return;
   }
   if(e.method==='windows/worldWritableWarning'){
    const sample=Array.isArray(p.samplePaths)?p.samplePaths.slice(0,3):[];

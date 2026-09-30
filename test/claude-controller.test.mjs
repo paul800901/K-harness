@@ -176,6 +176,21 @@ test('Claude exposes only native public status and actual context usage, never t
  }finally{await f.controller.close();}
 });
 
+test('Claude quota exhaustion retains the native error without adding a second K notice or retrying work',async()=>{
+ const f=await fixture();
+ try{
+  await f.controller.open({});await f.controller.send({text:'one fake request'});
+  const original="You've hit your session limit · resets 5:30pm (Asia/Taipei)";
+  for(const status of ['allowed_warning','rejected','rejected'])f.hostOptions.onMessage({type:'rate_limit_event',rate_limit_info:{status,rateLimitType:'five_hour'}});
+  f.hostOptions.onMessage({type:'result',is_error:true,result:original});
+  assert.equal(f.controller.state.error,original,'backend preserves the native wording');
+  assert.equal(f.controller.state.usage.claude.rateLimitStatus,'rejected');
+  assert.equal(f.controller.state.busy,false);
+  assert.deepEqual(f.controller.state.notices,[]);
+  assert.equal(f.host.startCalls.length,1);
+ }finally{await f.controller.close();}
+});
+
 test('forwards Luna Codex approvals to the same UI queue and stop cancels pending approval',async()=>{
   const f=await fixture();
   try {

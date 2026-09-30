@@ -6,21 +6,21 @@ test('allowed with org-level-disabled extra usage is informational, not a warnin
   const result=claudeRateStatus({status:null}, {rate_limit_info:{status:'allowed',overageStatus:'rejected',overageDisabledReason:'org_level_disabled'}});
   assert.equal(result.status,'allowed');
   assert.equal(result.extraUsageDisabled,true);
-  assert.equal(result.notice,null);
+  assert.equal('notice' in result,false);
 });
 
-test('non-allowed rate-limit notices are deduplicated until the status changes',()=>{
+test('native rate status updates usage data without synthesizing a K notice',()=>{
   const event=status=>({rate_limit_info:{status}});
-  const limited=claudeRateStatus({status:null},event('allowed_warning'));
-  assert.equal(limited.notice.status,'allowed_warning');
-  assert.equal(claudeRateStatus({status:limited.status},event('allowed_warning')).notice,null);
-  assert.equal(claudeRateStatus({status:limited.status},event('allowed')).notice,null);
-  assert.equal(claudeRateStatus({status:'allowed'},event('allowed_warning')).notice.status,'allowed_warning');
+  for(const status of ['allowed_warning','rejected','rejected','allowed']){
+    const result=claudeRateStatus({status:null},event(status));
+    assert.equal(result.status,status);
+    assert.equal('notice' in result,false);
+  }
   assert.equal(claudeRateStatus({status:'allowed',extraUsageDisabled:true},event('rejected')).extraUsageDisabled,null);
 });
 
 test('missing native status remains unknown',()=>{
   const result=claudeRateStatus({status:null,extraUsageDisabled:null},{rate_limit_info:{overageStatus:'rejected'}});
   assert.equal(result.status,null);
-  assert.equal(result.notice,null);
+  assert.equal('notice' in result,false);
 });

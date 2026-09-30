@@ -8,9 +8,9 @@ export function CopyFeedback({text}){
  const label=status==='copied'?'已複製':status==='failed'?'複製失敗，請重試':status==='pending'?'複製中':'複製';
  return <button type="button" title={label} aria-label={label} disabled={status==='pending'} onClick={copy}>{status==='copied'?<Check size={15}/>:<Copy size={15}/>} <span aria-live="polite">{label}</span></button>;
 }
-export function NativeNotices({state}){
+export function NativeNotices({state,error=state.error}){
  const [dismissed,setDismissed]=useState([]);useEffect(()=>setDismissed([]),[state.threadId]);
- return <div className="native-notices">{visibleNativeNotices(state.notices).filter(n=>!dismissed.includes(n.id)).map(n=><div key={n.id} className={n.level==='error'?'alert':'notice'} role={n.level==='error'?'alert':'status'}><span>{n.message}</span><button aria-label="關閉此通知" onClick={()=>setDismissed(d=>[...d,n.id])}>知道了</button></div>)}</div>;
+ return <div className="native-notices">{visibleNativeNotices(state.notices,error).filter(n=>!dismissed.includes(n.id)).map(n=><div key={n.id} className={n.level==='error'?'alert':'notice'} role={n.level==='error'?'alert':'status'}><span>{n.message}</span><button aria-label="關閉此通知" onClick={()=>setDismissed(d=>[...d,n.id])}>知道了</button></div>)}</div>;
 }
 export function NativeReasoning({state,group}){
  if(state.capabilities?.reasoningSummary===false)return <small>此供應商尚未接入可顯示的原生推理摘要。</small>;
