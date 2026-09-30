@@ -18,4 +18,8 @@
 - 本修正適用 K owner view 的一般文字欄位／文字選取。外部 Chrome 的原生右鍵本來由 Chrome 負責，不在本次修改範圍。
 
 ## 正式部署
-待補讀回；只需更新一個 Electron 模組，前端資產、對話與登入不動。
+03:09 使用者停止 K 後確認無 listener，備份並更新一個 Electron 模組；SHA-256 與來源一致，原入口重開、native health 正常。前端資產、對話與登入不動。
+- 來源：`f6ad3c3`。
+- 備份：`D:\K-harness\.runtime\releases\context-menu-before-20261001-030919`。
+- 收據與證據：`D:\K-harness\.runtime\context-menu-release-20261001`。
+- 還原時正常停 K，將備份 src/electron-workbench.mjs 複製回正式對應位置。
