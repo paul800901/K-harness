@@ -65,7 +65,7 @@ export function createUnifiedController(options){
   },
   async models(){
    const [gpt,anthropic]=await Promise.allSettled([codex.models(),inspect({cwd:root})]);
-   const selectableGPT=new Set(['gpt-6-astra','gpt-6-sol','gpt-6-luna']);
+   const selectableGPT=new Set(['gpt-6-astra','gpt-6.1-sol','gpt-6-luna']);
    const models=gpt.status==='fulfilled'?gpt.value.models.filter(m=>selectableGPT.has(m.model)).map(m=>({...m,provider:'codex'})):[];
    const auth=anthropic.status==='fulfilled'?anthropic.value:{available:false,reason:'Claude 登入狀態檢查失敗。'};
    models.push({model:CLAUDE_MODEL,displayName:'Claude Opus 5.5',provider:'claude',inputModalities:['text','image'],supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort})),available:auth.available,unavailableReason:auth.reason});

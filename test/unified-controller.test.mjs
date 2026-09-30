@@ -12,13 +12,35 @@ const CLAUDE_MODEL='claude-opus-5-5';
 const TEST_ROOT=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 
 test('picker catalog contains only current GPT trio and Claude with native effort choices',async()=>{
- const f=await fixture({codexModels:['gpt-6-astra','gpt-6-sol','gpt-6-luna','gpt-5.6-sol','gpt-5.5'].map(model=>({model}))});
+ const sol={model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']};
+ const f=await fixture({codexModels:[{model:'gpt-6-astra'},sol,...['gpt-6-sol','gpt-6-luna','gpt-5.6-sol','gpt-5.5'].map(model=>({model}))]});
  try{
   const {models}=await f.controller.models();
-  assert.deepEqual(models.map(item=>item.model),['gpt-6-astra','gpt-6-sol','gpt-6-luna','claude-opus-5-5']);
+  assert.deepEqual(models.map(item=>item.model),['gpt-6-astra','gpt-6.1-sol','gpt-6-luna','claude-opus-5-5']);
+  assert.deepEqual(models[1],{...sol,provider:'codex'});
   assert.deepEqual(models.at(-1).supportedReasoningEfforts.map(item=>item.reasoningEffort),['low','medium','high','xhigh','max']);
   await saveMainSession(f.root,{threadId:'old-gpt',model:'gpt-5.6-sol'});
   assert.equal((await f.controller.sessions()).sessions[0].model,'gpt-5.6-sol');
+ }finally{await f.controller.close();}
+});
+
+test('an older native catalog does not invent Sol 6.1 or relabel Sol 6',async()=>{
+ const f=await fixture({codexModels:['gpt-6-astra','gpt-6-sol','gpt-6-luna'].map(model=>({model}))});
+ try{
+  assert.deepEqual((await f.controller.models()).models.map(item=>item.model),['gpt-6-astra','gpt-6-luna','claude-opus-5-5']);
+ }finally{await f.controller.close();}
+});
+
+test('a saved Sol 6 conversation still opens with its original model after the picker upgrade',async()=>{
+ const f=await fixture({codexModels:['gpt-6-astra','gpt-6.1-sol','gpt-6-sol','gpt-6-luna'].map(model=>({model}))});
+ try{
+  await saveMainSession(f.root,{threadId:'legacy-sol',model:'gpt-6-sol',workspace:f.root});
+  await f.controller.models();
+  await f.controller.open({threadId:'legacy-sol',model:'gpt-6-sol'});
+  assert.deepEqual(f.codex.calls.find(call=>call.method==='open').data,{threadId:'legacy-sol',model:'gpt-6-sol'});
+  assert.equal(f.controller.state.model,'gpt-6-sol');
+  assert.equal((await f.controller.sessions()).sessions.find(item=>item.threadId==='legacy-sol').model,'gpt-6-sol');
+  assert.equal(f.codex.calls.some(call=>call.method==='selectModel'),false);
  }finally{await f.controller.close();}
 });
 

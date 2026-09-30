@@ -9,11 +9,14 @@ import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
 const ASTRA='gpt-6-astra';
 const TERRA='gpt-5.6-terra';
 const LUNA='gpt-6-luna';
+const SOL='gpt-6.1-sol';
+const LEGACY_SOL='gpt-6-sol';
 const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const catalog=[
  {model:ASTRA,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
  {model:TERRA,displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
  {model:LUNA,displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low',inputModalities:['text']},
+ ...[SOL,LEGACY_SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']})),
 ];
 
 const existingHistory=(threadId,text='既有要求')=>({turns:[{id:`prior-${threadId}`,items:[{type:'userMessage',id:`user-${threadId}`,content:[{type:'text',text}]},{type:'agentMessage',id:`assistant-${threadId}`,text:'既有回答'}]}]});
@@ -88,6 +91,31 @@ test('failed open closes the injected owner browser gateway',async()=>{
   await assert.rejects(f.c.open({model:ASTRA}),/fixture thread start failure/);
   assert.equal(browserCloseCount,1);
   assert.equal(f.c.state.browserAccess.enabled,false);
+ }finally{await f.c.close();}
+});
+
+test('Sol 6.1 is sent to the native host only after explicit selection, with old Sol history preserved',async()=>{
+ const f=await fixture({sessions:[{threadId:'legacy-sol',model:LEGACY_SOL,accessMode:'read-only'}]});
+ try{
+  await f.c.open({threadId:'legacy-sol',model:LEGACY_SOL});
+  assert.equal(f.c.state.model,LEGACY_SOL);
+  await f.c.selectModel({threadId:'legacy-sol',model:SOL,effort:'high',confirmed:true});
+  assert.equal(f.calls.some(call=>call.method==='turn/start'),false);
+  assert.ok(f.c.state.messages.some(message=>message.text==='既有要求'));
+  await f.c.send({text:'新模型驗證'});
+  const turn=f.calls.find(call=>call.method==='turn/start');
+  assert.equal(turn.p.model,SOL);
+  assert.equal(turn.p.effort,'high');
+  assert.equal(turn.p.threadId,'legacy-sol');
+  assert.equal(turn.p.sandboxPolicy.type,'readOnly');
+  await f.c.close();
+  const reopened=f.makeController();
+  try{
+   await reopened.open({threadId:'legacy-sol',model:SOL});
+   assert.equal(reopened.state.model,SOL);
+   assert.equal(reopened.state.accessMode,'read-only');
+   assert.ok(reopened.state.messages.some(message=>message.text==='既有要求'));
+  }finally{await reopened.close();}
  }finally{await f.c.close();}
 });
 

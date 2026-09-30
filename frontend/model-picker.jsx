@@ -6,7 +6,7 @@ import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login
 export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
 const modelProvider=model=>model?.provider==='claude'||model?.model?.startsWith('claude-')?'claude':'codex';
-const modelsByProvider={codex:new Set(['gpt-6-astra','gpt-6-sol','gpt-6-luna']),claude:new Set(['claude-opus-5-5'])};
+const modelsByProvider={codex:new Set(['gpt-6-astra','gpt-6.1-sol','gpt-6-luna']),claude:new Set(['claude-opus-5-5'])};
 const providerLabel=provider=>provider==='claude'?'Claude':'GPT';
 const providerSubscription=provider=>provider==='claude'?'Claude 訂閱':'Codex 訂閱';
 const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
