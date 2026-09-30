@@ -3,9 +3,8 @@ import assert from 'node:assert/strict';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import * as nativeNotices from '../frontend/native-notices.mjs';
 
-test('hides the obsolete external-sandbox explainer without suppressing actionable warnings or errors',()=>{
+test('retains actionable warnings and errors',()=>{
  const notices=[
-  {id:'network',kind:'externalSandboxNetwork',level:'warning'},
   {id:'reroute',kind:'modelRerouted',level:'warning'},
   {id:'error',kind:'nativeError',level:'error'},
  ];

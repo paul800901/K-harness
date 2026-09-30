@@ -4,13 +4,8 @@ const {mkdir,realpath,stat}=require('node:fs/promises');
 
 const root=path.resolve(__dirname,'..');
 const requireFromRuntime=createRequire(path.join(root,'package.json'));
-let ownerWorkbench=null,browserConnection=null,shuttingDown=false,ownerClosed=false,ownerClosePromise=null,electronApp=requireFromRuntime('electron').app,transport=null,ownerServices=null;
+let ownerWorkbench=null,shuttingDown=false,ownerClosed=false,ownerClosePromise=null,electronApp=requireFromRuntime('electron').app,ownerServices=null;
 
-function policySnapshot(state={}){
- const room=value=>({busy:value?.busy,pendingQuestions:value?.pendingQuestions,questions:value?.questions?.length?[true]:[],queuedMessages:value?.queuedMessages?.length?[true]:[],
-  status:value?.status,workers:Array.isArray(value?.workers)?value.workers.map(worker=>({settled:worker?.settled,status:worker?.status})):undefined});
- return {...room(state),conversationActivity:Array.isArray(state.conversationActivity)?state.conversationActivity.map(room):[]};
-}
 function reply(id,ok,value){if(process.connected)process.send({type:'owner-response',id,ok,...(ok?{value}:{})});}
 async function closeOwner(){
  if(ownerClosed)return;
@@ -29,17 +24,15 @@ async function shutdown(){
 }
 
 function handleParentMessage(message){
- if(message?.type==='cdp-receive'&&message.message&&typeof message.message==='object')transport?.onmessage?.(message.message);
  if(message?.type==='owner-request'&&Number.isSafeInteger(message.id))void handleOwnerRequest(message);
 }
 process.on('message',handleParentMessage);
 
-async function startNativeOwner({servicesFactory,electron=requireFromRuntime('electron'),paths,connectBrowser,userDataPath}={}){
+async function startNativeOwner({servicesFactory,electron=requireFromRuntime('electron'),paths,userDataPath}={}){
  electronApp=electron.app;
  if(shuttingDown||!process.connected){electronApp.quit();throw Error('Native supervisor disconnected before Electron startup.');}
  const {isolatedLauncherPaths,startIsolatedOwner}=await import(pathToFileUrl(path.join(__dirname,'isolated-launcher.mjs')));
  paths??=isolatedLauncherPaths();
- const {chromium}=requireFromRuntime('playwright-core');
  await stat(paths.vault).then(value=>{if(!value.isDirectory())throw Error('Candidate vault is unavailable.');});
  const nativeUserData=path.resolve(userDataPath??path.join(paths.vault,'native-shell'));
  const requestedRelative=path.relative(path.resolve(paths.vault),nativeUserData);
@@ -51,12 +44,6 @@ async function startNativeOwner({servicesFactory,electron=requireFromRuntime('el
  electron.app.setPath('userData',actual);
  await electron.app.whenReady();
  if(shuttingDown||!process.connected)throw Error('Native supervisor disconnected during startup.');
- transport={
-  send(message){if(!process.connected)throw Error('Private native CDP relay is disconnected.');process.send({type:'cdp-send',message});},
-  close(){this.onclose?.();},
- };
- browserConnection=await (connectBrowser??((pipe)=>chromium.connectOverCDP(pipe,{noDefaults:true})))(transport);
- if(shuttingDown||!process.connected)throw Error('Native supervisor disconnected during startup.');
  const {createElectronWorkbench}=await import(pathToFileUrl(path.join(__dirname,'electron-workbench.mjs')));
  const factory=servicesFactory??(async({gatewayFactory})=>{
   ownerServices=await startIsolatedOwner({paths,nodeExecutable:process.env.K_ISOLATED_PARENT_NODE_EXECUTABLE,gatewayFactory});
@@ -65,7 +52,7 @@ async function startNativeOwner({servicesFactory,electron=requireFromRuntime('el
  });
  const {loadKBrowserAssistant}=await import(pathToFileUrl(path.join(__dirname,'k-browser-assistant.mjs')));
  const browserGatewayFactory=await loadKBrowserAssistant({vault:paths.vault});
- ownerWorkbench=await createElectronWorkbench({electron,browser:browserConnection,servicesFactory:factory,browserGatewayFactory});
+ ownerWorkbench=await createElectronWorkbench({electron,servicesFactory:factory,browserGatewayFactory});
  ownerWorkbench.services.app.onClosed?.(()=>{if(!shuttingDown&&process.connected)process.send({type:'owner-close-request'});});
  if(shuttingDown||!process.connected){await ownerWorkbench.close();throw Error('Native supervisor disconnected during startup.');}
  ownerWorkbench.show();
@@ -80,7 +67,6 @@ async function startNativeOwner({servicesFactory,electron=requireFromRuntime('el
 function pathToFileUrl(value){return require('node:url').pathToFileURL(value).href;}
 async function handleOwnerRequest({id,method}){
  try{
-  if(method==='state')return reply(id,true,policySnapshot(ownerWorkbench?.services?.app?.controller?.state??{}));
   if(method==='show'){ownerWorkbench.show();return reply(id,true,{shown:true});}
   if(method==='close'){shuttingDown=true;try{await closeOwner();reply(id,true,{closed:true});setImmediate(()=>{try{electronApp?.quit();}catch{}});}catch{shuttingDown=false;reply(id,false);}return;}
   reply(id,false);

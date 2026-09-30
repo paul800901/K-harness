@@ -1,6 +1,5 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
-import {fileURLToPath} from 'node:url';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
@@ -9,16 +8,12 @@ import {listProjects,addProject,updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
-import {createWindowsDictation} from './windows-dictation.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
-import {browserLiveRequest} from './browser-live-proxy.mjs';
 
-export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,dictationFactory=createWindowsDictation,localDictationFactory=createLocalDictation,requireLaunchToken=false,deployment='standard',claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,browserRequest=browserLiveRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
- if(!['standard','isolated','native'].includes(deployment)||deployment!=='standard'&&!requireLaunchToken)throw new Error('Invalid desktop deployment mode.');
+export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateStream=createStateStream();let scheduled;
- // Opt-in for the isolated deployment candidate. Delivery of this one-use URL
+ // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
- // Network/OS isolation is still required, not replaced by a URL secret.
  let launchToken=null,launchExpires=0;
  const cookieMatches=req=>req.headers.cookie?.split(';').some(c=>c.trim()===`k_session=${cookie}`);
  const claudeLogin=claudeLoginFactory({cwd:root});
@@ -72,9 +67,6 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
   serverClosePromise=pending.finally(()=>{serverClosePromise=null;});
   return serverClosePromise;
  };
- const assets=new Map([['/',['index.html','text/html']],['/app.js',['app.js','text/javascript']],['/style.css',['style.css','text/css']],['/icon.svg',['icon.svg','image/svg+xml']]]);
- for(const name of ['base.css','design-platform.css','scrollbar.css'])assets.set(`/dsh/${name}`,[`dsh/${name}`,'text/css']);
- assets.set('/dsh-layout.css',['dsh-layout.css','text/css']);
  let origin;
  const server=http.createServer(async(req,res)=>{
   const json=(code,value)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
@@ -85,24 +77,18 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(req.headers.host!==new URL(origin).host)return json(403,{error:'Invalid host'});
    const url=new URL(req.url,origin);requestPath=url.pathname;
    if(closing&&!(req.method==='GET'&&['/health','/api/state'].includes(url.pathname))&&!(req.method==='POST'&&url.pathname==='/api/shutdown'))return json(503,{error:'K 正在關閉，請稍後重試。'});
-   if(requireLaunchToken&&req.method==='GET'&&url.pathname==='/bootstrap'){
+   if(req.method==='GET'&&url.pathname==='/bootstrap'){
     const actual=Buffer.from(url.searchParams.get('token')??''),expected=Buffer.from(launchToken??'');
     if(!launchToken||Date.now()>launchExpires||actual.length!==expected.length||!timingSafeEqual(actual,expected))return json(403,{error:'啟動連結無效或已使用，請重新從桌面開啟。'});
     launchToken=null;launchExpires=0;
     res.writeHead(303,{'Location':'/','Set-Cookie':`k_session=${cookie}; HttpOnly; SameSite=Strict; Path=/`});return res.end();
    }
-   if(req.method==='GET'&&url.pathname==='/health')return json(200,{app:'k-harness-desktop',version:1,deployment,workspace:root});
+   if(req.method==='GET'&&url.pathname==='/health')return json(200,{app:'k-harness-desktop',version:1,deployment:'native',workspace:root});
    if(req.method==='GET'&&(url.pathname==='/'||/^\/assets\/[a-zA-Z0-9_.-]+$/.test(url.pathname))){
-    if(requireLaunchToken&&url.pathname==='/'&&!cookieMatches(req))return json(403,{error:'請從可信桌面入口開啟 K。'});
+    if(url.pathname==='/'&&!cookieMatches(req))return json(403,{error:'請從可信桌面入口開啟 K。'});
     const name=url.pathname==='/'?'index.html':url.pathname.slice(1);
     const type=name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':name.endsWith('.jpg')?'image/jpeg':'application/octet-stream';
-    if(url.pathname==='/'&&!requireLaunchToken)res.setHeader('Set-Cookie',`k_session=${cookie}; HttpOnly; SameSite=Strict; Path=/`);
     const body=await readFile(new URL(name,uiRoot));res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
-   }
-   if(req.method==='GET'&&assets.has(url.pathname)){
-    const [name,type]=assets.get(url.pathname);
-    if(url.pathname==='/'&&!requireLaunchToken)res.setHeader('Set-Cookie',`k_session=${cookie}; HttpOnly; SameSite=Strict; Path=/`);
-    const body=await readFile(new URL(`../web/${name}`,import.meta.url));res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
    }
    if(!cookieMatches(req))return json(403,{error:'請從桌面啟動 K。'});
    if(req.headers.origin&&req.headers.origin!==origin)return json(403,{error:'Cross-origin request denied'});
@@ -152,10 +138,6 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
      return json(200,result);
     }finally{res.off('close',disconnected);req.off('aborted',disconnected);}
    }
-   if(url.pathname==='/api/dictation'){
-    const result=await dictationFactory()();
-    return json(result?.ok?200:409,result);
-   }
    if(url.pathname==='/api/browser/action')return json(200,await browserRequest(root,controller.state,data.threadId,'/action',data));
    if(url.pathname==='/api/codex/login')return json(200,await codexLogin.start());
    if(url.pathname==='/api/codex/login/cancel')return json(200,await codexLogin.cancel());
@@ -195,15 +177,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  server.once('close',()=>{if(!closedResources.has('本機語音辨識'))void closeLocalDictation().catch(()=>{});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>{origin=`http://127.0.0.1:${server.address().port}`;resolve();});});
  return {origin,controller,onClosed(listener){server.once('close',listener);},createLaunchUrl(){
-  if(!requireLaunchToken)return origin;
   launchToken=randomBytes(32).toString('hex');launchExpires=Date.now()+60000;
   return `${origin}/bootstrap?token=${launchToken}`;
  },async close(){await closeResources();await closeServer();}};
 }
-if(process.argv[1]===fileURLToPath(import.meta.url)){
- const root=fileURLToPath(new URL('../',import.meta.url));const executable=process.argv[2];if(!executable)throw new Error('Installed Codex executable required.');
- const app=await startDesktop({root,executable});console.log(`K desktop ready: ${app.origin}`);
- for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>void app.close());
-}
-
-

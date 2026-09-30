@@ -1,6 +1,5 @@
 import path from 'node:path';
 import {spawn} from 'node:child_process';
-import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
 import {isolatedLauncherPaths,runIsolatedLauncherProtocol} from './isolated-launcher.mjs';
 import {stat,realpath} from 'node:fs/promises';
@@ -20,14 +19,14 @@ function electronEnvironment(source){
   return env;
 }
 
-/** Node parent: private Electron CDP pipe + private launcher stdin protocol. */
+/** Node parent: private Electron IPC + launcher stdin protocol. */
 export async function startElectronIsolatedLauncher({paths=isolatedLauncherPaths(),input=process.stdin,output=process.stdout,
   electronPath=paths.electronExecutable,mainPath=path.join(paths.trustedRuntime,'src','electron-isolated-main.cjs'),spawnImpl=spawn,processObject=process}={}){
   const executable=await trustedFile(electronPath,paths.trustedRuntime);
   const main=await trustedFile(mainPath,paths.trustedRuntime);
-  const child=spawnImpl(executable,[main,'--remote-debugging-pipe'],{
+  const child=spawnImpl(executable,[main],{
     cwd:paths.trustedRuntime,env:{...electronEnvironment(processObject.env),K_ISOLATED_PARENT_NODE_EXECUTABLE:processObject.execPath},
-    windowsHide:true,stdio:['ignore','ignore','ignore','pipe','pipe','ipc'],
+    windowsHide:true,stdio:['ignore','ignore','ignore','ipc'],
   });
   let protocol=null,readyResolve,readyReject,failed=false,exited=false,normalCloseRequested=false;
   const readyPromise=new Promise((resolve,reject)=>{readyResolve=resolve;readyReject=reject;});
@@ -47,21 +46,7 @@ export async function startElectronIsolatedLauncher({paths=isolatedLauncherPaths
     for(const request of pending.values())request.reject(Error('Native Electron workbench disconnected.'));pending.clear();
     if(protocol&&!exited)void protocol.close();
   };
-  let cdpBuffer=Buffer.alloc(0);
-  child.stdio[4]?.on('data',chunk=>{
-    cdpBuffer=Buffer.concat([cdpBuffer,chunk]);let offset;
-    while((offset=cdpBuffer.indexOf(0))>=0){const message=cdpBuffer.subarray(0,offset).toString('utf8');cdpBuffer=cdpBuffer.subarray(offset+1);if(!message)continue;
-      let decoded;try{decoded=JSON.parse(message);}catch{fail();return;}
-      if(!child.connected){fail();return;}child.send({type:'cdp-receive',message:decoded},error=>{if(error)fail();});
-    }
-    if(cdpBuffer.length>32*1024*1024)fail();
-  });
-  child.stdio[3]?.on('error',fail);child.stdio[4]?.on('error',fail);
   child.on('message',message=>{
-    if(message?.type==='cdp-send'&&message.message&&typeof message.message==='object'){
-      if(!child.stdio[3]?.write(`${JSON.stringify(message.message)}\0`))child.stdio[3].once('drain',()=>{});
-      return;
-    }
     if(message?.type==='owner-ready'&&message.origin===ORIGIN){readyResolve();return;}
     if(message?.type==='owner-response'&&Number.isSafeInteger(message.id)){
       const request=pending.get(message.id);if(!request)return;pending.delete(message.id);
@@ -77,10 +62,8 @@ export async function startElectronIsolatedLauncher({paths=isolatedLauncherPaths
     await readyPromise;
     clearTimeout(startupTimer);
     if(failed||exited||!child.connected)throw Error('Native workbench exited before supervisor setup.');
-    let snapshot={};
-    const app={origin:ORIGIN,controller:{get state(){return snapshot;}},async close(){normalCloseRequested=true;try{await rpc('close');}catch(error){normalCloseRequested=false;if(exited){processObject.exitCode=1;input.destroy?.();}throw error;}}};
-    protocol=runIsolatedLauncherProtocol({app,input,output,presentation:'native',autoReady:false,
-      getState:async()=>{snapshot=await rpc('state');return snapshot;},
+    const app={origin:ORIGIN,async close(){normalCloseRequested=true;try{await rpc('close');}catch(error){normalCloseRequested=false;if(exited){processObject.exitCode=1;input.destroy?.();}throw error;}}};
+    protocol=runIsolatedLauncherProtocol({app,input,output,autoReady:false,
       onOpen:()=>rpc('show'),
     });
     protocol.ready();

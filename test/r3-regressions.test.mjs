@@ -5,7 +5,6 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {syncBuiltinESMExports} from 'node:module';
 import {createUnifiedController} from '../src/unified-controller.mjs';
-import {createCodingTools,normalizeCoding} from '../src/coding.mjs';
 import {saveUiMessageTiming,loadUiMessageTiming} from '../src/ui-message-timing.mjs';
 
 async function fixture(){const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await fs.mkdir(base,{recursive:true});return fs.mkdtemp(path.join(base,'r3-'));}
@@ -15,16 +14,6 @@ test('R3 official new Codex model is selectable without changing K',async()=>{
  const c=createUnifiedController({root,codexFactory:()=>({state:{},models:async()=>({models:[model]})}),claudeFactory:()=>({state:{},models:async()=>({models:[]})})});
  const rows=(await c.models()).models;
  assert.deepEqual(rows.find(x=>x.model===model.model),{...model,provider:'codex'});
-});
-
-test('R3 worker exposes exact replacement only, not a fixed test runner',async()=>{
- const root=await fixture();await fs.writeFile(path.join(root,'code.mjs'),'export const value=1;');
- const policy=normalizeCoding({editFiles:['code.mjs']},['code.mjs'],[]);
- assert.deepEqual(policy,{editFiles:['code.mjs']});
- const tools=await createCodingTools(root,policy,['code.mjs'],root);
- assert.deepEqual(tools.map(x=>x.name),['replace_code']);
- await tools[0].execute('edit',{path:'code.mjs',expectedText:'value=1',newText:'value=2'});
- assert.equal(await fs.readFile(path.join(root,'code.mjs'),'utf8'),'export const value=2;');
 });
 
 test('R3 timing projection survives a brief Windows replacement conflict',async t=>{

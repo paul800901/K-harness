@@ -1,58 +1,23 @@
-import {createServer} from 'node:http';
-import {randomBytes,randomUUID,timingSafeEqual} from 'node:crypto';
-import {lstat,mkdir,readFile,rename,stat,writeFile} from 'node:fs/promises';
+import {randomUUID} from 'node:crypto';
+import {lstat,mkdir,readFile,stat,writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
-import {execFile} from 'node:child_process';
-import {promisify} from 'node:util';
-import {prepareBrowserDownloadHistory} from './browser-download-history.mjs';
 import {MAX_DOWNLOAD_COPY_BYTES} from '../shared/browser-downloads.mjs';
 
 const VIEWPORT={width:1024,height:768};
-const LOOPBACK=new Set(['127.0.0.1','::1','::ffff:127.0.0.1']);
-
-// History must only be prepared offline. Do not touch a profile already open
-// in another K/browser process, even if SQLite happens to allow a short write.
-async function assertProfileIdle(profile){
-  if(process.platform!=='win32')return;
-  const script=String.raw`
-$ErrorActionPreference='Stop'
-$target=[IO.Path]::GetFullPath($env:K_BROWSER_PROFILE_CHECK).TrimEnd('\')
-$pattern='(?i)(?:^|\s)(?:"--user-data-dir=([^"]+)"|--user-data-dir=(?:"([^"]+)"|(\S+)))'
-foreach($p in (Get-CimInstance Win32_Process -Filter "Name = 'msedge.exe' OR Name = 'chrome.exe'")) {
-  if([string]::IsNullOrWhiteSpace($p.CommandLine)){
-    # CIM can observe a process that exits before CommandLine is read.
-    if(Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue){ [Console]::Write('unknown');exit }
-    continue
-  }
-  foreach($m in [regex]::Matches([string]$p.CommandLine,$pattern)) {
-    $value=($m.Groups[1].Value+$m.Groups[2].Value+$m.Groups[3].Value)
-    if([IO.Path]::GetFullPath($value).TrimEnd('\') -ieq $target){ [Console]::Write('busy');exit }
-  }
-}
-[Console]::Write('idle')`;
-  const {stdout}=await promisify(execFile)(path.join(process.env.SystemRoot??'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:10000,env:{...process.env,K_BROWSER_PROFILE_CHECK:profile}});
-  if(stdout.trim()==='busy')throw new Error('瀏覽器資料仍在使用中；請先關閉該對話的瀏覽器連線後重試。');
-  if(stdout.trim()!=='idle')throw new Error('無法確認瀏覽器資料是否閒置；沒有修改資料，請稍後重試。');
-}
-
 /**
- * One dedicated persistent browser context shared by the official Playwright
+ * One externally supplied browser context shared by the official Playwright
  * MCP server and K's authenticated live-view controls. This is a local control
  * API, not an OS/browser isolation boundary.
  */
-export async function createBrowserLiveSession(profile,{launchContext,downloadDirectory,controlMode='http',onControlChange=()=>{},nativeDownloads=false}={}){
+export async function createBrowserLiveSession(profile,{launchContext,downloadDirectory,onControlChange=()=>{}}={}){
   if(typeof profile!=='string'||!path.isAbsolute(profile))throw new Error('Dedicated absolute browser profile is required.');
   if(downloadDirectory!==undefined&&(typeof downloadDirectory!=='string'||!path.isAbsolute(downloadDirectory)))throw new Error('Dedicated absolute download directory is required.');
-  if(!['http','in-process'].includes(controlMode))throw new TypeError('controlMode must be http or in-process.');
   if(typeof onControlChange!=='function')throw new TypeError('onControlChange must be a synchronous callback.');
-  if(typeof nativeDownloads!=='boolean'||nativeDownloads&&controlMode!=='in-process')throw new TypeError('Native downloads require an in-process browser owner.');
   const downloadsRoot=downloadDirectory?path.resolve(downloadDirectory):null;
-  const token=controlMode==='http'?randomBytes(32).toString('hex'):null;
   let contextPromise;
   let context=null;
   let mode='ai', aiCalls=0, humanAction=false, disconnected=false, closed=false;
-  let nextPageId=1, selectedPageId=null, failClosedPromise=null, closePromise=null, listenerClosed=false;
+  let nextPageId=1, selectedPageId=null, failClosedPromise=null, closePromise=null;
   let humanInputAllowed=false;
   const pageIds=new WeakMap();
   const downloadPages=new WeakSet();
@@ -116,17 +81,13 @@ export async function createBrowserLiveSession(profile,{launchContext,downloadDi
   const attachPage=page=>{
     pageId(page);
     if(typeof page?.on==='function'&&!downloadPages.has(page)){
-      downloadPages.add(page);page.on('download',download=>{try{installSafeSaveAs(download);}catch{try{download.saveAs=async()=>{throw new Error('Download save operation could not be secured.');};}catch{}}if(!nativeDownloads)void trackDownload(download);});
+      downloadPages.add(page);page.on('download',download=>{try{installSafeSaveAs(download);}catch{try{download.saveAs=async()=>{throw new Error('Download save operation could not be secured.');};}catch{}}void trackDownload(download);});
     }
   };
   const getContext=async()=>{
     if(disconnected||closed)throw new Error('Browser session is unavailable.');
     if(!contextPromise)contextPromise=Promise.resolve().then(async()=>{
-      if(!launchContext&&process.platform==='win32'){
-        await assertProfileIdle(profile);
-        await prepareBrowserDownloadHistory(profile);
-      }
-      return launchContext?launchContext(profile,VIEWPORT):chromium.launchPersistentContext(profile,{channel:'msedge',headless:true,viewport:VIEWPORT});
+      return launchContext(profile,VIEWPORT);
     }).then(async value=>{
       if(closed){await value.close().catch(()=>{});throw new Error('Browser session is unavailable.');}
       context=value;
@@ -354,34 +315,6 @@ export async function createBrowserLiveSession(profile,{launchContext,downloadDi
       return new Response(null,{status:404,headers:{'Cache-Control':'no-store'}});
     }catch(error){return json({error:error.message},400);}
   }
-  const serveHttp=async(req,res)=>{
-    const hostHeader=req.headers.host??'';
-    const remote=req.socket.remoteAddress;
-    if(!LOOPBACK.has(remote)||hostHeader!==`127.0.0.1:${server.address()?.port}`&&hostHeader!==`localhost:${server.address()?.port}`&&hostHeader!==`[::1]:${server.address()?.port}`){res.writeHead(403);res.end();return;}
-    const supplied=Buffer.from((req.headers.authorization??'').replace(/^Bearer /,''));
-    const expected=Buffer.from(token);
-    if(!req.headers.authorization?.startsWith('Bearer ')||supplied.length!==expected.length||!timingSafeEqual(supplied,expected)){res.writeHead(401);res.end();return;}
-    let body;
-    if(req.method==='POST'&&req.url?.startsWith('/action')){
-      try{let raw='';for await(const chunk of req){raw+=chunk;if(raw.length>20000)throw new Error('Action payload is too large.');}body=JSON.parse(raw);}catch(error){const response=json({error:error.message},400);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(await response.text());return;}
-    }
-    const response=await controlRequest(req.method,req.url,body);
-    const bytes=Buffer.from(await response.arrayBuffer());
-    res.writeHead(response.status,Object.fromEntries(response.headers));res.end(bytes);
-  };
-  let server=controlMode==='http'?createServer(serveHttp):null;
-  let descriptorPath=null;
-  if(server){
-    server.listen(0,'127.0.0.1');
-    await new Promise((resolve,reject)=>{server.once('listening',resolve);server.once('error',reject);});
-    const descriptor={port:server.address().port,token};
-    descriptorPath=path.join(profile,'live.json');
-    const tempPath=path.join(profile,`.live-${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
-    try{
-      await writeFile(tempPath,JSON.stringify(descriptor),{mode:0o600,flag:'wx'});
-      await rename(tempPath,descriptorPath);
-    }catch(error){await new Promise(resolve=>server.close(()=>resolve()));throw error;}
-  }
   const failClosed=()=>{
     if(!failClosedPromise)failClosedPromise=(async()=>{
       notifyControl({mode:'human',closed:true});
@@ -390,22 +323,6 @@ export async function createBrowserLiveSession(profile,{launchContext,downloadDi
       if(context)await context.close();
     })();
     return failClosedPromise;
-  };
-  const getPresentationPage=async id=>{
-    if(!context||closed||disconnected)return null;
-    const current=pages();
-    const target=id===undefined||id===null?selectedPageId??current.at(-1)?.id:id;
-    if(target===undefined||target===null)return null;
-    if(typeof target!=='string'||!target)throw new Error('Unknown or closed browser page.');
-    const page=context.pages().find(candidate=>!candidate.isClosed?.()&&pageId(candidate)===target);
-    if(!page)throw new Error('Unknown or closed browser page.');
-    return page;
-  };
-  const acceptNativeDownload=download=>{
-    if(controlMode!=='in-process'||!nativeDownloads)throw new Error('Native browser downloads are not enabled for this owner session.');
-    if(!download||typeof download.suggestedFilename!=='function'||typeof download.url!=='function'||typeof download.saveAs!=='function')throw new Error('Invalid native browser download adapter.');
-    installSafeSaveAs(download);
-    void trackDownload(download);
   };
   const getControlSnapshot=()=>({...controlSnapshot(),humanInputAllowed});
   notifyControl();
@@ -419,21 +336,15 @@ export async function createBrowserLiveSession(profile,{launchContext,downloadDi
     },
     beginAiCall,endAiCall,
     reloadPageAtIndex,
-    getState:state,
-    ...(controlMode==='in-process'?{ownerPresentation:async id=>({page:await getPresentationPage(id),control:getControlSnapshot()}),getControlSnapshot}:{}),
-    ...(controlMode==='in-process'&&nativeDownloads?{acceptNativeDownload}:{}),
+    getState:state,getControlSnapshot,
+    humanRequest(route,body){return controlRequest(body===undefined?'GET':'POST',route,body);},
     failClosed,
     close(){
       if(!closePromise)closePromise=(async()=>{
-        if(server&&!listenerClosed){listenerClosed=true;await new Promise(resolve=>server.close(()=>resolve()));}
         await failClosed().catch(()=>{});
       })();
       return closePromise;
     },
-    descriptorPath,
-    // This direct capability is returned only in the explicitly selected
-    // in-process mode; it never creates or relies on an HTTP control token.
-    ...(controlMode==='in-process'?{humanRequest(route,body){return controlRequest(body===undefined?'GET':'POST',route,body);}}:{}),
   };
 }
 

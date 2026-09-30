@@ -1,9 +1,6 @@
-import {createConnection} from '@playwright/mcp';
-import {StdioServerTransport} from '@modelcontextprotocol/server/stdio';
 import {randomUUID} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
 import path from 'node:path';
-import {pathToFileURL} from 'node:url';
 
 // This is a tool-level boundary, not an OS sandbox. Keep the official browser
 // implementation, but do not allow native clients' project roots to widen it.
@@ -163,34 +160,5 @@ export function restrictedBrowserTransport(raw,directory,liveSession=null){
     },
     async close(){await raw.close();}
   };
-}
-
-export async function startBrowserMcp(directory,profile){
-  if(!path.isAbsolute(directory??'')||!path.isAbsolute(profile??''))throw new Error('Dedicated absolute browser directories are required.');
-  const root=await realpath(directory);
-  process.chdir(root); // Claude does not support the Codex MCP cwd field.
-  const {createBrowserLiveSession}=await import('./browser-live-session.mjs');
-  const liveSession=await createBrowserLiveSession(profile,{downloadDirectory:path.join(root,'downloads')});
-  let server;
-  try{
-  server=await createConnection({browser:{browserName:'chromium',userDataDir:profile,launchOptions:{channel:'msedge',headless:true,viewport:{width:1024,height:768}}},outputDir:root,allowUnrestrictedFileAccess:false,webmcp:false},liveSession.contextGetter);
-  // The public SDK method is used by Playwright during initialization. Return
-  // only K's dedicated directory, regardless of provider roots capabilities.
-  server.listRoots=async()=>({roots:[{uri:pathToFileURL(root).href,name:'K browser files'}]});
-  const transport=restrictedBrowserTransport(new StdioServerTransport(),root,liveSession);
-  // The SDK transport does not close itself on stdin EOF. Without this, the
-  // live-view HTTP listener keeps the process alive until the native client
-  // kills it, which can lose unflushed persistent cookies/history on Windows.
-  const onInputEnd=()=>{void server.close().catch(error=>console.error(error.message));};
-  const close=transport.close.bind(transport);
-  transport.close=async()=>{process.stdin.off('end',onInputEnd);try{await close();}finally{await liveSession.close();}};
-  await server.connect(transport);
-  process.stdin.once('end',onInputEnd);
-  return server;
-  }catch(error){await liveSession.close();throw error;}
-}
-
-if(process.argv[1]&&import.meta.url===pathToFileURL(path.resolve(process.argv[1])).href){
-  startBrowserMcp(process.argv[2],process.argv[3]).catch(error=>{console.error(error.message);process.exitCode=1;});
 }
 

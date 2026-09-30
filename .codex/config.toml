@@ -1,8 +1,1 @@
-# K HARNESS only. No credentials, model overrides or global settings.
-[mcp_servers.k_flash]
-command = 'C:\Program Files\nodejs\node.exe'
-args = ['D:\K-harness\src\mcp-stdio.mjs', '--live', '--workspace', 'D:\K-harness', '--model', 'deepseek-v4-flash', '--key-file', 'D:\K-harness\.env.local']
-cwd = 'D:\K-harness'
-startup_timeout_sec = 30
-tool_timeout_sec = 75
-enabled_tools = ['k_worker_run', 'k_worker_start', 'k_worker_wait', 'k_worker_inspect', 'k_worker_recover', 'k_worker_cancel']
+# K 專案已移除 DeepSeek 工人；既有全域設定不變。

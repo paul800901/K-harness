@@ -156,7 +156,7 @@ test('all native permission modes retain native turn sandbox on start and resume
  for(const [mode,type] of [['read-only','readOnly'],['workspace-write','workspaceWrite'],['auto-review','workspaceWrite'],['danger-full-access','dangerFullAccess']]){
   const f=await fixture();try{
    await f.c.open({model:'gpt-6-astra',accessMode:mode,permissionConfirmed:true});
-   assert.equal(f.c.state.executionPolicy,null);
+   assert.equal(f.c.state.executionPolicy,undefined);
    assert.equal(f.calls.findLast(c=>c.method==='thread/start').p.sandbox,mode==='auto-review'?'workspace-write':mode);
    await f.c.send({text:'fake native turn',accessMode:mode,permissionConfirmed:true});
    assert.equal(f.calls.findLast(c=>c.method==='turn/start').p.sandboxPolicy.type,type);

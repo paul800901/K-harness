@@ -2,7 +2,6 @@ import { lstat, readdir, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-const FLASH_TOOLS = ['k_worker_run', 'k_worker_start', 'k_worker_wait', 'k_worker_inspect', 'k_worker_recover', 'k_worker_cancel'];
 
 function samePath(left, right) {
   return path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();
@@ -78,33 +77,3 @@ export async function listWorkspaceDirectories(parent) {
     .map(entry => ({ name: entry.name, path: path.join(base, entry.name) }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
 }
-
-/**
- * Build the per-thread runtime override. It keeps K's MCP program and key
- * file fixed while changing only the selected workspace; no selected
- * workspace .codex configuration is copied or edited.
- */
-export function createWorkspaceRuntimeConfig({ appRoot, workspace, nodeExecutable = process.execPath, model = 'deepseek-v4-flash' }) {
-  const root = normalizeWorkspacePath(appRoot);
-  const selected = normalizeWorkspacePath(workspace);
-  if (typeof nodeExecutable !== 'string' || !path.isAbsolute(nodeExecutable)) throw new Error('Node 執行檔必須是絕對路徑。');
-  if (typeof model !== 'string' || !model) throw new Error('Flash 模型設定無效。');
-  const mcpScript = path.join(root, 'src', 'mcp-stdio.mjs');
-  return {
-    cwd: selected,
-    config: {
-      mcp_servers: {
-        k_flash: {
-          command: nodeExecutable,
-          args: [mcpScript, '--live', '--workspace', selected, '--model', model, '--key-file', path.join(root, '.env.local')],
-          cwd: root,
-          startup_timeout_sec: 30,
-          tool_timeout_sec: 75,
-          enabled_tools: [...FLASH_TOOLS],
-        },
-      },
-    },
-  };
-}
-
-export const buildWorkspaceRuntimeConfig = createWorkspaceRuntimeConfig;

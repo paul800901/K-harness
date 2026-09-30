@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import {mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {request as httpRequest} from 'node:http';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
 import {createBrowserLiveSession} from '../src/browser-live-session.mjs';
@@ -32,9 +31,7 @@ function fakePage(){
     mouse:{click:async()=>{},wheel:async()=>{}},keyboard:{insertText:async()=>{},press:async()=>{}},};
   return page;
 }
-async function request(session,descriptor,route,{method='GET',body}={}){
-  return fetch(`http://127.0.0.1:${descriptor.port}${route}`,{method,headers:{Authorization:`Bearer ${descriptor.token}`,...(body===undefined?{}:{'Content-Type':'application/json'})},body:body===undefined?undefined:JSON.stringify(body)});
-}
+async function request(session,route,{body}={}){return session.humanRequest(route,body);}
 
 test('externally owned contexts do not probe browser processes or prepare local download history',async()=>{
  const profile=await mkdtemp(path.join(os.tmpdir(),'k-external-no-probe-'));
@@ -45,41 +42,38 @@ test('externally owned contexts do not probe browser processes or prepare local 
  await writeFile(path.join(profile,'History'),'not a browser profile');
  const context=fakeContext();context._pages.push(fakePage());let session;
  try{
-  session=await createBrowserLiveSession(profile,{controlMode:'in-process',launchContext:async()=>context});
+  session=await createBrowserLiveSession(profile,{launchContext:async()=>context});
   assert.equal(await session.contextGetter(),context);
   assert.equal(calls,0);
   assert.equal(await readFile(path.join(profile,'History'),'utf8'),'not a browser profile');
  }finally{await session?.close();childProcess.execFile=original;syncBuiltinESMExports();}
 });
 
-test('live browser API is authenticated, takeover waits for MCP work, and human tabs share context',async()=>{
+test('in-process controls wait for MCP work and share the supplied context',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-'));
   const context=fakeContext();context._pages.push(fakePage());
   const session=await createBrowserLiveSession(profile,{launchContext:async()=>context});
-  const descriptor=JSON.parse(await readFile(path.join(profile,'live.json'),'utf8'));
   try{
     assert.equal(session.ownerPresentation,undefined,'HTTP sessions do not expose the native page capability');
-    const noAuth=await fetch(`http://127.0.0.1:${descriptor.port}/state`);assert.equal(noAuth.status,401);
-    const badHost=await new Promise((resolve,reject)=>{const req=httpRequest({host:'127.0.0.1',port:descriptor.port,path:'/state',headers:{Authorization:`Bearer ${descriptor.token}`,Host:`evil.test:${descriptor.port}`}},res=>{res.resume();res.on('end',()=>resolve(res.statusCode));});req.on('error',reject);req.end();});assert.equal(badHost,403);
     assert.equal(session.beginAiCall(),true);
-    const takeover=await request(session,descriptor,'/action',{method:'POST',body:{type:'takeover'}});
+    const takeover=await request(session,'/action',{method:'POST',body:{type:'takeover'}});
     assert.equal((await takeover.json()).busy,true);
-    const gated=await request(session,descriptor,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(gated.status,400);
+    const gated=await request(session,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(gated.status,400);
     session.endAiCall();
-    const created=await request(session,descriptor,'/action',{method:'POST',body:{type:'newPage'}});
+    const created=await request(session,'/action',{method:'POST',body:{type:'newPage'}});
     const state=await created.json();assert.equal(state.mode,'human');assert.equal(state.pages.length,2);
     const second=state.selectedPageId;assert.ok(second);
-    const nav=await request(session,descriptor,'/action',{method:'POST',body:{type:'navigate',pageId:second,url:'https://example.test/path'}});
+    const nav=await request(session,'/action',{method:'POST',body:{type:'navigate',pageId:second,url:'https://example.test/path'}});
     assert.equal((await nav.json()).pages.find(page=>page.id===second).url,'https://example.test/path');
     const page=context.pages().find(p=>p.url()==='https://example.test/path');page.historyIndex=1;page.historyLength=2;
-    const controls=await (await request(session,descriptor,'/state')).json();
+    const controls=await (await request(session,'/state')).json();
     assert.equal(controls.pages.find(item=>item.id===second).canGoBack,true);assert.equal(controls.pages.find(item=>item.id===second).canGoForward,false);
-    for(const type of ['back','forward','reload'])assert.equal((await request(session,descriptor,'/action',{method:'POST',body:{type,pageId:second}})).status,200);
+    for(const type of ['back','forward','reload'])assert.equal((await request(session,'/action',{method:'POST',body:{type,pageId:second}})).status,200);
     assert.deepEqual(page.navigations,['goto','back','forward','reload']);
-    const unsafe=await request(session,descriptor,'/action',{method:'POST',body:{type:'navigate',pageId:second,url:'file:///secret'}});assert.equal(unsafe.status,400);
-    const frame=await request(session,descriptor,`/frame?pageId=${second}`);assert.equal(frame.headers.get('content-type'),'image/jpeg');
-    const released=await request(session,descriptor,'/action',{method:'POST',body:{type:'release'}});assert.equal((await released.json()).mode,'ai');
-    const blocked=await request(session,descriptor,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(blocked.status,400);
+    const unsafe=await request(session,'/action',{method:'POST',body:{type:'navigate',pageId:second,url:'file:///secret'}});assert.equal(unsafe.status,400);
+    const frame=await request(session,`/frame?pageId=${second}`);assert.equal(frame.headers.get('content-type'),'image/jpeg');
+    const released=await request(session,'/action',{method:'POST',body:{type:'release'}});assert.equal((await released.json()).mode,'ai');
+    const blocked=await request(session,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(blocked.status,400);
   }finally{await session.close();}
 });
 
@@ -112,35 +106,26 @@ test('the MCP reload capability uses Playwright reload on the indexed existing p
 test('explicit in-process control reuses the same state/action/frame routes without listener or token file',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-inproc-'));
   const context=fakeContext();context._pages.push(fakePage());
-  const session=await createBrowserLiveSession(profile,{launchContext:async()=>context,controlMode:'in-process'});
+  const session=await createBrowserLiveSession(profile,{launchContext:async()=>context});
   try{
-    assert.equal(session.descriptorPath,null);
     assert.equal(typeof session.humanRequest,'function');
     await assert.rejects(readFile(path.join(profile,'live.json')),error=>error.code==='ENOENT');
-    const initial=await session.humanRequest('/state');assert.equal(initial.status,200);assert.equal((await initial.json()).mode,'ai');
     const takeover=await session.humanRequest('/action',{type:'takeover'});assert.equal((await takeover.json()).mode,'human');
     const frame=await session.humanRequest(`/frame?pageId=${(await session.getState()).selectedPageId}`);assert.equal(frame.headers.get('content-type'),'image/jpeg');assert.equal(await frame.text(),'jpeg');
     const released=await session.humanRequest('/action',{type:'release'});assert.equal((await released.json()).mode,'ai');
   }finally{await session.close();}
 });
 
-test('in-process presentation returns only a live session page and native input gate locks before AI/release',async()=>{
+test('in-process control changes lock before AI calls and release',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-native-'));
   const context=fakeContext();context._pages.push(fakePage());
   let session;
   const changes=[];
-  session=await createBrowserLiveSession(profile,{launchContext:async()=>context,controlMode:'in-process',onControlChange:snapshot=>{
+  session=await createBrowserLiveSession(profile,{launchContext:async()=>context,onControlChange:snapshot=>{
     changes.push({snapshot,actual:session?.getControlSnapshot()??null});
   }});
   try{
-    assert.equal((await session.ownerPresentation()).page,null,'presentation lookup does not launch a browser context');
     await session.contextGetter();
-    const initial=await session.getState(),pageId=initial.pages[0].id;
-    const presentation=await session.ownerPresentation(pageId);
-    assert.equal(presentation.page,context.pages()[0]);
-    assert.equal(presentation.control.humanInputAllowed,false);
-    assert.equal((await session.ownerPresentation()).page,context.pages()[0],'missing page id resolves to the owner-selected/last live page');
-    await assert.rejects(session.ownerPresentation('foreign-page'),/Unknown or closed browser page/u);
 
     assert.equal(session.beginAiCall(),true);
     const aiLock=changes.at(-1);
@@ -164,36 +149,12 @@ test('in-process presentation returns only a live session page and native input 
   }finally{await session.close();}
 });
 
-test('native download acceptance reuses safe save policy without duplicate Playwright tracking',async()=>{
-  const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-native-download-'));
-  const context=fakeContext();context._pages.push(fakePage());
-  const output=path.join(profile,'output','downloads');
-  const session=await createBrowserLiveSession(profile,{launchContext:async()=>context,downloadDirectory:output,controlMode:'in-process',nativeDownloads:true});
-  try{
-    await session.contextGetter();
-    assert.equal(typeof session.acceptNativeDownload,'function');
-    const pageDownload={suggestedFilename:()=> 'ignored.txt',url:()=> 'https://example.test/ignored',saveAs:async target=>{await writeFile(target,'PW_EVENT_ONLY');}};
-    context.pages()[0].emit('download',pageDownload);
-    await assert.rejects(pageDownload.saveAs(path.join(profile,'outside.txt')),/outside the session output directory/u);
-    assert.deepEqual((await session.getState()).downloads,[],'Playwright event installs safeSaveAs but native mode tracks only the Electron Session event');
-
-    session.acceptNativeDownload({suggestedFilename:()=> 'fake.txt',url:()=> 'https://user:password@example.test/fake?secret=x',saveAs:async target=>{await writeFile(target,'FAKE_NATIVE_BYTES');}});
-    let state;
-    for(let n=0;n<50;n++){state=await session.getState();if(state.downloads[0]?.status==='completed')break;await new Promise(resolve=>setTimeout(resolve,5));}
-    assert.equal(state.downloads.length,1);assert.equal(state.downloads[0].status,'completed');
-    assert.equal(state.downloads[0].name,'fake.txt');assert.equal(state.downloads[0].sourceUrl,'https://example.test');
-    const copy=await session.humanRequest(`/download?id=${state.downloads[0].id}`);
-    assert.equal(copy.status,200);assert.equal(await copy.text(),'FAKE_NATIVE_BYTES');
-  }finally{await session.close();}
-});
-
 test('native download events are saved under UUID directories and only completed files are served',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-download-'));
   const downloadDirectory=path.join(profile,'output','downloads');
   const upstreamTarget=path.join(path.dirname(downloadDirectory),'probe.txt');
   const context=fakeContext();context._pages.push(fakePage());
   const session=await createBrowserLiveSession(profile,{launchContext:async()=>context,downloadDirectory});
-  const descriptor=JSON.parse(await readFile(path.join(profile,'live.json'),'utf8'));
   try{
     await session.contextGetter();
     const pending=Promise.withResolvers();
@@ -210,34 +171,33 @@ test('native download events are saved under UUID directories and only completed
     await assert.rejects(nativeDownload.saveAs(path.join(profile,'outside','probe.txt')),/outside the session output directory/);
     if(process.platform==='win32')assert.equal(await readFile(`${upstreamTarget}:Zone.Identifier`,'utf8'),'[ZoneTransfer]\r\nZoneId=3\r\n');
     const target=await pending.promise;
-    const downloading=await (await request(session,descriptor,'/state')).json();assert.equal(downloading.downloads[0].status,'downloading');
+    const downloading=await (await request(session,'/state')).json();assert.equal(downloading.downloads[0].status,'downloading');
     finishDownload.resolve();
-    for(let n=0;n<20&&(await (await request(session,descriptor,'/state')).json()).downloads?.[0]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
-    const state=await (await request(session,descriptor,'/state')).json();
+    for(let n=0;n<20&&(await (await request(session,'/state')).json()).downloads?.[0]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
+    const state=await (await request(session,'/state')).json();
     const item=state.downloads[0];assert.equal(item.name,'report.txt');assert.equal(item.status,'completed');assert.equal(item.sourceUrl,'https://example.test');assert.equal(item.dangerous,false);assert.equal(item.size,13);assert.equal(item.copyAvailable,true);assert.equal(item.zoneMarked,process.platform==='win32'?true:'unsupported');assert.equal(Object.hasOwn(item,'path'),false);
     assert.doesNotMatch(JSON.stringify(item),/password|secret|fragment/);
     if(process.platform==='win32')assert.equal(await readFile(`${target}:Zone.Identifier`,'utf8'),'[ZoneTransfer]\r\nZoneId=3\r\n');
-    const unauthorized=await fetch(`http://127.0.0.1:${descriptor.port}/download?id=${item.id}`);assert.equal(unauthorized.status,401);
-    const incomplete=await request(session,descriptor,'/download?id=00000000-0000-0000-0000-000000000000');assert.equal(incomplete.status,400);
-    const response=await request(session,descriptor,`/download?id=${item.id}`);assert.equal(response.status,200);assert.equal(response.headers.get('content-disposition'),"attachment; filename*=UTF-8''report.txt");assert.equal(await response.text(),'download body');
+    const incomplete=await request(session,'/download?id=00000000-0000-0000-0000-000000000000');assert.equal(incomplete.status,400);
+    const response=await request(session,`/download?id=${item.id}`);assert.equal(response.status,200);assert.equal(response.headers.get('content-disposition'),"attachment; filename*=UTF-8''report.txt");assert.equal(await response.text(),'download body');
     assert.ok(path.dirname(target).startsWith(downloadDirectory));
     const reservedTarget=Promise.withResolvers();
     context.pages()[0].emit('download',{suggestedFilename:()=> 'cOn .txt',url:()=> 'data:text/plain,hidden',saveAs:async destination=>{reservedTarget.resolve(destination);await import('node:fs/promises').then(fs=>fs.writeFile(destination,'x'));}});
     const safeReservedPath=await reservedTarget.promise;
-    for(let n=0;n<20&&(await (await request(session,descriptor,'/state')).json()).downloads?.[1]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
-    const reserved=(await (await request(session,descriptor,'/state')).json()).downloads[1];
+    for(let n=0;n<20&&(await (await request(session,'/state')).json()).downloads?.[1]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
+    const reserved=(await (await request(session,'/state')).json()).downloads[1];
     assert.equal(path.basename(safeReservedPath),'_cOn .txt');assert.equal(reserved.dangerous,false);assert.equal(reserved.sourceUrl,'');
     const dangerousTarget=Promise.withResolvers();
     context.pages()[0].emit('download',{suggestedFilename:()=> 'setup.EXE',url:()=> 'https://example.test/install?sig=hidden',saveAs:async destination=>{await import('node:fs/promises').then(async fs=>{await fs.writeFile(destination,'x');await fs.truncate(destination,64*1024*1024+1);});dangerousTarget.resolve(destination);}});
     await dangerousTarget.promise;
-    for(let n=0;n<20&&(await (await request(session,descriptor,'/state')).json()).downloads?.[2]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
-    const dangerous=(await (await request(session,descriptor,'/state')).json()).downloads[2];assert.equal(dangerous.dangerous,true);assert.equal(dangerous.sourceUrl,'https://example.test');
-    const overLimit=(await (await request(session,descriptor,'/state')).json()).downloads[2];assert.equal(overLimit.size,64*1024*1024+1);assert.equal(overLimit.copyAvailable,false);
-    const blockedCopy=await request(session,descriptor,`/download?id=${overLimit.id}`);assert.equal(blockedCopy.status,400);
+    for(let n=0;n<20&&(await (await request(session,'/state')).json()).downloads?.[2]?.status!=='completed';n++)await new Promise(resolve=>setTimeout(resolve,5));
+    const dangerous=(await (await request(session,'/state')).json()).downloads[2];assert.equal(dangerous.dangerous,true);assert.equal(dangerous.sourceUrl,'https://example.test');
+    const overLimit=(await (await request(session,'/state')).json()).downloads[2];assert.equal(overLimit.size,64*1024*1024+1);assert.equal(overLimit.copyAvailable,false);
+    const blockedCopy=await request(session,`/download?id=${overLimit.id}`);assert.equal(blockedCopy.status,400);
     context.pages()[0].emit('download',{suggestedFilename:()=> 'broken.txt',saveAs:async()=>{throw new Error('private filesystem detail');}});
-    for(let n=0;n<20&&(await (await request(session,descriptor,'/state')).json()).downloads?.[3]?.status!=='failed';n++)await new Promise(resolve=>setTimeout(resolve,5));
-    const failed=(await (await request(session,descriptor,'/state')).json()).downloads[3];assert.equal(failed.status,'failed');assert.equal(failed.error,'下載未能安全保存，請重新確認網站與下載位置。');
-    const failedFile=await request(session,descriptor,`/download?id=${failed.id}`);assert.equal(failedFile.status,400);
+    for(let n=0;n<20&&(await (await request(session,'/state')).json()).downloads?.[3]?.status!=='failed';n++)await new Promise(resolve=>setTimeout(resolve,5));
+    const failed=(await (await request(session,'/state')).json()).downloads[3];assert.equal(failed.status,'failed');assert.equal(failed.error,'下載未能安全保存，請重新確認網站與下載位置。');
+    const failedFile=await request(session,`/download?id=${failed.id}`);assert.equal(failedFile.status,400);
   }finally{await session.close();}
 });
 
@@ -246,13 +206,12 @@ test('a failed download does not close the browser or prevent later human and AI
   const context=fakeContext();context._pages.push(fakePage());
   let closed=false;const originalClose=context.close;context.close=async()=>{closed=true;await originalClose();};
   const session=await createBrowserLiveSession(profile,{launchContext:async()=>context,downloadDirectory:path.join(profile,'output','downloads')});
-  const descriptor=JSON.parse(await readFile(session.descriptorPath,'utf8'));
   try{
-    await session.contextGetter();await request(session,descriptor,'/action',{method:'POST',body:{type:'takeover'}});
+    await session.contextGetter();await request(session,'/action',{method:'POST',body:{type:'takeover'}});
     context.pages()[0].emit('download',{suggestedFilename:()=> 'fake.exe',saveAs:async()=>{throw new Error('download cancelled');}});
     for(let n=0;n<50&&(await session.getState()).downloads[0]?.status!=='failed';n++)await new Promise(r=>setTimeout(r,5));
     const state=await session.getState();assert.equal(state.downloads[0].status,'failed');assert.equal(state.available,true);assert.equal(state.busy,false);assert.equal(state.recoveryRequired,false);assert.equal(closed,false);
-    for(const body of [{type:'navigate',url:'https://fixture.test/after-failure'},{type:'click',x:10,y:10},{type:'release'}])assert.equal((await request(session,descriptor,'/action',{method:'POST',body})).status,200);
+    for(const body of [{type:'navigate',url:'https://fixture.test/after-failure'},{type:'click',x:10,y:10},{type:'release'}])assert.equal((await request(session,'/action',{method:'POST',body})).status,200);
     assert.equal(session.beginAiCall(),true);session.endAiCall();assert.equal(closed,false);
   }finally{await session.close();}
 });
@@ -260,12 +219,11 @@ test('a failed download does not close the browser or prevent later human and AI
 test('unexpected browser close fails closed for AI and human input',async()=>{
   const profile=await mkdtemp(path.join(os.tmpdir(),'k-live-browser-close-'));
   const context=fakeContext();const session=await createBrowserLiveSession(profile,{launchContext:async()=>context});
-  const descriptor=JSON.parse(await readFile(path.join(profile,'live.json'),'utf8'));
   try{
     await session.contextGetter();
     await context.close();
     assert.equal(session.beginAiCall(),false);
-    const result=await request(session,descriptor,'/action',{method:'POST',body:{type:'takeover'}});
+    const result=await request(session,'/action',{method:'POST',body:{type:'takeover'}});
     assert.equal(result.status,400);
   }finally{await session.close();}
 });
@@ -275,16 +233,15 @@ test('fail-closed keeps an unavailable state endpoint and releases busy only aft
   let finishClose;const closeGate=new Promise(resolve=>finishClose=resolve);
   const context=fakeContext();context.close=async()=>{await closeGate;};
   const session=await createBrowserLiveSession(profile,{launchContext:async()=>context});
-  const descriptor=JSON.parse(await readFile(path.join(profile,'live.json'),'utf8'));
   try{
     await session.contextGetter();assert.equal(session.beginAiCall(),true);
     const failing=session.failClosed();
     assert.equal(session.beginAiCall(),false,'unavailable must take effect before browser shutdown completes');
-    let state=await (await request(session,descriptor,'/state')).json();
+    let state=await (await request(session,'/state')).json();
     assert.equal(state.available,false);assert.equal(state.busy,true);
-    const takeover=await request(session,descriptor,'/action',{method:'POST',body:{type:'takeover'}});assert.equal(takeover.status,400);
+    const takeover=await request(session,'/action',{method:'POST',body:{type:'takeover'}});assert.equal(takeover.status,400);
     finishClose();await failing;session.endAiCall();
-    state=await (await request(session,descriptor,'/state')).json();
+    state=await (await request(session,'/state')).json();
     assert.equal(state.available,false);assert.equal(state.busy,false);assert.equal(state.mode,'human');assert.match(state.error,/重新開啟對話/);assert.equal(state.recoveryRequired,true);
   }finally{finishClose();await session.close();}
 });
@@ -295,14 +252,13 @@ test('takeover reserves human control while the lazy context launch is pending',
   const launchGate=new Promise(resolve=>finishLaunch=resolve);
   const context=fakeContext();
   const session=await createBrowserLiveSession(profile,{launchContext:async()=>{await launchGate;return context;}});
-  const descriptor=JSON.parse(await readFile(path.join(profile,'live.json'),'utf8'));
   try{
-    const takingOver=request(session,descriptor,'/action',{method:'POST',body:{type:'takeover'}});
+    const takingOver=request(session,'/action',{method:'POST',body:{type:'takeover'}});
     await new Promise(resolve=>setTimeout(resolve,0));
-    const state=await (await request(session,descriptor,'/state')).json();
+    const state=await (await request(session,'/state')).json();
     assert.equal(state.mode,'human');assert.equal(state.busy,true);
-    const release=await request(session,descriptor,'/action',{method:'POST',body:{type:'release'}});assert.equal(release.status,400);
-    const input=await request(session,descriptor,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(input.status,400);
+    const release=await request(session,'/action',{method:'POST',body:{type:'release'}});assert.equal(release.status,400);
+    const input=await request(session,'/action',{method:'POST',body:{type:'click',x:5,y:5}});assert.equal(input.status,400);
     finishLaunch();
     const ready=await (await takingOver).json();assert.equal(ready.mode,'human');assert.equal(ready.busy,false);assert.equal(ready.pages.length,1);
   }finally{finishLaunch();await session.close();}

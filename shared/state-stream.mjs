@@ -83,12 +83,6 @@ export function createStateStream() {
 }
 
 export function applyStateEvent(previous, event) {
-  // Compatibility with the still-running legacy desktop server: it sends a
-  // complete bare state object until that server is restarted. Do not treat
-  // typed incremental events as snapshots here.
-  if (event && !Object.hasOwn(event, 'type') && Object.hasOwn(event, 'status') && Array.isArray(event.messages)) {
-    return clone(event);
-  }
   if (event?.type === 'snapshot') return clone(event.state);
   if (event?.type !== 'patch' || !previous) return previous;
   const next = {...previous};

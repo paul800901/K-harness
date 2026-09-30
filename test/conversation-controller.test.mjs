@@ -198,7 +198,7 @@ test('failed idle teardown remains registered and can be retried by a later clea
 test('HTTP desktop routes preserve thread context for stop, approvals, files and switching',async()=>{
  const f=await fixture();const app=await startDesktop({root:f.root,executable:'fixture',port:0,controllerFactory:()=>f.controller});
  try{
-  const home=await fetch(app.origin),cookie=home.headers.get('set-cookie').split(';')[0];await home.text();
+  const home=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=home.headers.get('set-cookie').split(';')[0];await home.text();
   const post=async(route,data)=>{const response=await fetch(`${app.origin}/api/${route}`,{method:'POST',headers:{cookie,Origin:app.origin,'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(data)});return {status:response.status,body:await response.json()};};
   const a=(await post('open',{model:claudeModel})).body;assert.equal((await post('send',{...a,text:'A'})).status,200);
   const b=(await post('open',{model:codexModel})).body;await post('send',{...b,text:'B'});

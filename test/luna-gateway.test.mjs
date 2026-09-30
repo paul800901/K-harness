@@ -77,3 +77,19 @@ test('gateway acknowledges only successfully prepared results, not output prepar
   f.records.get('r').output='done';await call(3,'luna_inspect',{requestId:'r'});assert.deepEqual(acks,[['r',false],['r',true]]);
  }finally{await gateway.close();}
 });
+
+test('MCP start forwards both worker choices and an explicit effort to the bridge',async()=>{
+ const f=fixture();const calls=[];f.bridge.start=async args=>{calls.push(args);return {requestId:args.requestId,model:args.model,effort:args.effort,status:'running'};};
+ const gateway=await createLunaGateway({bridge:f.bridge});
+ try{
+  const config=gateway.mcpConfig.mcpServers.k_luna,token=config.headers.Authorization.slice(7);
+  await post(config.url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'workers',version:'1'}}});
+  const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list'}));
+  assert.deepEqual(listed.result.tools.find(t=>t.name==='luna_start').inputSchema.properties.model.enum,['gpt-6.1-sol','gpt-6-luna']);
+  let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna']){
+   const args={requestId:model,task:'fake task',model,effort:'low'};
+   const result=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:args}}));
+   assert.notEqual(result.result.isError,true);assert.deepEqual(calls.at(-1),args);assert.equal(result.result.structuredContent.model,model);assert.equal(result.result.structuredContent.effort,'low');
+  }
+ }finally{await gateway.close();}
+});

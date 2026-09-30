@@ -10,7 +10,7 @@ async function fixture(pickWorkspace){
  const root=await mkdtemp(path.join(base,'folder-picker-'));
  const state={threadId:'keep-current',workspace:root,accessMode:'read-only'};
  const app=await startDesktop({root,port:0,pickWorkspace,controllerFactory:()=>({state,sessions:async()=>({sessions:[]}),close:async()=>{}})});
- const landing=await fetch(app.origin),cookie=landing.headers.get('set-cookie').split(';')[0];await landing.text();
+ const landing=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=landing.headers.get('set-cookie').split(';')[0];await landing.text();
  const headers={'Content-Type':'application/json','X-K-Request':'1',cookie,origin:app.origin};
  const pick=(options={})=>fetch(app.origin+'/api/pick-workspace',{method:'POST',headers,body:JSON.stringify({path:root}),...options});
  return {root,state,app,headers,pick};

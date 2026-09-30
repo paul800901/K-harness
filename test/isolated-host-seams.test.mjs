@@ -12,8 +12,8 @@ const testRoot=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 await mkdir(testRoot,{recursive:true});
 
 function fakeClaudeCapture(calls) {
-  return async (_spec,args,{env,runnerIdentity})=>{
-    calls.push({args:[...args],env:{...env},runnerIdentity});
+  return async (_spec,args,{env})=>{
+    calls.push({args:[...args],env:{...env}});
     if(args.includes('--version'))return {code:0,stdout:'2.1.280 (Claude Code)',stderr:''};
     if(args.includes('--help')&&args.includes('auth'))return {code:0,stdout:'login logout status',stderr:''};
     if(args.includes('status'))return {code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'pro'}),stderr:''};
@@ -85,9 +85,8 @@ test('Claude preflight and long-lived process use the same explicit runner and e
   const config=path.join(dir,'claude-config');await mkdir(config,{recursive:true});
   const calls=[],captureImpl=fakeClaudeCapture(calls),child=fakeChild({exitOnEnd:true});let spawnArgs;
   const env={...process.env,USERPROFILE:path.join(dir,'home'),CLAUDE_CONFIG_DIR:config,ANTHROPIC_API_KEY:'must-be-stripped'};
-  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:['claude.js']},cwd:dir,env,captureImpl,runnerIdentity:'sandboxie:claude-box-a',spawnImpl:(...args)=>{spawnArgs=args;child.launch();return child;}});
+  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:['claude.js']},cwd:dir,env,captureImpl,spawnImpl:(...args)=>{spawnArgs=args;child.launch();return child;}});
   assert.equal(calls.length,3);
-  assert.ok(calls.every(call=>call.runnerIdentity==='sandboxie:claude-box-a'));
   assert.ok(calls.every(call=>call.env.USERPROFILE===env.USERPROFILE&&call.env.CLAUDE_CONFIG_DIR===config));
   assert.ok(calls.every(call=>!Object.hasOwn(call.env,'ANTHROPIC_API_KEY')));
   assert.equal(spawnArgs[0],'claude-runner');assert.equal(spawnArgs[2].env.USERPROFILE,env.USERPROFILE);
@@ -96,19 +95,17 @@ test('Claude preflight and long-lived process use the same explicit runner and e
   invalidateClaudeInspection();
 });
 
-test('Claude inspection cache is partitioned by environment identity and runner identity',async()=>{
+test('Claude inspection cache is partitioned by environment identity',async()=>{
   invalidateClaudeInspection();
   const dir=await mkdtemp(path.join(testRoot,'isolated-claude-cache-'));
   const calls=[],captureImpl=fakeClaudeCapture(calls),env={...process.env,USERPROFILE:path.join(dir,'home-a'),CLAUDE_CONFIG_DIR:path.join(dir,'config-a')};
   const input={commandSpec:{command:'claude-runner',argsPrefix:[]},cwd:dir,env,captureImpl};
   try{
-    assert.equal((await inspectClaude({...input,runnerIdentity:'box-a'})).available,true);
-    assert.equal((await inspectClaude({...input,runnerIdentity:'box-a'})).available,true);
+    assert.equal((await inspectClaude({...input})).available,true);
+    assert.equal((await inspectClaude({...input})).available,true);
     assert.equal(calls.length,3);
-    assert.equal((await inspectClaude({...input,runnerIdentity:'box-b'})).available,true);
+    assert.equal((await inspectClaude({...input,env:{...env,CLAUDE_CONFIG_DIR:path.join(dir,'config-b')}})).available,true);
     assert.equal(calls.length,6);
-    assert.equal((await inspectClaude({...input,env:{...env,CLAUDE_CONFIG_DIR:path.join(dir,'config-b')},runnerIdentity:'box-a'})).available,true);
-    assert.equal(calls.length,9);
   }finally{invalidateClaudeInspection();}
 });
 
@@ -116,22 +113,16 @@ test('Claude runner preflight still rejects non-subscription auth before spawnin
   invalidateClaudeInspection();
   let spawned=false;
   const captureImpl=async(_spec,args)=>args.includes('--version')?{code:0,stdout:'2.1.280',stderr:''}:args.includes('--help')?{code:0,stdout:'status',stderr:''}:{code:0,stdout:JSON.stringify({loggedIn:true,authMethod:'console',apiProvider:'firstParty',subscriptionType:'pro'}),stderr:''};
-  await assert.rejects(openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},captureImpl,runnerIdentity:'box-nonsubscription',spawnImpl:()=>{spawned=true;throw new Error('must not spawn');}}),/not verified as using a supported Claude.ai subscription/);
+  await assert.rejects(openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},captureImpl,spawnImpl:()=>{spawned=true;throw new Error('must not spawn');}}),/not verified as using a supported Claude.ai subscription/);
   assert.equal(spawned,false);
   invalidateClaudeInspection();
-});
-
-test('Claude refuses to pair host auth capture with an isolated session spawn',async()=>{
-  let spawned=false;
-  await assert.rejects(openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},runnerIdentity:'sandboxie:box-a',spawnImpl:()=>{spawned=true;}}),/same explicit runner/);
-  assert.equal(spawned,false);
 });
 
 test('Claude termination uses runner terminate promise and closed waits for observed exit',async()=>{
   invalidateClaudeInspection();
   const dir=await mkdtemp(path.join(testRoot,'isolated-claude-stop-'));
   const child=fakeChild({onTerminate:async()=>{setTimeout(()=>child.emitExit(null,'SIGTERM'),25);}});
-  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},cwd:dir,captureImpl:fakeClaudeCapture([]),runnerIdentity:'box-stop',spawnImpl:()=>{child.launch();return child;}});
+  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},cwd:dir,captureImpl:fakeClaudeCapture([]),spawnImpl:()=>{child.launch();return child;}});
   let closed=false;void host.closed.then(()=>{closed=true;});
   await host.close();
   assert.equal(closed,true);
@@ -143,7 +134,7 @@ test('Claude termination errors are surfaced and do not resolve closed before ex
   invalidateClaudeInspection();
   const dir=await mkdtemp(path.join(testRoot,'isolated-claude-stop-error-'));
   const child=fakeChild({onTerminate:async()=>{throw new Error('runner termination failed');}});
-  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},cwd:dir,captureImpl:fakeClaudeCapture([]),runnerIdentity:'box-stop-error',spawnImpl:()=>{child.launch();return child;}});
+  const host=await openClaudeHost({commandSpec:{command:'claude-runner',argsPrefix:[]},cwd:dir,captureImpl:fakeClaudeCapture([]),spawnImpl:()=>{child.launch();return child;}});
   let closed=false;void host.closed.then(()=>{closed=true;});
   await assert.rejects(host.close(),/runner termination failed/);
   assert.equal(closed,false);

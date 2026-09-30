@@ -8,7 +8,7 @@ import {lunaResult} from './luna-bridge.mjs';
 
 const requestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
 const idSchema = z.strictObject({requestId});
-const taskSchema = z.strictObject({requestId,task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
+const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-luna']).optional(),effort:z.string().min(1).optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
 const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).max(60000).default(30000)});
 
 function createMcpServer(bridge) {
@@ -23,9 +23,9 @@ function createMcpServer(bridge) {
       return {isError:true,content:[{type:'text',text:`${String(error?.message ?? error)} Inspect the same requestId; do not retry under a new ID.`}]};
     }
   });
-  register('luna_start','Start one bounded task with subscription Codex GPT-6 Luna high. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.',taskSchema,
+  register('luna_start','Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna. Optional model and effort override this conversation\'s defaults; effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.',taskSchema,
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
-  register('luna_wait','Manual recovery only: wait for an existing Luna task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
+  register('luna_wait','Manual recovery only: wait for an existing Codex subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
   register('luna_inspect','Read existing Luna task state without starting or replaying work.',idSchema,
     args=>bridge.inspect(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});

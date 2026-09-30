@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile} from 'node:fs/promises';
-import {createServer} from 'node:http';
+import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
-async function fixture({catalog,modelPages}={}){
+async function fixture({catalog,modelPages,browser=false,browserState}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-'));
  const calls=[];let hooks;let close;let modelPageIndex=0,hostFactoryCalls=0,hostCloseCalls=0;
  const host={closed:new Promise(r=>{close=r;}),notify(){},waitForMcp:async()=>{},close:async()=>{hostCloseCalls++;close();},request:async(method,p)=>{
@@ -30,7 +30,7 @@ async function fixture({catalog,modelPages}={}){
   if(method==='mcpServer/tool/call')return {structuredContent:{status:'unresolved',outputFiles:[]}};
   return {};
  }};
- const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{hostFactoryCalls++;hooks=options;host.closed=new Promise(r=>{close=r;});return host;}});
+ const c=createDesktopController({...(browser?await fixtureBrowser(root,browserState):{}),root,executable:'fixture',hostFactory:options=>{hostFactoryCalls++;hooks=options;host.closed=new Promise(r=>{close=r;});return host;}});
  return {c,calls,root,host,get hooks(){return hooks;},get hostFactoryCalls(){return hostFactoryCalls;},get hostCloseCalls(){return hostCloseCalls;}};
 }
 
@@ -274,25 +274,21 @@ test('workspace switching binds Codex, attachments and saved history while disab
 });
 
 test('project browser opt-in adds a dedicated browser MCP profile to one Codex thread and leaves Flash disabled',async()=>{
- const f=await fixture();
+ const f=await fixture({browser:true});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),'{"enabled":true}');
   await f.c.open({model:'gpt-6-astra'});
   const start=f.calls.find(x=>x.method==='thread/start').p;
   assert.equal(start.config.mcp_servers.k_flash.enabled,false);
   const browser=start.config.mcp_servers.k_browser;
-  assert.deepEqual(browser.args,[path.join(f.root,'src','browser-mcp-stdio.mjs'),path.join(f.root,'.runtime','browser-output',browser.args[1].split(path.sep).at(-1)),path.join(f.root,'.runtime','browser-profiles',browser.args[1].split(path.sep).at(-1))]);
-  assert.equal(browser.cwd,browser.args[1]);
+  assert.equal(browser.url,'http://127.0.0.1:45678/mcp');
+  assert.deepEqual(browser.http_headers,{Authorization:'Bearer fixture'});
   assert.equal(Object.hasOwn(start.config.mcp_servers.k_browser,'env'),false);
  }finally{await f.c.close();}
 });
 
 test('Codex browser config follows effective access mode and refreshes native thread before a read-only turn',async()=>{
- const f=await fixture();
+ const f=await fixture({browser:true});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),'{"enabled":true}');
   await f.c.open({model:'gpt-6-astra',accessMode:'workspace-write'});
   assert.equal(f.c.state.browserAccess.enabled,true);
   assert.ok(f.calls.find(x=>x.method==='thread/start').p.config.mcp_servers.k_browser);
@@ -308,15 +304,9 @@ test('Codex browser config follows effective access mode and refreshes native th
 });
 
 test('browser fail-closed state explicitly replaces the Codex host before resuming the same thread',async()=>{
- const f=await fixture();let server;
+ const f=await fixture({browser:true,browserState:{available:false,busy:false,recoveryRequired:true,error:'瀏覽器連線已中止。'}});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),' {"enabled":true} ');
   await f.c.open({model:'gpt-6-astra'});
-  server=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({available:false,busy:false,recoveryRequired:true,error:'瀏覽器連線已中止。'}));});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  const profile=path.join(f.root,'.runtime','browser-profiles',f.c.state.browserAccess.sessionKey);
-  await writeFile(path.join(profile,'live.json'),JSON.stringify({port:server.address().port,token:'a'.repeat(64)}));
   f.c.state.status='completed';
   const baselineHosts=f.hostFactoryCalls,baselineCloses=f.hostCloseCalls;
   const beforeResume=f.calls.filter(call=>call.method==='thread/resume').length;
@@ -326,25 +316,20 @@ test('browser fail-closed state explicitly replaces the Codex host before resumi
   assert.equal(f.calls.filter(call=>call.method==='thread/resume').length,beforeResume+1);
   assert.equal(f.calls.some(call=>call.method==='turn/start'),false,'recovery never replays a turn');
   assert.equal(f.c.state.threadId,'test-thread');
- }finally{if(server)await new Promise(resolve=>server.close(resolve));await f.c.close();}
+ }finally{await f.c.close();}
 });
 
 test('browser not-yet-available state does not replace a ready Codex host',async()=>{
- const f=await fixture();let server;
+ const f=await fixture({browser:true,browserState:{available:false,busy:false,recoveryRequired:false,error:'瀏覽器尚未準備好，請稍後再試。'}});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),' {"enabled":true} ');
   await f.c.open({model:'gpt-6-astra'});
-  server=createServer((_request,response)=>{response.writeHead(200,{'Content-Type':'application/json'});response.end(JSON.stringify({available:false,busy:false,recoveryRequired:false,error:'瀏覽器尚未準備好，請稍後再試。'}));});
-  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-  await writeFile(path.join(f.root,'.runtime','browser-profiles',f.c.state.browserAccess.sessionKey,'live.json'),JSON.stringify({port:server.address().port,token:'b'.repeat(64)}));
   const baselineHosts=f.hostFactoryCalls,baselineCloses=f.hostCloseCalls;
   const beforeResume=f.calls.filter(call=>call.method==='thread/resume').length;
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
   assert.equal(f.hostFactoryCalls,baselineHosts);
   assert.equal(f.hostCloseCalls,baselineCloses);
   assert.equal(f.calls.filter(call=>call.method==='thread/resume').length,beforeResume);
- }finally{if(server)await new Promise(resolve=>server.close(resolve));await f.c.close();}
+ }finally{await f.c.close();}
 });
 
 test('workspace selection rejects invalid locations without losing the current conversation',async()=>{
@@ -358,12 +343,13 @@ test('desktop HTTP denies foreign origins, unauthenticated API and implicit writ
  const app=await startDesktop({root:'test',executable:'test',port:0,controllerFactory:()=>({state:{status:'idle'},sessions:async()=>({sessions:[]}),workers:async arg=>{stopArgument=arg;return [];},close:async()=>{}})});
  try{
   assert.equal((await fetch(app.origin+'/api/state')).status,403);
-  const page=await fetch(app.origin);assert.match(await page.text(),/K 執行中樞/);const cookie=page.headers.get('set-cookie').split(';')[0];
+  const page=await fetch(app.createLaunchUrl(),{redirect:'manual'});assert.equal(page.status,303);const cookie=page.headers.get('set-cookie').split(';')[0];
+  assert.match(await (await fetch(app.origin,{headers:{cookie}})).text(),/K 執行中樞/);
   assert.equal((await fetch(app.origin+'/api/state',{headers:{cookie}})).status,200);
   assert.equal((await fetch(app.origin+'/api/state',{headers:{cookie,origin:'https://foreign.example'}})).status,403);
   assert.equal((await fetch(app.origin+'/api/workers',{method:'POST',headers:{cookie,'Content-Type':'application/json'},body:'{}'})).status,403);
   assert.equal((await fetch(app.origin+'/api/workers',{method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:'{}'})).status,200);assert.equal(stopArgument,undefined);
-  assert.equal((await fetch(app.origin+'/dsh/design-platform.css')).status,200);
+  assert.equal((await fetch(app.origin+'/dsh/design-platform.css',{headers:{cookie}})).status,403);
  }finally{await app.close();}
 });
 
@@ -375,7 +361,7 @@ test('native review and file search routes preserve the explicit local POST cont
   fuzzyFileSearch:async data=>{calls.push(['fuzzyFileSearch',data]);return {files:[]};},
  })});
  try{
-  const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+  const page=await fetch(app.createLaunchUrl(),{redirect:'manual'});const cookie=page.headers.get('set-cookie').split(';')[0];
   const post=(route,body)=>fetch(app.origin+route,{method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(body)});
   assert.equal((await fetch(app.origin+'/api/native/review')).status,403);
   assert.deepEqual(await (await post('/api/native/review',{confirmed:true})).json(),{started:true});
@@ -384,26 +370,11 @@ test('native review and file search routes preserve the explicit local POST cont
  }finally{await app.close();}
 });
 
-test('dictation endpoint requires the existing explicit local POST contract and reports helper result without side effects',async()=>{
- let calls=0;
- const app=await startDesktop({root:'test',executable:'test',port:0,dictationFactory:()=>async()=>{calls++;return {ok:false,error:'synthetic foreground refusal'};},controllerFactory:()=>({state:{status:'idle'},close:async()=>{}})});
- try{
-  const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
-  const init={method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:'{}'};
-  assert.equal((await fetch(app.origin+'/api/dictation',init)).status,409);assert.equal(calls,1);
-  assert.deepEqual(await (await fetch(app.origin+'/api/dictation',init)).json(),{ok:false,error:'synthetic foreground refusal'});assert.equal(calls,2);
-  const noCsrf={...init,headers:{cookie,'Content-Type':'application/json'}};
-  assert.equal((await fetch(app.origin+'/api/dictation',noCsrf)).status,403);assert.equal(calls,2);
-  const foreign={...init,headers:{...init.headers,origin:'https://foreign.example'}};
-  assert.equal((await fetch(app.origin+'/api/dictation',foreign)).status,403);assert.equal(calls,2);
- }finally{await app.close();}
-});
-
 test('HTTP attachment upload and artifact preview/download preserve bytes and reject unlisted paths',async()=>{
  const f=await fixture();await f.c.open({model:'gpt-6-astra'});
  const app=await startDesktop({root:f.root,executable:'test',port:0,controllerFactory:()=>f.c});
  try{
-  const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+  const page=await fetch(app.createLaunchUrl(),{redirect:'manual'});const cookie=page.headers.get('set-cookie').split(';')[0];
   const r=await fetch(app.origin+'/api/upload',{method:'POST',headers:{cookie,'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify({threadId:'test-thread',name:'結果.csv',base64:Buffer.from('name,total\r\nsynthetic,19\r\n').toString('base64')})});
   assert.equal(r.status,200);const a=await r.json();f.c.state.artifacts=[a.path];
   const preview=await fetch(app.origin+'/api/artifact?path='+encodeURIComponent(a.path),{headers:{cookie}});assert.equal((await preview.json()).text,'name,total\r\nsynthetic,19\r\n');
@@ -560,9 +531,24 @@ test('settings shutdown notifies the native owner only after busy resources and 
  let resourceClosed=false,notifications=0;
  const app=await startDesktop({root:'test',executable:'test',port:0,controllerFactory:()=>({state:{busy:true,status:'working'},async close(){await new Promise(r=>setTimeout(r,20));resourceClosed=true;}})});
  const notified=new Promise(resolve=>app.onClosed(()=>{notifications++;assert.equal(resourceClosed,true);resolve();}));
- const page=await fetch(app.origin);const cookie=page.headers.get('set-cookie').split(';')[0];
+ const page=await fetch(app.createLaunchUrl(),{redirect:'manual'});const cookie=page.headers.get('set-cookie').split(';')[0];
  const response=await fetch(app.origin+'/api/shutdown',{method:'POST',headers:{cookie,'content-type':'application/json','X-K-Request':'1'},body:'{}'});
  assert.equal(response.status,200);assert.equal((await response.json()).closed,true);
  await notified;assert.equal(notifications,1);await app.close();assert.equal(notifications,1);
 });
 
+
+
+test('Codex persists and restores the selected worker model/effort in native agent defaults',async()=>{
+ const policy={model:'gpt-6.1-sol',effort:'ultra'};
+ const f=await fixture({catalog:[{model:'gpt-6-astra',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'gpt-6.1-sol',supportedReasoningEfforts:[{reasoningEffort:'ultra'}]}]});
+ try{
+  await f.c.open({model:'gpt-6-astra',workerPolicy:policy});
+  const start=f.calls.find(c=>c.method==='thread/start').p;
+  assert.equal(start.config.agents.default_subagent_model,policy.model);assert.equal(start.config.agents.default_subagent_reasoning_effort,policy.effort);
+  await f.c.stop();await f.c.open({threadId:'test-thread',model:'gpt-6-astra',effort:'high'});
+  assert.deepEqual(f.c.state.workerPolicy,policy);assert.deepEqual((await f.c.sessions()).sessions[0].workerPolicy,policy);
+  const resume=f.calls.findLast(c=>c.method==='thread/resume').p;
+  assert.equal(resume.config.agents.default_subagent_model,policy.model);assert.equal(resume.config.agents.default_subagent_reasoning_effort,policy.effort);
+ }finally{await f.c.close();}
+});

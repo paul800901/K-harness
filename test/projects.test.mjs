@@ -70,7 +70,7 @@ test('project routes require same-origin local authority; adding does not switch
  const state={threadId:'original',workspace:root};
  const app=await startDesktop({root,port:0,controllerFactory:()=>({state,sessions:async()=>({sessions:[]}),selectWorkspace:async()=>{switches++;},close:async()=>{}})});
  try {
-  const landing=await fetch(app.origin);const cookie=landing.headers.get('set-cookie').split(';')[0];await landing.text();
+  const landing=await fetch(app.createLaunchUrl(),{redirect:'manual'});const cookie=landing.headers.get('set-cookie').split(';')[0];await landing.text();
   const data={method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify({path:alpha})};
   assert.equal((await fetch(app.origin+'/api/projects',data)).status,403);
   const add=await fetch(app.origin+'/api/projects',{...data,headers:{...data.headers,cookie,origin:app.origin}});assert.equal(add.status,200);

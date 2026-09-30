@@ -1,8 +1,17 @@
 # K HARNESS
 
-以 Pi 為執行基底的通用工作 harness。
+以 Codex CLI／Claude Code 原生核心為執行基底的個人工作台。
 
 ## 目前狀態
+
+R3-2 候選：移除 DeepSeek／Pi、Sandboxie 執行、內嵌瀏覽器及 standard 舊入口；子代理可選 GPT-6.1 Sol／GPT-6 Luna 與原生 effort，Claude 加入 Sonnet 5.5。驗證與正式部署狀態以 [本批紀錄](docs/r3-2-cleanup-20260930.md) 為準。
+
+### 現行入口
+- 使用 `Start-K-Desktop.ps1`／`local-launcher/dist/K桌面啟動器.exe` 開啟 K。正式服務由原生桌面管理。
+- 本候選原始碼可用 `npm test`、`npm run build:ui` 驗證。
+- 外部網頁使用 K 瀏覽器助手；不再使用內嵌／舊 web。舊 `Start-K.ps1`、worker／DeepSeek／Pi 命令已移除，不再執行。
+
+### 下列為歷史階段紀錄
 
 2026-09-30 19:04：**R3-1 取消重連補修已正式套用並重開。** 修正既有聊天室取消後仍假裝已連線：Claude 下一則新訊息可重連，Codex 下次開啟重新讀歷史。完整 652/652、部署模組假 host 3/3、兩檔及正式 health 讀回通過，無真正模型回合或正式 UI 操作。[差異與還原](docs/r3-1-reconnect-cancel-fix-20260930.md)。
 
@@ -125,7 +134,7 @@
 - 原始 Pi 對話已驗證可重新載入；尚未實作續跑指令或驗證模型在壓縮與重啟後的記憶表現。原型關閉自動壓縮與自動重試，超出上下文或發生錯誤時回報失敗，不暗中改用其他模型。
 - 真實任務的速度、費用、完成度與記憶對照。舊 KAI 測試與小型 Flash 原型不作為本專案的完成證據。
 
-## 技術起點
+## 歷史：Pi 技術起點（R3-2 已移除）
 
 - Node.js：`>=22.19.0`，依 Pi 0.85.1 的套件要求宣告；沒有變更本機環境。
 - Pi SDK：`@earendil-works/pi-coding-agent` 與直接使用的 `@earendil-works/pi-ai`，均精確指定 `0.85.1`。
@@ -133,7 +142,7 @@
 - 依賴已安裝，完整解析版本記錄於 `package-lock.json`。安裝停用套件 lifecycle scripts；npm 快取限於專案 `.local/npm-cache`，未升級 Node.js／npm 或安裝全域套件。
 - 不將真實 API key、登入憑證、執行紀錄或使用者工作資料納入版本控制。
 
-## 操作
+## 歷史：Pi 操作（命令已移除，請勿執行）
 
 在 `D:\K-harness` 開啟終端：
 

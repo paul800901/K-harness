@@ -21,23 +21,6 @@ test('snapshots on connect/reconnect resynchronize state', () => {
   assert.deepEqual(reconnected,state);
 });
 
-test('legacy bare full-state events remain readable during the server transition', () => {
-  const legacy={status:'ready',messages:[{id:'m1',role:'assistant',text:'legacy'}],tools:[],busy:false};
-  const restored=applyStateEvent(null,legacy);
-  assert.deepEqual(restored,legacy);
-  assert.notEqual(restored,legacy);
-  assert.notEqual(restored.messages,legacy.messages);
-
-  // Compatibility must not reinterpret typed snapshots or patches.
-  const stream=createStateStream();
-  const typedSnapshot=stream.snapshot({status:'ready',messages:[],tools:[]});
-  assert.equal(typedSnapshot.type,'snapshot');
-  assert.deepEqual(applyStateEvent(null,typedSnapshot),typedSnapshot.state);
-  const patch=stream.update({status:'working',messages:[],tools:[]});
-  assert.equal(patch.type,'patch');
-  assert.equal(applyStateEvent({status:'ready',messages:[],tools:[]},patch).status,'working');
-});
-
 test('mutated messages and tools stream compact append patches without drift', () => {
   const stream=createStateStream();
   const state=stateWith([{id:'m1',role:'assistant',text:'hello'}],[{id:'t1',name:'shell',status:'running',output:'abc'}]);
@@ -71,7 +54,7 @@ test('a second SSE client receives a snapshot only after pending changes reach t
   const app=await startDesktop({root,executable:'fixture',port:0,controllerFactory:({onChange})=>{notify=onChange;return {state,close:async()=>{}};}});
   const streams=[];
   async function connect(){
-    const home=await fetch(app.origin);const cookie=home.headers.get('set-cookie').split(';')[0];
+    const home=await fetch(app.createLaunchUrl(),{redirect:'manual'});const cookie=home.headers.get('set-cookie').split(';')[0];
     const response=await fetch(new URL('/api/events',app.origin),{headers:{cookie}});
     const reader=response.body.getReader();streams.push(reader);const decoder=new TextDecoder();let buffer='';
     return {read:async()=>{while(!buffer.includes('\n\n')){const part=await reader.read();if(part.done)throw Error('SSE ended before an event');buffer+=decoder.decode(part.value,{stream:true});}const end=buffer.indexOf('\n\n'),frame=buffer.slice(0,end);buffer=buffer.slice(end+2);const data=frame.split('\n').find(line=>line.startsWith('data: '));return JSON.parse(data.slice(6));}};

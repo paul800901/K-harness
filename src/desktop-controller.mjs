@@ -1,12 +1,11 @@
 import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
 import {saveMainSession,listMainSessions} from './main-sessions.mjs';
-import {collectWorkerIds,checkMainWorkers} from './main-workers.mjs';
 import {randomUUID} from 'node:crypto';
 import {saveAttachment,loadAttachment,readPresentedFile} from './desktop-files.mjs';
 import path from 'node:path';
-import {codexQuota,flashUsage} from './usage.mjs';
-import {validateWorkspace,listWorkspaceDirectories,createWorkspaceRuntimeConfig} from './workspaces.mjs';
+import {codexQuota} from './usage.mjs';
+import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
 import {listMainModels,findMainModel,reasoningEfforts,supportsImages} from './main-models.mjs';
 import {normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
 import {collectNativeWorkerIds,checkNativeWorkers} from './native-workers.mjs';
@@ -14,22 +13,11 @@ import {permissionMode,turnPermissions,threadPermissions,approvalRequest} from '
 import {stopThreadTerminals} from './background-terminals.mjs';
 import {loadUiMessageTiming,saveUiMessageTiming,turnGroupId} from './ui-message-timing.mjs';
 import {normalizeFileSearchQuery,validateNativeReviewRequest} from './native-actions.mjs';
-import {readBrowserMcpConfig,withBrowserMcp,browserSessionKey} from './browser-mcp-config.mjs';
-import {browserLiveRequest} from './browser-live-proxy.mjs';
+import {withBrowserMcp,browserSessionKey} from './browser-mcp-config.mjs';
 
 // One active conversation. Official runtime remains the history authority.
-export function createDesktopController({root,executable,hostFactory=openCodexHost,onChange=()=>{},browserConfig=readBrowserMcpConfig,browserRequest=browserLiveRequest,closeBrowser=async()=>{},sandboxPolicyForMode}) {
- if(sandboxPolicyForMode!==undefined&&typeof sandboxPolicyForMode!=='function')throw new TypeError('sandboxPolicyForMode must be a function when supplied.');
- const threadPermissionParams=(mode,workspace)=>{
-  if(sandboxPolicyForMode)sandboxPolicyForMode(mode,workspace); // validates isolated-only routes before creating/resuming a native thread
-  return threadPermissions(mode,workspace);
- };
- const turnPermissionParams=(mode,workspace)=>{
-  const permissions=turnPermissions(mode,workspace);
-  if(sandboxPolicyForMode)permissions.sandboxPolicy=sandboxPolicyForMode(mode,workspace);
-  return permissions;
- };
- const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},executionPolicy:sandboxPolicyForMode?{type:'externalSandbox',networkAccess:'enabled'}:null,title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null},flash:{totalTokens:0,responses:0,unconfirmed:0,pending:0}}};
+export function createDesktopController({root,executable,hostFactory=openCodexHost,onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
+ const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const MAX_REASONING_SUMMARY_CHARS=16000,REASONING_TRUNCATION_SUFFIX='\n\n[摘要已截斷；僅顯示部分內容]';
  let usagePending,quotaReadAt=0,uiTiming={version:1,messages:{},tools:{}},uiTimingWrite=Promise.resolve(),activeGroupId=null;
@@ -213,10 +201,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  async function usage(force=false){
   if(closing)return state.usage;
   if(usagePending)return usagePending;
-  const active=host,threadId=state.threadId,workspace=state.workspace;
+  const active=host;
   usagePending=(async()=>{
-   const flash=await flashUsage(root,workspace,collectWorkerIds([...items.values()]));
-   if(threadId===state.threadId)state.usage.flash=flash;
   if(force||Date.now()-quotaReadAt>=(host?60000:300000)){
     let reader=active,temporary=false;
     try{
@@ -259,8 +245,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  async function workers(stop=false){
   if(!host||!state.threadId)return [];
   const threadId=state.threadId,epoch=viewEpoch;const observed=[...items.values()];
-  const [flash,native]=await Promise.all([checkMainWorkers(host,threadId,collectWorkerIds(observed),{stop,workspace:state.workspace}),checkNativeWorkers(host,threadId,collectNativeWorkerIds(observed),{stop})]);
-  const result=[...flash,...native];
+  const result=await checkNativeWorkers(host,threadId,collectNativeWorkerIds(observed),{stop});
   if(threadId!==state.threadId||epoch!==viewEpoch)return result;
   state.workers=result;syncArtifacts();changed();return result;
  }
@@ -339,7 +324,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!selected||(effort!=null&&!reasoningEfforts(selected).includes(effort)))throw Error('分支模型或推理程度不可用。');
    const access=permissionMode(accessMode),parent=state.threadId;
    if((access==='auto-review'||access==='danger-full-access')&&access!==state.accessMode&&permissionConfirmed!==true)throw Error('切換到此高權限模式前，必須明確確認 permissionConfirmed:true；分支未建立。');
-   const {config,...permissions}=threadPermissionParams(access,state.workspace);
+   const {config,...permissions}=threadPermissions(access,state.workspace);
    const result=await host.request('thread/fork',{threadId:parent,lastTurnId:point.turnId,cwd:state.workspace,model,...permissions,config:{...config,...(effort?{model_reasoning_effort:effort}:{})}});
    await saveMainSession(root,{threadId:result.thread.id,model,workspace:state.workspace,accessMode:access,effort,workerPolicy:state.workerPolicy,parentThreadId:parent,parentTitle:state.title});
    return this.open({threadId:result.thread.id,model,effort,accessMode:access});
@@ -408,7 +393,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const catalog=await this.models({signal});
     signal.throwIfAborted();const selected=findMainModel(catalog.models,model);
     if(!selected)throw new Error('目前帳號未提供指定模型。');
-    const policy=validateWorkerPolicy(workerPolicy,catalog.models);
+    const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,catalog.models);
     const efforts=reasoningEfforts(selected);
     effort=effort??saved?.effort??undefined;
     if(effort!==undefined&&(!efforts.includes(effort)))throw new Error('指定推理程度目前不可用。');
@@ -451,7 +436,6 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
-     state.usage.flash={totalTokens:0,responses:0,unconfirmed:0,pending:0};
      for(const turn of prior?.thread.turns??[])for(const i of turn.items??[]){
       if(i.type==='userMessage'){
        let text=(i.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');const attachments=[];
@@ -470,12 +454,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      }
      const lastTurn=prior?.thread.turns?.at(-1);activeGroupId=lastTurn?(uiTiming.messages[(lastTurn.items??[]).findLast(i=>i.type==='userMessage')?.id]?.groupId??turnGroupId(lastTurn.id)):null;
      syncArtifacts();changed();
-     const runtime=createWorkspaceRuntimeConfig({appRoot:root,workspace});
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
      const effective=await call('config/read',{includeLayers:false});
-     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??''});
-     const {config:permissionConfig,...threadAccess}=threadPermissionParams(access,workspace);
-     const config={...runtime,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{...runtime.config,mcp_servers:withBrowserMcp({k_flash:disabledCodexMcpServer(),...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer),...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
+     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:catalog.models});
+     const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
+     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{mcp_servers:withBrowserMcp({k_flash:disabledCodexMcpServer(),...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer),...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId){
@@ -497,11 +480,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
         const status=readiness?.status;
         if(['ready','notConfigured','updateRequired'].includes(status)){
          state.sandboxReadiness=status;
-         if(status!=='ready'&&!sandboxPolicyForMode)addNotice('warning',status==='notConfigured'?'Windows 沙箱尚未設定。':'Windows 沙箱需要更新。','windowsSandboxReadiness');
+         if(status!=='ready')addNotice('warning',status==='notConfigured'?'Windows 沙箱尚未設定。':'Windows 沙箱需要更新。','windowsSandboxReadiness');
         }
        }
       }catch(error){
-       if(!sandboxPolicyForMode&&host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch)addNotice('warning',`Windows 沙箱就緒狀態查詢失敗：${error.message}`,'windowsSandboxReadiness');
+       if(host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch)addNotice('warning',`Windows 沙箱就緒狀態查詢失敗：${error.message}`,'windowsSandboxReadiness');
       }
       state.title=saved?.title??'';
       if(!threadId)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
@@ -546,7 +529,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const input=[{type:'text',text:text+(context?'\n\n<K_ATTACHMENT_CONTEXT>\n'+context+'\n</K_ATTACHMENT_CONTEXT>':'')},...attachments.filter(a=>a.kind==='image').map(a=>({type:'localImage',path:path.join(state.workspace,a.path)}))];
     try{
      unsentSessions.delete(state.threadId);
-     const result=await host.request('turn/start',{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),input,...turnPermissionParams(access,state.workspace)});
+     const result=await host.request('turn/start',{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),input,...turnPermissions(access,state.workspace)});
      const sentTurnId=result.turn.id;message(userMessageId,'user',text,attachments,sentTurnId);
      if(state.busy)turnId=sentTurnId;
      if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges=[...state.modelChanges,{turnId:sentTurnId,fromModel:state.lastUsedModel,toModel:state.model,at:new Date().toISOString()}];

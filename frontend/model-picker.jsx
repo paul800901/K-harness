@@ -1,5 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
 import {Check,RefreshCw} from 'lucide-react';
+import {WORKER_MODELS,normalizeWorkerPolicy} from '../src/worker-policy.mjs';
 import {PermissionPicker} from './permission-picker.jsx';
 import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login-url.mjs';
 
@@ -10,11 +11,12 @@ const providerLabel=provider=>provider==='claude'?'Claude':'GPT';
 const providerSubscription=provider=>provider==='claude'?'Claude 訂閱':'Codex 訂閱';
 const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
 
-export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory=false,disabled,loadModels,onCatalog,onClose,onCreate}){
+export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode='create',hasHistory=false,disabled,loadModels,onCatalog,onClose,onCreate}){
  const [models,setModels]=useState([]),[provider,setProvider]=useState(mode==='switch'?modelProvider({model:currentModel}):'codex'),[model,setModel]=useState(''),[effort,setEffort]=useState(undefined),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const [claudeStatus,setClaudeStatus]=useState(null),[claudeLoading,setClaudeLoading]=useState(true),[claudeAction,setClaudeAction]=useState(false);
  const [claudeCode,setClaudeCode]=useState(''),[claudeLoginNotice,setClaudeLoginNotice]=useState('');
  const [codexStatus,setCodexStatus]=useState(null),[codexLoading,setCodexLoading]=useState(true),[codexAction,setCodexAction]=useState(false);
+ const [workerPolicy,setWorkerPolicy]=useState(()=>normalizeWorkerPolicy(currentWorkerPolicy));
  const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
  const initializedProvider=useRef(mode==='switch'?modelProvider({model:currentModel}):'codex');
 
@@ -108,6 +110,8 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
  const claudeStatusText=()=>claudeLoading?'正在讀取登入狀態…':claudeVerified?`已確認 Claude.ai ${auth.subscriptionType} 訂閱${claudeStatus.version?` · Claude Code ${claudeStatus.version}`:''}`:auth?.loggedIn===false?claudeUnavailableReason:claudeStatus?.reason||claudeUnavailableReason;
  const codexStatusText=()=>codexLoading?'正在讀取登入狀態…':codexVerified?`已確認 ChatGPT${codexAuth.planType?` ${codexAuth.planType} 訂閱`: ' 訂閱'}`:codexAuth?.loggedIn===false?'尚未登入 ChatGPT 訂閱，請先完成官方登入。':codexStatus?.reason||'尚未確認 Codex 訂閱狀態。';
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
+ const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model));
+ const workerEfforts=workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
  const inheritedEffort=mode==='switch'&&supportedEfforts.some(item=>item.reasoningEffort===currentEffort)?currentEffort:selected?.defaultReasoningEffort;
  const visibleModels=models.filter(item=>modelProvider(item)===provider);
 
@@ -185,9 +189,15 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
    {mode==='switch'?<>
     {hasHistory&&model!==currentModel?<p className="model-switch-warning" role="note">中途切換模型可能影響接續品質，上下文也可能自動壓縮。原對話與檔案保留，但不保證所有細節都能無損接續。需要完全獨立的工作時，可另開新對話。</p>:<p className="model-routing-note">從下一則訊息開始使用；不會立即執行工作。</p>}
     <p className="model-routing-note">只變更主代理與推理程度；工作區、子代理與操作權限不變。</p>
-   </>:<section className="setting-section worker-section" aria-labelledby="worker-setting-label"><div className="model-setting-copy"><strong id="worker-setting-label">子代理</strong><span>需要派工時才使用。</span></div><div className="worker-setting-readonly"><span>一般工人</span><strong>GPT-6 Luna · 高（橋接工人）</strong></div></section>}
+   </>:<section className="setting-section worker-section" aria-labelledby="worker-setting-label"><div className="model-setting-copy"><strong id="worker-setting-label">子代理</strong><span>需要派工時才使用；AI 可依任務改選。</span></div><div className="worker-settings-body">
+    <label><span>預設模型</span><select aria-label="子代理模型" value={workerPolicy.model} disabled={disabled} onChange={event=>{const model=workerModels.find(item=>item.model===event.target.value);setWorkerPolicy({model:model.model,effort:model.defaultReasoningEffort??'high'});}}>
+     {!workerModels.some(item=>item.model===workerPolicy.model)&&<option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>}{workerModels.map(item=><option key={item.model} value={item.model}>{displayModel(item)}</option>)}
+    </select></label>
+    <label><span>預設推理程度</span><select aria-label="子代理推理程度" value={workerPolicy.effort} disabled={disabled||!workerEfforts.length} onChange={event=>setWorkerPolicy(current=>({...current,effort:event.target.value}))}>
+     {!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort}>{effortName[workerPolicy.effort]??workerPolicy.effort}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
+    </select></label><p className="step-hint">沿用 Codex 訂閱；也可直接在訊息中指定子代理模型與推理程度。</p></div></section>}
   </>}
-  <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy:{model:'gpt-6-luna'}}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
+  <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </>;
 }
 

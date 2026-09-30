@@ -17,7 +17,7 @@ test('isolated desktop does not grant human session via public GET or forged hea
   const cookie=boot.headers.get('set-cookie').split(';')[0];assert.match(cookie,/^k_session=[a-f0-9]{64}$/);
   assert.equal((await fetch(url,{redirect:'manual'})).status,403);
   const state=await fetch(desktop.origin+'/api/state',{headers:{Cookie:cookie}});assert.equal(state.status,200);assert.deepEqual(await state.json(),{threadId:'fake'});
-  const anonymous=await fetch(desktop.origin+'/');assert.equal(anonymous.status,403);assert.equal(anonymous.headers.get('set-cookie'),null);
+  const anonymous=await fetch(desktop.origin,{redirect:'manual'});assert.equal(anonymous.status,403);assert.equal(anonymous.headers.get('set-cookie'),null);
   const cross=await fetch(desktop.origin+'/api/state',{headers:{Cookie:cookie,Origin:'https://example.invalid'}});assert.equal(cross.status,403);
  }finally{await desktop.close();}
 });

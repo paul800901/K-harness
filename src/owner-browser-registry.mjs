@@ -1,12 +1,11 @@
 import path from 'node:path';
 import {mkdir,realpath} from 'node:fs/promises';
-import {createBrowserOwnerGateway} from './browser-owner-gateway.mjs';
 import {identifyBrowserServer} from './browser-mcp-config.mjs';
 import {consumeBrowserResponse} from './browser-live-proxy.mjs';
 
 // Only the trusted K process constructs this registry. Its human methods and
 // owner profile paths never enter a provider MCP configuration.
-export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory=createBrowserOwnerGateway,testOnly=true,onControlChange=()=>{}}){
+export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory,testOnly=true,onControlChange=()=>{}}){
   if(!path.isAbsolute(vault??'')||!path.isAbsolute(outputRoot??''))throw Error('Absolute owner browser directories are required.');
   const entries=new Map(),sessions=new Set();
   async function childDirectory(base,key){
@@ -72,25 +71,5 @@ export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory=crea
     // This UI label is selected by the trusted owner, never by an AI tool.
     return route==='/state'||route==='/action'?{...result,testOnly:testOnly!==false}:result;
   }
-  function scopedEntry(state,threadId){
-    if(!threadId||threadId!==state.threadId)throw Error('對話已切換，請重新開啟瀏覽器分頁。');
-    const key=state.browserAccess?.sessionKey;
-    if(!state.browserAccess?.enabled||!key)throw Error('此對話尚未啟用瀏覽器。');
-    const entry=entries.get(key);
-    if(!entry?.gateway)throw Error('瀏覽器連線已結束，請重新開啟原對話。');
-    return {key,entry};
-  }
-  async function presentation(state,threadId,pageId){
-    const {key,entry}=scopedEntry(state,threadId);
-    if(typeof entry.gateway.ownerPresentation!=='function')throw Error('Native browser presentation is unavailable.');
-    const result=await entry.gateway.ownerPresentation(pageId);
-    if(entries.get(key)!==entry)throw Error('瀏覽器連線已變更，結果已捨棄。');
-    return result;
-  }
-  function controlSnapshot(state,threadId){
-    const {entry}=scopedEntry(state,threadId);
-    if(typeof entry.gateway.getControlSnapshot!=='function')throw Error('Native browser control state is unavailable.');
-    return entry.gateway.getControlSnapshot();
-  }
-  return {session,request,presentation,controlSnapshot,async close(){const results=await Promise.allSettled([...sessions].map(item=>item.close()));const errors=results.filter(x=>x.status==='rejected').map(x=>x.reason);if(errors.length)throw new AggregateError(errors,'Browser shutdown was not confirmed.');}};
+  return {session,request,async close(){const results=await Promise.allSettled([...sessions].map(item=>item.close()));const errors=results.filter(x=>x.status==='rejected').map(x=>x.reason);if(errors.length)throw new AggregateError(errors,'Browser shutdown was not confirmed.');}};
 }

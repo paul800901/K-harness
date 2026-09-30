@@ -1,11 +1,10 @@
 import {createUnifiedController} from './unified-controller.mjs';
 import {listMainSessions} from './main-sessions.mjs';
 import {deleteArchived} from './archive-delete.mjs';
-import {browserLiveRequest} from './browser-live-proxy.mjs';
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
-export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,browserRequest=browserLiveRequest,...options}){
+export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,browserRequest,...options}){
  const rooms=new Map(),controllers=new Set(),locked=new Set();
  const openedOrder=new Map();let openSequence=0;
  let pendingOpen;

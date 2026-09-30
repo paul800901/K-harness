@@ -134,8 +134,8 @@ internal sealed class KLauncherContext : ApplicationContext
             string origin = JsonString(line, "origin");
             string presentation = JsonString(line, "presentation");
             int nativePid;
-            if (presentation == "native") {
-                if (child == null || !Int32.TryParse(JsonNumber(line, "pid"), out nativePid) || nativePid != child.Id ||
+
+                if (presentation != "native" || child == null || !Int32.TryParse(JsonNumber(line, "pid"), out nativePid) || nativePid != child.Id ||
                     origin != "http://127.0.0.1:" + Port || !IsKReady()) {
                     Log("native isolated supervisor event rejected (identity/origin/health validation failed)");
                     lock (supervisorSync) supervisorReady = false;
@@ -148,27 +148,6 @@ internal sealed class KLauncherContext : ApplicationContext
                 Log(type == "ready" ? "native isolated workbench ready" : "native isolated workbench opened");
                 ShowOnUi(delegate { Notify("K 已就緒", "工作台已在原生視窗中開啟。", ToolTipIcon.Info); });
                 return;
-            }
-            string launchUrl = JsonString(line, "launchUrl");
-            int pid;
-            Uri uri;
-            if (child == null || !Int32.TryParse(JsonNumber(line, "pid"), out pid) || pid != child.Id ||
-                origin != "http://127.0.0.1:" + Port || !ValidLaunchUrl(launchUrl, origin, out uri) || !IsKReady()) {
-                Log("isolated supervisor event rejected (identity/health/token validation failed)");
-                lock (supervisorSync) supervisorReady = false;
-                pendingOpen = false;
-                ShowOnUi(delegate { Notify("K 啟動未完成", "隔離服務身分或健康狀態無法確認；沒有開啟或接管服務。", ToolTipIcon.Error); });
-                return;
-            }
-            lock (supervisorSync) supervisorReady = true;
-            Log("isolated supervisor ready; one-use URL received (redacted)");
-            bool open = true; // ready auto-opens once; each explicit open reply opens its one-use URL.
-            pendingOpen = false;
-            if (open) {
-                try { OpenUrl(uri.AbsoluteUri); ShowOnUi(delegate { Notify("K 已就緒", "已安全開啟 K 執行中樞。", ToolTipIcon.Info); }); }
-                catch (Exception) { Log("browser open failed (bootstrap URL redacted)"); ShowOnUi(delegate { MessageBox.Show("無法開啟 K 視窗；隔離服務仍在執行。", "K", MessageBoxButtons.OK, MessageBoxIcon.Error); }); }
-            }
-            return;
         }
         if (type == "error") {
             string code = JsonString(line, "code");
@@ -378,35 +357,6 @@ internal sealed class KLauncherContext : ApplicationContext
     {
         Match match = Regex.Match(json ?? "", "\"" + Regex.Escape(key) + "\"\\s*:\\s*([0-9]+)");
         return match.Success ? match.Groups[1].Value : null;
-    }
-
-    private static bool ValidLaunchUrl(string value, string expectedOrigin, out Uri uri)
-    {
-        uri = null;
-        if (!Uri.TryCreate(value, UriKind.Absolute, out uri) || uri.Scheme != Uri.UriSchemeHttp ||
-            uri.Host != "127.0.0.1" || uri.Port != Port || uri.AbsolutePath != "/bootstrap" ||
-            uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || uri.GetLeftPart(UriPartial.Authority) != expectedOrigin) return false;
-        return Regex.IsMatch(uri.Query, "^\\?token=[a-fA-F0-9]{64}$");
-    }
-
-    internal static void OpenUrl(string url)
-    {
-        string browser = BrowserPath();
-        if (browser != null) Process.Start(new ProcessStartInfo { FileName = browser, Arguments = "--app=\"" + url + "\" --start-maximized", UseShellExecute = true });
-        else Process.Start(new ProcessStartInfo { FileName = url, UseShellExecute = true });
-    }
-
-    private static string BrowserPath()
-    {
-        string[] paths = {
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Google", "Chrome", "Application", "chrome.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Google", "Chrome", "Application", "chrome.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Google", "Chrome", "Application", "chrome.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft", "Edge", "Application", "msedge.exe"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft", "Edge", "Application", "msedge.exe")
-        };
-        foreach (string candidate in paths) if (File.Exists(candidate)) return candidate;
-        return null;
     }
 
     private void OpenLog()

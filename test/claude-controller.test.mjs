@@ -10,7 +10,9 @@ import fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
-async function fixture({models,waitForHost}={}) {
+import {fixtureBrowser} from './fixtures/owner-browser.mjs';
+
+async function fixture({models,waitForHost,browser=false}={}) {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
   await mkdir(base,{recursive:true});
   const root=await mkdtemp(path.join(base,'claude-controller-'));
@@ -21,7 +23,7 @@ async function fixture({models,waitForHost}={}) {
   const makeHost=()=>{let resolveClosed;return {startCalls:[],closed:new Promise(resolve=>{resolveClosed=resolve;}),async start(content){this.startCalls.push(content);},async interrupt(){this.interrupted=true;},async close(){resolveClosed();}};};let host;
   const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return args;},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
   const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
-  const controller=createClaudeController({root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
+  const controller=createClaudeController({...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
     hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
     bridgeFactory:async options=>{bridgeOptions=options;return bridge;},
     gatewayFactory:async options=>{gatewayOptions=options;return gateway;}});
@@ -80,27 +82,24 @@ test('opens subscription host with native UUID and K Luna gateway, saves only a 
 });
 
 test('project browser opt-in adds a dedicated MCP profile beside Luna for the Claude conversation',async()=>{
- const f=await fixture();
+ const f=await fixture({browser:true});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),'{"enabled":true}');
   const opened=await f.controller.open({});
   const servers=f.hostOptions.mcpConfig.mcpServers;
   assert.deepEqual(Object.keys(servers).sort(),['k_browser','k_luna']);
   assert.equal(servers.k_luna,f.gateway.mcpConfig.mcpServers.k_luna);
-  assert.deepEqual(servers.k_browser.args,[path.join(f.root,'src','browser-mcp-stdio.mjs'),path.join(f.root,'.runtime','browser-output',opened.threadId.slice(7)),path.join(f.root,'.runtime','browser-profiles',opened.threadId.slice(7))]);
-  assert.deepEqual(Object.keys(servers.k_browser).sort(),['args','command']);
+  assert.equal(servers.k_browser.url,'http://127.0.0.1:45678/mcp');
+  assert.deepEqual(servers.k_browser.headers,{Authorization:'Bearer fixture'});
+  assert.deepEqual(Object.keys(servers.k_browser).sort(),['headers','type','url']);
   await f.controller.send({text:'以新的推理設定重開同一對話。',effort:'high'});
-  assert.deepEqual(f.hostOptions.mcpConfig.mcpServers.k_browser.args,servers.k_browser.args);
+  assert.deepEqual(f.hostOptions.mcpConfig.mcpServers.k_browser,servers.k_browser);
   assert.equal(f.hostOptions.sessionId,opened.threadId.slice(7));
  }finally{await f.controller.close();}
 });
 
 test('Claude browser MCP is absent in plan mode and changes with native mode restarts',async()=>{
- const f=await fixture();
+ const f=await fixture({browser:true});
  try{
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});
-  await writeFile(path.join(f.root,'.runtime','browser-mcp.json'),' {"enabled":true}');
   await f.controller.open({accessMode:'claude-plan'});
   assert.equal(f.controller.state.browserAccess.enabled,false);
   assert.equal(f.hostOptions.mcpConfig.mcpServers.k_browser,undefined);
@@ -777,5 +776,33 @@ test('Claude ExitPlanMode presents existing plan at the native approval entry po
   assert.match(question.text,/檢視工作計畫/);assert.match(question.text,/# 驗收計畫/);assert.equal(question.details.plan,'# 驗收計畫\n1. 檢查回歸測試');
   await f.controller.answer({id:question.id,accept:false});
   assert.equal((await pending).behavior,'deny');
+ }finally{await f.controller.close();}
+});
+
+test('Claude preserves chosen worker defaults through saving and reconnect, with lazy Codex startup',async()=>{
+ const f=await fixture();const policy={model:'gpt-6.1-sol',effort:'xhigh'};
+ try{
+  const {threadId}=await f.controller.open({workerPolicy:policy});
+  assert.deepEqual(f.controller.state.workerPolicy,policy);assert.equal(f.bridgeOptions,undefined);
+  assert.deepEqual((await f.controller.sessions()).sessions[0].workerPolicy,policy);
+  await f.controller.stop();await f.controller.open({threadId});
+  assert.deepEqual(f.controller.state.workerPolicy,policy);
+  await f.gatewayOptions.bridge.start({requestId:'selected',task:'fake task',model:'gpt-6-luna',effort:'low'});
+  assert.deepEqual(f.bridgeOptions.workerPolicy,policy);
+ }finally{await f.controller.close();}
+});
+
+for(const model of ['claude-sonnet-5','claude-sonnet-5-5'])test(`${model} from the official catalog can be the main agent and retain its exact model`,async()=>{
+ const models=[{model,displayName:'Sonnet',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'max'}]}];
+ const f=await fixture({models});
+ try{
+  assert.deepEqual((await f.controller.models()).models,models);
+  const {threadId}=await f.controller.open({model,effort:'low'});
+  assert.equal(f.hostOptions.model,model);assert.equal(f.hostOptions.effort,'low');
+  await f.controller.send({text:'fake Sonnet task'});assert.equal(f.host.startCalls.length,1);
+  await f.controller.stop();await f.controller.open({threadId,model});
+  assert.equal(f.controller.state.model,model);
+  assert.equal((await f.controller.sessions()).sessions[0].model,model);
+  await assert.rejects(f.controller.selectModel({threadId,model:'claude-not-in-catalog'}),/目前帳號未提供/);
  }finally{await f.controller.close();}
 });

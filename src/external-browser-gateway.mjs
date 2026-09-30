@@ -184,7 +184,6 @@ export async function createExternalBrowserGateway({directory,profile,onControlC
       if(route!=='/state'&&route!=='/action'||!response.headers.get('content-type')?.includes('application/json'))return response;
       const state=await response.clone().json(),headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json; charset=utf-8');return Response.json({...state,external:true,browserMode:selected},{status:response.status,headers});
     },
-    async ownerPresentation(pageId){const gateway=current();if(!gateway)throw Error('Select an external browser mode first.');return gateway.ownerPresentation(pageId);},
     async getState(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=await gateway.getState();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected};},
     getControlSnapshot(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=gateway.getControlSnapshot();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected};},
     close,

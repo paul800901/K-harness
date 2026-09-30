@@ -15,8 +15,6 @@ async function fixture(options={}){
     const id=++next,call={id,...options,closed:0,closeError:null,request:null};calls.push(call);
     return {aiMcpServer:{type:'http',url:`http://127.0.0.1:${40000+id}/mcp`,headers:{Authorization:`Bearer AI-${id}`}},
       async humanRequest(route,body){call.request?.(route,body);return call.response??new Response(JSON.stringify({available:true,mode:'human',id}));},
-      async ownerPresentation(pageId){return {page:{owner:id,pageId},control:{mode:'human',aiCalls:0,busy:false,available:true,selectedPageId:pageId,humanInputAllowed:true}};},
-      getControlSnapshot(){return {mode:'human',aiCalls:0,busy:false,available:true,selectedPageId:'page-owner',humanInputAllowed:true};},
       async close(){call.closed++;if(call.closeError)throw call.closeError;},
     };
   }});
@@ -51,25 +49,6 @@ test('owner profiles are per conversation and provider config exposes only AI HT
     assert.deepEqual(claude,{type:'http',url:server.url,headers:{Authorization:'Bearer AI-1'}});
     assert.equal(browserSessionKey(claude),'conversation-a');
     assert.doesNotMatch(JSON.stringify(claude),/conversation-a|vault|human/);
-  }finally{await session.close();await f.registry.close();}
-});
-
-test('native presentation is owner-only and validates current thread and browser session scope',async()=>{
-  const changes=[],f=await fixture({onControlChange:state=>changes.push(state)}),session=f.registry.session();
-  try{
-    const server=await config(session,'conversation-a');
-    const state={threadId:'thread-a',browserAccess:{enabled:true,sessionKey:'conversation-a'}};
-    assert.equal(f.calls[0].onControlChange instanceof Function,true,'trusted native callback is injected only into the owner gateway factory');
-    assert.deepEqual(await f.registry.presentation(state,'thread-a','page-1'),{
-      page:{owner:1,pageId:'page-1'},
-      control:{mode:'human',aiCalls:0,busy:false,available:true,selectedPageId:'page-1',humanInputAllowed:true},
-    });
-    assert.deepEqual(f.registry.controlSnapshot(state,'thread-a'),{mode:'human',aiCalls:0,busy:false,available:true,selectedPageId:'page-owner',humanInputAllowed:true});
-    await assert.rejects(f.registry.presentation(state,'thread-b','page-1'),/對話已切換/u);
-    await assert.rejects(f.registry.presentation({...state,browserAccess:{enabled:false,sessionKey:'conversation-a'}},'thread-a','page-1'),/尚未啟用/u);
-    await assert.rejects(f.registry.presentation({...state,browserAccess:{enabled:true,sessionKey:'conversation-b'}},'thread-a','page-1'),/連線已結束/u);
-    assert.doesNotMatch(JSON.stringify(server),/ownerPresentation|controlSnapshot|humanInputAllowed/);
-    assert.equal(changes.length,0,'registry passes through rather than invoking native callback on behalf of Electron');
   }finally{await session.close();await f.registry.close();}
 });
 

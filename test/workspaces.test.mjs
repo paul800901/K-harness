@@ -4,7 +4,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createWorkspaceRuntimeConfig, listWorkspaceDirectories, validateWorkspace } from '../src/workspaces.mjs';
+import { listWorkspaceDirectories, validateWorkspace } from '../src/workspaces.mjs';
 
 async function fixture() {
   const base = fileURLToPath(new URL('../.runtime/tests/', import.meta.url));
@@ -30,15 +30,4 @@ test('workspace browsing returns only immediate real child folders without conte
     { name: 'alpha', path: path.join(f.root, 'alpha') },
     { name: 'zeta', path: path.join(f.root, 'zeta') },
   ]);
-});
-
-test('runtime override keeps K script/key path and points host plus Flash at one workspace', async () => {
-  const f = await fixture();
-  const result = createWorkspaceRuntimeConfig({ appRoot: f.appRoot, workspace: f.selected, nodeExecutable: process.execPath });
-  assert.equal(result.cwd, path.resolve(f.selected));
-  const server = result.config.mcp_servers.k_flash;
-  assert.equal(server.cwd, path.resolve(f.appRoot));
-  assert.equal(server.args[0], path.join(f.appRoot, 'src', 'mcp-stdio.mjs'));
-  assert.equal(server.args[server.args.indexOf('--workspace') + 1], path.resolve(f.selected));
-  assert.equal(server.args[server.args.indexOf('--key-file') + 1], path.join(f.appRoot, '.env.local'));
 });

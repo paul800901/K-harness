@@ -173,7 +173,7 @@ test('transcribe route retains cookie, same-origin, request-header and route-loc
     assert.equal((await fetch(url, {method: 'POST', headers, body})).status, 403);
     assert.equal((await fetch(`${app.origin}/api/state`, {headers: {host: 'wrong.example'}})).status, 403);
     assert.equal((await fetch(`${app.origin}/assets/missing.js`)).status, 400);
-    const page = await fetch(app.origin);
+    const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
     const cookie = page.headers.get('set-cookie').split(';')[0];
     assert.equal((await fetch(url, {method: 'POST', headers: {...headers, cookie, origin: 'https://foreign.example'}, body})).status, 403);
     assert.equal((await fetch(url, {method: 'POST', headers: {cookie, 'Content-Type': 'application/json'}, body})).status, 403);
@@ -213,7 +213,7 @@ test('transcribe route propagates client abort and server shutdown to the job si
       close: async () => {closeCalls += 1;},
     })});
   try {
-    const page = await fetch(app.origin);
+    const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
     const cookie = page.headers.get('set-cookie').split(';')[0];
     const target = new URL(`${app.origin}/api/dictation/transcribe`);
     const request = httpRequest(target, {method: 'POST', headers: {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'}});
@@ -242,7 +242,7 @@ test('desktop close reports partial failure, closes other resources, and retries
     ...noOpLogins(closes),
     controllerFactory: () => ({state: {status: 'idle'}, close: async () => {controllerCloses += 1;}}),
     localDictationFactory: () => backend});
-  const session = await fetch(app.origin);
+  const session = await fetch(app.createLaunchUrl(),{redirect:'manual'});
   const cookie = session.headers.get('set-cookie').split(';')[0];
   const pending = backend.transcribe(makeWav().toString('base64'));
   pending.catch(() => {});
@@ -272,7 +272,7 @@ test('shutdown route returns partial failure and a later request can complete sh
       dictationCloses += 1;
       if (dictationCloses === 1) throw Object.assign(new Error('synthetic unconfirmed stop'), {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED'});
     }})});
-  const page = await fetch(app.origin);
+  const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
   const cookie = page.headers.get('set-cookie').split(';')[0];
   const url = `${app.origin}/api/shutdown`;
   const options = {method: 'POST', headers: {cookie, origin: app.origin, 'Content-Type': 'application/json', 'X-K-Request': '1'}, body: '{}'};

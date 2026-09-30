@@ -4,7 +4,6 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
-import {isolatedCodexSandboxPolicy} from '../src/isolated-provider-hosts.mjs';
 
 const root = path.resolve('.runtime','luna-bridge-tests',randomUUID());
 const workspace = path.join(root,'workspace');
@@ -35,23 +34,23 @@ function fakeHost({accountType='chatgpt', models=catalog, onStart, threadRead, p
   return {host, calls, closeCount:()=>closedCount, setOptions:o=>options=o, finish(threadId='thread-1',turnId='turn-1') {status='completed';host.emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'completed'}}});},
     item(threadId,item) {items.push(item);host.emit({method:'item/completed',params:{threadId,item}});},releaseTerminals(){terminals=[];}};
 }
-async function make({accountType,models,onStart,threadRead,onChange=()=>{},onRequest,terminalData,terminalStuck,sandboxPolicyForMode,accessMode='workspace-write'}={}) {
+async function make({accountType,models,onStart,threadRead,onChange=()=>{},onRequest,terminalData,terminalStuck,accessMode='workspace-write',workerPolicy}={}) {
   let fixture; const parentId=randomUUID();
-  const bridge=await createLunaBridge({root,workspace,parentId,executable:'codex',onChange,onRequest,sandboxPolicyForMode,accessMode,
+  const bridge=await createLunaBridge({root,workspace,parentId,executable:'codex',onChange,onRequest,accessMode,workerPolicy,
     hostFactory:options=>{fixture=fakeHost({accountType,models,onStart,threadRead,parentId,terminalData,terminalStuck});fixture.setOptions(options);return fixture.host;}});
   return {bridge,fixture};
 }
 const noWrite = () => ({status:'not-written'});
 
-test('rejects non-subscription account and catalog without Luna/high before any turn',async()=>{
-  for(const options of [{accountType:'apiKey'},{models:[{model:'gpt-6-sol',supportedReasoningEfforts:[{reasoningEffort:'high'}]}]}]) {
-    let f;
-    await assert.rejects(createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',hostFactory:o=>{f=fakeHost(options);f.setOptions(o);return f.host;}}));
-    assert.equal(f.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);
-  }
+test('rejects non-subscription account and validates the requested worker against the catalog before a turn',async()=>{
+ let f;
+ await assert.rejects(createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',hostFactory:o=>{f=fakeHost({accountType:'apiKey'});f.setOptions(o);return f.host;}}));
+ assert.equal(f.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);
+ const {bridge,fixture}=await make({models:[{model:'gpt-6-sol',supportedReasoningEfforts:[{reasoningEffort:'high'}]}]});
+ try{await assert.rejects(bridge.start({requestId:'unavailable',task:'fake task'}),/未自動換模/);assert.equal(fixture.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);}finally{await bridge.close();}
 });
 
-test('uses fixed Luna/high, deduplicates stable request IDs, and persists native completion/output/files',async()=>{
+test('defaults to Luna/high, deduplicates stable request IDs, and persists native completion/output/files',async()=>{
   const changes=[];const {bridge,fixture}=await make({onChange:r=>changes.push(r)});
   const requestId='dedup';
   const first=await bridge.start({requestId,task:'請檢查並修復問題'});
@@ -75,24 +74,6 @@ test('uses fixed Luna/high, deduplicates stable request IDs, and persists native
   const persisted=JSON.parse(await readFile(path.join(root,'.runtime','luna-bridge',result.parentId,`${requestId}.json`),'utf8'));
   assert.equal(persisted.provider,'codex');assert.equal(persisted.status,'completed');
   await bridge.close();
-});
-
-test('isolated Luna uses the same externalSandbox policy as main Codex and refuses readonly',async()=>{
-  const {bridge,fixture}=await make({sandboxPolicyForMode:isolatedCodexSandboxPolicy});
-  const started=await bridge.start({requestId:'external-sandbox',task:'fake policy check'});
-  const thread=fixture.calls.find(call=>call.method==='thread/start').p;
-  const turn=fixture.calls.find(call=>call.method==='turn/start').p;
-  assert.equal(thread.approvalPolicy,'on-request');assert.equal(thread.approvalsReviewer,'user');
-  assert.equal(turn.approvalPolicy,'on-request');assert.equal(turn.approvalsReviewer,'user');
-  assert.deepEqual(turn.sandboxPolicy,{type:'externalSandbox',networkAccess:'enabled'});
-  assert.equal(thread.config.sandbox_mode,'workspace-write');
-  await bridge.close();
-
-  const refused=await make({sandboxPolicyForMode:isolatedCodexSandboxPolicy,accessMode:'read-only'});
-  await assert.rejects(refused.bridge.start({requestId:'readonly-refused',task:'fake readonly check'}),/未具備可驗證的唯讀/u);
-  assert.equal(refused.fixture.calls.some(call=>call.method==='thread/start'||call.method==='turn/start'),false);
-  await refused.bridge.close();
-  assert.ok(started.threadId);
 });
 
 test('restart inspection reads native thread and never resends a turn',async()=>{
@@ -283,4 +264,23 @@ test('closing ignores settled historical records even when their thread is unava
  const original=next.host.request;next.host.request=(method,p)=>{if(method.startsWith('thread/')){reads++;throw Error('historical thread unavailable');}return original(method,p);};
  const reopened=await createLunaBridge({root,workspace,parentId:record.parentId,executable:'codex',hostFactory:o=>{next.setOptions(o);return next.host;}});
  await reopened.close();assert.equal(next.closeCount(),1);assert.equal(reads,0);
+});
+
+test('human defaults and AI per-task model/effort choices reach native worker requests unchanged',async()=>{
+ const models=[...catalog,{model:'gpt-6.1-sol',supportedReasoningEfforts:['low','ultra'].map(reasoningEffort=>({reasoningEffort}))}];
+ const {bridge,fixture}=await make({models,workerPolicy:{model:'gpt-6.1-sol',effort:'ultra'}});
+ try{
+  const first=await bridge.start({requestId:'sol',task:'fake default task'});
+  assert.equal(first.model,'gpt-6.1-sol');assert.equal(first.effort,'ultra');
+  const firstStart=fixture.calls.find(c=>c.method==='thread/start').p,firstTurn=fixture.calls.find(c=>c.method==='turn/start').p;
+  assert.equal(firstStart.model,'gpt-6.1-sol');assert.equal(firstStart.config.model_reasoning_effort,'ultra');assert.equal(firstTurn.model,'gpt-6.1-sol');assert.equal(firstTurn.effort,'ultra');
+  const second=await bridge.start({requestId:'luna',task:'fake selected task',model:'gpt-6-luna',effort:'high'});
+  assert.equal(second.model,'gpt-6-luna');assert.equal(fixture.calls.findLast(c=>c.method==='turn/start').p.effort,'high');
+  const before=fixture.calls.filter(c=>c.method==='turn/start').length;
+  await assert.rejects(bridge.start({requestId:'sol',task:'fake default task',model:'gpt-6-luna',effort:'high'}),/模型設定/);
+  await assert.rejects(bridge.start({requestId:'unsupported',task:'fake',model:'gpt-6-luna',effort:'ultra'}),/不支援/);
+  assert.equal(fixture.calls.filter(c=>c.method==='turn/start').length,before);
+  const persisted=JSON.parse(await readFile(path.join(root,'.runtime','luna-bridge',first.parentId,'sol.json')));
+  assert.equal(persisted.model,'gpt-6.1-sol');assert.equal(persisted.effort,'ultra');
+ }finally{await bridge.close();}
 });

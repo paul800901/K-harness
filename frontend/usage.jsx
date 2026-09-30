@@ -3,11 +3,10 @@ import {RefreshCw} from 'lucide-react';
 import './usage.css';
 
 const windowName=w=>w.minutes===10080?'每週':w.minutes===300?'5 小時':w.minutes?`${w.minutes} 分鐘`:w.key==='primary'?'短期額度':'長期額度';
-const tokenCount=value=>new Intl.NumberFormat('en-US',{notation:'compact',maximumFractionDigits:1}).format(value);
 const refreshUsage=force=>fetch(`/api/usage${force?'?refresh=1':''}`);
 
 export function Usage({state,online,onDetails}){
- const quota=state.usage?.codex,flash=state.usage?.flash;
+ const quota=state.usage?.codex;
  useEffect(()=>{
   let inFlight=false;
   const update=async()=>{if(document.hidden||inFlight||!online)return;inFlight=true;try{await refreshUsage(false);}catch{}finally{inFlight=false;}};
@@ -21,14 +20,13 @@ export function Usage({state,online,onDetails}){
    <span className="usage-label">剩餘額度</span>
    <span className="usage-row"><span className="usage-provider">Codex</span><span className="usage-values">{windows.length?[...windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':w.minutes===300?'5 小時':windowName(w)} {w.remainingPercent}%</span></React.Fragment>):'—'}</span>{stale&&<em>舊</em>}</span>
    <span className="usage-row"><span className="usage-provider">Claude</span><span className="usage-values">{state.usage?.claude?.windows?.some(w=>w.remainingPercent!=null)?state.usage.claude.windows.filter(w=>['five_hour','seven_day'].includes(w.key)).sort((a,b)=>a.key==='seven_day'?-1:b.key==='seven_day'?1:0).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={Number.isFinite(w.remainingPercent)&&w.remainingPercent<20?'warning':undefined}>{w.key==='five_hour'?'5 小時':'本週'} {w.remainingPercent??'—'}{w.remainingPercent==null?'':'%'}</span></React.Fragment>):'—'}</span>{(!online||state.usage?.claude?.status==='stale')&&<em>舊</em>}</span>
-   {(flash?.totalTokens>0||flash?.unconfirmed>0||flash?.pending>0)&&<span className="usage-flash">DeepSeek <b>{flash?.unconfirmed?'≥ ':''}{tokenCount(flash?.totalTokens??0)}</b> tok</span>}
   </button>
  </section>;
 }
 
 export function UsageDetails({state,online}){
  const [refreshing,setRefreshing]=useState(false);
- const quota=state.usage?.codex,flash=state.usage?.flash;
+ const quota=state.usage?.codex;
  const stale=!online||quota?.status==='stale';
  async function refresh(){
   setRefreshing(true);try{await refreshUsage(true);}catch{}finally{setRefreshing(false);}
@@ -43,8 +41,5 @@ export function UsageDetails({state,online}){
   {state.usage?.claude?.extraUsageDisabled===true&&<p className="usage-note">依目前觀察到的 Claude CLI 狀態，額外用量：未啟用（額度用完即停止，不會加價計費）。</p>}
   <p className="usage-note">{!online||state.usage?.claude?.status==='stale'?'舊資料，等待更新。':'Claude 連線中約每分鐘更新；無連線時約每 5 分鐘更新。'}直接讀取官方訂閱額度，不以 Token 推算。帳號共用，非此對話獨享。</p>
   <div className="usage-timestamps"><span>{state.usage?.claude?.checkedAt?`上次取得：${new Date(state.usage.claude.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(state.usage?.claude?.windows??[]).map(w=><span key={w.key}>{w.label}重設：{w.resetsAt?new Date(w.resetsAt*1000).toLocaleString('zh-TW'):'官方未提供'}</span>)}</div>
-  <div className="flash-line"><span>Flash · 本對話</span><strong>{flash?.unconfirmed?'至少 ':''}{(flash?.totalTokens??0).toLocaleString('zh-TW')} <small>Token</small></strong></div>
-  <p className="usage-note">輸入（含快取）與輸出 Token 合計；只計已收到的用量回報，不是 DeepSeek 帳號總消費，也不代表精確帳單。</p>
-  {(state.busy||flash?.pending>0||flash?.unconfirmed>0)&&<p className="usage-note">{flash?.unconfirmed?'部分用量尚未確認':'執行中；每次模型回覆後更新'}</p>}
  </section>;
 }

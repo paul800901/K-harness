@@ -6,13 +6,12 @@ import path from 'node:path';
 import os from 'node:os';
 import {chromium} from 'playwright';
 import {createBrowserOwnerGateway} from '../src/browser-owner-gateway.mjs';
-import {browserFramePoint} from '../frontend/browser-frame.mjs';
 
 async function fixture(options={}){
   const root=await mkdtemp(path.join(os.tmpdir(),'k-owner-browser-'));
   const directory=path.join(root,'output'),profile=path.join(root,'private-profile');
   await mkdir(directory);await mkdir(profile);
-  const gateway=await createBrowserOwnerGateway({directory,profile,...options});
+  const gateway=await createBrowserOwnerGateway({directory,profile,launchContext:async(profile,viewport)=>chromium.launchPersistentContext(profile,{channel:'msedge',headless:true,viewport}),...options});
   const config=gateway.aiMcpServer;
   const send=(message,extra={})=>fetch(config.url,{method:'POST',headers:{...config.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream',...extra.headers},body:JSON.stringify(message),...('signal' in extra?{signal:extra.signal}:{})});
   const call=(id,name,args={})=>send({jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}}).then(body);
@@ -49,19 +48,10 @@ test('owner gateway gives AI only MCP authority and never writes a human token f
     await assert.rejects(readFile(path.join(f.profile,'live.json')),error=>error.code==='ENOENT');
     const fake=path.join(f.root,'fake-cookie.txt');await writeFile(fake,'FAKE_COOKIE_ONLY');
     assert.match(JSON.stringify(await f.call(3,'browser_file_upload',{paths:[fake]})),/File access denied/);
+    assert.match(JSON.stringify(await f.call(30,'browser_drop',{paths:[fake]})),/File access denied/);
     assert.match(JSON.stringify(await f.call(4,'browser_run_code_unsafe',{code:'return 1'})),/not enabled/);
     assert.equal((await f.gateway.getState()).busy,false);
   }finally{await f.gateway.close();}
-});
-
-test('Electron native download receiver is exposed only when explicitly enabled',async()=>{
-  const ordinary=await fixture();
-  try{assert.equal(ordinary.gateway.acceptNativeDownload,undefined);}finally{await ordinary.gateway.close();}
-  const native=await fixture({nativeDownloads:true});
-  try{
-    assert.equal(typeof native.gateway.acceptNativeDownload,'function');
-    assert.doesNotMatch(JSON.stringify(native.config),/acceptNativeDownload|nativeDownloads/);
-  }finally{await native.gateway.close();}
 });
 
 test('owner takeover survives AI reconnect; real browser page is shared and returns to AI',async()=>{
@@ -78,9 +68,6 @@ test('owner takeover survives AI reconnect; real browser page is shared and retu
     try{control=await f.gateway.humanRequest('/action',{type:'takeover'}).then(r=>r.json());}finally{globalThis.fetch=originalFetch;}
     assert.equal(loopbackFetches,0);
     assert.equal(control.mode,'human');assert.equal(control.available,true);
-    const native=await f.gateway.ownerPresentation(control.selectedPageId);
-    assert.equal(native.page.url(),`http://127.0.0.1:${site.address().port}/`);
-    assert.equal(native.control.mode,'human');assert.equal(native.control.humanInputAllowed,true);
     assert.equal(typeof f.gateway.getControlSnapshot,'function');
     const shot=await f.gateway.humanRequest(`/frame?pageId=${control.selectedPageId}`);
     assert.equal(shot.headers.get('Content-Type'),'image/jpeg');assert((await shot.arrayBuffer()).byteLength>100);
@@ -133,7 +120,7 @@ function jpegDimensions(bytes){
   throw new Error('JPEG frame dimensions were not found.');
 }
 
-test('Edge MCP resize, CSS zoom, contained-frame click, takeover guard, and AI tab selection stay distinct',async()=>{
+test('Edge MCP resize, CSS zoom, page-coordinate click, takeover guard, and AI tab selection stay distinct',async()=>{
   const site=createServer((req,res)=>{
     const page=req.url==='/two'?'<title>PAGE_TWO</title><h1>PAGE_TWO</h1>':'<title>PAGE_ONE</title><h1>PAGE_ONE</h1><input id="target" aria-label="fake input" style="position:absolute;left:420px;top:260px;width:240px;height:52px">';
     res.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});res.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">${page}`);
@@ -175,15 +162,7 @@ test('Edge MCP resize, CSS zoom, contained-frame click, takeover guard, and AI t
     assert(zoomedRect&&zoomedRect.width>0&&zoomedRect.height>0);
 
     // A letterboxed 650x500 panel represents the screenshot without changing its viewport.
-    const panelRect={left:20,top:30,width:650,height:500};
-    const scale=Math.min(panelRect.width/1440,panelRect.height/900);
-    const displayedCenter={clientX:panelRect.left+(panelRect.width-1440*scale)/2+(zoomedRect.x+zoomedRect.width/2)*scale,clientY:panelRect.top+(panelRect.height-900*scale)/2+(zoomedRect.y+zoomedRect.height/2)*scale};
-    const mapped=browserFramePoint({rect:panelRect,width:1440,height:900,...displayedCenter});
-    assert(mapped,'scaled image click maps inside the actual browser viewport');
-
-    const aiSelectSecond=await tool('browser_tabs',{action:'select',index:1});
-    assert.notEqual(aiSelectSecond.result.isError,true,JSON.stringify(aiSelectSecond));
-    assert.match(JSON.stringify(await tool('browser_snapshot')),/PAGE_TWO/);
+    const mapped={x:zoomedRect.x+zoomedRect.width/2,y:zoomedRect.y+zoomedRect.height/2};
     const frameState=await f.gateway.getState();
     const firstPage=frameState.pages.find(page=>page.url.endsWith('/one'));
     assert(firstPage);

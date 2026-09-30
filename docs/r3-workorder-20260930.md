@@ -119,11 +119,11 @@ Claude 暫無額度，使用者明確要求 Astra 先自行驗證、直接套用
   - 控制器的預設參數不再指向舊路徑。
   - 前端：刪 `LegacyBrowserPanel`、`browser-frame.mjs`；刪 state-stream 的舊裸 state 相容分支。
 - **E4**：刪 `windows-dictation.mjs`、`scripts/Invoke-KWindowsDictation.ps1`、`/api/dictation` 路由。
-- **E5 桌面 Flash 接線**：
+- **E5 DeepSeek／Pi 整條路徑（9/30 追加取代原保留方案）**：
   - desktop-controller：刪 flashUsage 輪詢、checkMainWorkers／collectWorkerIds；刪 `createWorkspaceRuntimeConfig` 的 k_flash 部分（只留 cwd）。
   - 前端：刪 DeepSeek token 顯示。
   - **保留** `disabledCodexMcpServer()` 覆蓋：避免工作區 `.codex/config.toml` 的 k_flash 被帶進桌面對話。
-  - Pi 工人本體保留，Codex App 仍在用。
+  - 移除 Pi 工人本體、終端入口、npm scripts／相依及 Codex App 專案 k_flash 登記；舊程式留 Git，job／金鑰原地保留。
   - 刪 isolated-desktop 的 `createWorkerDispatcher`（無呼叫者）。
 - **E7**：
   - 刪系統匣啟動器的 launchUrl／`OpenUrl`／`BrowserPath`／`ValidLaunchUrl`，與 C2 同一次重建。
@@ -162,3 +162,11 @@ Claude 暫無額度，使用者明確要求 Astra 先自行驗證、直接套用
   - 開關對話、送出、停止、核准、分支、封存刪除、外部 Chrome 助手、本機聽寫、額度顯示都照常。
   - 新增的只有：連線中取消、確認後強制結束、模型清單跟官方。
 - 刪除量與新增量都要列出。這次重構的目標是總行數下降，不是上升。
+
+## 2026-09-30 R3-2 追加決定：移除 DeepSeek
+- 使用者明確要求先移除 DeepSeek 整條路徑，取代前文「保留 Pi 工人」：刪除工具登記、工人執行／終端原型、桌面顯示及不再使用的相依；Codex App 專案 k_flash 亦移除。
+- 保留 Codex／Claude 原生接入與 GPT 子代理。舊程式留 Git，既有 job、金鑰檔及登入資料原地保留，不呼叫 DeepSeek、不改全域設定或 API 計費。
+
+## R3-2 同批追加模型選擇
+- 原生 GPT 子代理由人／AI 可選 GPT-6.1 Sol 或 GPT-6 Luna 與官方支援的 effort；使用者明確要求的功能，不併入 R3-3 全域狀態整理。
+- Claude Sonnet 5.5 由官方模型目錄提供；使用者已允許更新 K 專用 CLI 至 2.1.285，不改全域、登入或計費。

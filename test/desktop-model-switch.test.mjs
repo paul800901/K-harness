@@ -15,14 +15,14 @@ const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const catalog=[
  {model:ASTRA,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
  {model:TERRA,displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
- {model:LUNA,displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low',inputModalities:['text']},
+ {model:LUNA,displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text']},
  ...[SOL,LEGACY_SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']})),
 ];
 
 const existingHistory=(threadId,text='既有要求')=>({turns:[{id:`prior-${threadId}`,items:[{type:'userMessage',id:`user-${threadId}`,content:[{type:'text',text}]},{type:'agentMessage',id:`assistant-${threadId}`,text:'既有回答'}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[],completeTurns=true,controllerOptions={},failAt=null}={}){
+async function fixture({sessions=[],completeTurns=true,controllerOptions={},failAt=null,models=catalog}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-model-switch-'));
  const histories=new Map(),unsupportedTurnReads=new Set(),calls=[],hosts=[];
@@ -40,7 +40,7 @@ async function fixture({sessions=[],completeTurns=true,controllerOptions={},fail
    async request(method,p={}){
     const call={host:this,method,p};calls.push(call);
     if(method==='account/read')return {account:{type:'chatgpt'}};
-    if(method==='model/list')return {data:catalog,nextCursor:null};
+    if(method==='model/list')return {data:models,nextCursor:null};
     if(method==='config/read')return {config:{}};
     if(method==='thread/read'){
      if(p.includeTurns===true&&unsupportedTurnReads.has(p.threadId)){
@@ -141,9 +141,9 @@ test('switch confirmation can be declined, is required for existing history, and
 });
 
 test('two model selections affect only the next turn, preserve effort policy and permissions, then persist turn attribution across reopen',async()=>{
- const f=await fixture();
+ const f=await fixture({models:catalog.map(model=>model.model===LUNA?{...model,supportedReasoningEfforts:[{reasoningEffort:'low'}]}:model)});
  try{
-  const opened=await f.c.open({model:ASTRA,effort:'high',accessMode:'read-only',workerPolicy:{model:LUNA}});
+  const opened=await f.c.open({model:ASTRA,effort:'high',accessMode:'read-only',workerPolicy:{model:LUNA,effort:'low'}});
   await flush();
   const threadId=opened.threadId;
   const originalWorkerPolicy=structuredClone(f.c.state.workerPolicy);

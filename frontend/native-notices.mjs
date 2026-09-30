@@ -1,5 +1,5 @@
 export function visibleNativeNotices(notices=[],displayedError=null) {
- return notices.filter(notice=>notice.kind!=='status'&&notice.kind!=='externalSandboxNetwork'&&!(notice.kind==='nativeError'&&notice.message===displayedError));
+ return notices.filter(notice=>notice.kind!=='status'&&!(notice.kind==='nativeError'&&notice.message===displayedError));
 }
 
 // Presentation only: native records stay unchanged; unknown wording stays intact.

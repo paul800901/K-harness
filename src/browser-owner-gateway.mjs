@@ -22,13 +22,13 @@ function matchesBearer(header,token){
  * This is NOT OS isolation: protect the caller, its code and its profile with
  * a verified OS boundary before connecting a model shell.
  */
-export async function createBrowserOwnerGateway({directory,profile,launchContext,toolTimeoutMs=120000,onControlChange=()=>{},nativeDownloads=false}){
+export async function createBrowserOwnerGateway({directory,profile,launchContext,toolTimeoutMs=120000,onControlChange=()=>{}}){
   if(!path.isAbsolute(directory??'')||!path.isAbsolute(profile??''))throw new Error('Absolute browser directories are required.');
   if(!Number.isInteger(toolTimeoutMs)||toolTimeoutMs<1)throw new Error('A positive tool timeout is required.');
   const root=await realpath(directory),profileRoot=await realpath(profile);
   const relative=path.relative(root,profileRoot);
   if(!relative||relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative))throw new Error('The browser profile must be outside AI browser files.');
-  const live=await createBrowserLiveSession(profileRoot,{launchContext,downloadDirectory:path.join(root,'downloads'),controlMode:'in-process',onControlChange,nativeDownloads});
+  const live=await createBrowserLiveSession(profileRoot,{launchContext,downloadDirectory:path.join(root,'downloads'),onControlChange});
   const aiToken=randomBytes(32).toString('hex');
   let mcp,closing=false,closePromise,host;
   const raw=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined});
@@ -92,7 +92,7 @@ export async function createBrowserOwnerGateway({directory,profile,launchContext
     return closePromise;
   }
   try{
-    mcp=await createConnection({browser:{browserName:'chromium',userDataDir:profileRoot,launchOptions:{channel:'msedge',headless:true}},outputDir:root,allowUnrestrictedFileAccess:false,webmcp:false},live.contextGetter);
+    mcp=await createConnection({browser:{browserName:'chromium'},outputDir:root,allowUnrestrictedFileAccess:false,webmcp:false},live.contextGetter);
     mcp.listRoots=async()=>({roots:[{uri:pathToFileURL(root).href,name:'K browser files'}]});
     await mcp.connect(transport);
     await new Promise((resolve,reject)=>{http.once('error',reject);http.listen(0,'127.0.0.1',resolve);});
@@ -107,9 +107,7 @@ export async function createBrowserOwnerGateway({directory,profile,launchContext
       return live.humanRequest(route,body);
     },
     getState:live.getState,
-    ownerPresentation:live.ownerPresentation,
     getControlSnapshot:live.getControlSnapshot,
-    ...(nativeDownloads?{acceptNativeDownload:live.acceptNativeDownload}:{}),
     close,
   };
 }
