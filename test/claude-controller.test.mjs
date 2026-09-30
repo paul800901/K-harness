@@ -364,6 +364,27 @@ test('cancelled Claude initialization closes a late host and does not turn ready
  assert.equal(closed,true);assert.notEqual(f.controller.state.status,'ready');assert.equal(f.controller.state.threadId,null);
  await f.controller.open({});assert.equal(f.controller.state.status,'ready');await f.controller.close();
 });
+
+test('cancelled Claude reconnect stays interrupted and only a new send resumes the same conversation',async()=>{
+ let entered,release,calls=0;const started=new Promise(r=>{entered=r;}),gate=new Promise(r=>{release=r;});
+ const f=await fixture({waitForHost:async()=>{if(++calls===2){entered();await gate;}}});
+ try{
+  const {threadId}=await f.controller.open({});
+  await f.controller.send({text:'original request'});f.hostOptions.onMessage({type:'result',is_error:false});
+  const old=f.host,messages=structuredClone(f.controller.state.messages);
+  const reconnect=f.controller.open({threadId,effort:'high'}),rejected=assert.rejects(reconnect,/取消/);await started;
+  const late=f.host;let lateClosed=false;void late.closed.then(()=>{lateClosed=true;});
+  const stopping=f.controller.stop();release();await stopping;await rejected;
+  assert.equal(f.controller.state.status,'interrupted');assert.equal(f.controller.state.error,null);
+  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.threadId,threadId);
+  assert.deepEqual(f.controller.state.messages,messages);assert.equal(lateClosed,true);
+  assert.equal(calls,2);assert.equal(old.startCalls.length,1);assert.equal(late.startCalls.length,0);
+  await f.controller.send({text:'new explicit request'});
+  assert.equal(calls,3);assert.equal(f.hostOptions.sessionId,threadId.slice(7));assert.equal(f.hostOptions.resume,true);
+  assert.equal(f.hostOptions.effort,null,'cancelled setting is not silently applied');
+  assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'new explicit request');
+ }finally{release();await f.controller.close();}
+});
 test('Luna completion wakes the original Claude once after the current turn; no wait or inspect',async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'delegate bounded work'});

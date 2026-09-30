@@ -509,7 +509,12 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       await saveMainSession(root,{...saved,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey});
      state.workerConnection='ready';
      signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
-   }catch(e){if(signal.aborted){Object.assign(state,previousState);if(createdHost){await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;}state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}throw new Error(state.error);}
+   }catch(e){if(signal.aborted){
+     Object.assign(state,previousState);
+     // Resume may already have reset the projection, even when reusing the host.
+     if(state.threadId){state.status='offline';state.browserAccess={enabled:false,networkAccess:false};}
+     if(createdHost){await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;
+    }state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}throw new Error(state.error);}
    }
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },

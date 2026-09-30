@@ -494,7 +494,10 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       } catch(error) {
         state.browserAccess={enabled:false,networkAccess:false};
         state.status=previousClosed?'error':'uncertain';state.error=error.message;
-        if(signal.aborted)Object.assign(state,previousState);
+        if(signal.aborted){
+          Object.assign(state,previousState);
+          if(previousClosed&&state.threadId){state.status='interrupted';state.browserAccess={enabled:false,networkAccess:false};}
+        }
         // Failed teardown must retain the old host so a later retry can close it.
         // Never retry teardown in the same catch or orphan its live connection.
         if(previousClosed){await closeWorkers().catch(()=>{});if(host){const failed=host;try{await failed.close();if(host===failed)host=null;settleNativeChildrenAfterHostClose();}catch(closeError){state.busy=false;state.status='uncertain';state.error=`新 Claude host 清理未確認：${closeError.message}；原開啟失敗：${error.message}`;throw new AggregateError([error,closeError],'Claude 對話開啟失敗，且新 host 關閉未確認。');}}}

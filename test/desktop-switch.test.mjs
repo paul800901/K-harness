@@ -16,7 +16,7 @@ const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'
 const history=text=>({turns:[{items:[{type:'userMessage',id:`u-${text}`,content:[{type:'text',text:`要求 ${text}`}]},{type:'agentMessage',id:`a-${text}`,text:`回答 ${text}`}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[]}={}){
+async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[],beforeRequest,controllerOptions={}}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-switch-'));
  const workspaceB=path.join(root,'workspace-b');await mkdir(workspaceB);
@@ -33,6 +33,7 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
    async close(){this.closeCount++;closeHost();},
    async request(method,p={}){
     const call={method,p};calls.push(call);allCalls.push({host:this,...call});
+    if(beforeRequest)await beforeRequest(method,p);
     if(method==='thread/start'||method==='thread/resume')for(const server of Object.values(p.config?.mcp_servers??{})){
      // Match native validation in a fresh home: disabled still needs transport.
      assert.ok(typeof server.command==='string'||typeof server.url==='string','invalid MCP transport');
@@ -74,7 +75,7 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
   if(options.onEvent){activeHost=host;activeHooks=options;}
   return host;
  };
- const c=createDesktopController({root,executable:'fixture',hostFactory});
+ const c=createDesktopController({root,executable:'fixture',hostFactory,...controllerOptions});
  const openSaved=threadId=>c.open({model:MODEL,threadId});
  return {c,root,workspaceB,hosts,allCalls,histories,get activeHost(){return activeHost;},get hooks(){return activeHooks;},openSaved};
 }
@@ -240,4 +241,31 @@ test('the same missing-turns protocol error does not make an arbitrary saved con
   assert.deepEqual(f.c.state.messages,[]);
   assert.equal(f.c.state.status,'error');
  }finally{await f.c.close();}
+});
+
+for(const replaceHost of [true,false])test(`cancelled Codex reconnect becomes offline and the next open refreshes history (replace host: ${replaceHost})`,async()=>{
+ let hold=false,entered,release;const started=new Promise(r=>{entered=r;}),gate=new Promise(r=>{release=r;});
+ const f=await fixture({
+  beforeRequest:async method=>{if(hold&&method==='thread/resume'){hold=false;entered();await gate;}},
+  controllerOptions:{browserConfig:async()=>({command:'fake-browser',args:[]}),browserRequest:async()=>({recoveryRequired:replaceHost})},
+ });
+ try{
+  await f.openSaved('thread-a');const old=f.activeHost,messages=structuredClone(f.c.state.messages);
+  f.histories.set('thread-a',history('refreshed A'));hold=true;
+  const reconnect=f.c.open({model:MODEL,threadId:'thread-a',accessMode:'workspace-write'});
+  const rejected=assert.rejects(reconnect,/取消/);await started;
+  const pendingHost=f.activeHost;await f.c.stop();release();await rejected;
+  assert.equal(f.c.state.status,'offline');assert.equal(f.c.state.busy,false);assert.equal(f.c.state.error,null);
+  assert.equal(f.c.state.threadId,'thread-a');assert.equal(f.c.state.accessMode,'read-only');
+  assert.deepEqual(f.c.state.messages,messages);
+  if(replaceHost){assert.equal(old.closeCount,1);assert.equal(pendingHost.closeCount,1);}
+  assert.equal(f.allCalls.some(call=>call.method==='turn/start'),false,'cancelling never sends or replays work');
+  const resumes=f.allCalls.filter(call=>call.method==='thread/resume').length;
+  await f.openSaved('thread-a');
+  assert.equal(f.c.state.status,'ready');assert.equal(f.c.state.accessMode,'read-only');
+  assert.equal(f.allCalls.filter(call=>call.method==='thread/resume').length,resumes+1,'not a false-ready no-op');
+  assert.equal(f.c.state.messages.at(-1).text,'回答 refreshed A');
+  await f.c.send({text:'new explicit request'});
+  assert.equal(f.allCalls.filter(call=>call.method==='turn/start').length,1);
+ }finally{release();await f.c.close();}
 });
