@@ -3,12 +3,24 @@ import assert from 'node:assert/strict';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import * as nativeNotices from '../frontend/native-notices.mjs';
 
-test('retains actionable warnings and errors',()=>{
+test('hides engineering notices without mutating the native records',()=>{
+ const notices=['status','deprecationNotice','configWarning','windowsWorldWritableWarning','windowsSandboxReadiness','windowsSandboxSetupCompleted']
+  .map((kind,index)=>({id:`hidden-${index}`,kind,level:'warning',message:`${kind} detail`}));
+ const before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices),[]);
+ assert.deepEqual(notices,before);
+});
+
+test('retains unknown warnings, guardian warnings, model routing, and native errors',()=>{
  const notices=[
+  {id:'warning',kind:'warning',level:'warning'},
+  {id:'guardian',kind:'guardianWarning',level:'warning'},
   {id:'reroute',kind:'modelRerouted',level:'warning'},
   {id:'error',kind:'nativeError',level:'error'},
  ];
- assert.deepEqual(visibleNativeNotices(notices).map(notice=>notice.id),['reroute','error']);
+ const before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices),notices);
+ assert.deepEqual(notices,before);
 });
 
 test('a native Codex error already shown in the main alert is not shown again',()=>{

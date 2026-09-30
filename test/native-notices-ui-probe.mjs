@@ -7,7 +7,7 @@ import {chromium} from 'playwright';
 import {preview} from 'vite';
 
 const root=fileURLToPath(new URL('..',import.meta.url));
-const output=path.join(root,'.runtime/r3/native-notice/ui');
+const output=path.join(root,'.runtime/engineering-notices-20261001/ui');
 const server=await preview({preview:{host:'127.0.0.1',port:5188,strictPort:true}});
 const native="You've hit your session limit · resets 5:30pm (Asia/Taipei)";
 const state={threadId:'claude-fake-quota',title:'假資料：額度通知',workspace:root,provider:'claude',model:'claude-opus-5-5',status:'failed',error:native,busy:false,messages:[],tools:[],questions:[],notices:[],artifacts:[],accessMode:'claude-manual',capabilities:{},conversationActivity:[]};
@@ -16,7 +16,7 @@ let browser;
 try{
  browser=await chromium.launch({headless:true,executablePath:process.env.K_UI_CHROMIUM});
  const page=await browser.newPage({viewport:{width:1920,height:1080}});
- await page.addInitScript(state=>{window.EventSource=class{constructor(){window.testState=next=>this.onmessage?.({data:JSON.stringify(next)});setTimeout(()=>window.testState(state),0);}close(){}};},state);
+ await page.addInitScript(state=>{window.EventSource=class{constructor(){window.testState=next=>this.onmessage?.({data:JSON.stringify({type:'snapshot',state:next})});setTimeout(()=>window.testState(state),0);}close(){}};},state);
  await page.route('**/api/**',async route=>{
   const request=route.request(),url=new URL(request.url());
   requests.push({path:url.pathname,method:request.method()});
@@ -43,10 +43,33 @@ try{
  assert.equal(await page.locator('main [role="alert"]').count(),1);
  assert.equal(await page.locator('.native-notices').isVisible(),false);
  await page.screenshot({path:path.join(output,'codex-single-error.png'),fullPage:true});
+
+ const engineeringKinds=['status','deprecationNotice','configWarning','windowsWorldWritableWarning','windowsSandboxReadiness','windowsSandboxSetupCompleted'];
+ const engineeringNotices=engineeringKinds.map((kind,index)=>({id:`engineering-${index}`,kind,level:'warning',message:`工程通知 ${kind}`}));
+ await page.evaluate(s=>window.testState(s),{...state,threadId:'engineering-notices',provider:'codex',error:null,notices:engineeringNotices});
+ await page.locator('main > .alert').waitFor({state:'hidden'});
+ assert.equal(await page.locator('.native-notices > *').count(),0,'engineering notices must not render');
+ assert.equal(await page.locator('.native-notices').boundingBox(),null,'hidden notices must not leave a blank region');
+ assert.equal(await page.getByRole('button',{name:'關閉此通知'}).count(),0,'hidden notices must not leave dismiss buttons');
+ for(const notice of engineeringNotices)assert.equal(await page.getByText(notice.message,{exact:true}).count(),0,notice.kind);
+ await page.screenshot({path:path.join(output,'engineering-notices-hidden.png'),fullPage:true});
+
+ const retainedNotices=[
+  {id:'unknown-warning',kind:'warning',level:'warning',message:'Important native warning'},
+  {id:'guardian-warning',kind:'guardianWarning',level:'warning',message:'Guardian policy warning'},
+  {id:'rerouted',kind:'modelRerouted',level:'warning',message:'Model rerouted for this turn'},
+  {id:'native-error',kind:'nativeError',level:'error',message:'Native operation failed'},
+ ];
+ await page.evaluate(s=>window.testState(s),{...state,threadId:'retained-notices',provider:'codex',error:null,notices:retainedNotices});
+ for(const notice of retainedNotices)await page.getByText(notice.message,{exact:true}).waitFor();
+ assert.equal(await page.locator('.native-notices > *').count(),retainedNotices.length);
+ assert.equal(await page.getByRole('button',{name:'關閉此通知'}).count(),retainedNotices.length);
+ await page.screenshot({path:path.join(output,'actionable-notices-retained.png'),fullPage:true});
+
  await page.evaluate(s=>window.testState(s),{...state,error:'Unknown native failure: request abc123'});
  await alert.getByText('Unknown native failure: request abc123',{exact:true}).waitFor();
  assert.equal(requests.some(r=>r.method==='POST'),false,'viewing notifications must not send or retry work');
- const result={passed:true,claudeAlertHeight:bounds.height,checks:['one localized Claude alert','native reset time retained','no duplicate notice or acknowledgment','one unchanged Codex error','unknown native details preserved','no POST or model work']};
+ const result={passed:true,claudeAlertHeight:bounds.height,checks:['one localized Claude alert','native reset time retained','no duplicate notice or acknowledgment','one unchanged Codex error','six engineering notice kinds hidden','hidden notices leave no blank region or dismiss buttons','unknown warning, guardian warning, model reroute, and native error retained','unknown native details preserved','no POST or model work']};
  await writeFile(path.join(output,'result.json'),JSON.stringify(result,null,2)+'\n');
  console.log(JSON.stringify(result));
 }finally{await browser?.close();await new Promise(resolve=>server.httpServer.close(resolve));}

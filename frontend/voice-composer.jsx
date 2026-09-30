@@ -16,7 +16,7 @@ function paintWaveform(canvas,levels){
 export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessionKey}){
  const [phase,setPhaseState]=useState('idle'),[notice,setNotice]=useState(''),[consent,setConsent]=useState(false);
  const canvas=useRef(null),job=useRef(null),callback=useRef(onResult),activity=useRef(onActiveChange),scope=useRef(sessionKey);callback.current=onResult;activity.current=onActiveChange;scope.current=sessionKey;
- const native=typeof window!=='undefined'&&typeof window.kBrowser?.present==='function';
+ const native=typeof window!=='undefined'&&typeof window.kBrowser?.onWindowHidden==='function';
  const consentKey=native?'k-local-dictation-consent':'k-browser-dictation-consent';
  const setPhase=next=>{setPhaseState(next);activity.current?.(next!=='idle');};
  const release=entry=>{cancelAnimationFrame(entry.frame);entry.stream?.getTracks().forEach(track=>track.stop());entry.context?.close().catch(()=>{});entry.stream=null;entry.context=null;};

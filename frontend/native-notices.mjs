@@ -1,5 +1,7 @@
+const hiddenEngineeringKinds=new Set(['status','deprecationNotice','configWarning','windowsWorldWritableWarning','windowsSandboxReadiness','windowsSandboxSetupCompleted']);
+
 export function visibleNativeNotices(notices=[],displayedError=null) {
- return notices.filter(notice=>notice.kind!=='status'&&!(notice.kind==='nativeError'&&notice.message===displayedError));
+ return notices.filter(notice=>!hiddenEngineeringKinds.has(notice.kind)&&!(notice.kind==='nativeError'&&notice.message===displayedError));
 }
 
 // Presentation only: native records stay unchanged; unknown wording stays intact.
