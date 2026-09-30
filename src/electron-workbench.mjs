@@ -60,6 +60,12 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
  const window=new BaseWindow({width:1440,height:960,title:'K 執行中樞',icon:fileURLToPath(new URL('../frontend/assets/k-logo.ico',import.meta.url))});window.setMenu(null);
  const owner=new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,partition:'k-trusted-owner',preload:fileURLToPath(new URL('./electron-owner-preload.cjs',import.meta.url))}});
  owner.webContents.on('dom-ready',()=>owner.webContents.setBackgroundThrottling(false));
+ owner.webContents.on('context-menu',(_event,{isEditable,selectionText,editFlags})=>{
+  const items=isEditable
+   ? [['undo','復原','canUndo'],['redo','重做','canRedo'],['cut','剪下','canCut'],['copy','複製','canCopy'],['paste','貼上','canPaste'],['selectAll','全選','canSelectAll']]
+   : selectionText?[['copy','複製','canCopy']]:[];
+  if(items.length)electron.Menu.buildFromTemplate(items.map(([action,label,flag])=>({label,enabled:editFlags[flag],click:()=>owner.webContents[action]()}))).popup({window});
+ });
  window.contentView.addChildView(owner);
  let services,closed=false,closing=false,closePromise=null;
  const refreshNativePresentation=()=>{if(closed||closing||!window.isVisible()||window.isMinimized())return;owner.webContents.send('k-native-browser-page',{refresh:true});};
