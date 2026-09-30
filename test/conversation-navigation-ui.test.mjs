@@ -27,7 +27,7 @@ test('chat actions are scoped to the rendered thread',()=>{
 });
 
 test('new conversations open directly in the selected workspace and agent activity does not lock navigation',()=>{
-  assert.match(main,/api\('open',\{\.\.\.selection,workspace:modal\.path\?\?state\.workspace\}\)/);
+  // Actual workspace selection and cancellation are exercised by model-picker-ui-probe.mjs.
   assert.match(main,/modal\?\.type==='new'.*<select aria-label="新對話工作區"/s);
   assert.match(main,/modal\?\.type==='new'.*projects\.filter\(p=>!p\.archived\)\.map\(p=>/s);
   assert.match(main,/const archivedProjectRows=projects\.filter\(project=>project\.archived\)/,'archived workspace restoration remains available separately');

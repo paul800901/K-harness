@@ -1,3 +1,4 @@
+import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
 import {saveMainSession,listMainSessions} from './main-sessions.mjs';
 import {collectWorkerIds,checkMainWorkers} from './main-workers.mjs';
@@ -264,7 +265,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(threadId!==state.threadId||epoch!==viewEpoch)return result;
   state.workers=result;syncArtifacts();changed();return result;
  }
+ let openAbort,openDone,finishOpen;
  async function stop(){
+  if(opening&&openAbort){openAbort.abort(new DOMException('已取消連線。','AbortError'));await openDone;return {cancelled:true};}
   if(opening||stopping)throw new Error('正在連線或停止，請稍候。');
   stopping=true;stopRequested=true;requestEpoch++;
   try{clearQuestions();if(!turnId&&submission)await submission;if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});
@@ -319,13 +322,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     state.usage.flash={totalTokens:0,responses:0,unconfirmed:0,pending:0};return {workspace};
    }finally{opening=false;changed();}
   },
-  async models(){
+  async models({signal}={}){
    let reader=host,temporary=false;
    try{
-    if(!reader){temporary=true;reader=hostFactory({executable,cwd:root});await reader.request('initialize',{clientInfo:{name:'k_harness_model_catalog',version:'0.1.0'}});reader.notify({method:'initialized',params:{}});}
-    const auth=temporary?await reader.request('account/read',{refreshToken:false}):null;
+    if(!reader){temporary=true;reader=hostFactory({executable,cwd:root,signal});await abortable(reader.request('initialize',{clientInfo:{name:'k_harness_model_catalog',version:'0.1.0'}}),signal);reader.notify({method:'initialized',params:{}});}
+    const auth=temporary?await abortable(reader.request('account/read',{refreshToken:false}),signal):null;
     if(auth&&auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
-    return {models:await listMainModels(reader)};
+    return {models:await abortable(listMainModels(reader),signal)};
    }finally{if(temporary&&reader)await reader.close();}
   },
   async fork({model=state.model,effort=state.effort,accessMode=state.accessMode,permissionConfirmed,messageId}){
@@ -381,14 +384,17 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // Sidebar labels/visibility are local K metadata; never alter model history.
    await saveMainSession(root,found);if(threadId===state.threadId){state.title=found.title;changed();}return found;
   },
-  async open({model,threadId,effort,workerPolicy,accessMode,permissionConfirmed}={}){
+  async open({model,threadId,effort,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal}={}){
    if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
    if(typeof model!=='string'||!model.trim())throw new Error('請選擇可用的 Codex 模型。');
    // Reserve before any asynchronous session/catalog read.  Catalog failure
    // must leave the current conversation untouched, while concurrent send
    // or open calls must still be rejected.
-   opening=true;
+   opening=true;openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
+   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state);let createdHost;
+   const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
+    signal.throwIfAborted();
     const saved=threadId?(await listMainSessions(root)).sessions.find(s=>s.threadId===threadId):null;
     if(threadId&&!saved)throw new Error('只能開啟 K 清單中的對話。');
     if(threadId&&saved.model!==model)throw Object.assign(new Error('此對話的主模型設定已更新，請重新整理清單後再開啟。'),{code:'K_STALE_MODEL_SELECTION'});
@@ -400,8 +406,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(host&&threadId===state.threadId&&model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&effort===undefined&&workerPolicy===undefined&&accessMode===undefined&&browserRecoveryThreadId!==threadId)return {threadId};
     // Validate against a fresh official catalog before touching the active
     // conversation or host, so a bad model/effort cannot destroy current UI.
-    const catalog=await this.models();
-    const selected=findMainModel(catalog.models,model);
+    const catalog=await this.models({signal});
+    signal.throwIfAborted();const selected=findMainModel(catalog.models,model);
     if(!selected)throw new Error('目前帳號未提供指定模型。');
     const policy=validateWorkerPolicy(workerPolicy,catalog.models);
     const efforts=reasoningEfforts(selected);
@@ -417,11 +423,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(!host){
      unsentSessions.clear();
      const connectionEpoch=++hostEpoch;
-     const active=hostFactory({executable,cwd:root,onEvent:e=>event(e,connectionEpoch),onRequest:request});host=active;
+     signal.throwIfAborted();const active=hostFactory({executable,cwd:root,signal,onEvent:e=>event(e,connectionEpoch),onRequest:request});host=active;createdHost=active;
       active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.error='主控已斷線；先重開原對話查明工作，不要直接重送。';changed();}}});
-     await host.request('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});
+     await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});
      }
-     const auth=await host.request('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
+     const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
      // Reading history does not require resuming the agent or starting MCP.
      // Keep the old view intact until the target history has been obtained.
      const unsent=unsentSessions.get(threadId);
@@ -431,11 +437,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       // A newly created, unsent thread still lives in this host, but this
       // runtime cannot list/resume its nonexistent turns. Do not invent a
       // blank history for arbitrary errors or for a thread from an old host.
-      try{prior=await host.request('thread/read',{threadId,includeTurns:true});}
+      try{prior=await call('thread/read',{threadId,includeTurns:true});}
       catch(e){
        if(!unsent||e.protocolMessage!=='list_turns is not supported yet')throw e;
        if(unsent.selection!==selection)throw new Error('尚未送出的空白對話不能變更模型設定；請先送出訊息或建立新工作。');
-       const summary=await host.request('thread/read',{threadId,includeTurns:false});
+       const summary=await call('thread/read',{threadId,includeTurns:false});
        if(summary.thread?.status?.type!=='idle'||summary.thread?.preview)throw e;
        prior={thread:{...summary.thread,turns:[]}};
       }
@@ -467,27 +473,27 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      syncArtifacts();changed();
      const runtime=createWorkspaceRuntimeConfig({appRoot:root,workspace});
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
-     const effective=await host.request('config/read',{includeLayers:false});
+     const effective=await call('config/read',{includeLayers:false});
      const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??''});
      const {config:permissionConfig,...threadAccess}=threadPermissionParams(access,workspace);
      const config={...runtime,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{...runtime.config,mcp_servers:withBrowserMcp({k_flash:disabledCodexMcpServer(),...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer),...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId){
-      try{session=await host.request('thread/resume',{...config,threadId});}
+      try{session=await call('thread/resume',{...config,threadId});}
       catch(e){
        // Codex can retain an archived flag independently of K's local sidebar.
        // The exact native precondition is recoverable: unarchive that same
        // thread, then resume it once. Never retry any turn or worker work.
        if(e.protocolMessage!==`session ${threadId} is archived. Run \`codex unarchive ${threadId}\` to unarchive it first.`)throw e;
-       await host.request('thread/unarchive',{threadId});
-       session=await host.request('thread/resume',{...config,threadId});
+       await call('thread/unarchive',{threadId});
+       session=await call('thread/resume',{...config,threadId});
       }
-     }else session=await host.request('thread/start',config);
-     state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);
+     }else session=await call('thread/start',config);
+     signal.throwIfAborted();state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);
       const openedThreadId=state.threadId,openedHost=host,readinessEpoch=viewEpoch;
       try{
-       const readiness=await openedHost.request('windowsSandbox/readiness',undefined,5000);
+       const readiness=await abortable(openedHost.request('windowsSandbox/readiness',undefined,5000),signal);
        if(host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch){
         const status=readiness?.status;
         if(['ready','notConfigured','updateRequired'].includes(status)){
@@ -500,13 +506,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       }
       state.title=saved?.title??'';
       if(!threadId)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
-      try{state.goal=(await host.request('thread/goal/get',{threadId:state.threadId})).goal??null;}catch{state.goal=null;}
+      try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch{state.goal=null;}
       await saveMainSession(root,{...saved,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey});
      state.workerConnection='ready';
-     state.status='ready';void usage();return {threadId:state.threadId};
-   }catch(e){state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}throw new Error(state.error);}
+     signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
+   }catch(e){if(signal.aborted){Object.assign(state,previousState);if(createdHost){await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;}state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}throw new Error(state.error);}
    }
-   finally{opening=false;changed();}
+   finally{opening=false;openAbort=null;finishOpen();changed();}
   },
   async send({text,attachmentIds=[],effort,accessMode,permissionConfirmed}){
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的訊息。');

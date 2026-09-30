@@ -11,12 +11,12 @@ const CODEX_OTHER='gpt-6-luna';
 const CLAUDE_MODEL='claude-opus-5-5';
 const TEST_ROOT=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 
-test('picker catalog contains only current GPT trio and Claude with native effort choices',async()=>{
+test('picker catalog contains the complete official GPT catalog and Claude with native effort choices',async()=>{
  const sol={model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']};
  const f=await fixture({codexModels:[{model:'gpt-6-astra'},sol,...['gpt-6-sol','gpt-6-luna','gpt-5.6-sol','gpt-5.5'].map(model=>({model}))]});
  try{
   const {models}=await f.controller.models();
-  assert.deepEqual(models.map(item=>item.model),['gpt-6-astra','gpt-6.1-sol','gpt-6-luna','claude-opus-5-5']);
+  assert.deepEqual(models.map(item=>item.model),['gpt-6-astra','gpt-6.1-sol','gpt-6-sol','gpt-6-luna','gpt-5.6-sol','gpt-5.5','claude-opus-5-5']);
   assert.deepEqual(models[1],{...sol,provider:'codex'});
   assert.deepEqual(models.at(-1).supportedReasoningEfforts.map(item=>item.reasoningEffort),['low','medium','high','xhigh','max']);
   await saveMainSession(f.root,{threadId:'old-gpt',model:'gpt-5.6-sol'});
@@ -27,7 +27,7 @@ test('picker catalog contains only current GPT trio and Claude with native effor
 test('an older native catalog does not invent Sol 6.1 or relabel Sol 6',async()=>{
  const f=await fixture({codexModels:['gpt-6-astra','gpt-6-sol','gpt-6-luna'].map(model=>({model}))});
  try{
-  assert.deepEqual((await f.controller.models()).models.map(item=>item.model),['gpt-6-astra','gpt-6-luna','claude-opus-5-5']);
+  assert.deepEqual((await f.controller.models()).models.map(item=>item.model),['gpt-6-astra','gpt-6-sol','gpt-6-luna','claude-opus-5-5']);
  }finally{await f.controller.close();}
 });
 
@@ -53,7 +53,7 @@ async function fixture({codexModels,inspect=async()=>({available:true,reason:nul
  return {root,controller,codex,get claude(){return claude;}};
 }
 
-function createFake(provider,root,{models=[{model:CLAUDE_MODEL,displayName:'Claude Opus 5.5'}]}={}){
+function createFake(provider,root,{models=[{model:CLAUDE_MODEL,displayName:'Claude Opus 5.5',supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort}))}]}={}){
  const defaultModel=provider==='claude'?CLAUDE_MODEL:CODEX_MODEL;
  const fake={
   calls:[],closeCount:0,
@@ -96,20 +96,12 @@ test('native Codex actions require confirmation, keep search inside the selected
 });
 
 test('model catalog merges providers independently when either provider fails',async()=>{
- const f=await fixture({inspect:async()=>{throw new Error('Claude auth probe failed');}});
- try{
-  let result=await f.controller.models();
-  assert.deepEqual(result.models.map(item=>[item.model,item.provider]),[[CODEX_MODEL,'codex'],[CLAUDE_MODEL,'claude']]);
-  assert.equal(result.models[1].available,false);
-  assert.match(result.models[1].unavailableReason,/檢查失敗/);
-
-  const codexDown=createFake('codex',f.root);
-  codexDown.models=async()=>{throw new Error('Codex unavailable');};
-  const other=createUnifiedController({root:f.root,codexFactory:()=>codexDown,claudeFactory:()=>createFake('claude',f.root),inspect:async()=>({available:true,auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'pro'}})});
-  result=await other.models();
-  assert.deepEqual(result.models.map(item=>[item.model,item.provider]),[[CLAUDE_MODEL,'claude']]);
-  assert.equal(result.models[0].available,true);
-  assert.match(result.warnings[0],/Codex 暫時不可用/);
+ const f=await fixture();try{
+  await f.controller.models();f.claude.models=async()=>{throw Error('Claude unavailable');};
+  let result=await f.controller.models();assert.deepEqual(result.models.map(row=>row.provider),['codex']);assert.match(result.warnings[0],/Claude unavailable/);
+  const codexDown=createFake('codex',f.root);codexDown.models=async()=>{throw Error('Codex unavailable');};
+  const other=createUnifiedController({root:f.root,codexFactory:()=>codexDown,claudeFactory:()=>createFake('claude',f.root)});
+  result=await other.models();assert.deepEqual(result.models.map(row=>row.provider),['claude']);assert.match(result.warnings[0],/Codex unavailable/);await other.close();
  }finally{await f.controller.close();}
 });
 

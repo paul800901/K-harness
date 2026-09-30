@@ -122,7 +122,7 @@ test('archive deletion refuses busy hidden rooms, and shutdown closes every owne
  assert.equal(f.room(a.threadId).state.busy,true);await c.close();assert.ok(f.native.every(controller=>controller.closed>0));
 });
 
-test('shutdown waits for an already opening room, then closes its newly created native runtime',async()=>{
+test('shutdown cancels an opening room and closes a late-created runtime',async()=>{
  let releaseOpen,enteredOpen;
  const gate=new Promise(resolve=>{releaseOpen=resolve;}),entered=new Promise(resolve=>{enteredOpen=resolve;});
  const f=await fixture({beforeOpen:async()=>{enteredOpen();await gate;}}),c=f.controller;
@@ -131,7 +131,7 @@ test('shutdown waits for an already opening room, then closes its newly created 
  try{
   await assert.rejects(c.open({model:claudeModel}),/切換聊天室/);
   assert.equal(f.native.some(controller=>controller.closed>0),false,'do not close a host before accepted open finishes');
- }finally{releaseOpen();await opening;await shutdown;}
+ }finally{const cancelled=assert.rejects(opening,/取消/);releaseOpen();await cancelled;await shutdown;}
  assert.ok(f.native.every(controller=>controller.closed>0));
  assert.equal(c.state.conversationActivity.length,0);
 });

@@ -1,6 +1,6 @@
-import {mkdir,open,readdir,readFile,lstat,rename} from 'node:fs/promises';
+import {readdir,readFile,lstat} from 'node:fs/promises';
 import path from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {atomicWrite} from './atomic-write.mjs';
 import {normalizeWorkspacePath} from './workspaces.mjs';
 import {validMainModel} from './main-models.mjs';
 import {normalizeWorkerPolicy} from './worker-policy.mjs';
@@ -21,21 +21,10 @@ async function writeMainSession(root,{threadId,model,title='',archived=false,pin
   if(!validId(threadId)||!validMainModel(model))throw new Error('Invalid K session.');
   if(parentThreadId===undefined||browserSessionKey===undefined){const prior=(await listMainSessions(root,{threadId})).sessions.find(s=>s.threadId===threadId);if(parentThreadId===undefined){parentThreadId=prior?.parentThreadId??null;parentTitle=prior?.parentTitle??null;branchType??=prior?.branchType??null;}browserSessionKey??=prior?.browserSessionKey??null;}
   const selectedWorkspace=normalizeWorkspacePath(workspace);
-  const directory=path.join(root,'.runtime/main-sessions');await mkdir(directory,{recursive:true});
+  const directory=path.join(root,'.runtime/main-sessions');
   const saveOrder=Math.max(Date.now()*1000,lastSaveOrder+1);lastSaveOrder=saveOrder;
   const target=path.join(directory,`${threadId}-current.json`);
-  const temporary=`${target}.${randomUUID()}.tmp`;
-  const file=await open(temporary,'wx');
-  try {await file.writeFile(JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:model.startsWith('claude-')?'claude':'codex',accountType:model.startsWith('claude-')?'claude.ai':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));await file.sync();}finally{await file.close();}
-  // Windows readers can briefly block replacement. Retry this rename only,
-  // preserving the same completed snapshot and the original error on exhaustion.
-  for(let attempt=0;;attempt++){
-    try{await rename(temporary,target);break;}
-    catch(error){
-      if(!['EPERM','EACCES','EBUSY'].includes(error.code)||attempt>=20)throw error;
-      await new Promise(resolve=>setTimeout(resolve,Math.min(5*(attempt+1),50)));
-    }
-  }
+  await atomicWrite(target,JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:model.startsWith('claude-')?'claude':'codex',accountType:model.startsWith('claude-')?'claude.ai':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));
   return target;
 }
 export async function listMainSessions(root,{threadId}={}) {

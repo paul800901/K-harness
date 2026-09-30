@@ -7,7 +7,7 @@ await mkdir(base,{recursive:true});
 import path from 'node:path';
 import { CLAUDE_MODEL, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
 
-async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }) {
+async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }, models) {
   const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
   const file = path.join(dir, 'fake-claude.mjs');
   const code = `
@@ -31,7 +31,7 @@ rl.on('line', line => {
   const msg = JSON.parse(line);
   if (msg.type === 'control_request' && msg.request?.subtype === 'initialize') {
     init = true;
-    console.log(JSON.stringify({ type:'control_response', response:{ subtype:'success', request_id:msg.request_id, response:{ tools:[{name:'Read'},{name:'Task'}], slash_commands:['compact'], agents:[{name:'reviewer'}], skills:['skill-a'], mcp_servers:['server-a'] } } }));
+    console.log(JSON.stringify({ type:'control_response', response:{ subtype:'success', request_id:msg.request_id, response:{ models:${JSON.stringify(models)}, tools:[{name:'Read'},{name:'Task'}], slash_commands:['compact'], agents:[{name:'reviewer'}], skills:['skill-a'], mcp_servers:['server-a'] } } }));
   } else if (msg.type === 'user' && init && !asked) {
     asked = true;
     console.log(JSON.stringify({ type:'control_request', request_id:'permission-1', request:{ subtype:'can_use_tool', tool_name:'Read', input:{ file_path:'README.md' } } }));
@@ -164,4 +164,26 @@ test('official quota normalization preserves missing values instead of inventing
  assert.equal(result.windows[0].remainingPercent,0);assert.equal(result.windows[0].resetsAt,1790240400);
  assert.equal(result.windows[1].remainingPercent,null);assert.equal(result.windows[1].resetsAt,null);
  assert.equal(claudeQuota({rate_limits_available:false,rate_limits:{five_hour:{utilization:0}}}).status,'unavailable');
+});
+
+test('native Claude catalog admits future IDs and efforts, resolves aliases and hides hidden models',async()=>{
+ const rows=[{value:'default',resolvedModel:'claude-future',displayName:'Default'},{value:'future',resolvedModel:'claude-future',displayName:'Future',supportedEffortLevels:['ultra']},{value:'claude-hidden',hidden:true}];
+ const f=await fakeCli(undefined,rows);
+ await writeFile(f.file,(await readFile(f.file,'utf8')).replace("const rl =", "if(args[args.indexOf('--model')+1]!=='claude-future')process.exit(99);\nconst rl ="));
+ const host=await openClaudeHost({commandSpec:f.commandSpec,cwd:f.dir,model:'claude-future',effort:'ultra'});
+ try{assert.deepEqual(host.models.map(m=>[m.model,m.supportedReasoningEfforts]),[['claude-future',[{reasoningEffort:'ultra'}]]]);}finally{await host.close();}
+});
+
+for(const stage of ['preflight','initialize'])test(`real Claude ${stage} subprocess stops within one second of abort`,async()=>{
+ const f=await fakeCli(),marker=path.join(f.dir,'pid.txt');
+ const code=await readFile(f.file,'utf8');
+ const hang=`writeFileSync(${JSON.stringify(marker)},String(process.pid));setInterval(()=>{},1000);`;
+ await writeFile(f.file,"import {writeFileSync} from 'node:fs';\n"+(stage==='preflight'?hang:code.replace('init = true;',`${hang}return;`)));
+ const abort=new AbortController();const pending=openClaudeHost({commandSpec:f.commandSpec,cwd:f.dir,signal:abort.signal});const rejected=assert.rejects(pending,/abort/i);let pid;
+ try{
+  const end=Date.now()+10000;while(Date.now()<end){try{pid=Number(await readFile(marker,'utf8'));if(pid)break;}catch{}await new Promise(r=>setTimeout(r,20));}
+  assert.ok(pid,'fixture reached requested stage');const start=Date.now();abort.abort();await rejected;
+  while(Date.now()-start<950){try{process.kill(pid,0);}catch{pid=null;break;}await new Promise(r=>setTimeout(r,10));}
+  assert.equal(pid,null,'no residual native process');assert.ok(Date.now()-start<1000);
+ }finally{abort.abort();if(pid)try{process.kill(pid);}catch{}}
 });

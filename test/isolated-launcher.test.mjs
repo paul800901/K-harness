@@ -219,7 +219,7 @@ test('Electron supervisor preserves OS and tool environment before native owner 
  const {p}=await fixture(),input=new PassThrough(),output=new PassThrough();
  await mkdir(path.dirname(p.electronExecutable),{recursive:true});await writeFile(p.electronExecutable,'fixture');
  const mainPath=path.join(p.trustedRuntime,'src','electron-isolated-main.cjs');await writeFile(mainPath,'fixture');
- const env={ComSpec:'C:\\Windows\\System32\\cmd.exe',PATHEXT:'.EXE;.CMD',ProgramData:'C:\\ProgramData',PSModulePath:'C:\\Modules',TOOL_CUSTOM_OPTION:'keep',ELECTRON_RUN_AS_NODE:'1'};
+ const env={ComSpec:'C:\\Windows\\System32\\cmd.exe',PATHEXT:'.EXE;.CMD',ProgramData:'C:\\ProgramData',PSModulePath:'C:\\Modules',TOOL_CUSTOM_OPTION:'keep',ELECTRON_RUN_AS_NODE:'1',NODE_OPTIONS:'--require fake-hook.cjs'};
  const child=Object.assign(new EventEmitter(),{connected:true,stdio:[null,null,null,new PassThrough(),new PassThrough()],send(message,callback){callback?.();if(message.type==='owner-request')queueMicrotask(()=>child.emit('message',{type:'owner-response',id:message.id,ok:true,value:{closed:true}}));}});
  let launched;
  const owner=await startElectronIsolatedLauncher({paths:p,mainPath,input,output,processObject:{env,execPath:process.execPath},
@@ -227,6 +227,7 @@ test('Electron supervisor preserves OS and tool environment before native owner 
  try{
   for(const key of ['ComSpec','PATHEXT','ProgramData','PSModulePath','TOOL_CUSTOM_OPTION'])assert.equal(launched.env[key],env[key]);
   assert.equal(launched.env.ELECTRON_RUN_AS_NODE,undefined);
+  assert.equal(launched.env.NODE_OPTIONS,undefined);assert.equal(env.NODE_OPTIONS,'--require fake-hook.cjs');
   assert.equal(launched.windowsHide,true);
  }finally{await owner.protocol.close();input.destroy();output.destroy();child.stdio[3].destroy();child.stdio[4].destroy();}
 });

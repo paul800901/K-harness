@@ -134,28 +134,28 @@ test('production stdio refuses implicit live operation before loading a credenti
   assert.match(child.stderr, /explicit --live/iu);
 });
 
-test('real MCP coding dispatch exposes explicit grants, edits code, runs tests and rejects changed scopes/commands', { timeout: 30_000 }, async (t) => {
+test('real MCP coding dispatch exposes explicit grants, edits code without a test runner and rejects changed scopes/commands', { timeout: 30_000 }, async (t) => {
   const f = await fixture(t, 'coding');
   const { tools } = await f.client.listTools();
   const start = tools.find((tool) => tool.name === 'k_worker_start');
   assert.ok(start.inputSchema.properties.coding);
   assert.equal(start.annotations.destructiveHint, true);
   const request = { requestId: 'code-1', task: 'Fix approved addition.', readFiles: ['code.mjs', 'checks.mjs'],
-    coding: { editFiles: ['code.mjs'], testFiles: ['checks.mjs'] } };
+    coding: { editFiles: ['code.mjs'] } };
   const originalTests = await readFile(path.join(f.workspace, 'checks.mjs'), 'utf8');
   assert.equal((await f.call('k_worker_start', { ...request, coding: { ...request.coding, command: 'anything' } })).isError, true);
   const begun = await f.call('k_worker_start', request);
   assert.equal(begun.structuredContent.status, 'running');
-  assert.deepEqual(begun.structuredContent.coding, { ...request.coding, timeoutMs: 10000 });
+  assert.deepEqual(begun.structuredContent.coding, request.coding);
   const result = (await f.call('k_worker_wait', { requestId: request.requestId })).structuredContent;
   assert.equal(result.status, 'completed');
-  assert.equal(result.toolCalls, 3); assert.equal(result.toolErrors, 0);
+  assert.equal(result.toolCalls, 1); assert.equal(result.toolErrors, 0);
   assert.equal(await readFile(path.join(f.workspace, 'code.mjs'), 'utf8'), 'export const add = (a, b) => a + b;\n');
   assert.equal(await readFile(path.join(f.workspace, 'checks.mjs'), 'utf8'), originalTests);
-  const tests = (await readdir(result.jobDirectory)).filter((name) => name.startsWith('test-'));
-  const statuses = await Promise.all(tests.map(async (name) => JSON.parse(await readFile(path.join(result.jobDirectory, name, 'result.json'), 'utf8')).status));
-  assert.deepEqual(statuses.sort(), ['failed', 'passed']);
-  assert.equal((await f.call('k_worker_start', request)).structuredContent.modelTurns, 4);
+  assert.deepEqual(Object.keys(start.inputSchema.properties.coding.properties),['editFiles']);
+  assert.doesNotMatch(JSON.stringify(tools),/run_tests|testRunner|testFiles/);
+  assert.equal((await readdir(result.jobDirectory)).some(name=>name.startsWith('test-')),false);
+  assert.equal((await f.call('k_worker_start', request)).structuredContent.modelTurns, 2);
   assert.equal((await f.call('k_worker_start', { ...request, coding: { ...request.coding, timeoutMs: 2000 } })).isError, true);
   assert.equal((await f.call('k_worker_start', { ...request, coding: undefined })).isError, true);
   assert.equal((await f.call('k_worker_inspect', { requestId: request.requestId })).structuredContent.status, 'completed');
@@ -164,7 +164,7 @@ test('real MCP coding dispatch exposes explicit grants, edits code, runs tests a
 test('MCP coding cancellation preserves the completed edit and original backup', { timeout: 30_000 }, async (t) => {
   const f = await fixture(t, 'coding-hold');
   const request = { requestId: 'code-cancel', task: 'Fix approved addition.', readFiles: ['code.mjs', 'checks.mjs'],
-    coding: { editFiles: ['code.mjs'], testFiles: ['checks.mjs'] } };
+    coding: { editFiles: ['code.mjs'] } };
   await f.call('k_worker_start', request); await f.waitingAfterWrite;
   await f.call('k_worker_cancel', { requestId: request.requestId });
   const result = (await f.call('k_worker_wait', { requestId: request.requestId })).structuredContent;

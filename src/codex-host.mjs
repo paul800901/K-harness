@@ -10,7 +10,9 @@ export function disabledCodexMcpServer() {
 
 // Official local Codex runtime owns login and conversation state. K never reads
 // auth.json or forwards OAuth credentials to Pi or DeepSeek.
-export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, spawnImpl=spawn }) {
+export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, signal, spawnImpl=spawn }) {
+  signal?.throwIfAborted();
+  let abortClose;
   const child = spawnImpl(executable, ['app-server', '--stdio'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.resume();
   const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false;
@@ -34,10 +36,14 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
     child.once('close', (code,signal) => settled(code,signal));
     child.once('error', error => { failAll();processError=Object.assign(new Error('Codex host process could not start or continue.'),{cause:error}); });
   });
-  child.once('spawn',()=>{didSpawn=true;});
+  const abort=()=>{failAll();abortClose=terminateChild();void abortClose.catch(()=>{});};
+  signal?.addEventListener('abort',abort,{once:true});
+  void exited.then(()=>signal?.removeEventListener('abort',abort));
+  child.once('spawn',()=>{didSpawn=true;if(signal?.aborted)abort();});
   child.stdin.on('error',failAll);
   const send = message => { if (stopped) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
   lines.on('line', line => {
+    if(stopped)return;
     let message; try { message = JSON.parse(line); } catch { return; }
     if (message.method) {
       if(message.method==='serverRequest/resolved')serverRequests.delete(message.params?.requestId);
@@ -91,6 +97,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
       });
     },
     async close() {
+      if(abortClose)await abortClose;
       if(!processClosed)try{child.stdin.end();}catch{}
       if(processError){
         if(!processClosed&&(didSpawn||typeof child.terminate==='function'))try{await terminateChild();}catch(terminationError){throw new AggregateError([processError,terminationError],'Codex host reported a process error and its runner could not confirm termination.');}

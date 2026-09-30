@@ -1,6 +1,7 @@
-import {mkdir, lstat, readFile, rename, writeFile} from 'node:fs/promises';
-import {createHash, randomUUID} from 'node:crypto';
+import {mkdir, lstat, readFile, writeFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
 import path from 'node:path';
+import {atomicWrite} from './atomic-write.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
 import {threadPermissions, turnPermissions} from './desktop-permissions.mjs';
 import {listMainModels, findMainModel, reasoningEfforts} from './main-models.mjs';
@@ -112,18 +113,14 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   let requestGuard=()=>undefined;
   const host = hostFactory({executable, cwd:root, onEvent: event, onRequest:message=>requestGuard(message)});
   const records = new Map();
-  const operations = new Map();
+  const operations = new Map(), ownedThreads=new Set();
   const persistTails = new Map();
   let closed = false, closing = false, closePromise;
   const changed = record => { try { onChange(clone(record)); } catch {} };
   const persist = record => {
     const prior=persistTails.get(record.requestId)??Promise.resolve();
     const next=prior.catch(()=>{}).then(async()=>{
-      await mkdir(directory, {recursive:true});
-      const target = path.join(directory, `${record.requestId}.json`);
-      const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
-      await writeFile(temporary, JSON.stringify(record, null, 2), 'utf8');
-      await rename(temporary, target);
+      await atomicWrite(path.join(directory,`${record.requestId}.json`),JSON.stringify(record,null,2));
     });
     persistTails.set(record.requestId,next);
     void next.finally(()=>{if(persistTails.get(record.requestId)===next)persistTails.delete(record.requestId);}).catch(()=>{});
@@ -218,7 +215,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
         cwd:workspace, model:MODEL, ...permissions,
         config:{...permissions.config,model_reasoning_effort:EFFORT,mcp_servers:{...permissions.config?.mcp_servers,k_flash:disabledCodexMcpServer()},agents:{enabled:false}},
       });
-      record.threadId = session.thread.id;
+      record.threadId = session.thread.id;ownedThreads.add(record.threadId);
       await persist(record); changed(record);
       if (record.cancelRequested) {
         record.status='cancelled'; record.settled=true; await persist(record); changed(record); return clone(record);
@@ -285,9 +282,18 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     closing=true;
     closePromise=(async()=>{
       try {
-        const records=await bridgeList();
+        const records=await bridgeList(false);
         for(const record of records){
           if(!record)continue;
+          if(record.settled===true){
+            // A completed turn may still own background terminals in THIS host.
+            // Historical settled records never trigger a native read or cancellation.
+            if(ownedThreads.has(record.threadId)){
+              try{await stopThreadTerminals(host,record.threadId);}
+              catch(error){record.cleanupError=`Luna ${record.requestId} 背景命令清理未確認：${error.message}`;await persist(record);throw Error(record.cleanupError,{cause:error});}
+            }
+            continue;
+          }
           const result=await cancel({requestId:record.requestId});
           if(!result?.settled)throw new Error('Luna 工作尚未確認停止；Codex 主控保持開啟，請先查詢原工作。');
         }
@@ -300,12 +306,12 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     })();
     return closePromise;
   }
-  async function bridgeList() {
+  async function bridgeList(refresh=true) {
     const ids = new Set(records.keys());
     await mkdir(directory,{recursive:true});
     const {readdir} = await import('node:fs/promises');
     for (const name of await readdir(directory)) if (name.endsWith('.json')) ids.add(name.slice(0,-5));
-    return Promise.all([...ids].map(requestId => inspect({requestId})));
+    return Promise.all([...ids].map(requestId => refresh?inspect({requestId}):load(requestId)));
   }
   return {
     start, inspect, cancel,

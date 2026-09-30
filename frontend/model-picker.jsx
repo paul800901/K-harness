@@ -6,7 +6,6 @@ import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login
 export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
 const modelProvider=model=>model?.provider==='claude'||model?.model?.startsWith('claude-')?'claude':'codex';
-const modelsByProvider={codex:new Set(['gpt-6-astra','gpt-6.1-sol','gpt-6-luna']),claude:new Set(['claude-opus-5-5'])};
 const providerLabel=provider=>provider==='claude'?'Claude':'GPT';
 const providerSubscription=provider=>provider==='claude'?'Claude 訂閱':'Codex 訂閱';
 const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
@@ -25,7 +24,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
    const response=await fetch('/api/claude/auth',{cache:'no-store'});
    if(!response.ok)throw new Error();
    const next=await response.json();setClaudeStatus(next);
-   if(refreshModels&&next.available===true){try{const catalog=await loadModels(),list=catalog.models??[];setModels(list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model))));onCatalog(list,catalog.warnings??[]);}catch{}}
+   if(refreshModels&&next.available===true){try{const catalog=await loadModels(),list=catalog.models??[];setModels(list);onCatalog(list,catalog.warnings??[]);}catch{}}
   }catch{setClaudeStatus({available:false,reason:'無法讀取 Claude 登入狀態。',login:{status:'idle'}});}
   finally{setClaudeLoading(false);}
  };
@@ -36,7 +35,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
    if(!response.ok)throw new Error();
    const next=await response.json();setCodexStatus(next);
    if(refreshModels&&next.available===true){try{
-    const catalog=await loadModels(),list=catalog.models??[],supported=list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model)));
+    const catalog=await loadModels(),list=catalog.models??[],supported=list;
     setModels(supported);onCatalog(list,catalog.warnings??[]);setError('');setLoading(false);
     const currentProvider=modelProvider({model:currentModel}),choices=mode==='switch'?supported.filter(item=>modelProvider(item)===currentProvider):supported;
     const initial=choices.find(item=>item.model===currentModel)?.model??choices.find(item=>item.isDefault&&item.available!==false)?.model??choices.find(item=>item.available!==false&&modelProvider(item)==='codex')?.model??choices[0]?.model??'';
@@ -86,7 +85,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
   let cancelled=false;setLoading(true);setError('');
   loadModels().then(({models:list,warnings=[]})=>{
    if(cancelled)return;
-   const supported=list.filter(item=>Object.values(modelsByProvider).some(ids=>ids.has(item.model)));
+   const supported=list;
    setModels(supported);onCatalog(list,warnings);
    const currentProvider=modelProvider({model:currentModel});
    const choices=mode==='switch'?supported.filter(item=>modelProvider(item)===currentProvider):supported;
@@ -110,7 +109,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
  const codexStatusText=()=>codexLoading?'正在讀取登入狀態…':codexVerified?`已確認 ChatGPT${codexAuth.planType?` ${codexAuth.planType} 訂閱`: ' 訂閱'}`:codexAuth?.loggedIn===false?'尚未登入 ChatGPT 訂閱，請先完成官方登入。':codexStatus?.reason||'尚未確認 Codex 訂閱狀態。';
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
  const inheritedEffort=mode==='switch'&&supportedEfforts.some(item=>item.reasoningEffort===currentEffort)?currentEffort:selected?.defaultReasoningEffort;
- const visibleModels=models.filter(item=>modelsByProvider[provider]?.has(item.model));
+ const visibleModels=models.filter(item=>modelProvider(item)===provider);
 
  useEffect(()=>{
   if(!model)return;
@@ -125,7 +124,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
  const chooseProvider=next=>{
   if(mode==='switch'&&next!==modelProvider({model:currentModel}))return;
   setProvider(next);
-  const first=models.find(item=>modelsByProvider[next]?.has(item.model));
+  const first=models.find(item=>modelProvider(item)===next);
   if(next!==provider){setAccessMode(providerDefaultPermission(next));setPermissionConfirmed(false);initializedProvider.current=next;}
   if(first){setModel(first.model);setEffort(undefined);}else{setModel('');setEffort(undefined);}
  };
@@ -172,7 +171,7 @@ export function ModelPicker({currentModel,currentEffort,mode='create',hasHistory
      <fieldset className="model-picker-step"><legend><span>2</span>模型</legend><div className="model-choice-row model-choice-models" role="group" aria-label="選擇主代理模型">
       {visibleModels.map(item=><button key={item.model} type="button" className={`model-choice ${item.model===model?'selected':''}`} disabled={disabled||!isAvailable(item)} aria-pressed={item.model===model} title={!isAvailable(item)?(modelProvider(item)==='claude'?claudeUnavailableReason:item.unavailableReason||'目前不可用'):undefined} onClick={()=>chooseModel(item)}><span>{displayModel(item)}{item.model===model&&<small>{providerSubscription(provider)}</small>}</span>{item.model===model&&<Check size={15}/>}</button>)}
       {!visibleModels.length&&<p className="step-hint">目前帳號未提供此提供者的支援模型。</p>}
-     </div></fieldset>
+     </div>{selected?.description&&<p className="step-hint">{selected.description}</p>}</fieldset>
 
      <fieldset className="model-picker-step effort-step"><legend><span>3</span>推理程度</legend>{hasReasoningOptions?<div className="model-choice-row effort-choice-row" role="group" aria-label="選擇主代理推理程度">
       <button type="button" className={`model-choice ${effort===undefined||effort===null?'selected':''}`} aria-pressed={effort===undefined||effort===null} disabled={disabled} onClick={()=>chooseEffort(null)}><span>模型預設{inheritedEffort&&<small>目前預設：{effortName[inheritedEffort]??inheritedEffort}</small>}</span>{(effort===undefined||effort===null)&&<Check size={15}/>}</button>

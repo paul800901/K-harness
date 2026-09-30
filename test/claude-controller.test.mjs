@@ -10,7 +10,7 @@ import fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
-async function fixture() {
+async function fixture({models,waitForHost}={}) {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
   await mkdir(base,{recursive:true});
   const root=await mkdtemp(path.join(base,'claude-controller-'));
@@ -22,7 +22,7 @@ async function fixture() {
   const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return args;},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
   const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
   const controller=createClaudeController({root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
-    hostFactory:async options=>{hostOptions=options;host=makeHost();return host;},
+    hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
     bridgeFactory:async options=>{bridgeOptions=options;return bridge;},
     gatewayFactory:async options=>{gatewayOptions=options;return gateway;}});
   return {root,uuid,controller,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
@@ -328,6 +328,27 @@ async function waitFor(predicate){
   await new Promise(resolve=>setTimeout(resolve,10));
  }
 }
+
+test('Claude preserves a saved native model and rejects removed catalog IDs without replay',async()=>{
+ const models=[{model:'claude-future',displayName:'Future',supportedReasoningEfforts:[{reasoningEffort:'ultra'}]},{model:'claude-second',displayName:'Second',supportedReasoningEfforts:[]}];
+ const f=await fixture({models});
+ try{
+  const {threadId}=await f.controller.open({model:'claude-future',effort:'ultra'});
+  await f.controller.open({threadId,model:'claude-future'});assert.equal(f.hostOptions.model,'claude-future');assert.equal(f.hostOptions.effort,'ultra');
+  await f.controller.selectModel({threadId,model:'claude-second'});assert.equal(f.hostOptions.model,'claude-second');assert.equal((await listMainSessions(f.root)).sessions[0].model,'claude-second');assert.equal(f.host.startCalls.length,0);
+  models.splice(1,1);await assert.rejects(f.controller.open({threadId,model:'claude-second'}),/未提供/);
+  assert.equal((await listMainSessions(f.root)).sessions[0].model,'claude-second');
+ }finally{await f.controller.close();}
+});
+
+test('cancelled Claude initialization closes a late host and does not turn ready; next open succeeds',async()=>{
+ let entered,release,calls=0;const started=new Promise(r=>{entered=r;}),gate=new Promise(r=>{release=r;});
+ const f=await fixture({waitForHost:async()=>{if(++calls===1){entered();await gate;}}});
+ const pending=f.controller.open({});const rejected=assert.rejects(pending,/取消/);await started;
+ const late=f.host;let closed=false;void late.closed.then(()=>{closed=true;});const stop=f.controller.stop();release();await stop;await rejected;
+ assert.equal(closed,true);assert.notEqual(f.controller.state.status,'ready');assert.equal(f.controller.state.threadId,null);
+ await f.controller.open({});assert.equal(f.controller.state.status,'ready');await f.controller.close();
+});
 test('Luna completion wakes the original Claude once after the current turn; no wait or inspect',async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'delegate bounded work'});

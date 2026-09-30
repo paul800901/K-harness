@@ -5,8 +5,7 @@ import { inspectRecovery } from './recovery.mjs';
 const requestId = z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/u);
 const idInput = z.strictObject({ requestId });
 const codingInput = z.strictObject({
-  editFiles: z.array(z.string()).min(1), testFiles: z.array(z.string()).min(1),
-  timeoutMs: z.number().int().min(100).max(60_000).optional(),
+  editFiles: z.array(z.string()).min(1),
 });
 const taskInput = z.strictObject({ requestId, task: z.string().refine((value) => value.trim().length > 0), readFiles: z.array(z.string()).default([]), outputFiles: z.array(z.string()).default([]), coding: codingInput.optional(), historyIds: z.array(requestId).max(20).optional() });
 
@@ -24,7 +23,7 @@ function handoff(state, id) {
 }
 
 export function createWorkerMcpServer({ dispatcher, workspace, model }) {
-  const server = new McpServer({ name: 'k-flash-worker', version: '0.2.0' }, {
+  const server = new McpServer({ name: 'k-flash-worker', version: '0.3.0' }, {
     instructions: [
       'K HARNESS delegates bounded nonclinical file tasks to DeepSeek. The parent owns judgment and acceptance.',
       'This Flash worker is optional, not mandatory and not the only worker route. Use it only when suitable; direct work and native GPT subagents remain available according to the parent runtime and user selection. Delegated image interpretation must use native gpt-5.6-luna, never this Flash worker.',
@@ -34,8 +33,8 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
       'Unresolved means inspect existing evidence; never invent a new ID to retry unknown work.',
       `Workspace is fixed to ${workspace}; requested model is ${model}.`,
       'Default: explicitly listed UTF-8 inputs and new outputs, up to 256 KiB each. No edits unless coding is explicitly granted for this task.',
-      'Optional coding names exact editFiles and read-only .mjs testFiles, all also in readFiles. It grants backed-up exact-fragment edits and a fixed Node test runner, never arbitrary commands.',
-      'Coding is only for authorized non-sensitive, trusted code in an exclusively owned workspace. Node permissions are NOT an OS sandbox or network isolation. No clinical data, secrets, hostile code or directory browsing.',
+      'Optional coding names exact editFiles, all also in readFiles. It grants backed-up exact-fragment edits only. The parent agent runs tests; no worker test runner or arbitrary commands.',
+      'Coding is only for authorized non-sensitive, trusted code in an exclusively owned workspace. No clinical data, secrets, hostile code or directory browsing.',
       'Do not overlap coding edits with other tasks, even in another host. The dispatcher rejects known in-host file conflicts; it is not a cross-process lock.',
       'Cancelling a wait does not cancel the worker. Use k_worker_cancel then wait for its terminal state; existing files remain.',
       'The stdio host owns worker lifetime. Closing it requests cancellation; reconnecting reads records, not automatic resume.',
@@ -47,13 +46,13 @@ export function createWorkerMcpServer({ dispatcher, workspace, model }) {
       try { return handoff(await execute(args, context), args.requestId); } catch (error) {
         return {
           isError: true,
-          content: [{ type: 'text', text: `${error.message} Inspect the same request ID and existing evidence; do not automatically retry under a new ID.` }],
+          content: [{ type: 'text', text: `${String(error?.message ?? error)} Inspect the same request ID and existing evidence; do not automatically retry under a new ID.` }],
         };
       }
     });
   }
 
-  tool('k_worker_start', 'Start one authorized Flash task; returns before completion. Optional coding grants exact editable files and fixed .mjs tests, only with explicit task authority. Reuse the same requestId only for identical task, file lists and coding grants.',
+  tool('k_worker_start', 'Start one authorized Flash task; returns before completion. Optional coding grants exact editable files, only with explicit task authority. Reuse the same requestId only for identical task, file lists and coding grants.',
     taskInput,
     { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
     (args) => dispatcher.start(args));

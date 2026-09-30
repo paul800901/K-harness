@@ -274,3 +274,13 @@ test('long result refuses a workspace junction pointing outside',async()=>{
  await symlink(outside,path.join(w,'.runtime'),process.platform==='win32'?'junction':'dir');
  await assert.rejects(lunaResult({workspace:w,parentId:'parent',requestId:'escape',settled:true,output:'x'.repeat(4001)}),/Unsafe/);
 });
+
+test('closing ignores settled historical records even when their thread is unavailable',async()=>{
+ const {bridge,fixture}=await make();
+ const record=await bridge.start({requestId:'closed-history',task:'Fake history'});fixture.finish();
+ await bridge.inspect({requestId:'closed-history'});await bridge.close();
+ const next=fakeHost();let reads=0;
+ const original=next.host.request;next.host.request=(method,p)=>{if(method.startsWith('thread/')){reads++;throw Error('historical thread unavailable');}return original(method,p);};
+ const reopened=await createLunaBridge({root,workspace,parentId:record.parentId,executable:'codex',hostFactory:o=>{next.setOptions(o);return next.host;}});
+ await reopened.close();assert.equal(next.closeCount(),1);assert.equal(reads,0);
+});

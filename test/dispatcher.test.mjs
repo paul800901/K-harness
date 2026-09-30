@@ -184,7 +184,7 @@ async function codingRequest(f) {
   await writeFile(path.join(f.workspace, 'code.mjs'), 'export const value = 1;\n', { flag: 'wx' });
   await writeFile(path.join(f.workspace, 'checks.mjs'), "import assert from 'node:assert/strict'; import { value } from './code.mjs'; assert.equal(value, 1);\n", { flag: 'wx' });
   return { requestId: 'code-request', task: 'Only check the approved code.', readFiles: ['code.mjs', 'checks.mjs'],
-    coding: { editFiles: ['code.mjs'], testFiles: ['checks.mjs'] } };
+    coding: { editFiles: ['code.mjs'] } };
 }
 
 test('coding grants survive dispatch/restart, are part of request identity, and never expand an old file job', async (t) => {
@@ -193,18 +193,27 @@ test('coding grants survive dispatch/restart, are part of request identity, and 
   await f.host.start(request);
   const result = await f.host.wait(request.requestId);
   assert.equal(result.status, 'completed');
-  assert.deepEqual(result.coding, { ...request.coding, timeoutMs: 10000 });
-  await assert.rejects(f.host.start({ ...request, coding: { ...request.coding, timeoutMs: 2000 } }), /different request/);
+  assert.deepEqual(result.coding, request.coding);
+  await assert.rejects(f.host.start({ ...request, coding: { editFiles: ['checks.mjs'] } }), /different request/);
   await assert.rejects(f.host.start({ ...request, coding: undefined }), /different request/);
   await f.host.close();
   const restored = await createDispatcher(f.config);
   t.after(() => restored.close());
-  await assert.rejects(restored.start({ ...request, coding: { ...request.coding, testFiles: ['code.mjs'] } }), /different request/);
-  assert.equal((await restored.start({ ...request, coding: { ...request.coding, timeoutMs: 10000 } })).status, 'completed');
+  await assert.rejects(restored.start({ ...request, coding: { editFiles: ['checks.mjs'] } }), /different request/);
+  assert.equal((await restored.start({ ...request, coding: request.coding })).status, 'completed');
   assert.equal(f.faux.state.callCount, 1);
   await restored.start(f.request); await restored.wait(f.request.requestId);
-  await assert.rejects(restored.start({ ...f.request, coding: { editFiles: ['input.txt'], testFiles: ['checks.mjs'] } }), /approved input/);
+  await assert.rejects(restored.start({ ...f.request, coding: { editFiles: ['checks.mjs'] } }), /approved input/);
   await assert.rejects(restored.start({ ...request, requestId: f.request.requestId }), /different request/);
+});
+
+test('old test-runner grants stay readable but the same ID cannot be adopted or replayed',async t=>{
+ const f=await fixture(t),request=await codingRequest(f);await f.host.start(request);await f.host.wait(request.requestId);await f.host.close();
+ const file=path.join(f.config.stateDir,request.requestId,'job.json'),record=JSON.parse(await readFile(file,'utf8'));
+ record.coding={...record.coding,testFiles:['checks.mjs'],timeoutMs:1000};const before=JSON.stringify(record);await writeFile(file,before);
+ const restored=await createDispatcher(f.config);t.after(()=>restored.close());
+ assert.deepEqual((await restored.inspect(request.requestId)).coding,record.coding);
+ await assert.rejects(restored.start(request),/different request/);assert.equal(f.faux.state.callCount,1);assert.equal(await readFile(file,'utf8'),before);
 });
 
 test('active coding files reject overlapping reads/writes but independent work and same-ID inspection remain available', async (t) => {

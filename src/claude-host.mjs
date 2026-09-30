@@ -1,3 +1,4 @@
+import {abortable} from './abortable.mjs';
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access } from 'node:fs/promises';
@@ -6,6 +7,7 @@ import { createInterface } from 'node:readline';
 import { randomUUID } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
+export const CLAUDE_REASONING_EFFORTS=Object.freeze(['low','medium','high','xhigh','max']);
 export const CLAUDE_MODEL = 'claude-opus-5-5';
 
 const SUBSCRIPTION_TYPES = new Set(['pro', 'max', 'team', 'enterprise']);
@@ -66,9 +68,22 @@ export function nativeCapabilitiesFrom(value = {}) {
   const names = items => Array.isArray(items) ? items.map(item => typeof item === 'string' ? item : item && typeof item.name === 'string' ? item.name : null).filter(Boolean) : [];
   return {
     tools:names(value.tools), commands:names(value.slash_commands ?? value.commands),
-    models:names(value.models), agents:names(value.agents), skills:names(value.skills), mcpServers:names(value.mcp_servers),
-    permissionModes:[...CLAUDE_ACCESS_MODES], efforts:['low','medium','high','xhigh','max'],
+    models:claudeModelsFrom(value.models).map(item=>item.model), agents:names(value.agents), skills:names(value.skills), mcpServers:names(value.mcp_servers),
+    permissionModes:[...CLAUDE_ACCESS_MODES], efforts:CLAUDE_REASONING_EFFORTS,
   };
+}
+
+// Keep concrete native IDs, not moving aliases, in saved conversations.
+export function claudeModelsFrom(rows){
+ if(!Array.isArray(rows))return [{model:CLAUDE_MODEL,displayName:'Claude Opus 5.5',provider:'claude',supportedReasoningEfforts:CLAUDE_REASONING_EFFORTS.map(reasoningEffort=>({reasoningEffort})),inputModalities:['text','image']}];
+ const models=new Map();
+ for(const row of rows){
+  if(row.hidden===true)continue;
+  const model=row.value?.startsWith('claude-')?row.value:row.resolvedModel;
+  if(!model)continue;
+  models.set(model,{model,displayName:row.displayName??model,description:row.description,provider:'claude',inputModalities:['text','image'],supportedReasoningEfforts:(row.supportedEffortLevels??[]).map(reasoningEffort=>({reasoningEffort}))});
+ }
+ return [...models.values()];
 }
 
 function sanitizedEnv(source = process.env) {
@@ -154,13 +169,14 @@ function normalizeCommandSpec(commandSpec) {
   return { command: commandSpec.command, argsPrefix: Array.isArray(commandSpec.argsPrefix) ? commandSpec.argsPrefix : [] };
 }
 
-async function runCapture(spec, args, { cwd, env, timeout = 10000 } = {}) {
+async function runCapture(spec, args, { cwd, env, signal, timeout = 10000 } = {}) {
   try {
     const { stdout = '', stderr = '' } = await execFileAsync(spec.command, [...spec.argsPrefix, ...args], {
-      cwd, env, timeout, windowsHide: true, maxBuffer: 256 * 1024,
+      cwd, env, signal, timeout, windowsHide: true, maxBuffer: 256 * 1024,
     });
     return { code: 0, stdout, stderr };
   } catch (error) {
+    signal?.throwIfAborted();
     return {
       code: Number.isInteger(error?.code) ? error.code : Number.isInteger(error?.status) ? error.status : 1,
       stdout: typeof error?.stdout === 'string' ? error.stdout : '',
@@ -181,7 +197,8 @@ function safeAuth(value) {
 }
 
 /** Local, read-only preflight. Only allowlisted auth fields cross the process boundary. */
-export async function inspectClaude({ commandSpec, cwd, env: sourceEnv = process.env, captureImpl=runCapture, runnerIdentity='host' } = {}) {
+export async function inspectClaude({ commandSpec, cwd, env: sourceEnv = process.env, captureImpl=runCapture, runnerIdentity='host', signal } = {}) {
+  signal?.throwIfAborted();
   let spec;
   try { spec = normalizeCommandSpec(commandSpec ?? await resolveClaudeCommand({env:sourceEnv})); }
   catch (error) { return { available: false, reason: error.message, version: null, auth: null }; }
@@ -199,11 +216,12 @@ export async function inspectClaude({ commandSpec, cwd, env: sourceEnv = process
   const base = [...SETTINGS_ARGS, '--settings', HOST_SETTINGS];
   const capture=async args=>{
     try {
-      const result=await captureImpl(spec,args,{cwd,env,timeout:10000,runnerIdentity});
+      const result=await captureImpl(spec,args,{cwd,env,signal,timeout:10000,runnerIdentity});
       if(!result||!Number.isInteger(result.code)||typeof result.stdout!=='string'||typeof result.stderr!=='string')
         throw new Error('Invalid Claude inspection capture result.');
       return result;
     } catch {
+      signal?.throwIfAborted();
       return {code:1,stdout:'',stderr:'',captureFailed:true};
     }
   };
@@ -260,16 +278,15 @@ async function terminateChild(child) {
  * Start a persistent official Claude Code stream-json session.
  * This is async so auth is verified before creating a model process.
  */
-export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, runnerIdentity='host', sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
+export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, runnerIdentity='host', sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, model=CLAUDE_MODEL, signal, onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
   if((captureImpl===runCapture)!==(spawnImpl===spawn)||(spawnImpl===spawn)!==(runnerIdentity==='host'))
     throw new Error('Claude Code auth preflight and session must use the same explicit runner; no session was started.');
   const spec = normalizeCommandSpec(commandSpec ?? await resolveClaudeCommand({env:sourceEnv}));
   const env=sanitizedEnv(sourceEnv);
-  const preflight = await inspectClaude({ commandSpec: spec, cwd, env:sourceEnv, captureImpl, runnerIdentity });
+  const preflight = await inspectClaude({ commandSpec: spec, cwd, env:sourceEnv, captureImpl, runnerIdentity, signal });
   if (!preflight.available) throw new Error(preflight.reason || 'Claude Code subscription verification failed; no session was started.');
   if (resume && !sessionId) throw new TypeError('sessionId is required when resume is true.');
   const permissionMode = claudePermissionMode(accessMode);
-  if(effort!==undefined&&effort!==null&&!['low','medium','high','xhigh','max'].includes(effort))throw new TypeError('Unsupported Claude Code reasoning effort.');
 
   const config = mcpConfigText(mcpConfig);
   const args = [
@@ -277,12 +294,14 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose', '--replay-user-messages', '--include-partial-messages', '--forward-subagent-text',
     ...SETTINGS_ARGS, '--settings', HOST_SETTINGS,
     '--mcp-config', config,
-    '--model', CLAUDE_MODEL, '--permission-mode', permissionMode, '--permission-prompts', 'host', '--permission-prompt-tool', 'stdio',
+    '--model', model, '--permission-mode', permissionMode, '--permission-prompts', 'host', '--permission-prompt-tool', 'stdio',
     '--append-system-prompt', HOST_INSTRUCTIONS,
   ];
   if(effort)args.push('--effort',effort);
   if(forkFrom){if(!/^[0-9a-f-]{36}$/i.test(forkFrom)||!sessionId||resume)throw new Error('Invalid native fork.');args.push('--resume',forkFrom,'--fork-session','--session-id',sessionId);}
   else if (sessionId) args.push(resume ? '--resume' : '--session-id', sessionId);
+  signal?.throwIfAborted();
+  let modelCatalog;
   const child = spawnImpl(spec.command, args, {
     cwd, env, windowsHide: true, shell: false, stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -344,7 +363,7 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
       if (response?.subtype === 'success' && response.request_id === 'k-initialize') {
         initialized = true;
         const data = response.response && typeof response.response === 'object' ? response.response : {};
-        nativeCapabilities = nativeCapabilitiesFrom(data);
+        nativeCapabilities = nativeCapabilitiesFrom(data); modelCatalog=claudeModelsFrom(data.models);
         resolveInitialized();
       }
       settle(message);
@@ -382,16 +401,16 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
 
   try {
     let timer;
-    await Promise.race([
+    await abortable(Promise.race([
       initializedPromise,
       exited.then(() => { throw new Error('Claude Code exited before stream initialization.'); }),
       new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Claude Code stream initialization timed out.')), 15000); }),
-    ]).finally(() => clearTimeout(timer));
+    ]),signal).finally(() => clearTimeout(timer));
   } catch (error) {
     stopped = true;
-    if(!processClosed&&(didSpawn||typeof child.terminate==='function'))try { await terminateChild(child); }
+    if(!processClosed&&(child.pid||didSpawn||typeof child.terminate==='function'))try { await terminateChild(child); }
     catch(terminationError){lines.close();throw new AggregateError([error,terminationError],'Claude Code initialization failed and its process could not be confirmed stopped.');}
-    if(!processClosed&&(didSpawn||typeof child.terminate==='function'))await exited;
+    if(!processClosed&&(child.pid||didSpawn||typeof child.terminate==='function'))await exited;
     lines.close();
     throw processError??error;
   }
@@ -414,7 +433,7 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     if (!processClosed) {
       try { child.stdin.end(); } catch { /* already closed */ }
       if(processError){
-        if(didSpawn||typeof child.terminate==='function')try{await terminateChild(child);}catch(terminationError){throw new AggregateError([processError,terminationError],'Claude Code reported a process error and its runner could not confirm termination.');}
+        if(child.pid||didSpawn||typeof child.terminate==='function')try{await terminateChild(child);}catch(terminationError){throw new AggregateError([processError,terminationError],'Claude Code reported a process error and its runner could not confirm termination.');}
         await exited;
       }
       let timer;
@@ -431,5 +450,5 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     const response = await control('get_usage', {skip_behaviors:true});
     return response.response;
   }
-  return { closed, start, interrupt, close, usage, get nativeCapabilities() { return nativeCapabilities && structuredClone(nativeCapabilities); } };
+  return { closed, start, interrupt, close, usage, get models(){return structuredClone(modelCatalog);}, get nativeCapabilities() { return nativeCapabilities && structuredClone(nativeCapabilities); } };
 }

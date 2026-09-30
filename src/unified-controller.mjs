@@ -1,7 +1,8 @@
+import {abortable} from './abortable.mjs';
 import {createInputQueue} from './input-queue.mjs';
 import {createDesktopController} from './desktop-controller.mjs';
 import {createClaudeController} from './claude-controller.mjs';
-import {inspectClaude,CLAUDE_MODEL} from './claude-host.mjs';
+import {inspectClaude} from './claude-host.mjs';
 import {listMainSessions,saveMainSession} from './main-sessions.mjs';
 import {normalizeClaudeAccessMode} from './claude-host.mjs';
 import {permissionMode} from './desktop-permissions.mjs';
@@ -64,14 +65,16 @@ export function createUnifiedController(options){
    return {files:normalizeNativeFileSearchResults(response,workspace)};
   },
   async models(){
-   const [gpt,anthropic]=await Promise.allSettled([codex.models(),inspect({cwd:root})]);
-   const selectableGPT=new Set(['gpt-6-astra','gpt-6.1-sol','gpt-6-luna']);
-   const models=gpt.status==='fulfilled'?gpt.value.models.filter(m=>selectableGPT.has(m.model)).map(m=>({...m,provider:'codex'})):[];
-   const auth=anthropic.status==='fulfilled'?anthropic.value:{available:false,reason:'Claude 登入狀態檢查失敗。'};
-   models.push({model:CLAUDE_MODEL,displayName:'Claude Opus 5.5',provider:'claude',inputModalities:['text','image'],supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort})),available:auth.available,unavailableReason:auth.reason});
-   return {models,warnings:gpt.status==='rejected'?['Codex 暫時不可用：'+gpt.reason.message]:[]};
+   claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
+   const [gpt,anthropic]=await Promise.allSettled([codex.models(),claude.models()]);
+   const models=[],warnings=[];
+   for(const [provider,result] of [['codex',gpt],['claude',anthropic]]){
+    if(result.status==='fulfilled')models.push(...result.value.models.filter(m=>m.hidden!==true).map(m=>({...m,provider})));
+    else warnings.push(`${provider} 目錄暫時不可用：${String(result.reason?.message??result.reason)}`);
+   }
+   return {models,warnings};
   },
-  async open(data){
+  async open(data,{signal}={}){
    if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw new Error('請先結束目前工作與核准，再切換對話。');
    changing=true;
    try{
@@ -80,7 +83,7 @@ export function createUnifiedController(options){
     const isClaude=(saved?.model??data.model??'').startsWith('claude-');
     if(saved&&saved.model!==data.model)throw new Error('對話設定已更新，請重新整理清單。');
     if(isClaude){
-     const auth=await inspect({cwd:root});if(!auth.available)throw new Error('請先在 K 登入 Claude 訂閱。'+(auth.reason??''));
+     const auth=await abortable(inspect({cwd:root,signal}),signal);if(!auth.available)throw new Error('請先在 K 登入 Claude 訂閱。'+(auth.reason??''));
      claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
     }
     const target=isClaude?claude:codex;
@@ -90,7 +93,7 @@ export function createUnifiedController(options){
      if(list.some(w=>w.settled===false||['running','starting','pending'].includes(w.status)))throw new Error('子代理尚未結束，請先停止或查明原工作。');
      await target.selectWorkspace({path:saved?.workspace??active.state.workspace});
     }
-    const result=await target.open(data);
+    signal?.throwIfAborted();const result=await target.open(data,{signal});signal?.throwIfAborted();
     // Keep old state intact if the new provider cannot open. No history is transferred.
     if(target!==active){
      try{await active.close();}catch(error){await target.close().catch(()=>{});throw error;}

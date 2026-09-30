@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -277,23 +277,38 @@ internal sealed class KLauncherContext : ApplicationContext
             bool refused;
             bool failedClose;
             lock (supervisorSync) { closed = closeConfirmed; refused = closeBlocked; failedClose = closeFailed; }
-            if (!closed) {
-                if (refused) MessageBox.Show("仍有工作或待核准事項；請先在 K 完成或停止工作，再關閉服務。沒有強制終止。", "K 尚未停止", MessageBoxButtons.OK, MessageBoxIcon.Information);
-                else MessageBox.Show(failedClose ? "隔離服務未能確認安全關閉；啟動器沒有強制終止或重啟。" : "尚未確認隔離服務完全關閉；沒有強制終止或重啟。", "K 停止未確認", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
-            }
+            if (!closed) return ForceStop(current, refused ? "仍有工作或待核准事項" : failedClose ? "服務回報關閉失敗" : "等候逾時或無法確認");
             for (int attempt = 0; attempt < 50 && IsPortOpen(); attempt++) Thread.Sleep(100);
             if (IsPortOpen()) {
-                MessageBox.Show("服務回報關閉，但連接埠尚未釋放；未強制終止或重啟。", "K 停止未確認", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                return false;
+                return ForceStop(current, "服務回報關閉，但連接埠尚未釋放");
             }
             Log("isolated K stopped by owner supervisor");
             if (notify) Notify("K 已停止", "隔離服務已確認安全關閉。", ToolTipIcon.Info);
             return true;
         } catch (Exception error) {
             Log("isolated K stop command failed: " + error.Message);
-            MessageBox.Show("無法確認隔離服務安全關閉；未強制終止或重啟。", "K 停止未確認", MessageBoxButtons.OK, MessageBoxIcon.Error);
-            return false;
+            return ForceStop(current, error.Message);
+        }
+    }
+
+    private bool ForceStop(Process current, string reason)
+    {
+        // Never find a process by name or port: only the child owned by this launcher.
+        if (HasExited(current)) { Log("force stop unavailable: owner already exited"); return false; }
+        if (MessageBox.Show("K 無法正常關閉（" + reason + "）。要強制結束嗎？\n還在跑的工作可能中斷，之後需要查看狀態。", "K 強制結束", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) {
+            Log("force stop declined: " + reason); return false;
+        }
+        lock (supervisorSync) { if (supervisor != current || HasExited(current)) return false; }
+        try {
+            Log("force stop confirmed for owned supervisor PID " + current.Id + ": " + reason);
+            using (var killer = Process.Start(new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "taskkill.exe"), "/PID " + current.Id + " /T /F") { UseShellExecute = false, CreateNoWindow = true })) {
+                if (!killer.WaitForExit(5000) || killer.ExitCode != 0 || !current.WaitForExit(5000)) throw new InvalidOperationException("程序樹結束未確認");
+            }
+            lock (supervisorSync) { if (supervisor == current) supervisor = null; supervisorReady = false; closeConfirmed = true; }
+            Log("owned supervisor process tree forcibly stopped"); return true;
+        } catch (Exception error) {
+            Log("force stop failed: " + error.Message);
+            MessageBox.Show("強制結束未確認：" + error.Message, "K 尚未停止", MessageBoxButtons.OK, MessageBoxIcon.Error); return false;
         }
     }
 

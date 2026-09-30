@@ -8,6 +8,7 @@ import {browserLiveRequest} from './browser-live-proxy.mjs';
 export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,browserRequest=browserLiveRequest,...options}){
  const rooms=new Map(),controllers=new Set(),locked=new Set();
  const openedOrder=new Map();let openSequence=0;
+ let pendingOpen;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
  const create=()=>{
   const controller=sessionFactory({...options,root,onChange:()=>{if(!closing)onChange();}});
@@ -73,12 +74,12 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=active.state;return {...s,usage:{...s.usage,...(sharedUsage?{codex:sharedUsage.codex,claude:sharedUsage.claude}:{})},conversationActivity:[...rooms.values()].map(activity)};},
+  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...(sharedUsage?{codex:sharedUsage.codex,claude:sharedUsage.claude}:{})},conversationActivity:[...rooms.values()].map(activity)};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),
   async usage(refresh=false){sharedUsage=await catalog.usage(refresh);onChange();return api.state.usage;},
   async open(data={}){
-   focusLock();let candidate,existing;
+   focusLock();const abort=new AbortController();pendingOpen=abort;onChange();let candidate,existing;
    try{
     const saved=data.threadId?(await listMainSessions(root)).sessions.find(row=>row.threadId===data.threadId):null;
     if(data.threadId&&!saved)throw Error('只能開啟 K 清單中的對話。');
@@ -93,19 +94,19 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      }
      const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
      if((recover||configure)&&!s.busy&&!s.questions?.length){
-      locked.add(existing);try{await existing.open(data);}finally{locked.delete(existing);}
+      locked.add(existing);try{await existing.open(data,{signal:abort.signal});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
      }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
-    active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId};
+    abort.signal.throwIfAborted();active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId};
     }
-    candidate=create();
+    abort.signal.throwIfAborted();candidate=create();
     await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
-    const result=await candidate.open(data);
+    abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal});abort.signal.throwIfAborted();
     if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
     reindex(candidate);active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
    }catch(error){
     if(candidate){try{await candidate.close();controllers.delete(candidate);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
     throw error;
-   }finally{focusDone();}
+   }finally{pendingOpen=null;focusDone();}
   },
   async selectWorkspace(data){
    // Workspace selection only prepares an empty view; it never repurposes a
@@ -159,6 +160,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    closing=true;
    // A controller still opening may create its native host after close() runs.
    // Settle that already accepted navigation before collecting every owner.
+   pendingOpen?.abort(new DOMException('已取消連線。','AbortError'));
    await navigationSettled;
    await releasing;
    const results=await Promise.allSettled([...controllers].map(controller=>controller.close()));
@@ -168,6 +170,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   },
  };
  for(const method of ['send','steer','queue','goal','answer','upload','selectModel','review','fuzzyFileSearch'])api[method]=data=>target(data)[method](data);
- for(const method of ['stop','compact','workers'])api[method]=data=>target(data)[method]();
+ for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
+ api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}return target(data).stop();};
  return api;
 }

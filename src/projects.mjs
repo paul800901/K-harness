@@ -1,6 +1,6 @@
-import {mkdir, readFile, writeFile, rename} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
 import path from 'node:path';
-import {randomUUID} from 'node:crypto';
+import {atomicWrite} from './atomic-write.mjs';
 import {normalizeWorkspacePath, validateWorkspace} from './workspaces.mjs';
 
 const key = value => path.normalize(value).replace(/[\\/]+$/, '').toLowerCase();
@@ -41,11 +41,7 @@ export async function addProject(root, candidate) {
     const projects = await readProjects(root);
     if (!projects.some(p => key(p.path) === key(folder))) {
       projects.push({path:folder});
-      const directory = path.join(root, '.runtime');
-      await mkdir(directory, {recursive:true});
-      const temporary = path.join(directory, `projects-${randomUUID()}.tmp`);
-      await writeFile(temporary, JSON.stringify(projects.map(p => Object.keys(p).length === 1 ? p.path : p), null, 2), {flag:'wx'});
-      await rename(temporary, path.join(directory, 'projects.json'));
+      await atomicWrite(path.join(root,'.runtime/projects.json'),JSON.stringify(projects.map(p=>Object.keys(p).length===1?p.path:p),null,2));
     }
     return {path:folder, name:path.basename(folder)};
   });
@@ -74,11 +70,7 @@ export async function updateProject(root, data, sessions = []) {
     const index = projects.findIndex(p => key(p.path) === key(folder));
     const updated = {...(index < 0 ? {path:known.path} : projects[index]),...patch};
     if (index < 0) projects.push(updated); else projects[index] = updated;
-    const directory = path.join(root,'.runtime');
-    await mkdir(directory,{recursive:true});
-    const temporary = path.join(directory,`projects-${randomUUID()}.tmp`);
-    await writeFile(temporary,JSON.stringify(projects.map(p => Object.keys(p).length === 1 ? p.path : p),null,2),{flag:'wx'});
-    await rename(temporary,path.join(directory,'projects.json'));
+    await atomicWrite(path.join(root,'.runtime/projects.json'),JSON.stringify(projects.map(p=>Object.keys(p).length===1?p.path:p),null,2));
     return {...known,...patch};
   });
   pending.set(root,operation);

@@ -20,7 +20,7 @@ function createMcpServer(bridge) {
       bridge.resultReady?.(args,value);
       return response;
     } catch (error) {
-      return {isError:true,content:[{type:'text',text:`${error.message} Inspect the same requestId; do not retry under a new ID.`}]};
+      return {isError:true,content:[{type:'text',text:`${String(error?.message ?? error)} Inspect the same requestId; do not retry under a new ID.`}]};
     }
   });
   register('luna_start','Start one bounded task with subscription Codex GPT-6 Luna high. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.',taskSchema,

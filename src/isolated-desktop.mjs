@@ -48,7 +48,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
   };
   const hosts=native?{codex:options=>openCodexHost({...options,env}),claude:options=>openClaudeHost({...options,env})}:createIsolatedProviderHosts({spawnImpl:pool.spawnImpl,env,runnerIdentity});
   const sandboxPolicyForMode=native?undefined:isolatedCodexSandboxPolicy;
-  const inspect=()=>inspectClaude({commandSpec,cwd:selected,env,captureImpl:hosts.captureImpl,runnerIdentity});
+  const inspect=({signal}={})=>inspectClaude({commandSpec,cwd:selected,env,signal,captureImpl:hosts.captureImpl,runnerIdentity});
   const codexHost=(options,workspace=selected)=>hosts.codex({...options,executable,cwd:workspace});
   const claudeHost=(options,workspace=selected)=>hosts.claude({...options,commandSpec,cwd:workspace});
   function restrictWorkspace(controller){
@@ -86,7 +86,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
     // isolated runner. No provider key is forwarded into the child environment.
     createWorkerDispatcher:async options=>{
       const workerWorkspace=await validateRegisteredWorkspace(options?.workspace??app.controller.state.workspace??selected);
-      return createDispatcher({...options,workspace:workerWorkspace,...(native?{}:{testRunner:{spawnImpl:pool.spawnImpl,env}})});
+      return createDispatcher({...options,workspace:workerWorkspace});
     },
     async close(){await app.close();await browsers.close();await pool?.close();},
   };

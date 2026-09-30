@@ -1,11 +1,12 @@
-import {mkdir,readFile,writeFile,rename} from 'node:fs/promises';
+import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
+import {atomicWrite} from './atomic-write.mjs';
 // K owns only unsent input. Once delivery is attempted the native core owns execution.
 export function createInputQueue({root,getController,onChange=()=>{}}){
  let threadId=null,rows=[],paused=false,chain=Promise.resolve(),draining=false,closed=false,timer,stopEpoch=0;
  const file=id=>{if(!/^[a-zA-Z0-9_-]{1,128}$/.test(id??''))throw Error('Invalid queue conversation.');return path.join(root,'.runtime/input-queues',id+'.json');};
- const save=()=>{const id=threadId,data=JSON.stringify({rows,paused});if(!id)return Promise.resolve();const next=chain.catch(()=>{}).then(async()=>{const target=file(id);await mkdir(path.dirname(target),{recursive:true});const tmp=target+'.'+randomUUID()+'.tmp';await writeFile(tmp,data);await rename(tmp,target);});chain=next;return next;};
+ const save=()=>{const id=threadId,data=JSON.stringify({rows,paused});if(!id)return Promise.resolve();const next=chain.catch(()=>{}).then(async()=>{await atomicWrite(file(id),data);});chain=next;return next;};
  const notify=()=>onChange();
  const hasWorkers=s=>(s.workers??[]).some(w=>w.settled===false||['running','starting','pending','unresolved'].includes(w.status));
  const ready=()=>{const s=getController().state;return !closed&&!draining&&!paused&&s.threadId===threadId&&!s.busy&&!(s.questions??[]).length&&!hasWorkers(s)&&['ready','completed','failed','interrupted'].includes(s.status)&&rows[0]?.status==='queued';};

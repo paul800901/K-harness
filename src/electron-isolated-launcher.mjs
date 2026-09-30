@@ -16,6 +16,7 @@ async function trustedFile(file,root){
 function electronEnvironment(source){
   const env={...source};
   delete env.ELECTRON_RUN_AS_NODE;
+  delete env.NODE_OPTIONS;
   return env;
 }
 

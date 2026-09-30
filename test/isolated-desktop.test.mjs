@@ -161,27 +161,14 @@ test('Claude auth inspection and Codex catalog use explicit isolated runner, CLI
   assert.equal(codex.options.env.DEEPSEEK_API_KEY, undefined);
 });
 
-test('Pi worker dispatcher receives the same isolated runner and excludes API keys from test child env', async (t) => {
-  const f = await fixture(t);
-  await writeFile(path.join(f.workspace, 'code.mjs'), 'export const value = 1;\n');
-  await writeFile(path.join(f.workspace, 'checks.mjs'), 'assert.ok(true);\n');
-  const runtime = await createModelRuntime();
-  const faux = fauxProvider({ provider: 'isolated-desktop-test', models: [{ id: 'scripted', reasoning: false }] });
-  faux.setResponses([fauxAssistantMessage(fauxToolCall('run_tests', {})), (context) => {
-    assert.equal(JSON.parse(context.messages.at(-1).content[0].text).status, 'passed');
-    return fauxAssistantMessage('測試完成。');
-  }]);
-  runtime.registerNativeProvider(faux.provider);
-  const dispatcher = await f.app.createWorkerDispatcher({ modelRuntime: runtime, model: faux.getModel(), stateDir: path.join(f.root, 'jobs') });
-  t.after(() => dispatcher.close());
-  await dispatcher.start({ requestId: 'isolated-pi', task: 'Run the approved check.', readFiles: ['code.mjs', 'checks.mjs'],
-    coding: { editFiles: ['code.mjs'], testFiles: ['checks.mjs'] } });
-  const result = await dispatcher.wait('isolated-pi');
-  assert.equal(result.status, 'completed', result.error);
-  const testRun = f.calls.find((call) => call.command === process.execPath && call.args.includes('--permission'));
-  assert.ok(testRun);
-  assert.equal(testRun.options.cwd, f.workspace);
-  assert.equal(testRun.options.env.DEEPSEEK_API_KEY, undefined);
+test('Pi worker only patches approved code and never spawns a test process',async t=>{
+ const f=await fixture(t);await writeFile(path.join(f.workspace,'code.mjs'),'export const value = 1;');
+ const runtime=await createModelRuntime(),faux=fauxProvider({provider:'isolated-desktop-test',models:[{id:'scripted',reasoning:false}]});
+ faux.setResponses([fauxAssistantMessage(fauxToolCall('replace_code',{path:'code.mjs',expectedText:'value = 1',newText:'value = 2'})),fauxAssistantMessage('請主代理驗收。')]);runtime.registerNativeProvider(faux.provider);
+ const dispatcher=await f.app.createWorkerDispatcher({modelRuntime:runtime,model:faux.getModel(),stateDir:path.join(f.root,'jobs')});t.after(()=>dispatcher.close());
+ await dispatcher.start({requestId:'isolated-pi',task:'Patch value.',readFiles:['code.mjs'],coding:{editFiles:['code.mjs']}});
+ const result=await dispatcher.wait('isolated-pi');assert.equal(result.status,'completed',result.error);
+ assert.equal(f.calls.some(call=>call.args.includes('--permission')),false);
 });
 
 test('Claude Luna bridge launches its Codex host through the same isolated runner', async (t) => {
