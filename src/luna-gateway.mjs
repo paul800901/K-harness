@@ -13,6 +13,11 @@ const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).m
 
 function createMcpServer(bridge) {
   const server = new McpServer({name:'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
+  const policy=bridge.workerPolicy;
+  const workerOptions=(bridge.workerOptions??[]).map(option=>`${option.model}: ${(option.efforts??[]).join(', ')}`).join('; ');
+  const selectionGuidance=policy?.model==='auto'&&policy?.effort==='auto'
+    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇。官方可用選項：${workerOptions||'請依目前工具列出的官方模型與推理程度選擇'}。`
+    : `目前預設為 ${policy?.model??'GPT-6 Luna'} / ${policy?.effort??'high'}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
     try {
       const value=await lunaResult(await execute(args));
@@ -23,7 +28,7 @@ function createMcpServer(bridge) {
       return {isError:true,content:[{type:'text',text:`${String(error?.message ?? error)} Inspect the same requestId; do not retry under a new ID.`}]};
     }
   });
-  register('luna_start','Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna. Optional model and effort override this conversation\'s defaults; effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.',taskSchema,
+  register('luna_start',`Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna. ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,taskSchema,
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
   register('luna_wait','Manual recovery only: wait for an existing Codex subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});

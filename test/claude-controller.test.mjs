@@ -77,7 +77,7 @@ test('opens subscription host with native UUID and K Luna gateway, saves only a 
     assert.equal(projection.messages.length,0);
     assert.equal((await f.controller.sessions()).sessions.length,1);
     const common=await listMainSessions(f.root);assert.equal(common.sessions[0].provider,'claude');
-    assert.equal(common.sessions[0].workerPolicy.model,'gpt-6-luna');
+    assert.deepEqual(common.sessions[0].workerPolicy,{model:'auto',effort:'auto'});
   } finally { await f.controller.close(); }
 });
 

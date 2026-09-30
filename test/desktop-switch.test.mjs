@@ -119,7 +119,7 @@ test('saved conversations share one initialized host and read each history befor
  }finally{await f.c.close();}
 });
 
-test('normal subscription conversations disable Flash and do not wait for its MCP startup',async()=>{
+test('normal subscription conversations disable the removed Flash server and keep AI-auto delegation',async()=>{
  const f=await fixture();
  try{
   await f.openSaved('thread-a');
@@ -128,7 +128,7 @@ test('normal subscription conversations disable Flash and do not wait for its MC
   const resume=f.activeHost.calls.find(call=>call.method==='thread/resume').p;
   const disabled={enabled:false,command:process.execPath,args:['--version']};
   assert.deepEqual(resume.config.mcp_servers,{k_flash:disabled,k_browser:disabled});
-  assert.equal(resume.config.agents.default_subagent_model,'gpt-6-luna');
+  assert.deepEqual(resume.config.agents,{enabled:true});
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
   await f.c.send({text:'直接工作，不啟動 Flash'});
  }finally{await f.c.close();}

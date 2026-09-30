@@ -68,7 +68,7 @@ try{
  assert.equal(await workerDetails.count(),1);assert.equal(await workerDetails.evaluate(el=>el.open),false);
  await workerDetails.locator('summary').click();
  const workerModel=page.getByLabel('子代理模型',{exact:true}),workerEffort=page.getByLabel('子代理推理程度',{exact:true});
- await workerModel.waitFor();await workerModel.selectOption('gpt-6.1-sol');await workerEffort.selectOption('ultra');
+ await workerModel.waitFor();assert.equal(await workerModel.inputValue(),'auto');assert.equal(await workerEffort.count(),0);assert.match(await workerDetails.locator('summary').textContent(),/AI 自動選擇/);await workerModel.selectOption('gpt-6-luna');assert.equal(await workerEffort.count(),1);await workerModel.selectOption('auto');assert.equal(await workerEffort.count(),0);await workerModel.selectOption('gpt-6.1-sol');await workerEffort.selectOption('ultra');
  await workerDetails.locator('summary').click();assert.equal(await workerDetails.evaluate(el=>el.open),false);
 
  // Logged-in normal state stays collapsed; credentials/status controls remain available on expansion.
@@ -148,6 +148,16 @@ try{
  await page.getByRole('button',{name:'確認切換',exact:true}).waitFor();
  await page.getByRole('button',{name:'取消',exact:true}).click();
  assert.equal(requests.filter(r=>r.path==='/api/model').length,0,'canceling model switch sent a request');
+
+ // A fresh conversation defaults to auto even after the prior conversation chose Sol.
+ await page.getByRole('button',{name:'新對話',exact:true}).click();
+ const freshWorkers=page.locator('details').filter({has:page.locator('summary[aria-label="子代理設定"]')});
+ await freshWorkers.locator('summary').click();
+ assert.equal(await page.getByLabel('子代理模型',{exact:true}).inputValue(),'auto');
+ assert.equal(await page.getByLabel('子代理推理程度',{exact:true}).count(),0);
+ await page.getByRole('button',{name:'建立對話',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('[aria-label="主代理模型"]')===null);
+ assert.deepEqual(requests.filter(r=>r.path==='/api/open').at(-1).data.workerPolicy,{model:'auto',effort:'auto'});
 
  // Fresh fake UI with signed-out status proves login entry and Chinese cancel feedback remain.
  state.threadId=null;state.messages=[];codexLoggedIn=false;claudeLoggedIn=false;claudeLogin={status:'running',url:'https://claude.ai/oauth/authorize?fixture=1'};
