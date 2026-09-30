@@ -12,4 +12,9 @@
 
 ## 驗證
 首次完整測試 500/502，兩個真 controller → gateway 接線測試暴露上述遺漏，未掩蓋。補接後再跑全部測試；隔離桌面測試直接讀 MCP tools/list，確認自動政策確實到工具說明，沒有 Luna/high 備援。
-最終完整測試 **502/502** 通過。部署讀回待補。未呼叫真模型，不消耗模型回合。
+最終完整測試 **502/502** 通過。正式部署前確認 K 無 listener、自有程序已離開。**03:01 已更新四個後端檔並從原入口重開**，四檔雜湊一致，native health 正常；正式模組讀回 auto/auto，Codex agents 僅 enabled，無固定模型。未呼叫真模型，不消耗模型回合。
+
+## 還原與證據
+- 來源提交：`a117eca`。
+- 備份：`D:\K-harness\.runtime\releases\worker-policy-cleanup-before-20261001-030134`；正常停 K 後將四個原檔複製回對應位置即可還原。
+- 收據／首輪失敗及最終通過輸出：`D:\K-harness\.runtime\worker-policy-cleanup-release-20261001`。前端、對話、登入資料皆未改動。
