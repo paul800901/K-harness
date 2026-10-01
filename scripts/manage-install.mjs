@@ -43,6 +43,7 @@ try{
  run('powershell.exe',['-NoProfile','-Command',`$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(prepared)}`]);
  // New candidate only: npm never replaces the running runtime's dependencies.
  run('cmd.exe',['/d','/s','/c','npm ci --no-audit --no-fund'],prepared);
+ run(process.execPath,['node_modules/electron/install.js'],prepared);
  run(process.execPath,['node_modules/vite/bin/vite.js','build'],prepared);
  run(process.execPath,['browser-extension/build.mjs'],prepared);
  run('powershell.exe',['-NoProfile','-File',path.join(prepared,'local-launcher/Build-K-Launcher.ps1')],prepared);
