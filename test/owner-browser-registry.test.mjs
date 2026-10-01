@@ -1,10 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir,mkdtemp} from 'node:fs/promises';
+import {mkdir,mkdtemp,readdir} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {browserSessionKey,toClaudeBrowserMcpServer} from '../src/browser-mcp-config.mjs';
 import {createOwnerBrowserRegistry} from '../src/owner-browser-registry.mjs';
+import {loadKBrowserAssistant} from '../src/k-browser-assistant.mjs';
+
+test('fresh installations without browser setup allow default text conversations without creating profiles',async()=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'k-owner-no-browser-'));
+ const vault=path.join(root,'vault'),outputRoot=path.join(root,'output');
+ await mkdir(vault);await mkdir(outputRoot);
+ const gatewayFactory=await loadKBrowserAssistant({vault});
+ assert.equal(gatewayFactory,undefined);
+ const registry=createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory});
+ try{
+  for(const [provider,accessMode] of [['codex','workspace-write'],['claude','claude-manual']]){
+   const session=registry.session();
+   assert.equal(await session.config({conversationId:`${provider}-text`,provider,accessMode}),null);
+   const state={threadId:`${provider}-text`,browserAccess:{enabled:false}};
+   assert.equal((await registry.request({},state,state.threadId,'/state')).available,false);
+   await session.close();
+  }
+  assert.deepEqual(await readdir(vault),[]);
+  assert.deepEqual(await readdir(outputRoot),[]);
+ }finally{await registry.close();}
+});
 
 async function fixture(options={}){
   const root=await mkdtemp(path.join(os.tmpdir(),'k-owner-registry-'));

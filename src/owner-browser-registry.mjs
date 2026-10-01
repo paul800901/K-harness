@@ -24,7 +24,7 @@ export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory,test
         try{
           await controller.close();
           const modes=provider==='codex'?['workspace-write','auto-review','danger-full-access']:provider==='claude'?['claude-manual','claude-acceptEdits','claude-auto','claude-bypassPermissions','claude-dontAsk']:[];
-          if(!modes.includes(accessMode))return null;
+          if(!gatewayFactory||!modes.includes(accessMode))return null;
           if(!/^[A-Za-z0-9-]{1,100}$/.test(conversationId??''))throw Error('Invalid browser conversation identifier.');
           if(entries.has(conversationId))throw Error('Browser profile is already owned by another conversation connection.');
           const entry={key:conversationId,gateway:null};active=entry;entries.set(entry.key,entry);
