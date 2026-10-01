@@ -1,4 +1,4 @@
-param([switch]$NoBrowser)
+﻿param([switch]$NoBrowser)
 $ErrorActionPreference = 'Stop'
 
 $launcher = Join-Path $PSScriptRoot 'local-launcher\dist\K桌面啟動器.exe'
