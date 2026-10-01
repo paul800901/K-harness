@@ -35,3 +35,16 @@
 - Git ZIP 在 `D:\K-harness\.runtime\git-install-smoke\新機 測試`（中文及空格）完成 npm ci、三項建置與 **508/508** 完整測試；兩家原生 exe 版本為 Codex 0.159.0、Claude Code 2.1.285。沒有複製登入資料。
 - 接著真正啟動抓到缺漏：Electron 44 套件沒有 postinstall，npm ci 不會自動取得 Electron binary。第一次啟動失敗，正式 K 未動；安裝器補上官方 `node_modules/electron/install.js`，不是以測試通過當成啟動通過。
 - Chrome 設定腳本在上述假安裝目錄驗證中文設定／wrapper；註冊 helper 換成只記錄參數的測試 stub，因此本次沒有寫 HKCU、沒有開 Chrome，不能宣稱新機 Chrome 已驗收。
+
+## 正式完成與 Git 讀回（2026-10-01 10:01 後）
+
+- 官方 Electron binary 下載完成後，中文空格的新安裝目錄真正啟動 Electron；收到 `ready`，送一次 `close` 後收到 `closed confirmed=true`，退出碼 0。匿名 GET `/` 回 403 是可信入口保護，不作為登入／畫面內容通過證據。
+- 正式安裝候選再次從 Git 建置，完整測試 **508/508 通過**（34.17 秒）；啟動入口另發現既有 `Start-K-Desktop.ps1` 未含 BOM，Windows PowerShell 5 解析失敗。已補 BOM、再次建置與 **508/508 通過**（33.85 秒），沒有掩蓋這次失敗。
+- 正式啟用程式 commit：`60672fc85f85c4b434c7298a897d7cec1c2f10e0`。最後僅更新入口增加「退回舊版後從已保留新版載入更新器」，此入口以假 manager 實際透過 PowerShell 5 執行驗證；不重新建置未改的介面／binary。
+- 正式 runtime 395 個 Git 追蹤檔與維護來源逐一比對，除 CRLF/LF 正規化外 **沒有差異**。根目錄僅套用配套 launcher、Start／Update 入口及本機設定，沒有整批覆寫舊根目錄開發來源。
+- `D:\K-harness\.local\runtime.json` 已保存目前 Node 及原有 Whisper Python／模型位置，沒有搬錄音、模型、登入或對話。原有瀏覽器設定／HKCU 註冊未更動。
+- 可退回的更新前正式版：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1790819992956`。`previous` 指向此真正更新前版本，不指向本輪尚未成功啟動的中間版；中間產物仍保留。
+- 10:01:38 由正式 Start 入口啟動，10:01:39 launcher 記錄 `native isolated workbench ready`；`GET /health` 回 `deployment=native` 與原有 private-state 路徑。未發起收費模型工作；本輪不宣稱真實麥克風／新機登入已驗收。
+- 已 fast-forward 推送私人 `paul800901/K-harness` 的 main，並發布 Git tag **`k-r3-git-20261001`**，遠端 main／tag 讀回皆為上述 commit。未 force push。
+- 再由 GitHub clone 此 tag 至新目錄讀回相同 commit，存在 Setup 入口、沒有 `.local`／`.runtime` 個人資料。推送前已检查本輪 Git 物件路徑及追蹤檔秘密樣式，未發現登入／憑證／執行資料被納入。
+- 本段完成紀錄另作文件提交；發布 tag 與正式程式版本保持不變。Windows 10 實機、目標電腦官方登入、Chrome 載入和語音硬體仍須在該台驗證。
