@@ -19,9 +19,8 @@ try{
  const draft=page.locator('textarea.composer-input');
  await draft.fill('原草稿保留');
  await mic.click();
- await page.getByRole('region',{name:'啟用本機聽寫'}).waitFor();
+ assert.equal(await page.getByRole('region',{name:'啟用本機聽寫'}).count(),0);
  assert.equal(await page.getByRole('region',{name:'啟用瀏覽器聽寫'}).count(),0);
- await page.getByRole('button',{name:'同意並開始聽寫',exact:true}).click();
  const stop=page.getByRole('button',{name:'停止聽寫',exact:true});
  await stop.waitFor();
  await page.waitForTimeout(8200); // Capture one complete synthetic sentence.
@@ -40,6 +39,18 @@ try{
  await page.getByText('轉錄要求無法處理。 未送出；原草稿保留。',{exact:true}).waitFor();
  assert.equal(await draft.inputValue(),text);
  assert.equal(await app.evaluate(()=>fixture.sends.length),0);
- const result={passed:true,text,checks:['actual native preload selects local consent','synthetic microphone to real local Whisper to retained draft','stop does not send','cancel keeps draft and makes no request','transcription error keeps draft without send'],realMicrophone:false,providerCalls:0};
+ await app.evaluate(async()=>{await fixture.close();});
+ await app.close();app=null;
+ const restarted=await mkdtemp(path.join(output,'native-reopen-'));
+ app=await _electron.launch({executablePath:path.join(root,'node_modules/electron/dist/electron.exe'),args:[path.join(root,'test/fixtures/voice-composer-app.cjs')],env:{...env,K_VOICE_TEST_ROOT:restarted},timeout:20000});
+ const reopened=await app.firstWindow();reopened.setDefaultTimeout(15000);
+ await reopened.waitForURL('http://127.0.0.1:*/');
+ await reopened.getByRole('button',{name:'開始聽寫',exact:true}).click();
+ await reopened.getByRole('button',{name:'停止聽寫',exact:true}).waitFor();
+ assert.equal(await reopened.locator('.voice-consent').count(),0);
+ assert.equal(await reopened.getByRole('button',{name:'同意並開始聽寫',exact:true}).count(),0);
+ await reopened.getByRole('button',{name:'取消聽寫',exact:true}).click();
+ assert.equal(await app.evaluate(()=>fixture.calls.length),0);
+ const result={passed:true,text,checks:['native starts without K consent','synthetic microphone to real local Whisper to retained draft','stop does not send','cancel keeps draft and makes no request','transcription error keeps draft without send','new Electron process and fresh storage start dictation without consent'],realMicrophone:false,providerCalls:0};
  await writeFile(path.join(run,'result.json'),JSON.stringify(result,null,2));console.log(JSON.stringify({run,...result}));
 }finally{if(app){await app.evaluate(async()=>{await global.fixture?.close?.();}).catch(()=>{});await app.close();}}

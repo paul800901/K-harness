@@ -17,7 +17,7 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
  const [phase,setPhaseState]=useState('idle'),[notice,setNotice]=useState(''),[consent,setConsent]=useState(false);
  const canvas=useRef(null),job=useRef(null),callback=useRef(onResult),activity=useRef(onActiveChange),scope=useRef(sessionKey);callback.current=onResult;activity.current=onActiveChange;scope.current=sessionKey;
  const native=typeof window!=='undefined'&&typeof window.kBrowser?.onWindowHidden==='function';
- const consentKey=native?'k-local-dictation-consent':'k-browser-dictation-consent';
+ const consentKey='k-browser-dictation-consent';
  const setPhase=next=>{setPhaseState(next);activity.current?.(next!=='idle');};
  const release=entry=>{cancelAnimationFrame(entry.frame);entry.stream?.getTracks().forEach(track=>track.stop());entry.context?.close().catch(()=>{});entry.stream=null;entry.context=null;};
  const cancel=()=>{const entry=job.current;if(!entry)return;job.current=null;entry.session?.cancel();release(entry);setPhase('idle');setNotice('已取消這段聽寫，原草稿保留。');};
@@ -29,7 +29,7 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
  useEffect(()=>()=>{const entry=job.current;job.current=null;if(entry){entry.session?.cancel();release(entry);}activity.current?.(false);},[sessionKey]);
  const start=async()=>{
   if(disabled||job.current)return;
-  if(sessionStorage.getItem(consentKey)!=='yes'){
+  if(!native&&sessionStorage.getItem(consentKey)!=='yes'){
    setConsent(true);activity.current?.(false);return;
   }
   if(native){

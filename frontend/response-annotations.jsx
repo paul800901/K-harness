@@ -92,7 +92,7 @@ function QuoteAnnotationEditor({quote,threadId,onChange,disabled,onVoiceActive,c
   if(claimVoice&&!claimVoice(voiceKey)){setBusyNotice('另一段聽寫仍在進行，請先停止或完成。');return false;}
   setBusyNotice('');return true;
  };
- const startVoice=()=>{if(sessionStorage.getItem(voice.consentKey)!=='yes'){setConsent(true);return;}if(reserveVoice())void voice.start();};
+ const startVoice=()=>{if(!voice.native&&sessionStorage.getItem(voice.consentKey)!=='yes'){setConsent(true);return;}if(reserveVoice())void voice.start();};
  const acceptVoice=()=>{if(reserveVoice()){sessionStorage.setItem(voice.consentKey,'yes');setConsent(false);voice.accept();}};
  useEffect(()=>{if(autoFocus)textarea.current?.focus();},[autoFocus]);
  return <div className={`quote-annotation-editor${popover?' quote-annotation-editor-popover':''}`}>
@@ -101,6 +101,6 @@ function QuoteAnnotationEditor({quote,threadId,onChange,disabled,onVoiceActive,c
    {voice.active?<><button type="button" aria-label="取消此段聽寫" title="取消聽寫" onMouseDown={event=>event.preventDefault()} onClick={voice.cancel}><X size={15}/></button><VoiceWaveform voice={voice}/><button type="button" aria-label="停止並填入留言" title="停止並填入留言" disabled={voice.phase!=='recording'} onMouseDown={event=>event.preventDefault()} onClick={()=>voice.stop(false)}><Square size={14}/></button></>:<button type="button" data-quote-mic aria-label="聽寫到此段註解" title="聽寫到此段註解" disabled={disabled||(voiceOwner&&voiceOwner!==voiceKey)} onMouseDown={event=>event.preventDefault()} onClick={startVoice}><Mic size={15}/></button>}
    {(voice.notice||busyNotice)&&<span role="status">{voice.notice||busyNotice}</span>}
   </div>
-  {consent&&<section className="quote-voice-consent" aria-label={voice.native?'啟用本機聽寫':'啟用聽寫'}><strong>{voice.native?'啟用本機聽寫？':'啟用現有聽寫？'}</strong><p>{voice.native?'使用本機離線語音辨識；音訊只在記憶體處理、不保存錄音，也不使用付費 API。單次最長 5 分鐘；達上限會停止並轉錄且不會自動送出。停止只填入註解草稿，完成後請檢查再自行送出引用與註解。':'沿用 K 現有聽寫功能，音訊處理方式依瀏覽器供應商而定；不會把聽寫音訊送給主代理模型。'}</p><div><button type="button" onClick={()=>setConsent(false)}>取消</button><button type="button" onClick={acceptVoice}>同意並開始聽寫</button></div></section>}
+  {consent&&<section className="quote-voice-consent" aria-label="啟用聽寫"><strong>啟用現有聽寫？</strong><p>沿用 K 現有聽寫功能，音訊處理方式依瀏覽器供應商而定；不會把聽寫音訊送給主代理模型。</p><div><button type="button" onClick={()=>setConsent(false)}>取消</button><button type="button" onClick={acceptVoice}>同意並開始聽寫</button></div></section>}
  </div>;
 }
