@@ -2,11 +2,14 @@
 
 ## 使用方式
 
+新電腦本次安裝版本使用 **`k-r3-git-20261001b`**，已納入 `c043911` 的無瀏覽器助手文字對話補修；不要使用未含補修的 `k-r3-git-20261001`。Chrome 助手仍為分開設定，不是開文字聊天室的前置條件。版本內容與發布讀回見 [本次發布紀錄](r3-git-release-b-20261001.md)。
+
 K 程式由私人儲存庫 `https://github.com/paul800901/K-harness` 取得；新電腦需先以本人 GitHub 帳號取得存取權。使用乾淨 clone，不把目前開發機整個資料夾複製過去。
 
 ```powershell
 git clone https://github.com/paul800901/K-harness.git
 cd K-harness
+git checkout --detach k-r3-git-20261001b
 ```
 
 需要現有 Git、Node.js（符合 package.json，目前至少 22.19）、npm、PowerShell 及 .NET Framework C# 編譯器。K 不自動安裝全域環境，也不改帳號或計費。首次準備還需要官方 Codex／Claude Code 的原生 Windows exe；不是 cmd 包裝檔。Codex 的同目錄 exe 輔助程式會一起複製至 K 專用目錄，Claude 複製單一 exe；不複製任一登入憑證。
@@ -14,7 +17,7 @@ cd K-harness
 由 AI 確認本機官方執行檔實際路徑後執行：
 
 ```powershell
-.\Setup-K.ps1 -CodexExecutable '<官方 codex.exe 完整路徑>' -ClaudeExecutable '<官方 claude.exe 完整路徑>'
+.\Setup-K.ps1 -Ref 'k-r3-git-20261001b' -CodexExecutable '<官方 codex.exe 完整路徑>' -ClaudeExecutable '<官方 claude.exe 完整路徑>'
 .\Start-K-Desktop.ps1
 ```
 
@@ -23,7 +26,7 @@ cd K-harness
 ## 更新
 
 ```powershell
-.\Update-K.ps1 -Ref '<已確認的版本標記>'
+.\Update-K.ps1 -Ref 'k-r3-git-20261001b'
 ```
 
 會 fetch 現有 origin 的版本，再以指定 commit 建立候選，不 merge/reset 現有工作樹，不包含未提交的修改。依 lockfile 執行 npm ci、建置介面／擴充／啟動器及完整測試；失敗不動現用程式。更新器不更新兩家的 CLI，核心升級另外驗證。
