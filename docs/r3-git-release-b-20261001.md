@@ -23,6 +23,15 @@
 
 ## 發布讀回
 
-此文件建立時尚未推送；發布完成必須另外取得遠端 main／tag 與乾淨下載讀回，實際結果補記於此。沒有把待推狀態當成已發布。
+**已發布並讀回完成（臺灣時間 2026-10-01 10:53）**：一次 `git push --atomic` 同時 fast-forward main 與建立新標記，退出碼 0，沒有 force。遠端讀回：
+
+- 新 tag object：`06b70964ee7aafa8b7a3a57291046630201e7696`（annotated tag）。
+- 新 tag 指向程式／文件 commit：`bb06b937e36350d425e05e0bd388688786db63c2`；首次發布時 main 相同。
+- 舊 `k-r3-git-20261001` 仍為 `60672fc85f85c4b434c7298a897d7cec1c2f10e0`，沒有移動。
+- 另外從 GitHub 乾淨 clone 新 tag 至 `D:\K-harness\.runtime\concentrated-review-20261001\release-b-clean-clone`，HEAD 正確且工作樹乾淨；補修模組、回歸測試、package／lockfile、Setup／Update 六個 Git blob 均與測過的來源一致，沒有 `.local`／`.runtime`／`.env.local`／node_modules。
+- clone 曾輸出「annotated tag object is not a commit」warning；退出碼 0、HEAD 與安裝器實際使用的 `k-r3-git-20261001b^{commit}` 皆讀回 bb06b93。沒有忽略版本不符，也未重新建立標記。
+- 這是乾淨下載／版本讀回，不是另一台電腦完整安裝；沒有新增套件下載、搬帳號或模型回合。
+- 後續僅將本段讀回與複查文件的發布狀態提交至 main；已發布標記保持固定，不隨文件收尾再移動。
+- 證據：`D:\K-harness\.runtime\concentrated-review-20261001\release-b-push.log`、`release-b-clone.log`、`release-b-readback.json`。本輪沒有 GitHub Release 附件或額外上傳，僅 Git commits／tag。
 
 Windows 10、真麥克風、剪貼簿操作與該台首次登入仍待東區實機驗收；Git 發布與程式測試不取代這些測試。

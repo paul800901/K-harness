@@ -98,3 +98,7 @@ Review comment:
 - 正式讀回不是畫面逐項操作驗收：本輪未重新操作實體麥克風、真剪貼簿、全新電腦或 Windows 10；原生 review 的前端按鈕未端到端驗證。這些限制保留，不以 health 宣稱全部人工互動通過。
 - 部署及讀回證據在 `deployment.json`、`deployment-command.log`、`before-deploy-processes.json`、`formal-processes.json`、`formal-health.json`、`formal-readback.json`、`prepared-tests.log`、`formal-registry-tests.log`；一次性 `deploy-review.mjs` 與 `readback-review.mjs` 保留。不新增永久驗證／部署機制。
 - 本輪沒有大改動或需使用者另行裁決的架構取捨；不因此推進其他 R3 未完成項。
+
+## 後續 Git 發布（同日 10:53）
+
+前文「未 push」為集中複查完成當時的狀態。使用者後續明確授權發布：已將 c043911 與複查文件推到既有 GitHub，新增 `k-r3-git-20261001b`（commit `bb06b937e36350d425e05e0bd388688786db63c2`），保留舊 tag。再次完整 **509/509**、遠端與乾淨 clone 讀回完成；本輪未重啟或改動正式程式。東區新機安裝請用新標記，硬體與該台登入仍待實測。見 [發布紀錄](r3-git-release-b-20261001.md)。
