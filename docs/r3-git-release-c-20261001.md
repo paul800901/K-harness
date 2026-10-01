@@ -23,6 +23,18 @@
 
 本節是版本打標前的已完成查核，不把測試通過當成已發布。證據位置：`D:\K-harness\.runtime\voice-release-c-20261001`，含 `release-c-tests.log`（首次失敗）、`release-c-download-isolated.log`、`release-c-tests-repeat.log`、`release-c-build.log`。實際發布讀回完成後追加結果至 main 同名文件；已發布標記不隨文件收尾移動。
 
+## 實際發布與遠端讀回
+
+**已發布並讀回完成（臺灣時間 2026-10-01 23:45）**。一次 `git push --atomic` 退出碼 0，同時 fast-forward main 與建立 annotated tag c；沒有 force、沒有重送，舊 tag 讀回不變。
+
+- c tag object：`74bbc78acbfcf6f60ec2d10c8ef15d2d13f3d266`。
+- c 的固定 commit：`50ee11e1b11358e1c93d7ee62d71938ea471e370`；首次發布時遠端 main 相同。包含原文字聊天室補修、`ad1fa98` 聽寫修正與最新文件。
+- 遠端舊 `k-r3-git-20261001` 仍為 `60672fc85f85c4b434c7298a897d7cec1c2f10e0`；b tag object／commit 仍為 `06b70964ee7aafa8b7a3a57291046630201e7696`／`bb06b937e36350d425e05e0bd388688786db63c2`。
+- 從 GitHub 乾淨 clone，再明確取回 c 並 checkout `c^{commit}`；HEAD 為 50ee11e、工作樹乾淨。3 個前端、2 個聽寫測試、README、AGENTS、安裝指南、package／lockfile、Setup／Update **12 個 Git blob** 與測過的來源一致。沒有 `.local`／`.runtime`／`.env.local`／node_modules；未另外下載套件或搬帳號。
+- 清楚區分：這是乾淨下載與版本讀回，不是東區實機安裝或硬體驗收。首次失敗與兩類舊測試限制仍保留，沒有因發布而改寫成全部正式功能通過。
+- 讀回證據：`release-c-prepush.json`、`release-c-push.log`、`release-c-push-result.json`、`release-c-remote.txt`、`release-c-clone.log`、`release-c-readback.json`。下載位置 `D:\K-harness\.runtime\voice-release-c-20261001\clean-clone`。
+- 後續只提交／推送本段讀回及索引等文件至 main；**c 標記維持固定在 50ee11e，不隨文件收尾移動**。本輪沒有重新套用或重啟本機 K，也沒有 GitHub Release 附件或額外上傳。
+
 ## 東區安裝與未驗界線
 
 依 [安裝指南](git-install-update.md) 使用乾淨 clone，checkout `k-r3-git-20261001c`，首次 `Setup-K.ps1 -Ref 'k-r3-git-20261001c'` 並提供該台官方 Codex／Claude exe 位置；已安裝者先離開並停止 K，再 `Update-K.ps1 -Ref 'k-r3-git-20261001c'`。不把開發機整個資料夾或登入憑證搬過去。
