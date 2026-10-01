@@ -5,7 +5,7 @@ import {EventEmitter} from 'node:events';
 import {mkdtemp,mkdir,writeFile,stat,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {isolatedLauncherPaths,startIsolatedOwner,runIsolatedLauncherProtocol,ISOLATED_FORMAL_PORT} from '../src/isolated-launcher.mjs';
+import {isolatedLauncherPaths,startIsolatedOwner,runIsolatedLauncherProtocol,ISOLATED_CANDIDATE_ROOT,ISOLATED_FORMAL_PORT} from '../src/isolated-launcher.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {startIsolatedDesktop} from '../src/isolated-desktop.mjs';
 import {listProjects} from '../src/projects.mjs';
@@ -30,6 +30,20 @@ test('formal isolation paths use a new vault state child and the existing privat
  assert.equal(p.electronExecutable,path.join(p.trustedRuntime,'node_modules','electron','dist','electron.exe'));
  assert.equal(ISOLATED_FORMAL_PORT,47831);
  assert.throws(()=>isolatedLauncherPaths('relative-path'),/absolute/);
+});
+
+test('launcher defaults to the module candidate and honors K_CANDIDATE_ROOT',()=>{
+ const sourceRoot=fileURLToPath(new URL('..',import.meta.url));
+ const previous=process.env.K_CANDIDATE_ROOT;
+ try{
+  delete process.env.K_CANDIDATE_ROOT;
+  assert.equal(ISOLATED_CANDIDATE_ROOT,path.resolve(sourceRoot));
+  assert.equal(isolatedLauncherPaths().root,path.resolve(sourceRoot));
+  process.env.K_CANDIDATE_ROOT=path.join(sourceRoot,'.runtime','portable-candidate');
+  assert.equal(isolatedLauncherPaths().root,path.resolve(process.env.K_CANDIDATE_ROOT));
+ }finally{
+  if(previous===undefined)delete process.env.K_CANDIDATE_ROOT;else process.env.K_CANDIDATE_ROOT=previous;
+ }
 });
 
 test('native supervisor events omit the bootstrap capability and await native open',async()=>{

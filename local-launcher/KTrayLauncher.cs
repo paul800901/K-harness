@@ -14,7 +14,6 @@ internal sealed class KLauncherContext : ApplicationContext
     private const int Port = 47831;
     private const string CandidateDirectory = ".runtime\\isolation-pilot\\sandboxie-candidate-3b6c43ee";
     private const string StateChild = "private-state";
-    private const string NodeExecutable = @"C:\Program Files\nodejs\node.exe";
     private readonly string root;
     private readonly string logPath;
     private readonly NotifyIcon tray;
@@ -85,7 +84,9 @@ internal sealed class KLauncherContext : ApplicationContext
         string candidate = Path.GetFullPath(Path.Combine(root, CandidateDirectory));
         string trustedRuntime = Path.Combine(candidate, "trusted-runtime");
         string script = Path.Combine(trustedRuntime, "src", "electron-isolated-launcher.mjs");
-        string node = NodeExecutable;
+        string settingsPath = Path.Combine(root, ".local", "runtime.json");
+        string settings = File.Exists(settingsPath) ? File.ReadAllText(settingsPath) : "{}";
+        string node = JsonString(settings, "nodeExecutable") ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "nodejs", "node.exe");
         if (!File.Exists(script) || !File.Exists(node)) {
             MessageBox.Show("找不到K 啟動程式或 Node 執行檔；未改用一般 K 啟動。", "K 啟動失敗", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return;
@@ -103,6 +104,11 @@ internal sealed class KLauncherContext : ApplicationContext
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+            start.EnvironmentVariables["K_CANDIDATE_ROOT"] = candidate;
+            foreach (string key in new [] { "dictationPython", "dictationModel" }) {
+                string value = JsonString(settings, key);
+                if (!String.IsNullOrEmpty(value)) start.EnvironmentVariables[key == "dictationPython" ? "K_DICTATION_PYTHON" : "K_DICTATION_MODEL"] = Path.GetFullPath(Path.Combine(root, value));
+            }
             var child = new Process();
             child.StartInfo = start;
             child.EnableRaisingEvents = true;

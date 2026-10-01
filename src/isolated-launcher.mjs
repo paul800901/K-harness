@@ -1,13 +1,17 @@
 import path from 'node:path';
 import {mkdir,realpath,stat} from 'node:fs/promises';
 import {createInterface} from 'node:readline';
+import {fileURLToPath} from 'node:url';
 import {createOwnerBrowserRegistry} from './owner-browser-registry.mjs';
 import {startIsolatedDesktop} from './isolated-desktop.mjs';
 
-export const ISOLATED_CANDIDATE_ROOT=String.raw`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee`;
+const moduleDirectory=path.dirname(fileURLToPath(import.meta.url));
+const inferredCandidateRoot=path.basename(path.dirname(moduleDirectory)).toLowerCase()==='trusted-runtime'
+  ?path.resolve(moduleDirectory,'../..'):path.resolve(moduleDirectory,'..');
+export const ISOLATED_CANDIDATE_ROOT=inferredCandidateRoot;
 export const ISOLATED_FORMAL_PORT=47831;
 
-export function isolatedLauncherPaths(candidateRoot=ISOLATED_CANDIDATE_ROOT){
+export function isolatedLauncherPaths(candidateRoot=process.env.K_CANDIDATE_ROOT||ISOLATED_CANDIDATE_ROOT){
   if(!path.isAbsolute(candidateRoot))throw Error('Candidate root must be absolute.');
   const root=path.resolve(candidateRoot),vault=path.join(root,'vault'),trustedRuntime=path.join(root,'trusted-runtime');
   const trustedProviders=path.join(root,'trusted-providers');

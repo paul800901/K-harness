@@ -1,4 +1,4 @@
-param(
+﻿param(
  [Parameter(Mandatory=$true)][string]$HostDirectory,
  [Parameter(Mandatory=$true)][string]$ConfigPath,
  [Parameter(Mandatory=$true)][string]$BackupDirectory
@@ -9,7 +9,7 @@ $root=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 foreach($p in @($HostDirectory,$ConfigPath,$BackupDirectory)) {
  if(![IO.Path]::GetFullPath($p).StartsWith($root+'\',[StringComparison]::OrdinalIgnoreCase)){throw 'Native host paths must stay inside K'}
 }
-$config=Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+$config=Get-Content -LiteralPath $ConfigPath -Encoding UTF8 -Raw | ConvertFrom-Json
 if($config.extensionId -notmatch '^[a-p]{32}$'){throw 'Invalid extension identity'}
 $hostScript=Join-Path $HostDirectory 'host.mjs'
 if(!(Test-Path -LiteralPath $hostScript -PathType Leaf)){throw 'Missing native host script'}
@@ -23,8 +23,8 @@ foreach($name in @('host.bat','com.k_harness.browser_assistant.json')) {
  if(Test-Path -LiteralPath $file){Copy-Item -LiteralPath $file -Destination (Join-Path $BackupDirectory $name)}
 }
 $node=(Get-Command node -ErrorAction Stop).Source
-$bat='@echo off'+"`r`n"+'"'+$node+'" "'+$hostScript+'" --config "'+[IO.Path]::GetFullPath($ConfigPath)+'" %*'+"`r`n"
-[IO.File]::WriteAllText((Join-Path $HostDirectory 'host.bat'),$bat,[Text.Encoding]::ASCII)
+$bat='@echo off'+"`r`nchcp 65001 >nul`r`n"+'"'+$node+'" "'+$hostScript+'" --config "'+[IO.Path]::GetFullPath($ConfigPath)+'" %*'+"`r`n"
+[IO.File]::WriteAllText((Join-Path $HostDirectory 'host.bat'),$bat,(New-Object Text.UTF8Encoding($false)))
 $manifest=Join-Path $HostDirectory 'com.k_harness.browser_assistant.json'
 $manifestJson=@{name='com.k_harness.browser_assistant';description='K browser assistant background connection';path=(Join-Path $HostDirectory 'host.bat');type='stdio';allowed_origins=@("chrome-extension://$($config.extensionId)/")}|ConvertTo-Json
 [IO.File]::WriteAllText($manifest,$manifestJson,(New-Object Text.UTF8Encoding($false)))

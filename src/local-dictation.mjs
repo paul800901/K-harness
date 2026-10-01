@@ -2,8 +2,13 @@ import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
-export const LOCAL_DICTATION_PYTHON = 'D:\\錄音轉文字\\runtime\\asr_faster_whisper_venv\\Scripts\\python.exe';
-export const LOCAL_DICTATION_MODEL = 'D:\\錄音轉文字\\runtime\\models\\hf_cache\\models--Systran--faster-whisper-large-v3\\snapshots\\edaa852ec7e145841d8ffdb056a99866b5f0a478';
+const moduleDirectory = path.dirname(fileURLToPath(import.meta.url));
+const candidateRoot = process.env.K_CANDIDATE_ROOT || (path.basename(path.dirname(moduleDirectory)).toLowerCase() === 'trusted-runtime'
+  ? path.resolve(moduleDirectory, '../..') : path.resolve(moduleDirectory, '..'));
+const localDictationRoot = path.join(candidateRoot, 'local語音');
+export const LOCAL_DICTATION_PYTHON = path.join(localDictationRoot, 'runtime', 'asr_faster_whisper_venv', 'Scripts', 'python.exe');
+export const LOCAL_DICTATION_MODEL = path.join(localDictationRoot, 'runtime', 'models', 'hf_cache', 'models--Systran--faster-whisper-large-v3',
+  'snapshots', 'edaa852ec7e145841d8ffdb056a99866b5f0a478');
 export const MAX_WAV_BYTES = 12 * 1024 * 1024;
 export const MAX_WAV_DURATION_SECONDS = 5 * 60;
 export const MAX_JSON_BYTES = 16 * 1024 * 1024;
@@ -70,23 +75,25 @@ export function validatePcm16Mono16kWav(wav) {
   return {durationSeconds: dataBytes / 32000, dataBytes};
 }
 
-function childEnvironment(source = process.env) {
+function childEnvironment(source = process.env, modelPath = LOCAL_DICTATION_MODEL, pythonPath = LOCAL_DICTATION_PYTHON) {
   const env = {};
   for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH']) {
     const key = Object.keys(source).find(value => value.toUpperCase() === name.toUpperCase());
     if (key && typeof source[key] === 'string') env[name] = source[key];
   }
-  const sitePackages = path.join(path.dirname(path.dirname(LOCAL_DICTATION_PYTHON)), 'Lib', 'site-packages');
+  const sitePackages = path.join(path.dirname(path.dirname(pythonPath)), 'Lib', 'site-packages');
   const cudaBins = ['cublas', 'cuda_runtime', 'cuda_nvrtc', 'cudnn'].map(name => path.join(sitePackages, 'nvidia', name, 'bin'));
   const systemRoot = env.SystemRoot ?? env.WINDIR ?? 'C:\\Windows';
-  env.PATH = [...cudaBins, path.dirname(LOCAL_DICTATION_PYTHON), path.join(systemRoot, 'System32')].join(path.delimiter);
+  env.PATH = [...cudaBins, path.dirname(pythonPath), path.join(systemRoot, 'System32')].join(path.delimiter);
+  env.K_DICTATION_MODEL = modelPath;
   env.HF_HUB_OFFLINE = '1';
   env.HF_HUB_DISABLE_TELEMETRY = '1';
   env.TRANSFORMERS_OFFLINE = '1';
   return env;
 }
 
-export function createLocalDictation({pythonPath = LOCAL_DICTATION_PYTHON, scriptPath = helperPath,
+export function createLocalDictation({pythonPath = process.env.K_DICTATION_PYTHON || LOCAL_DICTATION_PYTHON,
+  modelPath = process.env.K_DICTATION_MODEL || LOCAL_DICTATION_MODEL, scriptPath = helperPath,
   spawnImpl = spawn, timeoutMs = 120_000, stopTimeoutMs = 5000} = {}) {
   if (!path.isAbsolute(pythonPath) || !path.isAbsolute(scriptPath) || !Number.isInteger(timeoutMs) || timeoutMs < 1 ||
       !Number.isInteger(stopTimeoutMs) || stopTimeoutMs < 1) {
@@ -135,7 +142,7 @@ export function createLocalDictation({pythonPath = LOCAL_DICTATION_PYTHON, scrip
     signal?.addEventListener('abort', job.onAbort, {once: true});
     job.timer = setTimeout(() => stopChild(job, 'timeout', new LocalDictationError('本機語音辨識逾時。', {code: 'LOCAL_DICTATION_TIMEOUT', statusCode: 504})), timeoutMs);
     try {
-      const child = spawnImpl(pythonPath, ['-I', '-B', scriptPath], {cwd: path.dirname(scriptPath), env: childEnvironment(), windowsHide: true,
+      const child = spawnImpl(pythonPath, ['-I', '-B', scriptPath], {cwd: path.dirname(scriptPath), env: childEnvironment(process.env, modelPath, pythonPath), windowsHide: true,
         shell: false, stdio: ['pipe', 'pipe', 'pipe']});
       job.child = child;
       child.stdout.setEncoding('utf8');

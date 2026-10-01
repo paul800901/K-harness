@@ -1,5 +1,12 @@
 # K HARNESS
 
+## Git 安裝與更新
+
+請使用這份原始碼的 `Setup-K.ps1` 首次設定、`Update-K.ps1 -Ref <版本>` 指定更新，以及 `Update-K.ps1 -Rollback` 退回上一版。先在獨立候選目錄安裝鎖定相依、建置與測試，成功且 K 停止後才交換程式；對話、登入與瀏覽器資料不搬移。沒有背景自動更新。
+
+首次所需環境、Chrome 助手及本機 Whisper 設定見 [Git 安裝與更新指南](docs/git-install-update.md)。Git 不包含執行環境、模型檔或個人資料；目前還沒有另一台 Windows 10 的實機驗收。
+
+
 以 Codex CLI／Claude Code 原生核心為執行基底的個人工作台。
 
 ## 目前狀態

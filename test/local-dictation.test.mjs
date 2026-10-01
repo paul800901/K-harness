@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {request as httpRequest} from 'node:http';
 import {PassThrough} from 'node:stream';
-import {createLocalDictation, decodePcm16Mono16kWav, validatePcm16Mono16kWav, MAX_WAV_BYTES} from '../src/local-dictation.mjs';
+import {createLocalDictation, decodePcm16Mono16kWav, validatePcm16Mono16kWav, MAX_WAV_BYTES,
+  LOCAL_DICTATION_PYTHON, LOCAL_DICTATION_MODEL} from '../src/local-dictation.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 
 function wavChunk(id, data) {
@@ -99,14 +100,41 @@ test('local dictation starts one offline child, forwards WAV only on stdin, and 
   const backend = createLocalDictation({spawnImpl: (...args) => { invocation = args; return child; }});
   try {
     assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: ''});
-    assert.equal(invocation[0], 'D:\\錄音轉文字\\runtime\\asr_faster_whisper_venv\\Scripts\\python.exe');
+    assert.equal(invocation[0], LOCAL_DICTATION_PYTHON);
     assert.deepEqual(invocation[1].slice(0, 2), ['-I', '-B']);
     assert.ok(invocation[1][2].endsWith('scripts\\local-dictation.py'));
     assert.equal(invocation[2].stdio.join(','), 'pipe,pipe,pipe');
     assert.equal(invocation[2].env.HF_HUB_OFFLINE, '1');
     assert.equal(invocation[2].env.TRANSFORMERS_OFFLINE, '1');
+    assert.equal(invocation[2].env.K_DICTATION_MODEL, LOCAL_DICTATION_MODEL);
     assert.deepEqual(Buffer.concat(child.input), audio);
   } finally { await backend.close(); }
+});
+
+test('local dictation accepts candidate-local and explicitly configured portable paths', async () => {
+  assert.match(LOCAL_DICTATION_PYTHON, /local語音/);
+  assert.match(LOCAL_DICTATION_MODEL, /models--Systran--faster-whisper-large-v3/);
+  const audio = makeWav();
+  const pythonPath = 'E:\\portable\\python.exe';
+  const modelPath = 'E:\\portable\\models\\faster-whisper-large-v3';
+  let invocation;
+  const previousPython = process.env.K_DICTATION_PYTHON;
+  const previousModel = process.env.K_DICTATION_MODEL;
+  process.env.K_DICTATION_PYTHON = pythonPath;
+  process.env.K_DICTATION_MODEL = modelPath;
+  const backend = createLocalDictation({spawnImpl: (...args) => {
+    invocation = args;
+    return new FakeChild();
+  }});
+  try {
+    await backend.transcribe(audio.toString('base64'));
+    assert.equal(invocation[0], pythonPath);
+    assert.equal(invocation[2].env.K_DICTATION_MODEL, modelPath);
+  } finally {
+    await backend.close();
+    if (previousPython === undefined) delete process.env.K_DICTATION_PYTHON; else process.env.K_DICTATION_PYTHON = previousPython;
+    if (previousModel === undefined) delete process.env.K_DICTATION_MODEL; else process.env.K_DICTATION_MODEL = previousModel;
+  }
 });
 
 test('local dictation rejects concurrent job and abort kills only its child', async () => {

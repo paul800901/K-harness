@@ -6,8 +6,7 @@ import os
 import sys
 import wave
 
-PYTHON = r"D:\錄音轉文字\runtime\asr_faster_whisper_venv\Scripts\python.exe"
-MODEL = r"D:\錄音轉文字\runtime\models\hf_cache\models--Systran--faster-whisper-large-v3\snapshots\edaa852ec7e145841d8ffdb056a99866b5f0a478"
+MODEL = os.environ.get("K_DICTATION_MODEL")
 MAX_SECONDS = 5 * 60
 SAMPLE_RATE = 16_000
 
@@ -15,7 +14,7 @@ SAMPLE_RATE = 16_000
 def load_cuda_dll_directories():
     """Keep DLL search additions process-local and scoped to the existing venv."""
     handles = []
-    site_packages = os.path.join(os.path.dirname(os.path.dirname(PYTHON)), "Lib", "site-packages")
+    site_packages = os.path.join(os.path.dirname(os.path.dirname(sys.executable)), "Lib", "site-packages")
     for package in ("cublas", "cuda_runtime", "cuda_nvrtc", "cudnn"):
         directory = os.path.join(site_packages, "nvidia", package, "bin")
         if os.path.isdir(directory) and hasattr(os, "add_dll_directory"):
@@ -42,9 +41,12 @@ def read_pcm16_mono_16k(raw):
 
 def main():
     # The helper accepts only raw WAV bytes on stdin. No request-provided path,
-    # model name, command, or environment setting is interpreted.
+    # model name or command is interpreted; the trusted parent supplies the
+    # offline model path through its process environment.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+    if not MODEL:
+        raise ValueError("K_DICTATION_MODEL is required")
     raw = sys.stdin.buffer.read()
     if not raw:
         raise ValueError("Empty WAV input")

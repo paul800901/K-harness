@@ -1,10 +1,10 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $dist = Join-Path $PSScriptRoot 'dist'
 $icon = Join-Path $projectRoot 'frontend\assets\k-logo.ico'
 $exe = Join-Path $dist 'K桌面啟動器.exe'
-$compiler = 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-if (-not (Test-Path -LiteralPath $compiler)) { $compiler = 'C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+$compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+if (-not (Test-Path -LiteralPath $compiler)) { $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
 if (-not (Test-Path -LiteralPath $compiler)) { throw '找不到 Windows C# 編譯器。' }
 if (-not (Test-Path -LiteralPath $icon)) { throw '找不到 K 圖示。' }
 

@@ -208,3 +208,5 @@
 
 - 2026-09-28：依使用者最新要求切換原生 Claude／Codex 權限、移除 K 額外 Sandboxie。實作、128 項回歸、原位置 ffmpeg 與部署狀態見 [native-core-permissions-20260928](native-core-permissions-20260928.md)。
 - 2026-09-28 02:22 正式完成：K health=native；Codex 原生 workspaceWrite 實際呼叫原位置 ffmpeg 成功、Claude 既有登入 inspection 通過、128/128、正式正常退出與重啟通過。不再套 K Sandboxie；證據／還原與首次原生啟動等待限制見 [native-core-permissions-20260928](native-core-permissions-20260928.md)。
+
+- 2026-10-01：Git 安裝／指定版本更新／退版與可搬路徑，見 [工程紀錄](git-install-update-20261001.md)；部署與跨機驗證狀態以該紀錄為準。
