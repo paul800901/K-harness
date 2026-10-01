@@ -27,3 +27,5 @@
 ## 邊界
 
 首次仍需要官方原生 CLI、Git／Node／npm 等環境；不偷搬帳號。Whisper 仍依賴可用 CUDA 環境，新電腦沒有安裝語音環境時不會憑空可用。Windows 10、實際登入、麥克風與 Chrome 使用者手動載入尚須在目標電腦驗收。程式退版不是使用者資料快照還原。
+
+- 乾淨安裝第一次發現 Windows tar 解 Git archive 的中文 CMD 名稱失敗，正式程式未動；改用 Git ZIP 加 PowerShell Expand-Archive，保留失败候選，不重送任何模型工作。Windows PowerShell 5 的中文腳本亦已補 UTF-8 BOM，C# 啟動器已實際編譯通過。

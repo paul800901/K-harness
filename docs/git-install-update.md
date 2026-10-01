@@ -9,7 +9,7 @@ git clone https://github.com/paul800901/K-harness.git
 cd K-harness
 ```
 
-需要現有 Git、Node.js（符合 package.json，目前至少 22.19）、npm、Windows tar、PowerShell 及 .NET Framework C# 編譯器。K 不自動安裝全域環境，也不改帳號或計費。首次準備還需要官方 Codex／Claude Code 的原生 Windows exe；不是 cmd 包裝檔。Codex 的同目錄 exe 輔助程式會一起複製至 K 專用目錄，Claude 複製單一 exe；不複製任一登入憑證。
+需要現有 Git、Node.js（符合 package.json，目前至少 22.19）、npm、PowerShell 及 .NET Framework C# 編譯器。K 不自動安裝全域環境，也不改帳號或計費。首次準備還需要官方 Codex／Claude Code 的原生 Windows exe；不是 cmd 包裝檔。Codex 的同目錄 exe 輔助程式會一起複製至 K 專用目錄，Claude 複製單一 exe；不複製任一登入憑證。
 
 由 AI 確認本機官方執行檔實際路徑後執行：
 
@@ -66,3 +66,4 @@ cd K-harness
 ## 驗收邊界
 
 Windows 10 實機、真正登入及新電腦麥克風仍待當地驗收。工程測試與本機更新結果見 `docs/git-install-update-20261001.md`；不以 Git clone 成功當作全功能驗收。
+
