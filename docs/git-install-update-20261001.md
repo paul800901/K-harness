@@ -29,3 +29,9 @@
 首次仍需要官方原生 CLI、Git／Node／npm 等環境；不偷搬帳號。Whisper 仍依賴可用 CUDA 環境，新電腦沒有安裝語音環境時不會憑空可用。Windows 10、實際登入、麥克風與 Chrome 使用者手動載入尚須在目標電腦驗收。程式退版不是使用者資料快照還原。
 
 - 乾淨安裝第一次發現 Windows tar 解 Git archive 的中文 CMD 名稱失敗，正式程式未動；改用 Git ZIP 加 PowerShell Expand-Archive，保留失败候選，不重送任何模型工作。Windows PowerShell 5 的中文腳本亦已補 UTF-8 BOM，C# 啟動器已實際編譯通過。
+
+## 乾淨安裝追加實測
+
+- Git ZIP 在 `D:\K-harness\.runtime\git-install-smoke\新機 測試`（中文及空格）完成 npm ci、三項建置與 **508/508** 完整測試；兩家原生 exe 版本為 Codex 0.159.0、Claude Code 2.1.285。沒有複製登入資料。
+- 接著真正啟動抓到缺漏：Electron 44 套件沒有 postinstall，npm ci 不會自動取得 Electron binary。第一次啟動失敗，正式 K 未動；安裝器補上官方 `node_modules/electron/install.js`，不是以測試通過當成啟動通過。
+- Chrome 設定腳本在上述假安裝目錄驗證中文設定／wrapper；註冊 helper 換成只記錄參數的測試 stub，因此本次沒有寫 HKCU、沒有開 Chrome，不能宣稱新機 Chrome 已驗收。
