@@ -15,6 +15,12 @@
 - 真正建置 UI 的假 API 操作測試通過：設定兩家登入／停止、Codex 自動完成刷新、Claude 授權碼交付及完成刷新、設定不建立對話、回到新對話保留同一登入狀態。兩張設定截圖已人工視覺檢查；產物在 `.runtime/bootstrap/subscription-settings-ui-20261003`。
 - 原有 compact model picker 的八組 UI 回歸通過，14 個假官方模型與兩個被攔截的假開啟請求；未送任何模型工作。
 - 真正 Electron 的 `target="_blank"` 行為 probe 通過：兩家官方網址各交付一次給替代 `shell.openExternal` 的紀錄函式，其他網址被拒，原 owner 頁及單一視窗保留。此為原生連結事件驗證，不是 Windows 預設瀏覽器或本人帳號授權驗收。probe 首次把絕對 Electron npm 模組當成內建 API 造成載入錯誤，改用 `require('electron')` 後成功；僅終止本輪該失敗 probe 自有程序。
-- 目前正式 K 的原生畫面擷取兩次逾時，只能取得控制項文字，點擊回報沒有座標幾何，Escape 未造成可觀察的關閉。沒有使用自訂 Win32 操作或讀取控制 cookie 繞過；已請使用者用 K 原生「離開並停止 K」後再套用。正式版本仍是上一版，候選 ready，尚未部署。
+- 部署前正式 K 的原生畫面擷取兩次逾時，只能取得控制項文字，點擊回報沒有座標幾何，Escape 未造成可觀察的關閉。沒有使用自訂 Win32 操作或讀取控制 cookie 繞過；當時請使用者用 K 原生「離開並停止 K」。最新回報後已實際確認正式埠及啟動器停止，並完成下列正式更新。
+
+## 01:01 正式更新讀回
+
+- 與 [工作列品牌修正](taskbar-branding-20261003.md) 一起完成新候選建置，514/514 測試及兩家真 Electron 新視窗事件驗證通過。
+- 已套用 `64cc530d73fd6245f22038942ff5e5ea7fa92808`，上一版程式保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1790960340904`；原入口重開、原生 health、帳號設定元件及相關五個來源檔、三個 HTTP UI 資產均實際讀回一致。驗證結果 `.runtime/bootstrap/active-update-verification-20261003.json`。
+- Windows 內建聽寫設定保留。登入修正已正式套用，不再是 ready 候選；真實本人授權、模型回合及正式設定按鈕操作仍未驗收。Computer Use 擷取／座標問題仍在，未繞過控制 cookie 或讀取登入憑證。
 
 本人登入與實際訂閱狀態仍待完成，不以假資料驗證宣稱成功。此次不 push。
