@@ -440,14 +440,15 @@ test('cancelled Claude reconnect stays interrupted and only a new send resumes t
   assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'new explicit request');
  }finally{release();await f.controller.close();}
 });
-test('Luna completion wakes the original Claude once after the current turn; no wait or inspect',async()=>{
+for(const provider of ['codex','gemini'])test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`,async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'delegate bounded work'});
   await f.gatewayOptions.bridge.start({requestId:'notify',task:'bounded'});
-  const record={parentId:f.controller.state.threadId,requestId:'notify',settled:true,status:'completed',output:'done',outputFiles:[]};
+  const record={provider,parentId:f.controller.state.threadId,requestId:'notify',settled:true,status:'completed',output:'done',outputFiles:[]};
   f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,1);
   f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
   assert.equal(f.host.startCalls.length,2);assert.match(f.host.startCalls[1][0].text,/K 工人完成通知/);
+  const notification=JSON.parse(f.host.startCalls[1][0].text.split('\n').slice(1).join('\n'));assert.equal(notification[0].provider,provider);
   f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await tick();
   assert.equal(f.host.startCalls.length,2);
   const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${f.controller.state.threadId}.json`),'utf8'));

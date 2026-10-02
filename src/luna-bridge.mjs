@@ -7,15 +7,16 @@ import {threadPermissions, turnPermissions} from './desktop-permissions.mjs';
 import {listMainModels} from './main-models.mjs';
 import {stopThreadTerminals} from './background-terminals.mjs';
 import {checkedPath} from './files.mjs';
+import {createGeminiWorker} from './gemini-worker.mjs';
 
-import {normalizeWorkerPolicy,validateWorkerPolicy} from './worker-policy.mjs';
+import {normalizeWorkerPolicy,validateWorkerPolicy,GEMINI_WORKER_MODELS,GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
 const clone = value => structuredClone(value);
 
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','acceptance','threadId','turnId'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','acceptance','threadId','turnId','error','deniedTools','toolErrors','outputFilesNote'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
   if(!record.settled)return result;
@@ -96,11 +97,12 @@ function extractThread(thread, workspace, record) {
   }
 }
 
-export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, onRequest, onChange=()=>{}}) {
-  if (!root || !workspace || !safeId(parentId) || !executable) throw new Error('root、workspace、parentId 與 Codex executable 必須有效。');
+export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, geminiFactory=createGeminiWorker, geminiOptions={}, onRequest, onChange=()=>{}}) {
+  if (!root || !path.isAbsolute(workspace??'') || !safeId(parentId)) throw new Error('root、workspace 與 parentId 必須有效。');
   const directory = path.join(root, '.runtime', 'luna-bridge', parentId);
   let requestGuard=()=>undefined;
-  const host = hostFactory({executable, cwd:root, onEvent: event, onRequest:message=>requestGuard(message)});
+  let host, codexError, gemini;
+  const geminiRuns=new Map();
   const records = new Map();
   const approvalItems = new Map();
   const operations = new Map(), ownedThreads=new Set();
@@ -164,21 +166,33 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   };
   requestGuard=guardedRequest;
   try {
+    if(!executable)throw Error('Codex executable 必須有效。');
+    host=hostFactory({executable, cwd:root, onEvent: event, onRequest:message=>requestGuard(message)});
     await host.request('initialize', {clientInfo:{name:'k_harness_luna_bridge',version:'0.1.0'},capabilities:{experimentalApi:true}});
     host.notify({method:'initialized',params:{}});
     const account = await host.request('account/read', {refreshToken:false});
     if (account?.account?.type !== 'chatgpt') throw new Error('Luna 工人需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
     models = await listMainModels(host);
   } catch (error) {
-    closed = true;
-    await host.close?.().catch?.(()=>{});
-    throw error;
+    codexError=error;
+    await host?.close?.().catch?.(()=>{});
+    host=null;
   }
 
   async function inspect({requestId}) {
     if (!safeId(requestId)) throw new Error('requestId 格式無效。');
     const record = await load(requestId);
     if (!record) return null;
+    if(record.provider==='gemini'){
+      // A restarted bridge cannot own/adopt a saved PID (it may have been reused).
+      // Preserve ambiguity, including a lost result after side effects; never replay.
+      if(!record.settled&&!geminiRuns.has(requestId)&&!operations.has(requestId)){
+        if(record.status!=='unresolved')record.error='K 重啟後 agy 程序與完成結果無法確認；未重播。';
+        record.status='unresolved';
+        await persist(record);changed(record);
+      }
+      return clone(record);
+    }
     if (!record.threadId) return clone(record);
     try {
       const result = await host.request('thread/read', {threadId:record.threadId,includeTurns:true});
@@ -199,7 +213,9 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     if (closed || closing) throw new Error('Luna bridge 正在關閉或已關閉。');
     if (!safeId(requestId) || typeof task !== 'string' || !task.trim() || task.length > 32000) throw new Error('requestId 或 task 無效。');
     const choice={model:model??defaults.model,effort:effort??defaults.effort};
-    if(choice.model==='auto'||choice.effort==='auto')throw new Error('目前是「AI 自動選擇」：請依這項工作的難度，明確指定 GPT-6.1 Sol 或 GPT-6 Luna，以及該模型支援的推理程度；尚未開始工作。');
+    if(GEMINI_WORKER_MODELS.includes(choice.model))return startGemini({requestId,task,...choice});
+    if(choice.model==='auto'||choice.effort==='auto')throw new Error('目前是「AI 自動選擇」：請依這項工作的難度，明確指定 GPT-6.1 Sol 或 GPT-6 Luna，或 Gemini 3.8 Flash，以及該模型支援的推理程度；尚未開始工作。');
+    if(codexError)throw Error(`Codex 子代理初始化失敗：${codexError.message}；未轉派 Gemini。`);
     const policy=validateWorkerPolicy(choice,models);
     const existing = await inspect({requestId});
     if (existing) {
@@ -244,10 +260,60 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     operations.set(requestId, operation);
     return operation;
   }
+  async function startGemini({requestId,task,model,effort}) {
+    if(!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash effort 只接受 low|medium|high；未換模。');
+    const existing=await inspect({requestId});
+    if(existing){
+      if(existing.task!==task||existing.model!==model||existing.effort!==effort)throw Error('相同 requestId 已綁定不同 task 或模型設定；拒絕重送。');
+      return operations.get(requestId)??existing;
+    }
+    // inspect yields; reserve synchronously after it to deduplicate concurrent starts.
+    const pending=records.get(requestId);
+    if(pending){
+      if(pending.task!==task||pending.model!==model||pending.effort!==effort)throw Error('相同 requestId 已綁定不同 task 或模型設定；拒絕重送。');
+      return operations.get(requestId)??clone(pending);
+    }
+    if(closed||closing)throw Error('Luna bridge 正在關閉或已關閉。');
+    const record={requestId,parentId,provider:'gemini',model,effort,status:'starting',settled:false,acceptance:'not-reviewed',task,output:'',outputFiles:[],workspace,accessMode};
+    records.set(requestId,record);
+    const controller=new AbortController();
+    const handle={controller,completion:null};geminiRuns.set(requestId,handle);
+    const operation=(async()=>{
+      await persist(record);changed(record);
+      try{
+        gemini??=geminiFactory({...geminiOptions,root,workspace,accessMode});
+        handle.completion=Promise.resolve().then(()=>gemini.run({task,model,effort,signal:controller.signal,onStart:pid=>{
+          record.pid=pid;record.status='running';record.startedAt=new Date().toISOString();
+          void persist(record).then(()=>changed(record)).catch(()=>{});
+        }})).then(result=>Object.assign(record,result)).catch(error=>{
+          Object.assign(record,{status:controller.signal.aborted?'cancelled':'failed',settled:true,error:error.message});
+        }).then(async()=>{
+          record.acceptance='not-reviewed';record.endedAt=new Date().toISOString();
+          await persist(record);changed(record);return clone(record);
+        }).finally(()=>geminiRuns.delete(requestId));
+        // The completion promise owns persistence and notification, even if start
+        // returns before agy emits output. No task retry or provider fallback.
+        void handle.completion.catch(()=>{});
+      }catch(error){
+        record.status='failed';record.settled=true;record.error=error.message;
+        geminiRuns.delete(requestId);await persist(record);changed(record);
+      }
+      return clone(record);
+    })().catch(error=>{
+      geminiRuns.delete(requestId);record.status='failed';record.settled=true;record.error=error.message;
+      throw error;
+    }).finally(()=>operations.delete(requestId));
+    operations.set(requestId,operation);return operation;
+  }
   async function cancel({requestId}) {
     const current = await inspect({requestId});
     if (!current) return null;
     const record = records.get(requestId);
+    if(record.provider==='gemini'){
+      const handle=geminiRuns.get(requestId);
+      if(!record.settled&&handle){record.cancelRequested=true;handle.controller.abort();await operations.get(requestId);await handle.completion;}
+      return inspect({requestId});
+    }
     if (!record.settled) record.cancelRequested = true;
     if (!record.threadId) {
       if(!record.settled){record.status='cancelled'; record.settled=true; await persist(record); changed(record);}
@@ -304,7 +370,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
           const result=await cancel({requestId:record.requestId});
           if(!result?.settled)throw new Error('Luna 工作尚未確認停止；Codex 主控保持開啟，請先查詢原工作。');
         }
-        await host.close();
+        await host?.close();
         closed=true;
       } finally {
         closing=false;

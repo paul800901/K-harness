@@ -8,14 +8,14 @@ import {lunaResult} from './luna-bridge.mjs';
 
 const requestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
 const idSchema = z.strictObject({requestId});
-const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-luna']).optional(),effort:z.string().min(1).optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
+const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']).optional(),effort:z.string().min(1).optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)}).refine(args=>args.model!=='gemini-3.8-flash'||['low','medium','high'].includes(args.effort),{message:'Flash effort 必須是 low|medium|high'});
 const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).max(60000).default(30000)});
 
 function createMcpServer(bridge) {
   const server = new McpServer({name:'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   const policy=bridge.workerPolicy;
   const selectionGuidance=policy.model==='auto'
-    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇 Sol 或 Luna 及官方支援的推理程度。`
+    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇 Sol、Luna 或 Flash 及官方支援的推理程度。`
     : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
     try {
@@ -27,9 +27,9 @@ function createMcpServer(bridge) {
       return {isError:true,content:[{type:'text',text:`${String(error?.message ?? error)} Inspect the same requestId; do not retry under a new ID.`}]};
     }
   });
-  register('luna_start',`Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna. ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,taskSchema,
+  register('luna_start',`Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna, or Antigravity Gemini 3.8 Flash. Flash 適合範圍明確、要快的機械性工作；困難的設計、除錯、判斷交 Sol。Flash effort 只接受 low|medium|high；非完整存取模式不能跑指令，目前 workspace-write 未通過 agy strict 實測而拒絕派工，不會提升權限。唯讀的 strict headless 也可能拒絕讀檔並回 failed。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,taskSchema,
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
-  register('luna_wait','Manual recovery only: wait for an existing Codex subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
+  register('luna_wait','Manual recovery only: wait for an existing Sol, Luna or Flash subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
   register('luna_inspect','Read existing Luna task state without starting or replaying work.',idSchema,
     args=>bridge.inspect(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});

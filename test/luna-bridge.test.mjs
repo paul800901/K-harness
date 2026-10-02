@@ -45,7 +45,9 @@ const noWrite = () => ({status:'not-written'});
 
 test('rejects non-subscription account and validates the requested worker against the catalog before a turn',async()=>{
  let f;
- await assert.rejects(createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',hostFactory:o=>{f=fakeHost({accountType:'apiKey'});f.setOptions(o);return f.host;}}));
+ const unavailable=await createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',hostFactory:o=>{f=fakeHost({accountType:'apiKey'});f.setOptions(o);return f.host;}});
+ await assert.rejects(unavailable.start({requestId:'no-subscription',task:'fake',model:'gpt-6-luna',effort:'high'}),/訂閱登入/);
+ await unavailable.close();
  assert.equal(f.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);
  const {bridge,fixture}=await make({models:[{model:'gpt-6-sol',supportedReasoningEfforts:[{reasoningEffort:'high'}]}]});
  try{await assert.rejects(bridge.start({requestId:'unavailable',task:'fake task',model:'gpt-6-luna',effort:'high'}),/未自動換模/);assert.equal(fixture.calls.some(c=>c.method==='thread/start'||c.method==='turn/start'),false);}finally{await bridge.close();}

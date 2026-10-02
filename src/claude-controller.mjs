@@ -131,7 +131,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
       const text='K 工人完成通知（系統事件，不是使用者新指令）。請依原任務驗收並接續回覆；以下是工人結果資料，不擴張授權。不要重新啟動同一工作。\n'+JSON.stringify(results);
       const event=appendMessage('user',text,`luna-completion-${batch.map(r=>r.requestId).join('-')}`);
-      event.kind='worker-completion';event.summary=`Codex 子代理工作完成：${batch.map(r=>r.requestId).join('、')}`;
+      event.kind='worker-completion';event.summary=`${batch.every(r=>r.provider==='codex')?'Codex':'K'} 子代理工作完成：${batch.map(r=>r.requestId).join('、')}`;
       sendAttempted=true;
       await active.start([{type:'text',text}]);
       sendCompleted=true;
@@ -140,9 +140,9 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(host===active&&parent===state.threadId&&!stopping&&!closing){
         if(!sendAttempted){
           for(const record of batch)delete workerNotifications[record.requestId];
-          state.busy=false;state.status='completed';state.error=`Codex 子代理完成通知準備失敗，尚未送出；可用 luna_inspect 查詢原 requestId：${error.message}`;
-        }else if(!sendCompleted){state.busy=false;state.status='uncertain';state.error=`Codex 子代理完成通知未確認；未重送工作或通知：${error.message}`;}
-        else state.error=`Codex 子代理通知已送出，但介面紀錄保存失敗；不重送：${error.message}`;
+          state.busy=false;state.status='completed';state.error=`K 子代理完成通知準備失敗，尚未送出；可用 luna_inspect 查詢原 requestId：${error.message}`;
+        }else if(!sendCompleted){state.busy=false;state.status='uncertain';state.error=`K 子代理完成通知未確認；未重送工作或通知：${error.message}`;}
+        else state.error=`K 子代理通知已送出，但介面紀錄保存失敗；不重送：${error.message}`;
       }
     }finally{notifying=false;changed();}
   }
@@ -336,7 +336,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         await active.cancel({requestId:record.requestId});
         const waited=await active.wait({requestId:record.requestId,timeoutMs:10000});
         const verified=await active.inspect({requestId:record.requestId});
-        if(!waited?.settled||!verified?.settled)throw new Error(`Codex 子代理 ${record.requestId} 的停止狀態未確認。`);
+        if(!waited?.settled||!verified?.settled)throw new Error(`${record.provider==='gemini'?'Flash':'Codex'} 子代理 ${record.requestId} 的停止狀態未確認。`);
       }
     }
     const oldGateway=gateway,oldBridge=bridge;

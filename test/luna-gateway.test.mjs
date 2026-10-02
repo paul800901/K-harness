@@ -87,11 +87,17 @@ test('MCP start forwards both worker choices and an explicit effort to the bridg
   const config=gateway.mcpConfig.mcpServers.k_luna,token=config.headers.Authorization.slice(7);
   await post(config.url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'workers',version:'1'}}});
   const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list'}));
-  assert.deepEqual(listed.result.tools.find(t=>t.name==='luna_start').inputSchema.properties.model.enum,['gpt-6.1-sol','gpt-6-luna']);
-  let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna']){
+  const start=listed.result.tools.find(t=>t.name==='luna_start');
+  assert.deepEqual(start.inputSchema.properties.model.enum,['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']);
+  assert.match(start.description,/Flash.*機械性工作/);assert.match(start.description,/不能跑指令/);
+  let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']){
    const args={requestId:model,task:'fake task',model,effort:'low'};
    const result=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:args}}));
    assert.notEqual(result.result.isError,true);assert.deepEqual(calls.at(-1),args);assert.equal(result.result.structuredContent.model,model);assert.equal(result.result.structuredContent.effort,'low');
+  }
+  for(const effort of ['ultra','xhigh','auto']){
+   const bad=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'bad',task:'fake',model:'gemini-3.8-flash',effort}}}));
+   assert.equal(bad.result.isError,true);assert.equal(calls.length,3);
   }
  }finally{await gateway.close();}
 });

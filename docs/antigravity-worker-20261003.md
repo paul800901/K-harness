@@ -1,4 +1,6 @@
-# Antigravity worker：階段 0 調查 — 2026-10-03
+# Antigravity worker：階段 0 調查／階段 1 實作 — 2026-10-03
+
+最新狀態見下方「階段 1」。原有階段 0 的停止原因與證據保留為歷史；本輪已採用修訂後的設定 home／Windows 登入設計，新增 worker 與 gateway 接線，但 **workspace-write 明確停用**，尚未部署或驗收。
 
 ## 結論與停止原因
 
@@ -118,7 +120,67 @@ repo 既有接線：`src/claude-controller.mjs` 的 `configureGateway()`／`nati
 
 後續工作必須先由主代理審查此停止原因及「設定 home 與系統登入分離」是否可成為新的設計；本輪沒有把它當成既定授權。未驗證：獨立訂閱登入、有效 home 設定的 workspace-write 矩陣、danger-full-access、逾時／取消整棵樹、同 home 並行、固定 home MCP／外掛、未登入／未知模型／額度錯誤及階段 1 全部接線。使用者此輪無需登入、改設定或操作正式 K。
 
-## Live 證據節錄
+## 階段 1（修訂設計）
+
+### 結論與設計修訂
+
+階段 0 的固定 Windows home 停止條件已由主代理修訂：K 管理設定、對話與 log 的 home，agy 自己沿用 Windows 帳號的訂閱登入。實作預設 home 為 `<candidate>/agent-home/gemini/<profile>`；profile 是 `accessMode + 換行 + 正規化絕對工作區` 的 SHA-256 前 16 碼。Windows 路徑轉正斜線、小寫並移除尾端斜線；不同工作區或模式使用不同 profile。每次執行前原子寫入 `.gemini/antigravity-cli/settings.json`，相同 profile 產生相同設定；CLI 可能再把空 allow/ask 欄位省略，下次 K 會重新產生。
+
+本輪只有 `USERPROFILE`＋`HOME` 覆寫，環境其餘僅保留 SystemRoot、WINDIR、TEMP、TMP、PATH。沒有轉交 APPDATA／LOCALAPPDATA，仍取得模型回答、strict init 與 deny 錯誤，所以不需要覆寫這兩個變數。預設 agy 路徑在環境覆寫前從原始 LOCALAPPDATA 解析；可由 `geminiOptions.executable` 指定絕對執行檔。K 不讀、不複製、不列印任何認證內容，不替人登入，不接 API key，也不改使用者真實 `.gemini`。官方 keyring 說明與沿用 Windows 登入的推論延續階段 0，未以讀憑證方式確認來源。
+
+**一般權限不可派 Flash。** `workspace-write` 設定的三種工作區 allow 路徑都未讓工作區內寫入成功，而未列入 allow 的兩個外部目標卻真的寫入成功。依修訂規格直接拒絕此模式，worker 在建立 profile／查詢模型／啟動 agy 前就丟出簡短錯誤，bridge 保存 `failed`，不改用完整存取。這是已實作的拒絕路徑，不宣稱 agy 工作區邊界通過。
+
+`read-only` 維持規格指定的 strict、allow 空陣列、deny 四項，沒有另加 read deny。實測 write/command deny 有效，但 **agy strict 仍把未列 allow 的讀檔變成 Ask**，headless 自動拒絕而且沒有回答；因此它也不能宣稱與 Codex 的不限讀檔等價。本輪未自行改成 `read_file(*)` allow 或放寬模式，工具說明有標示此限制。
+
+`danger-full-access` 才加 `--dangerously-skip-permissions`，profile 設定仍保留 `mcp(*)` deny。S7 的 native init 是 `always-proceed`，完成純文字回答；沒有原生 MCP／permission 工具呼叫事件，故 **skip 下 deny 是否生效仍未驗證**，不能依模型自述判定。新建空 home 的 `agy plugin list` 在 S1–S3 各回傳 `No imported plugins.`，沒有複製使用者外掛或 MCP，沒有設定或啟動測試 MCP server。這不是移除 agy 原生 invoke_subagent 等工具的證據；禁止遞迴委派仍有 prompt 約束與 `mcp(*)` deny，不能稱為 OS 隔離。
+
+官方路徑正規化、規則優先序與 headless 行為僅作參照；本輪可用性以以下檔案與事件讀回為準。[CLI permissions](https://antigravity.google/docs/permissions?tab=cli)、[Headless mode](https://antigravity.google/docs/cli/headless/)。
+
+### 權限矩陣與 live 證據
+
+本輪 **10 次 gemini-3.8-flash-low**，未超過上限，沒有其他模型回合、重試、換模或 fallback。下表時間為 2026-10-03 Asia/Taipei；models/plugin 子命令不是模型回合。所有 home 及假資料位於本輪 `%TEMP%/k-agy-*`，測後經 realpath／父目錄及名稱檢查再刪除。未在正式 candidate 的 agent-home 建立 gemini。
+
+| ID／時間 | 模式及目的 | 原生與檔案讀回 |
+| --- | --- | --- |
+| S1 05:00:23–29 | workspace-write；去磁碟字母、正斜線 allow | init strict；inside 檔不存在；result SUCCESS 但 response 空，stderr no output produced，不能判成功 |
+| S2 05:00:56–05:01:02 | workspace-write；保留 `C:`、正斜線 allow | inside 被 Ask／headless 拒絕，檔不存在；result SUCCESS、response 空 |
+| S3 05:01:18–25 | workspace-write；原生反斜線 allow | 同樣拒絕 inside，沒有寫入；不是路徑格式的成功證據 |
+| S4 05:06:04–12 | workspace-write；父目錄絕對路徑 | init strict；工具寫入成功；parent.txt 真實內容為 `EXTERNAL\n`，不在 allow 工作區 |
+| S5 05:06:04–12 | 同 S4 profile 並行；另一 `%TEMP%/k-agy-other-*` 絕對路徑 | init strict；absolute.txt 真實內容為 `EXTERNAL\n`；同樣越過指定工作區 |
+| S6 05:10:42–50 | read-only；寫檔及 echo 指令 | 兩項 ERROR 都命中 configured deny；ro-denied.txt 不存在；有最後回答，worker completed 且 deniedTools 兩筆、acceptance not-reviewed |
+| S7 05:10:53–59 | danger-full-access；synthetic mcp permission probe | init always-proceed；設定仍只有 mcp deny；沒有工具事件；模型說未能呼叫 permission 工具，無法驗證 deny 優先序 |
+| S8 05:10:59–05:11:04 | read-only；AbortSignal 取消 | view_file 先被 Ask 拒絕；取消與自然退出撞期，taskkill 非零；worker 保守保存 unresolved，沒有假稱 cancelled |
+| S9 05:11:08–14 | 真 agy 經 bridge start→終值紀錄；Codex factory 故意失敗 | view_file 被 headless 拒絕；failed、settled true、provider gemini、not-reviewed；重複 requestId 回原 failed 紀錄，沒有第二個 agy 回合 |
+| S10 05:11:14–22 | workspace-write；單獨 echo 指令 | run_command ERROR 命中 command deny，有最後回答；沒有執行指令 |
+
+S4/S5 共享 home／settings、cwd，啟動時間相差 6ms 且執行時間重疊。各自 native conversation_id 是 `b39bdbd2-4de4-447d-a383-6f868b251247` 與 `23164bde-df91-4607-806c-25b576ee057f`，回答與目標各自對應，兩筆 SUCCESS，證明這兩個並行回合沒有串到彼此結果；不推廣為長期／大量並行驗收。
+
+S8 在取消前觀察 root agy PID 33628 與 conhost PID 95200；取消後兩者都不存在，survivors 空陣列。由於讀檔 Ask 使回合很快自然結束，taskkill 未成功，沒有取得 language server 子程序被強制終止的直接證據。這只能記為「已觀察程序無存活者」，**D 的完整取消程序樹驗證仍未通過**。fake-spawn 測試另確認 timer／AbortSignal／輸出超限都呼叫整樹終止並等待其完成，Windows helper 使用 `/PID <owned-pid> /T /F`，未確認則 unresolved。
+
+S9 的 starting→running→failed 三個 onChange 事件、inspect／wait、相同 requestId 回傳與磁碟 JSON 完全對應；Codex 不可用沒有阻止 Gemini 啟動，也沒有 fallback。這輪驗證的是原生讀檔失敗的端到端保存，**沒有成功讀檔完成的 bridge live**。真 Claude 自動接收 Flash 完成通知未送模型回合驗證；以 controller 測試確認 provider gemini 的完成通知在主回合結束後只送一次。
+
+原始 stdout／stderr、假資料讀回、設定與 PID 證據保留在本 worktree Git 排除的 `.runtime/agyi/phase1-matrix*.json`、`phase1-external.json`、`phase1-live.json`。上表是可提交的節錄，不含憑證。全數臨時根目錄已刪除；這些證據檔位於指定 worktree，而非正式 runtime。
+
+### 實作檔案與接線範圍
+
+- `src/gemini-worker.mjs`：原生 agy executable／參數、home profile 與原子設定、白名單環境、首次 `agy models` 查詢與快取、NDJSON 最後 result／工具錯誤、最多 20 筆 deniedTools、K timer／AbortSignal／taskkill 整樹終止、stdout 8 MiB／stderr 128 KiB 上限、git status 前後檔案清單。獨立隨機 log 檔防止同 profile 並行覆蓋。所有成果一律 not-reviewed。非 repo 或 git 查詢失敗時檔案清單空陣列並附註。
+- `src/luna-bridge.mjs`：Gemini start／inspect／wait／cancel、provider 分流、requestId 冪等、持久化及 onChange 通知；Codex 初始化失敗留下各自的錯誤，不阻斷 Gemini，Gemini 失敗亦不轉派 Codex。重啟不接管舊 PID，未完成紀錄 unresolved，不重播；保存的完成紀錄仍可讀。原有 approvalItems／核准 item 歸屬檢查保留。
+- `src/luna-gateway.mjs`：model enum 加 gemini-3.8-flash；Flash effort 僅 low／medium／high，說明範圍明確、要快的機械性工作與 Sol 的設計／除錯／判斷用途、非完整存取不能跑指令及目前模式限制；Luna 原本用途維持。
+- `src/worker-policy.mjs`：獨立 Gemini 模型／effort 清單；WORKER_MODELS 與 Codex native agents default_subagent_model 仍只有 Sol／Luna，UI 下拉選單未改。
+- `src/claude-controller.mjs`：沿用現有通知與切權限前停止檢查；Gemini 通知改用正確的 K／Flash 名稱，不冒稱 Codex。
+- `test/gemini-worker.test.mjs` 與 `test/luna-bridge.test.mjs`、`test/luna-gateway.test.mjs`、`test/claude-controller.test.mjs`：新增／更新指定測試與 provider 通知驗證；本文件及 development-log 更新索引。
+
+本階段只有 **接 k_luna gateway 的 Claude 主對話**可以明確選 Flash：plan→read-only、bypass→danger-full-access，其他→workspace-write 而目前拒絕。`src/isolated-desktop.mjs` 的 Claude bridgeFactory 與 `src/claude-controller.mjs` 的 lazyBridge 會走新分流。Codex 主對話沒有建立 k_luna gateway，仍使用官方 native GPT agents，**本階段不能由 K 的 Codex 主對話直接派 Flash**。沒有額外 MCP server、下拉 UI、供應商互相 fallback 或自動分類器。
+
+### 測試、交付與剩餘限制
+
+階段 0 基底 529/529。本輪首次定向 29/31 是舊測試仍期待「Codex 初始化失敗就拒絕整個 bridge」及舊 model enum；按新需求更新預期後 57/57。第一次 UI 建置後完整 **555/555** 通過；後續補整樹 helper、共享 catalog 取消、headless denied_actions 與 Gemini 通知測試，最終定向 **125/125**（2,649.2799ms），最終完整 **559 tests／559 pass／0 fail／0 cancelled／0 skipped**（33,432.6973ms）。`git diff --check` 通過；最終暫存根目錄清理讀回為空。UI 建置只有既有 bundle size 提示，不安裝／升級相依。
+
+未驗證／限制：workspace-write 因實際越界而拒絕；read-only 的指定 strict 設定無法不限讀檔；skip 下 mcp deny 仍未知；language server 強制取消與無孤兒的完整 D、成功讀檔的 bridge live、真 Claude→Flash 通知、未登入／額度耗盡的真實錯誤樣本仍未驗。未知模型只驗證清單缺席的拒絕，未刻意呼叫供應商不存在的模型。git status 可辨認新增／刪除／狀態改變，不能歸因同工作區並行修改，也不能辨認原本已 dirty 且 status 不變的內容變動；紀錄附此界線。模型清單失敗不換模；共享首次查詢有 30 秒上限，取消單一任務不取消另一任務的清單查詢。
+
+只改 feature/antigravity-worker 指定 worktree；未改主工作樹、正式 runtime、K Codex／Claude home 或使用者真實 `.gemini`，未讀憑證、用 API key、替人登入、安裝依賴、推送、合併、部署或重啟 K。提交是可複查的階段 1 程式與證據，**不是正式驗收**。
+
+## 階段 0 Live 證據節錄
 
 時間為 Asia/Taipei（UTC+8）。所有寫入目標皆為本輪建立的假資料；下方的設定讀回與工具事件由本地 probe 結果節錄，未取憑證或使用者資料。
 

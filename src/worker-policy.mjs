@@ -1,6 +1,9 @@
 export const DEFAULT_WORKER_MODEL = 'auto';
 export const DEFAULT_WORKER_EFFORT = 'auto';
 export const WORKER_MODELS = ['gpt-6.1-sol','gpt-6-luna'];
+// Gateway-only subscription workers; never feed these into Codex native agents.
+export const GEMINI_WORKER_MODELS = ['gemini-3.8-flash'];
+export const GEMINI_WORKER_EFFORTS = ['low','medium','high'];
 
 // Preserve legacy metadata for readback; new execution validates the current policy.
 export function normalizeWorkerPolicy(value = {}) {
