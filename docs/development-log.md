@@ -227,3 +227,5 @@
 - 2026-10-01：Git 安裝／指定版本更新／退版與可搬路徑，見 [工程紀錄](git-install-update-20261001.md)；部署與跨機驗證狀態以該紀錄為準。
 
 - 2026-10-01 Git 交付已正式套用：508/508、中文新路徑原生啟閉、正式 health=native、GitHub tag `k-r3-git-20261001` 推送及重新 clone 讀回完成；完整失敗／修復／跨機限制見 [工程紀錄](git-install-update-20261001.md)。
+
+- 2026-10-03：Antigravity CLI Flash worker 停在階段 0；空 home 仍沿用登入，固定 Windows home 的工作區 deny／plan 不能限制內外寫檔。僅調查文件與 5 次 live 證據、529/529 回歸；未接入或部署，見 [antigravity-worker-20261003](antigravity-worker-20261003.md)。
