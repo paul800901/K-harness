@@ -105,6 +105,8 @@ internal sealed class KLauncherContext : ApplicationContext
                 StandardErrorEncoding = Encoding.UTF8
             };
             start.EnvironmentVariables["K_CANDIDATE_ROOT"] = candidate;
+            string dictationProvider = JsonString(settings, "dictationProvider");
+            if (!String.IsNullOrEmpty(dictationProvider)) start.EnvironmentVariables["K_DICTATION_PROVIDER"] = dictationProvider;
             foreach (string key in new [] { "dictationPython", "dictationModel" }) {
                 string value = JsonString(settings, key);
                 if (!String.IsNullOrEmpty(value)) start.EnvironmentVariables[key == "dictationPython" ? "K_DICTATION_PYTHON" : "K_DICTATION_MODEL"] = Path.GetFullPath(Path.Combine(root, value));

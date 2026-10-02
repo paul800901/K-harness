@@ -137,6 +137,32 @@ test('local dictation accepts candidate-local and explicitly configured portable
   }
 });
 
+test('Windows dictation uses the built-in recognizer helper and keeps WAV, cancellation and no API credentials', async () => {
+  let invocation;
+  const child = new FakeChild({response: {ok: true, text: '東區測試'}});
+  const backend = createLocalDictation({provider: 'windows', spawnImpl: (...args) => {invocation = args; return child;}});
+  const audio = makeWav();
+  try {
+    assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: '東區測試'});
+    assert.match(invocation[0], /WindowsPowerShell.*powershell\.exe$/i);
+    assert.deepEqual(invocation[1].slice(0, 3), ['-NoProfile', '-NonInteractive', '-File']);
+    assert.match(invocation[1][3], /windows-dictation\.ps1$/);
+    assert.deepEqual(Buffer.concat(child.input), audio);
+    assert.equal(invocation[2].windowsHide, true);
+    assert.equal(invocation[2].env.K_DICTATION_MODEL, undefined);
+    assert.equal(invocation[2].env.ANTHROPIC_API_KEY, undefined);
+    assert.equal(invocation[2].env.OPENAI_API_KEY, undefined);
+  } finally { await backend.close(); }
+  const held = new FakeChild({hold: true});
+  const cancelable = createLocalDictation({provider: 'windows', spawnImpl: () => held});
+  const abort = new AbortController();
+  const pending = cancelable.transcribe(audio.toString('base64'), {signal: abort.signal});
+  abort.abort();
+  await assert.rejects(pending, {code: 'LOCAL_DICTATION_ABORTED'});
+  assert.equal(held.kills, 1);
+  await cancelable.close();
+});
+
 test('local dictation rejects concurrent job and abort kills only its child', async () => {
   const audio = makeWav().toString('base64');
   const child = new FakeChild({hold: true});

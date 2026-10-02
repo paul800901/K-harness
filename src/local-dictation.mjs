@@ -13,6 +13,7 @@ export const MAX_WAV_BYTES = 12 * 1024 * 1024;
 export const MAX_WAV_DURATION_SECONDS = 5 * 60;
 export const MAX_JSON_BYTES = 16 * 1024 * 1024;
 const helperPath = fileURLToPath(new URL('../scripts/local-dictation.py', import.meta.url));
+const windowsHelperPath = fileURLToPath(new URL('../scripts/windows-dictation.ps1', import.meta.url));
 
 export class LocalDictationError extends Error {
   constructor(message, {code = 'LOCAL_DICTATION_FAILED', statusCode = 500, cause, diagnostic} = {}) {
@@ -75,11 +76,15 @@ export function validatePcm16Mono16kWav(wav) {
   return {durationSeconds: dataBytes / 32000, dataBytes};
 }
 
-function childEnvironment(source = process.env, modelPath = LOCAL_DICTATION_MODEL, pythonPath = LOCAL_DICTATION_PYTHON) {
+function childEnvironment(source = process.env, modelPath = LOCAL_DICTATION_MODEL, pythonPath = LOCAL_DICTATION_PYTHON, provider = 'whisper') {
   const env = {};
   for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH']) {
     const key = Object.keys(source).find(value => value.toUpperCase() === name.toUpperCase());
     if (key && typeof source[key] === 'string') env[name] = source[key];
+  }
+  if (provider === 'windows') {
+    for (const name of ['USERPROFILE', 'APPDATA', 'LOCALAPPDATA']) if (source[name]) env[name] = source[name];
+    return env;
   }
   const sitePackages = path.join(path.dirname(path.dirname(pythonPath)), 'Lib', 'site-packages');
   const cudaBins = ['cublas', 'cuda_runtime', 'cuda_nvrtc', 'cudnn'].map(name => path.join(sitePackages, 'nvidia', name, 'bin'));
@@ -92,9 +97,10 @@ function childEnvironment(source = process.env, modelPath = LOCAL_DICTATION_MODE
   return env;
 }
 
-export function createLocalDictation({pythonPath = process.env.K_DICTATION_PYTHON || LOCAL_DICTATION_PYTHON,
-  modelPath = process.env.K_DICTATION_MODEL || LOCAL_DICTATION_MODEL, scriptPath = helperPath,
+export function createLocalDictation({provider = process.env.K_DICTATION_PROVIDER || 'whisper', pythonPath = process.env.K_DICTATION_PYTHON || LOCAL_DICTATION_PYTHON,
+  modelPath = process.env.K_DICTATION_MODEL || LOCAL_DICTATION_MODEL, scriptPath = provider === 'windows' ? windowsHelperPath : helperPath,
   spawnImpl = spawn, timeoutMs = 120_000, stopTimeoutMs = 5000} = {}) {
+  if (!['whisper', 'windows'].includes(provider)) throw new TypeError('Dictation provider must be whisper or windows.');
   if (!path.isAbsolute(pythonPath) || !path.isAbsolute(scriptPath) || !Number.isInteger(timeoutMs) || timeoutMs < 1 ||
       !Number.isInteger(stopTimeoutMs) || stopTimeoutMs < 1) {
     throw new TypeError('Absolute Python/helper paths and a positive timeout are required.');
@@ -142,7 +148,9 @@ export function createLocalDictation({pythonPath = process.env.K_DICTATION_PYTHO
     signal?.addEventListener('abort', job.onAbort, {once: true});
     job.timer = setTimeout(() => stopChild(job, 'timeout', new LocalDictationError('本機語音辨識逾時。', {code: 'LOCAL_DICTATION_TIMEOUT', statusCode: 504})), timeoutMs);
     try {
-      const child = spawnImpl(pythonPath, ['-I', '-B', scriptPath], {cwd: path.dirname(scriptPath), env: childEnvironment(process.env, modelPath, pythonPath), windowsHide: true,
+      const executable = provider === 'windows' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe') : pythonPath;
+      const args = provider === 'windows' ? ['-NoProfile', '-NonInteractive', '-File', scriptPath] : ['-I', '-B', scriptPath];
+      const child = spawnImpl(executable, args, {cwd: path.dirname(scriptPath), env: childEnvironment(process.env, modelPath, pythonPath, provider), windowsHide: true,
         shell: false, stdio: ['pipe', 'pipe', 'pipe']});
       job.child = child;
       child.stdout.setEncoding('utf8');
