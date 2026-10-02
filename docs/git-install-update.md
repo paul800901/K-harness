@@ -29,7 +29,7 @@ git pull --ff-only origin main
 .\Update-K.ps1 -Ref 'origin/main'
 ```
 
-上方 Git 更新適用於已在 `main` 且無待保留本機修改的工作樹；有分支差異時先檢查，不 reset 或覆寫。`git pull` 只取得来源，第二步才套用正式 K。更新器會 fetch 現有 origin，再以指定 commit 建立候選，不 merge/reset 現有工作樹，不包含未提交的修改。依 lockfile 執行 npm ci、建置介面／擴充／啟動器及完整測試；失敗不動現用程式。更新器不更新兩家的 CLI，核心升級另外驗證。
+上方 Git 更新適用於已在 `main` 且無待保留本機修改的工作樹；有分支差異時先檢查，不 reset 或覆寫。`git pull` 只取得來源，第二步才套用正式 K。更新器會 fetch 現有 origin，再以指定 commit 建立候選，不 merge/reset 現有工作樹，不包含未提交的修改。依 lockfile 執行 npm ci、建置介面／擴充／啟動器及完整測試；失敗不動現用程式。更新器不更新兩家的 CLI，核心升級另外驗證。
 
 可先加 `-PrepareOnly` 完成候選建置而不套用。正式套用前請「離開並停止 K」，不要只關閉視窗；更新器不強制停止工作。成功後自行啟動 K。更新後若擴充有變更，執行瀏覽器設定腳本並在 Chrome 擴充頁重新載入；不能用程式已更新宣稱 Chrome 已載入新版。
 

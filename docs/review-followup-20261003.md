@@ -17,4 +17,4 @@
 - 候選真正建置 UI 配合假訂閱 API 操作通過：設定兩家登入／停止、Codex 自動刷新、Claude 授權碼及自動刷新、新對話共用狀態、設定不建立對話。紀錄 `.runtime/bootstrap/review-followup-ui-20261003.log`，截圖保存於 `review-followup-ui-20261003`；沒有真實本人登入或模型回合。
 - 正式 `.local/runtime.json` 讀回仍為上一版 `64cc530d73fd6245f22038942ff5e5ea7fa92808`，Windows 聽寫保留。本輪只準備本機程式與 Git 提交，未替換正在執行的正式 K、未重開、未 push、未搬登入憑證。
 
-南區可透過後續 Git 整合取得共用來源及可重現測試；本機 Windows 聽寫選擇仍由各機器設定決定。
+本批後續已依使用者選擇合入並發布 main，精確整合及遠端讀回見 [發布紀錄](dongqu-main-publish-20261003.md)。南區可取得共用來源及可重現測試；本機 Windows 聽寫選擇仍由各機器設定決定。
