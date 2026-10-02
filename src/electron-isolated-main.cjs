@@ -52,7 +52,8 @@ async function startNativeOwner({servicesFactory,electron=requireFromRuntime('el
  });
  const {loadKBrowserAssistant}=await import(pathToFileUrl(path.join(__dirname,'k-browser-assistant.mjs')));
  const browserGatewayFactory=await loadKBrowserAssistant({vault:paths.vault});
- ownerWorkbench=await createElectronWorkbench({electron,servicesFactory:factory,browserGatewayFactory});
+ const relaunchExecutable=path.resolve(paths.root,'../../..','local-launcher/dist/K桌面啟動器.exe');
+ ownerWorkbench=await createElectronWorkbench({electron,servicesFactory:factory,browserGatewayFactory,relaunchExecutable});
  ownerWorkbench.services.app.onClosed?.(()=>{if(!shuttingDown&&process.connected)process.send({type:'owner-close-request'});});
  if(shuttingDown||!process.connected){await ownerWorkbench.close();throw Error('Native supervisor disconnected during startup.');}
  ownerWorkbench.show();

@@ -1,4 +1,14 @@
 import {fileURLToPath} from 'node:url';
+import {officialClaudeLoginUrl} from '../shared/claude-login-url.mjs';
+import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
+
+export function createSubscriptionLoginWindowHandler(openExternal){
+ return ({url})=>{
+  const official=officialClaudeLoginUrl(url)||officialCodexLoginUrl(url);
+  if(official)void openExternal(official).catch(()=>{});
+  return {action:'deny'};
+ };
+}
 
 const originMatches=(value,expected)=>{
  if(typeof value!=='string'||!expected)return false;
@@ -55,9 +65,14 @@ export function createOwnerSessionMediaPermissionHandlers({ownerWebContents,getA
 
 // Trusted native shell. The factory determines candidate vs formal state; this
 // module never chooses or copies a profile, provider credential, or workspace.
-export async function createElectronWorkbench({electron,servicesFactory,browserGatewayFactory}){
+export async function createElectronWorkbench({electron,servicesFactory,browserGatewayFactory,relaunchExecutable}){
  const {BaseWindow,WebContentsView}=electron;
- const window=new BaseWindow({width:1440,height:960,title:'K 執行中樞',icon:fileURLToPath(new URL('../frontend/assets/k-logo.ico',import.meta.url))});window.setMenu(null);
+ const appName='K 執行中樞',appId='K.Harness.Desktop',icon=fileURLToPath(new URL('../frontend/assets/k-logo.ico',import.meta.url));
+ electron.app.setName(appName);
+ if(process.platform==='win32')electron.app.setAppUserModelId(appId);
+ const window=new BaseWindow({width:1440,height:960,title:appName,icon});
+ if(process.platform==='win32')window.setAppDetails({appId,appIconPath:icon,...(relaunchExecutable?{relaunchCommand:`"${relaunchExecutable}"`,relaunchDisplayName:appName}:{})});
+ window.setMenu(null);
  const owner=new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,partition:'k-trusted-owner',preload:fileURLToPath(new URL('./electron-owner-preload.cjs',import.meta.url))}});
  owner.webContents.on('dom-ready',()=>owner.webContents.setBackgroundThrottling(false));
  owner.webContents.on('context-menu',(_event,{isEditable,selectionText,editFlags})=>{
@@ -85,7 +100,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   ownerSession.setPermissionRequestHandler(permissionHandlers.request);
   ownerSession.setPermissionCheckHandler(permissionHandlers.check);
   ownerSession.setDisplayMediaRequestHandler(permissionHandlers.display);
-  owner.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  owner.webContents.setWindowOpenHandler(createSubscriptionLoginWindowHandler(url=>electron.shell.openExternal(url)));
   owner.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   owner.webContents.on('will-redirect',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   await owner.webContents.loadURL(services.app.createLaunchUrl());

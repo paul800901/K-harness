@@ -9,7 +9,7 @@ const args=process.argv.slice(2),options={};
 for(let i=0;i<args.length;i++){
  const key=args[i];
  if(['--fetch','--rollback','--prepare-only'].includes(key))options[key]=true;
- else if(['--root','--ref','--codex','--claude','--dictation-python','--dictation-model'].includes(key)&&args[i+1])options[key]=args[++i];
+ else if(['--root','--ref','--codex','--claude','--dictation-provider','--dictation-python','--dictation-model'].includes(key)&&args[i+1])options[key]=args[++i];
  else throw Error(`不認得的參數：${key}`);
 }
 function run(command,args,cwd=source){
@@ -53,6 +53,10 @@ try{
  await provisionProviders(p);
  for(const directory of ['vault/private-state','vault/profiles','workspace','agent-home','browser-output'])await mkdir(path.join(p.candidate,directory),{recursive:true});
  const settings={...(await readSettings(root)),nodeExecutable:process.execPath};
+ if(options['--dictation-provider']){
+  if(!['whisper','windows'].includes(options['--dictation-provider']))throw Error('聽寫來源須為 whisper 或 windows。');
+  settings.dictationProvider=options['--dictation-provider'];
+ }
  for(const [option,key] of [['--dictation-python','dictationPython'],['--dictation-model','dictationModel']])
   if(options[option]){await stat(path.resolve(options[option]));settings[key]=path.resolve(options[option]);}
  console.log(JSON.stringify(await activateRuntime({root,prepared,version,settings}),null,2));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createOwnerSessionMediaPermissionHandlers} from '../src/electron-workbench.mjs';
+import {createOwnerSessionMediaPermissionHandlers,createSubscriptionLoginWindowHandler} from '../src/electron-workbench.mjs';
 
 const appOrigin='http://127.0.0.1:43127';
 function fixture(){
@@ -66,4 +66,14 @@ test('permission handlers fail closed after owner lifecycle closes or URLs becom
  const g=fixture();g.mainFrame.url='about:blank';
  assert.equal(g.request(),false);
  assert.equal(g.handlers.check(g.owner,'media',appOrigin,{isMainFrame:true,mediaType:'audio',securityOrigin:appOrigin,requestingUrl:`${appOrigin}/`}),false);
+});
+
+test('official Codex and Claude login links open externally while Electron popups stay denied',()=>{
+ const opened=[],handler=createSubscriptionLoginWindowHandler(async url=>{opened.push(url);});
+ for(const url of ['https://auth.openai.com/oauth/authorize?state=fixture','https://claude.ai/oauth/authorize?state=fixture','https://claude.com/oauth/authorize?state=fixture']){
+  assert.deepEqual(handler({url}),{action:'deny'});
+  assert.equal(opened.at(-1),url);
+ }
+ for(const url of ['https://example.com/oauth/authorize','https://auth.openai.com.evil.example/oauth/authorize','https://user:secret@auth.openai.com/oauth/authorize','https://auth.openai.com:123/oauth/authorize','https://auth.openai.com/oauth/token','file:///C:/Windows/System32/cmd.exe','https://auth.openai.com/','http://auth.openai.com/oauth/authorize'])assert.deepEqual(handler({url}),{action:'deny'});
+ assert.equal(opened.length,3);
 });
