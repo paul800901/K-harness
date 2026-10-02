@@ -2,7 +2,7 @@
 
 ## 使用者決定與範圍
 
-基於 `main` 的 `30d845c`，本機分支 `fix/subagent-approval`。不修改 `C:\K-harness工作區\antigravity-worker` 或其 `feature/antigravity-worker` 分支；推送前另問使用者。
+基於 `main` 的 `30d845c`，修正分支 `fix/subagent-approval`。不修改 `C:\K-harness工作區\antigravity-worker` 或其 `feature/antigravity-worker` 分支；推送前另問使用者。使用者後續明確要求「合進 main 再推」，發布結果見下節。
 
 Claude 主對話選「略過權限提示」（`claude-bypassPermissions`），或 Codex 主對話選完全信任／完整存取權（`danger-full-access`），即信任主代理。主代理決定子代理工作的核准與否，不再交給使用者；子代理不得超過主代理授權。其他模式維持原狀，包括 `claude-auto`、`claude-dontAsk`。
 
@@ -42,10 +42,16 @@ Windows 設定依 OpenAI 的 [Config basics](https://learn.chatgpt.com/docs/conf
 
 所有驗證工人已 settled、主對話不 busy、沒有核准問題後，正式 owner 正常關閉並退出（exit 0）。再執行 `C:\K-harness\Start-K-Desktop.ps1`：桌面啟動器與正式 Electron 程序已啟動、視窗「K 執行中樞」已讀回，`/health` 回傳 `k-harness-desktop`／`deployment:native`／正確 private-state。`.local/runtime.json` 版本仍為 `e9f9613`，Windows 聽寫設定保持原值。
 
-## Git 與未另驗證事項
+## main 發布與南區取得
 
-- 實作提交為 `419a01d`、`e9f9613`；最後另以文件提交收錄正式驗證結果，不改已部署程式。分支仍為 `fix/subagent-approval`，尚未推送。
-- Antigravity worktree 未讀改檔案、未切換或提交；Git 登記仍為原分支與 `30d845c`。
+2026-10-03 04:44（臺灣時間），依使用者明確授權，將 `fix/subagent-approval` 的三個提交快轉合入本機 `main`，再正常推送 `origin/main`，由 `30d845c` 更新至 `2076ae3b542b5202a40e9edbc70d9d0071c2ba18`。GitHub `refs/heads/main` 實際讀回與本機完全一致，沒有衝突或 force-push。此節為發布完成後補記；實作提交 `419a01d`、`e9f9613` 與正式驗證文件提交 `2076ae3` 均已發布。
+
+發布的程式、測試與相依宣告，和已部署／完整 529/529 通過的 `e9f9613` 沒有差異；本輪只整合與補記發布，不另宣稱重跑完整測試，也沒有重啟或更新現用 K。Antigravity worktree 僅讀取 Git 登記，未讀改其檔案、切換或提交該分支。
+
+南區在乾淨的 `main` 工作樹執行 `git pull --ff-only origin main` 即可取得來源。要套用現用 K，確認沒有執行中工作，選「離開並停止 K」，再執行 `Update-K.ps1 -Ref 'origin/main'`，成功後執行 `Start-K-Desktop.ps1`。本機登入／對話／聽寫設定不隨 Git 搬移；已有 Codex 設定不覆寫。既有更新步驟見 [南區取得方式](dongqu-main-publish-20261003.md#南區操作)。
+
+## 未另驗證事項
+
 - Codex 主對話完整存取權的既有原生傳遞經回歸測試確認；本輪真實訂閱派工驗收專注 Claude → Luna/low，未另重做 Codex 主對話 → 原生子代理的實機測試。
 - 不宣稱 unelevated 設定等於完整作業系統隔離驗收；未新增管理員沙箱、帳號或 ACL。
 - 鄰近既有問題：被拒絕的 fileChange 可能仍被工人成果清單列出路徑，即使檔案不存在。本輪以實際檔案讀回判定結果，沒有擴張修改該清單邏輯。
