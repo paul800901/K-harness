@@ -102,6 +102,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   let requestGuard=()=>undefined;
   const host = hostFactory({executable, cwd:root, onEvent: event, onRequest:message=>requestGuard(message)});
   const records = new Map();
+  const approvalItems = new Map();
   const operations = new Map(), ownedThreads=new Set();
   const persistTails = new Map();
   let closed = false, closing = false, closePromise, models;
@@ -130,12 +131,17 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     const record = [...records.values()].find(value => value.threadId && value.threadId === p.threadId);
     if (!record) return;
     if (message.method === 'turn/started') record.turnId = p.turn?.id ?? record.turnId;
+    const itemKey=`${p.threadId}:${p.turnId}:${p.item?.id}`;
+    // Pending file changes may arrive before thread/read includes the item.
+    if(message.method==='item/started'&&p.item?.type==='fileChange'&&p.turnId===record.turnId)approvalItems.set(itemKey,clone(p.item));
+    if(message.method==='item/completed')approvalItems.delete(itemKey);
     if (message.method === 'item/completed' && p.item?.type === 'agentMessage') record.output = (record.output ? `${record.output}\n\n` : '') + itemText(p.item);
     if (message.method === 'item/completed' && p.item?.type === 'fileChange') record.outputFiles = filesFrom([...(record.items ?? []), p.item], workspace);
     if (message.method === 'turn/completed') {
       const status = p.turn?.status;
       record.status = status === 'interrupted' ? 'cancelled' : status === 'failed' ? 'failed' : 'completed';
       record.settled = true;
+      for(const key of approvalItems.keys())if(key.startsWith(`${p.threadId}:${p.turn?.id}:`))approvalItems.delete(key);
     }
     void persist(record).then(() => changed(record)).catch(() => {});
   }
@@ -151,6 +157,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
         const result=await host.request('thread/read',{threadId:p.threadId,includeTurns:true});
         item=result.thread?.turns?.find(turn=>turn.id===p.turnId)?.items?.find(value=>value.id===p.itemId);
       }catch{}
+      if(!item?.changes?.length)item=approvalItems.get(`${p.threadId}:${p.turnId}:${p.itemId}`)??item;
       if(record.settled&&record.status!=='running'||record.turnId&&record.turnId!==p.turnId)return undefined;
     }
     return onRequest?.(message,item);

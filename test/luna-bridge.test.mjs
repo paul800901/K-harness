@@ -252,6 +252,24 @@ test('file change approval reads the matching native turn item and keeps missing
  }finally{await bridge.close();}
 });
 
+test('pending native file change events supply changes before thread/read contains the item',async()=>{
+ const {bridge,fixture}=await make({onRequest:(message,item)=>approvalRequest(message,item)});
+ try{
+  const record=await bridge.start({requestId:'pending-file-item',task:'bounded'});
+  const item={id:'pending-item',type:'fileChange',status:'inProgress',changes:[{path:'native.txt',kind:{type:'add'},diff:'native contents'}]};
+  const params={threadId:record.threadId,turnId:record.turnId,item};
+  fixture.host.emit({method:'item/started',params});
+  fixture.host.emit({method:'item/started',params:{...params,threadId:'foreign',item:{...item,changes:[{path:'foreign.txt'}]}}});
+  fixture.host.emit({method:'item/started',params:{...params,turnId:'foreign-turn',item:{...item,changes:[{path:'old.txt'}]}}});
+  const request={method:'item/fileChange/requestApproval',params:{threadId:record.threadId,turnId:record.turnId,itemId:item.id}};
+  const approval=await fixture.host.requestHandler(request);
+  assert.equal(approval.canAccept,true);assert.deepEqual(approval.details.changes,item.changes);
+  assert.deepEqual(approval.reply(true),{decision:'accept'});
+  fixture.host.emit({method:'item/completed',params});
+  assert.equal((await fixture.host.requestHandler(request)).canAccept,false);
+ }finally{await bridge.close();}
+});
+
 test('approval cannot use an item from another turn or appear after the worker finishes during read',async()=>{
  let finishRead;let reading;
  const {bridge,fixture}=await make({onRequest:(message,item)=>approvalRequest(message,item)});
