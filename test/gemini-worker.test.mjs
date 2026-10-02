@@ -28,7 +28,8 @@ test('Gemini profile hashes canonical workspace and access mode; settings keep e
  const p=geminiProfile(workspace,'read-only');assert.match(p,/^[a-f0-9]{16}$/);
  assert.equal(p,geminiProfile(workspace+path.sep,'read-only'));assert.notEqual(p,geminiProfile(workspace,'danger-full-access'));assert.notEqual(p,geminiProfile(root,'read-only'));
  if(process.platform==='win32')assert.equal(p,geminiProfile(workspace.toUpperCase(),'read-only'));
- assert.deepEqual(geminiSettings(workspace,'read-only'),{toolPermission:'strict',permissions:{allow:[],deny:['write_file(*)','command(*)','unsandboxed(*)','mcp(*)'],ask:[]}});
+ // Default mode + deny: strict would turn reads into headless Ask and ignores allow.
+ assert.deepEqual(geminiSettings(workspace,'read-only'),{permissions:{allow:[],deny:['write_file(*)','command(*)','unsandboxed(*)','mcp(*)'],ask:[]}});
  const write=geminiSettings(workspace,'workspace-write');assert.deepEqual(write.permissions.allow,[`write_file(${workspace.replaceAll('\\','/')})`]);assert.equal(write.permissions.deny.includes('write_file(*)'),false);
  assert.deepEqual(geminiSettings(workspace,'danger-full-access').permissions,{allow:[],deny:['mcp(*)'],ask:[]});
  assert.throws(()=>geminiProfile('relative','read-only'));assert.throws(()=>geminiSettings(workspace,'unknown'));
@@ -41,7 +42,7 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
  const fake=fakeSpawn(),worker=make(fake);const result=await worker.run({task:'bounded',effort});
  assert.equal(result.status,'completed');assert.equal(result.acceptance,'not-reviewed');assert.deepEqual(result.outputFiles,[]);assert.match(result.outputFilesNote,/無法取得/);
  const launch=fake.calls[1];assert.equal(launch.exe,path.resolve(root,'original-local','agy/bin/agy.exe'));assert.equal(launch.options.cwd,workspace);assert.equal(launch.options.shell,false);assert.equal(launch.options.windowsHide,true);assert.equal(launch.options.stdio[0],'ignore');
- assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'120s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
+ assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'600s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
  assert.match(launch.args[1],/不得超過主代理的授權/);assert.match(launch.args[1],/不得再委派子代理、啟動背景服務/);assert.match(launch.args[1],/不能跑指令/);assert.match(launch.args[1],/<DELEGATED_TASK>\nbounded\n<\/DELEGATED_TASK>/);
  assert.equal(launch.options.env.USERPROFILE,worker.home);assert.equal(launch.options.env.HOME,worker.home);assert.equal(launch.options.env.LOCALAPPDATA,undefined);assert.ok(launch.args[launch.args.indexOf('--log-file')+1].startsWith(worker.home+path.sep));
  assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'read-only'));

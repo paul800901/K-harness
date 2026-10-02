@@ -738,3 +738,28 @@ S9 的 starting→running→failed 三個 onChange 事件、inspect／wait、相
   "stderr": "jetski: no output produced — a tool required the \"command\" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. command(<target>)). Alternatively, re-run with --dangerously-skip-permissions to auto-approve all tools.\n"
 }
 ```
+
+## 主代理驗收與修正（Claude Opus 5.5，2026-10-03）
+
+Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 agy 1.0.6 驗證（暫存目錄，共 4 次 Flash-low，測完刪除；不改使用者 `~/.gemini`、不讀憑證）。
+
+### 修正
+- **read-only 不再使用 strict**：strict 會把未列 allow 的讀檔變成 headless Ask 而自動拒絕；實測連 `allow:["read_file(*)"]` 也被忽略（`view_file` 仍被拒）。改為預設模式（init `permission_mode:"request-review"`）＋原本四項 deny。設定見 `geminiSettings`。
+- **逾時預設 120 秒 → 600 秒**：2 分鐘不足以完成實際子任務；仍有 K 自己的計時器與整樹終止。
+- **工具說明**：移除「唯讀可能拒絕讀檔」，改為唯讀可讀檔、寫檔與指令由 deny 拒絕並列於 deniedTools。
+
+### 實測
+| 項目 | 方法 | 結果 |
+|---|---|---|
+| read-only（經 K 指示） | `createGeminiWorker` read-only，要求讀 data.txt 並嘗試寫三處 | completed，回答 8；三處檔案都不存在（模型依指示自行不寫） |
+| read-only 強制寫入 | 不加 K 唯讀指示、直接以 read-only settings 呼叫 agy，要求「必須」寫工作區內、父目錄、另一絕對路徑並執行 `whoami` | 讀檔成功；三次 `write_to_file` 與 `run_command` 全部 `Matches user-configured deny rule`，檔案都不存在；4 筆列入 deniedTools；exit 0、result SUCCESS（再次證明不能只看退出碼） |
+| danger-full-access | 建立 result.txt 寫入總和 | completed，result.txt 內容 `8`，deniedTools 空 |
+| 取消 | 長任務 8 秒後 abort | cancelled；當時程序樹為 agy＋conhost，取消後 1.5 秒兩者皆不存在，無殘留 |
+
+### 測試
+定向 125/125；完整 559/559。
+
+### 現況
+- 可用：主對話「略過權限提示」（子代理完整存取）與「計畫模式」（唯讀）。一般權限（workspace-write）仍拒絕派 Flash，不提升權限。
+- 仍未驗證：Claude 主對話實際收到 Flash 完成通知（需部署後於正式 K 實測）、未登入／額度用完的真實錯誤樣本、完整存取下 `mcp(*)` deny 是否生效（K profile 為空家目錄，本來就沒有 MCP）。
+- 未推送、未合併、未部署。

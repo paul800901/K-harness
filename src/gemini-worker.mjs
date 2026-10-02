@@ -20,7 +20,9 @@ export function geminiProfile(workspace, accessMode) {
 export function geminiSettings(workspace, accessMode) {
   geminiProfile(workspace,accessMode);
   const deny=['command(*)','unsandboxed(*)','mcp(*)'];
-  return {toolPermission:'strict',permissions:{
+  // agy 1.0.6 strict ignores allow (even read_file(*)) and turns reads into headless
+  // Ask; read-only therefore relies on the default mode plus deny, which live tests honor.
+  return {...(accessMode==='read-only'?{}:{toolPermission:'strict'}),permissions:{
     allow:accessMode==='workspace-write'?[`write_file(${path.resolve(workspace).replaceAll('\\','/')})`]:[],
     deny:accessMode==='read-only'?['write_file(*)',...deny]:accessMode==='danger-full-access'?['mcp(*)']:deny,
     ask:[],
@@ -153,7 +155,7 @@ export function geminiOutputFiles(before,after,workspace) {
   return {outputFiles,outputFilesNote:'git status 前後差異；無法歸因並行寫入，亦無法辨認原本已 dirty 且狀態相同的內容變更。'};
 }
 
-export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=120000,gitStatus=geminiGitStatus}={}) {
+export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=600000,gitStatus=geminiGitStatus}={}) {
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw Error('Flash timeoutMs 無效。');
   const profile=geminiProfile(workspace,accessMode),home=path.join(profileRoot,profile);
   // Resolve before HOME/USERPROFILE overrides. Never discover through a shell.
