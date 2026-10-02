@@ -4,6 +4,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
+import {approvalRequest} from '../src/desktop-permissions.mjs';
 
 const root = path.resolve('.runtime','luna-bridge-tests',randomUUID());
 const workspace = path.join(root,'workspace');
@@ -228,6 +229,56 @@ test('approval requests pass through only for the bridge-owned native thread and
   assert.equal(await guarded.fixture.host.requestHandler({...raw,params:{...raw.params,turnId:'foreign-turn'}}),undefined);
   assert.deepEqual(seen,[raw]);
   await guarded.bridge.close();
+});
+
+test('file change approval reads the matching native turn item and keeps missing changes unapprovable',async()=>{
+ const seen=[];const {bridge,fixture}=await make({onRequest:(message,item)=>{seen.push(item);return approvalRequest(message,item);}});
+ try{
+  const record=await bridge.start({requestId:'file-approval',task:'bounded'});
+  const item={id:'file-item',type:'fileChange',changes:[{path:'result.txt',kind:{type:'add'},diff:'+fixture'}]};
+  fixture.item(record.threadId,item);
+  const request={method:'item/fileChange/requestApproval',params:{threadId:record.threadId,turnId:record.turnId,itemId:item.id}};
+  const approval=await fixture.host.requestHandler(request);
+  assert.equal(seen[0],item);assert.equal(approval.canAccept,true);
+  assert.deepEqual(approval.reply(true),{decision:'accept'});
+  assert.deepEqual(fixture.calls.filter(c=>c.method==='thread/read').at(-1).p,{threadId:record.threadId,includeTurns:true});
+  const missing=await fixture.host.requestHandler({...request,params:{...request.params,itemId:'missing'}});
+  assert.equal(missing.canAccept,false);assert.throws(()=>missing.reply(true),/核准/);
+  assert.deepEqual(missing.reply(false),{decision:'decline'});
+  const read=fixture.host.request;
+  fixture.host.request=async(method,p)=>{if(method==='thread/read')throw Error('unavailable');return read(method,p);};
+  assert.equal((await fixture.host.requestHandler(request)).canAccept,false);
+  fixture.host.request=read;
+ }finally{await bridge.close();}
+});
+
+test('approval cannot use an item from another turn or appear after the worker finishes during read',async()=>{
+ let finishRead;let reading;
+ const {bridge,fixture}=await make({onRequest:(message,item)=>approvalRequest(message,item)});
+ try{
+  const record=await bridge.start({requestId:'approval-read',task:'bounded'});
+  const request={method:'item/fileChange/requestApproval',params:{threadId:record.threadId,turnId:record.turnId,itemId:'same-id'}};
+  const read=fixture.host.request;
+  fixture.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{id:'older-turn',items:[{id:'same-id',changes:[{path:'old.txt'}]}]}]}}:read(method,p);
+  assert.equal((await fixture.host.requestHandler(request)).canAccept,false);
+  fixture.host.request=async(method,p)=>method==='thread/read'?new Promise(resolve=>{finishRead=resolve;}):read(method,p);
+  reading=fixture.host.requestHandler(request);
+  fixture.finish(record.threadId,record.turnId);
+  finishRead({thread:{turns:[{id:record.turnId,items:[{id:'same-id',changes:[{path:'new.txt'}]}]}]}});
+  assert.equal(await reading,undefined);
+  fixture.host.request=read;
+ }finally{await bridge.close();}
+});
+
+test('fully trusted workers send never approval and danger-full-access to the native core',async()=>{
+ const {bridge,fixture}=await make({accessMode:'danger-full-access'});
+ try{
+  await bridge.start({requestId:'trusted',task:'bounded'});
+  const thread=fixture.calls.find(c=>c.method==='thread/start').p,turn=fixture.calls.find(c=>c.method==='turn/start').p;
+  assert.equal(thread.sandbox,'danger-full-access');assert.equal(thread.approvalPolicy,'never');
+  assert.equal(turn.sandboxPolicy.type,'dangerFullAccess');assert.equal(turn.approvalPolicy,'never');
+  assert.match(turn.input[0].text,/不得超過主代理的授權/);
+ }finally{await bridge.close();}
 });
 
 // Model-facing outputs never repeat in-flight text, and long results remain locally readable.

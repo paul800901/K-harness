@@ -49,6 +49,10 @@ export async function activateRuntime({root,prepared,version,settings={},checkSt
   await mkdir(path.dirname(p.launcher),{recursive:true});
   await copyFile(path.join(backup,'incoming-launcher.exe'),p.launcher);
   await copyFile(path.join(backup,'incoming-entry.ps1'),p.entry);
+  const codexHome=path.join(p.candidate,'agent-home/.codex');
+  await mkdir(codexHome,{recursive:true});
+  try{await writeFile(path.join(codexHome,'config.toml'),'[windows]\nsandbox = "unelevated"\n',{flag:'wx'});}
+  catch(error){if(error.code!=='EEXIST')throw error;}
   await atomicWrite(p.settings,JSON.stringify({...before,...settings,version,previous:hadRuntime?backup:null},null,2));
  }catch(error){
   if(movedNew)await rename(p.runtime,prepared);

@@ -314,8 +314,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     changed();
   }
 
-  function codexApproval(request) {
-    const approval=approvalRequest(request);
+  function codexApproval(request,item) {
+    const approval=approvalRequest(request,item);
     if(!approval) return undefined;
     const id=randomUUID();
     return new Promise(resolve=>{
@@ -347,7 +347,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   }
 
   async function configureGateway() {
-    const workerMode=claudePermissionMode(state.accessMode)==='plan'?'read-only':'workspace-write';
+    const permissionMode=claudePermissionMode(state.accessMode);
+    const workerMode=permissionMode==='bypassPermissions'?'danger-full-access':permissionMode==='plan'?'read-only':'workspace-write';
     const ensureBridge=()=>{
       if(bridgeInstance)return Promise.resolve(bridgeInstance);
       if(!bridgeInitPromise)bridgeInitPromise=Promise.resolve().then(()=>bridgeFactory({root,workspace:state.workspace,parentId:state.threadId,executable,accessMode:workerMode,workerPolicy:state.workerPolicy,onRequest:codexApproval,onChange:recordWorker})).then(value=>(bridgeInstance=value)).finally(()=>{bridgeInitPromise=null;});

@@ -12,7 +12,7 @@ import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 
-async function fixture({models,waitForHost,browser=false}={}) {
+async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
   await mkdir(base,{recursive:true});
   const root=await mkdtemp(path.join(base,'claude-controller-'));
@@ -25,7 +25,7 @@ async function fixture({models,waitForHost,browser=false}={}) {
   const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
   const controller=createClaudeController({...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
     hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
-    bridgeFactory:async options=>{bridgeOptions=options;return bridge;},
+    bridgeFactory:async options=>{bridgeOptions=options;return bridgeFactory?bridgeFactory(options):bridge;},
     gatewayFactory:async options=>{gatewayOptions=options;return gateway;}});
   return {root,uuid,controller,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
 }
@@ -209,6 +209,62 @@ test('forwards Luna Codex approvals to the same UI queue and stop cancels pendin
     assert.equal(f.gateway.closed,true);
     assert.equal(f.bridge.closed,true);
   } finally { await f.controller.close(); }
+});
+
+for(const [mode,workerMode] of [['bypassPermissions','danger-full-access'],['plan','read-only'],['manual','workspace-write'],['acceptEdits','workspace-write'],['auto','workspace-write'],['dontAsk','workspace-write']]){
+ test(`Claude ${mode} delegates workers with ${workerMode}`,async()=>{
+  const f=await fixture();try{
+   await f.controller.open({accessMode:`claude-${mode}`});
+   await f.gatewayOptions.bridge.start({requestId:'mode',task:'bounded'});
+   assert.equal(f.bridgeOptions.accessMode,workerMode);
+  }finally{await f.controller.close();}
+ });
+}
+
+test('permission switches close the previous bridge and rebuild with the new worker mode',async()=>{
+ const bridges=[];let f;
+ f=await fixture({bridgeFactory:options=>{const bridge={...f.bridge,closed:false,records:[],mode:options.accessMode};bridges.push(bridge);return bridge;}});
+ try{
+  await f.controller.open({accessMode:'claude-manual'});
+  await f.gatewayOptions.bridge.start({requestId:'before',task:'bounded'});
+  await f.controller.send({text:'switch',accessMode:'claude-bypassPermissions'});
+  assert.equal(bridges[0].closed,true);
+  await f.gatewayOptions.bridge.start({requestId:'after',task:'bounded'});
+  assert.equal(bridges[1].mode,'danger-full-access');
+  assert.notEqual(bridges[1],bridges[0]);
+  f.hostOptions.onMessage({type:'result',is_error:false});
+  await f.controller.send({text:'switch back',accessMode:'claude-manual'});
+  assert.equal(bridges[1].closed,true);
+  await f.gatewayOptions.bridge.start({requestId:'manual',task:'bounded'});
+  assert.equal(bridges[2].mode,'workspace-write');
+ }finally{await f.controller.close();}
+});
+
+test('unsettled workers prevent a permission switch without closing the existing bridge',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({accessMode:'claude-manual'});
+  await f.gatewayOptions.bridge.start({requestId:'active',task:'bounded'});
+  f.bridge.records=[{requestId:'active',settled:false}];
+  await assert.rejects(f.controller.send({text:'switch',accessMode:'claude-bypassPermissions'}),/子代理尚未結束/);
+  assert.equal(f.controller.state.accessMode,'claude-manual');
+  assert.equal(f.bridge.closed,false);
+  assert.equal(f.bridgeOptions.accessMode,'workspace-write');
+ }finally{f.bridge.records=[];await f.controller.close();}
+});
+
+test('worker file changes can be accepted only when the native item has changes',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.gatewayOptions.bridge.start({requestId:'file',task:'bounded'});
+  const request={method:'item/fileChange/requestApproval',params:{itemId:'file-item'}};
+  const item={id:'file-item',type:'fileChange',changes:[{path:'result.txt',kind:{type:'add'},diff:'+fixture'}]};
+  const approval=f.bridgeOptions.onRequest(request,item);
+  const q=f.controller.state.questions[0];
+  assert.equal(q.canAccept,true);assert.deepEqual(q.details.changes,item.changes);
+  await f.controller.answer({id:q.id,accept:true});assert.deepEqual(await approval,{decision:'accept'});
+  const missing=f.bridgeOptions.onRequest(request);
+  const unavailable=f.controller.state.questions[0];assert.equal(unavailable.canAccept,false);
+  await f.controller.answer({id:unavailable.id,accept:false});assert.deepEqual(await missing,{decision:'decline'});
+ }finally{await f.controller.close();}
 });
 
 test('resumes only a saved Claude projection and forwards native UUID, never a Codex id',async()=>{

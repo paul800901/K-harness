@@ -35,6 +35,20 @@ test('running work prevents activation, preserving existing code and candidate',
  const {root,p,prepared}=await fixture();
  await assert.rejects(activateRuntime({root,prepared,version:'new',checkStopped:async()=>{throw Error('running');}}),/running/);
  assert.equal(await readFile(p.launcher,'utf8'),'old-launcher');assert.ok(await stat(prepared));
+ await assert.rejects(stat(path.join(p.candidate,'agent-home/.codex/config.toml')),{code:'ENOENT'});
+});
+
+test('activation creates the missing K Codex Windows sandbox config',async()=>{
+ const {root,p,prepared}=await fixture();
+ await activateRuntime({root,prepared,version:'windows-config',checkStopped});
+ assert.equal(await readFile(path.join(p.candidate,'agent-home/.codex/config.toml'),'utf8'),'[windows]\nsandbox = "unelevated"\n');
+});
+
+test('activation leaves an existing Codex config byte for byte unchanged',async()=>{
+ const {root,p,prepared}=await fixture(),config=path.join(p.candidate,'agent-home/.codex/config.toml');
+ const existing='# user choice\r\n[windows]\r\nsandbox = "elevated"\r\n';await writeFile(config,existing);
+ await activateRuntime({root,prepared,version:'preserve-config',checkStopped});
+ assert.equal(await readFile(config,'utf8'),existing);
 });
 test('missing build output does not replace the current runtime',async()=>{
  const {root,p}=await fixture();const prepared=path.join(p.candidate,'incomplete');await mkdir(prepared);
