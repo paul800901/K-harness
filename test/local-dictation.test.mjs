@@ -97,7 +97,7 @@ test('local dictation starts one offline child, forwards WAV only on stdin, and 
   const audio = makeWav();
   let invocation;
   const child = new FakeChild({response: {ok: true, text: ''}});
-  const backend = createLocalDictation({spawnImpl: (...args) => { invocation = args; return child; }});
+  const backend = createLocalDictation({provider: 'whisper', spawnImpl: (...args) => { invocation = args; return child; }});
   try {
     assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: ''});
     assert.equal(invocation[0], LOCAL_DICTATION_PYTHON);
@@ -122,7 +122,7 @@ test('local dictation accepts candidate-local and explicitly configured portable
   const previousModel = process.env.K_DICTATION_MODEL;
   process.env.K_DICTATION_PYTHON = pythonPath;
   process.env.K_DICTATION_MODEL = modelPath;
-  const backend = createLocalDictation({spawnImpl: (...args) => {
+  const backend = createLocalDictation({provider: 'whisper', spawnImpl: (...args) => {
     invocation = args;
     return new FakeChild();
   }});

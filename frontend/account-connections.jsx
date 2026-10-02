@@ -1,6 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {ChevronDown,RefreshCw} from 'lucide-react';
 import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login-url.mjs';
+import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 
 export function AccountConnections({disabled=false,provider='codex',defaultOpen=false,hidden=false,onStatus,onRefresh}){
  const [claudeStatus,setClaudeStatus]=useState(null),[claudeLoading,setClaudeLoading]=useState(true),[claudeAction,setClaudeAction]=useState(false);
@@ -103,5 +104,3 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
   </div></div>
  </details>;
 }
-
-function officialCodexLoginUrl(value){try{const url=new URL(value);return url.protocol==='https:'&&url.hostname==='auth.openai.com'&&!url.username&&!url.password&&!url.port&&url.pathname==='/oauth/authorize'?url.href:null;}catch{return null;}}

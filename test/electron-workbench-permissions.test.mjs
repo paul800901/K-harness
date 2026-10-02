@@ -74,6 +74,6 @@ test('official Codex and Claude login links open externally while Electron popup
   assert.deepEqual(handler({url}),{action:'deny'});
   assert.equal(opened.at(-1),url);
  }
- for(const url of ['https://example.com/oauth/authorize','https://auth.openai.com.evil.example/oauth/authorize','https://user:secret@auth.openai.com/oauth/authorize','file:///C:/Windows/System32/cmd.exe','https://auth.openai.com/','http://auth.openai.com/oauth/authorize'])assert.deepEqual(handler({url}),{action:'deny'});
+ for(const url of ['https://example.com/oauth/authorize','https://auth.openai.com.evil.example/oauth/authorize','https://user:secret@auth.openai.com/oauth/authorize','https://auth.openai.com:123/oauth/authorize','https://auth.openai.com/oauth/token','file:///C:/Windows/System32/cmd.exe','https://auth.openai.com/','http://auth.openai.com/oauth/authorize'])assert.deepEqual(handler({url}),{action:'deny'});
  assert.equal(opened.length,3);
 });

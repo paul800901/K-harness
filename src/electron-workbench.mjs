@@ -1,12 +1,10 @@
 import {fileURLToPath} from 'node:url';
 import {officialClaudeLoginUrl} from '../shared/claude-login-url.mjs';
+import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 
 export function createSubscriptionLoginWindowHandler(openExternal){
  return ({url})=>{
-  let official=officialClaudeLoginUrl(url);
-  if(!official){
-   try{const parsed=new URL(url);if(parsed.protocol==='https:'&&parsed.hostname==='auth.openai.com'&&!parsed.username&&!parsed.password&&!parsed.port&&parsed.pathname==='/oauth/authorize')official=parsed.href;}catch{}
-  }
+  const official=officialClaudeLoginUrl(url)||officialCodexLoginUrl(url);
   if(official)void openExternal(official).catch(()=>{});
   return {action:'deny'};
  };
