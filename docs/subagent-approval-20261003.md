@@ -24,10 +24,28 @@ Windows 設定依 OpenAI 的 [Config basics](https://learn.chatgpt.com/docs/conf
 - 首次新增測試有兩項失敗，原因是測試錯將布林 reply 介面傳入物件，以及嘗試回答介面已停用的接受動作；修正測試呼叫後通過，未因此放寬產品核准限制。
 - 候選完整測試 **528/528 通過**，無跳過；介面、瀏覽器擴充與 C# 啟動器建置成功。候選使用 Git 提交 `419a01d4d5a5e6f7c6e25d3c0c19f2e08bdaaf61`，保留東區 `K_DICTATION_PROVIDER=windows`。證據：`.runtime/subagent-approval-targeted.log`、`.runtime/subagent-approval-prepare.log`。
 - 首次真實 UI 驗證：Claude bypass → Luna/low 以 `danger-full-access` 成功建立標記檔，沒有核准提示。切回 manual 後，橋接確實使用新 `workspace-write`，但檔案核准仍不可接受；已從介面拒絕該請求，工人完成並確認檔案不存在，沒有重送該任務。原生診斷證據 `.runtime/bootstrap/subagent-native-approval-trace.json` 顯示 `item/started` 已有完整變更，而同一 host 的 `thread/read` 當時只含 userMessage。
-- 補上待核准原生 item 後，五個定向測試檔 **108/108 通過**；包含未進 thread/read 的 live item、外來 thread／turn 不得覆蓋及完成後清除。補修後完整套件與正式 UI 重驗待執行。
+- 補上待核准原生 item 後，五個定向測試檔 **108/108 通過**；包含未進 thread/read 的 live item、外來 thread／turn 不得覆蓋及完成後清除。補修候選 `e9f9613fc5237941102186702952c1b2d267aa03` 的完整套件 **529/529 通過**，無跳過，介面／擴充／啟動器建置成功。證據：`.runtime/subagent-approval-targeted-final.log`、`.runtime/subagent-approval-prepare-final.log`。
 
 ## 正式部署與實測
 
 首次套用前：Windows 視窗清單沒有 K；正式連接埠 47831 沒有監聽、K launcher／Electron／專用核心程序未在執行。已套用第一版 `419a01d`、建立 Windows 設定檔，保留原程式於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1790964382189`。三個修改檔與 Git 內容一致（只正規化 CRLF／LF 比較）；證據 `.runtime/bootstrap/subagent-approval-activation.json`。
 
-正式部署版本、可還原版本、設定讀回、Claude→Luna/low 真實派工及人工核准按鈕驗證：待後續補記，不以單元測試通過宣稱完成。
+補修版已套用至正式 runtime，版本 `e9f9613fc5237941102186702952c1b2d267aa03`；啟用前正式介面為 ready、無工作／問題／工人，可信入口正常關閉並退出，停止檢查通過。前一版程式保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1790965388663`，更早的原程式備份仍保留。三個修改檔讀回與來源一致（正規化換行），已有 Codex 設定原位保留、啟用前後逐位元組一致；設定目前除 `[windows]` 外亦含原生核心自行登記的此工作區 trust。證據 `.runtime/bootstrap/subagent-approval-activation-final.json`。
+
+正式 UI 重驗完成，對話 `claude-81de5488-1693-4146-9fa0-326ea8751aef`：
+
+- Claude manual 派 `approval-manual-fixed-f917662e`（Luna/low），工人為 `workspace-write`。在工作區 `.codex` 原生保護路徑新建標記檔，以確實觸發原生檔案核准；一般工作區內操作本來就不保證每次詢問。Claude 本身的 MCP 派工核准保留並按單次核准。
+- 子代理檔案核准顯示精確路徑、add 與內容 `K MANUAL FIXED SMOKE f917662e`，`canAccept=true`、按鈕可按。核准前檔案不存在；從既有介面按「只核准這次變更」後，問題移除、檔案實際建立，工人完成／settled=true。
+- 同一對話切回 bypass 後派 `approval-bypass-final-f917662e`（Luna/low），新 bridge 的工人為 `danger-full-access`，在工作區獨立測試目錄建 `bypass-final.txt`，內容為 `K FINAL BYPASS SMOKE f917662e`，工人完成／settled=true。全程沒有核准問題，也沒有點選任何核准按鈕。
+- 真實驗證用已部署 runtime 的 `startNativeOwner`、正式資料位置與兩家原生訂閱核心。工程程序以 Electron DOM 操作既有權限選單、輸入框及核准按鈕；不另造核准介面、不偽造核心、不搬憑證或繞過 HTTP 登入。臨時驗證程序與證據留在 Git 排除的 `.runtime/bootstrap`，未加入產品架構。
+- 證據：`.runtime/bootstrap/subagent-approval-live-result.json`、`subagent-approval-live-events.jsonl`、`subagent-approval-native-trace.jsonl`。測試標記檔保留於 `C:\K-harness工作區\.runtime\subagent-approval-20261003-f917662e` 及 `C:\K-harness工作區\.codex\subagent-approval-fixed-f917662e.txt`；原被拒絕的標記檔與診斷標記檔均未建立。
+
+所有驗證工人已 settled、主對話不 busy、沒有核准問題後，正式 owner 正常關閉並退出（exit 0）。再執行 `C:\K-harness\Start-K-Desktop.ps1`：桌面啟動器與正式 Electron 程序已啟動、視窗「K 執行中樞」已讀回，`/health` 回傳 `k-harness-desktop`／`deployment:native`／正確 private-state。`.local/runtime.json` 版本仍為 `e9f9613`，Windows 聽寫設定保持原值。
+
+## Git 與未另驗證事項
+
+- 實作提交為 `419a01d`、`e9f9613`；最後另以文件提交收錄正式驗證結果，不改已部署程式。分支仍為 `fix/subagent-approval`，尚未推送。
+- Antigravity worktree 未讀改檔案、未切換或提交；Git 登記仍為原分支與 `30d845c`。
+- Codex 主對話完整存取權的既有原生傳遞經回歸測試確認；本輪真實訂閱派工驗收專注 Claude → Luna/low，未另重做 Codex 主對話 → 原生子代理的實機測試。
+- 不宣稱 unelevated 設定等於完整作業系統隔離驗收；未新增管理員沙箱、帳號或 ACL。
+- 鄰近既有問題：被拒絕的 fileChange 可能仍被工人成果清單列出路徑，即使檔案不存在。本輪以實際檔案讀回判定結果，沒有擴張修改該清單邏輯。
