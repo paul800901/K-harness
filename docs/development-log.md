@@ -2,6 +2,9 @@
 
 使用者要求：每項變更記錄專案內，Opus 可直接複查，不需要使用者轉貼聊天。
 
+## 2026-10-03
+- [設定內訂閱登入與官方頁面開啟修復](subscription-settings-login-20261003.md)：Codex／Claude 共用帳號登入元件加入設定；修復 Electron 攔下官方登入頁，Codex 登入後自動刷新。實際驗證及本機套用狀態見紀錄，未 push。
+
 ## 2026-10-02
 - [東區 Windows 10 安裝與內建聽寫](dongqu-install-20261002.md)：安裝官方 Claude Code 2.1.287 與 K 本機依賴，接上 Windows zh-TW 內建辨識；實際安裝、驗證及未完成事項見紀錄。此次本機修改未 push。
 

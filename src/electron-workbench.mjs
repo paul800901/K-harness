@@ -1,4 +1,16 @@
 import {fileURLToPath} from 'node:url';
+import {officialClaudeLoginUrl} from '../shared/claude-login-url.mjs';
+
+export function createSubscriptionLoginWindowHandler(openExternal){
+ return ({url})=>{
+  let official=officialClaudeLoginUrl(url);
+  if(!official){
+   try{const parsed=new URL(url);if(parsed.protocol==='https:'&&parsed.hostname==='auth.openai.com'&&!parsed.username&&!parsed.password&&!parsed.port&&parsed.pathname==='/oauth/authorize')official=parsed.href;}catch{}
+  }
+  if(official)void openExternal(official).catch(()=>{});
+  return {action:'deny'};
+ };
+}
 
 const originMatches=(value,expected)=>{
  if(typeof value!=='string'||!expected)return false;
@@ -85,7 +97,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   ownerSession.setPermissionRequestHandler(permissionHandlers.request);
   ownerSession.setPermissionCheckHandler(permissionHandlers.check);
   ownerSession.setDisplayMediaRequestHandler(permissionHandlers.display);
-  owner.webContents.setWindowOpenHandler(()=>({action:'deny'}));
+  owner.webContents.setWindowOpenHandler(createSubscriptionLoginWindowHandler(url=>electron.shell.openExternal(url)));
   owner.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   owner.webContents.on('will-redirect',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   await owner.webContents.loadURL(services.app.createLaunchUrl());
