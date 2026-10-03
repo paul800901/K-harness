@@ -34,15 +34,15 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
   setGeminiLoading(true);
   try{const response=await fetch('/api/gemini/auth',{cache:'no-store'});if(!response.ok)throw Error();const next=await response.json();setGeminiStatus(next);if(refreshModels&&next.available)await onRefresh?.('gemini');}
   catch{setGeminiStatus({available:false,reason:'無法確認 Antigravity 狀態。'});}
-  finally{setGeminiLoading(false);await refreshGeminiAccounts();}
+  finally{setGeminiLoading(false);}
  };
- const refreshGeminiAccounts=async()=>{
-  const generation=++geminiGeneration.current;setGeminiAccountsLoading(true);
+ const refreshGeminiAccounts=async({quiet=false}={})=>{
+  const generation=++geminiGeneration.current;if(!quiet)setGeminiAccountsLoading(true);
   try{
    const response=await fetch('/api/gemini/accounts',{cache:'no-store'});if(!response.ok)throw Error();
    const next=await response.json();if(generation===geminiGeneration.current)setGeminiAccounts(next);return next;
   }catch{const unavailable={enabled:false,activeAccountId:null,busy:false,loginPending:false,accounts:[],reason:'目前無法讀取 Gemini 帳號清單。'};if(generation===geminiGeneration.current)setGeminiAccounts(unavailable);return unavailable;}
-  finally{if(generation===geminiGeneration.current)setGeminiAccountsLoading(false);}
+  finally{if(!quiet&&generation===geminiGeneration.current)setGeminiAccountsLoading(false);}
  };
  const geminiAccountAction=async(action,data={})=>{
   ++geminiGeneration.current;
@@ -65,7 +65,7 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
   catch(error){setGeminiNotice(error.message||'無法開啟 Antigravity 官方登入。');}
   finally{setGeminiAction(false);}
  };
- useEffect(()=>{refreshClaudeStatus();refreshCodexStatus();refreshGeminiStatus();},[]);
+ useEffect(()=>{refreshClaudeStatus();refreshCodexStatus();refreshGeminiStatus();refreshGeminiAccounts();},[]);
  const updateClaudeLogin=async(route,data={})=>{
   setClaudeAction(true);setClaudeLoginNotice('');setClaudeCode('');
   try{
@@ -126,6 +126,13 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
  const geminiRegistered=geminiAccountRows.length>0;
  const geminiActiveVerified=geminiRegistered?!!geminiAccountActive&&geminiAccountActive.auth?.status==='authenticated'&&!geminiLoginPending:geminiLegacyVerified&&!geminiLoginPending;
  const geminiUncertain=geminiAccounts?.uncertain===true;
+ // A busy snapshot can outlive the native status/catalog lookup that caused it.
+ // Re-read while actually busy, without replacing account cards with a spinner.
+ useEffect(()=>{
+  if(!geminiBusy||geminiUncertain||geminiLoginPending||geminiAction||geminiAccountsLoading)return;
+  const timer=setTimeout(()=>{void refreshGeminiAccounts({quiet:true});},1000);
+  return()=>clearTimeout(timer);
+ },[geminiAccounts,geminiBusy,geminiUncertain,geminiLoginPending,geminiAction,geminiAccountsLoading]);
  const geminiStatusForConsumers=useMemo(()=>geminiRegistered?{...geminiStatus,available:geminiActiveVerified,auth:{...(geminiStatus?.auth??{}),status:geminiLoginPending?'unknown':geminiAccountActive?.auth?.status??'signed-out',loggedIn:geminiActiveVerified,checkedAt:geminiAccountActive?.auth?.checkedAt},accounts:geminiAccountRows,activeAccountId:geminiAccounts?.activeAccountId}:geminiLoginPending?{...geminiStatus,available:false,auth:{...(geminiStatus?.auth??{}),status:'unknown',loggedIn:false}}:geminiStatus,[geminiStatus,geminiRegistered,geminiActiveVerified,geminiLoginPending,geminiAccountActive,geminiAccountRows,geminiAccounts?.activeAccountId]);
  const codexVerified=codexStatus?.available===true&&codexAuth?.loggedIn===true&&codexAuth?.authMethod==='chatgpt';
  const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
@@ -167,7 +174,7 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
       </div>;
      })}
      {!geminiAccountRows.length&&<div className="gemini-account-empty"><span>{geminiLoading?'正在確認登入狀態…':geminiLegacyVerified?'目前 Antigravity 登入已驗證，可保存為帳號。':geminiStatus?.auth?.loggedIn===false?'目前尚未登入 Gemini。':'尚未確認目前登入狀態。'}</span>
-      <div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||geminiBusy||geminiLoginPending||!geminiAccountsEnabled||!geminiLegacyVerified} onClick={()=>geminiAccountAction('capture')}>保存目前登入</button><button type="button" disabled={disabled||geminiAction||geminiLoading||geminiBusy||geminiLoginPending||geminiLegacyVerified||!geminiStatus?.installed||!geminiAccountsEnabled} onClick={startGeminiLogin}>登入 Gemini 訂閱</button><button type="button" disabled={geminiAction||geminiLoading||geminiLoginPending||(geminiUncertain&&!geminiAccountsEnabled)} onClick={async()=>{if(geminiUncertain)await geminiAccountAction('refresh');void refreshGeminiStatus();}}><RefreshCw size={14}/>刷新狀態</button></div>
+      <div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||geminiBusy||geminiLoginPending||!geminiAccountsEnabled||!geminiLegacyVerified} onClick={()=>geminiAccountAction('capture')}>保存目前登入</button><button type="button" disabled={disabled||geminiAction||geminiLoading||geminiBusy||geminiLoginPending||geminiLegacyVerified||!geminiStatus?.installed||!geminiAccountsEnabled} onClick={startGeminiLogin}>登入 Gemini 訂閱</button><button type="button" disabled={geminiAction||geminiLoading||geminiLoginPending||(geminiUncertain&&!geminiAccountsEnabled)} onClick={async()=>{if(geminiUncertain)await geminiAccountAction('refresh');void refreshGeminiStatus();void refreshGeminiAccounts();}}><RefreshCw size={14}/>刷新狀態</button></div>
      </div>}
      {geminiLoginPending&&<div className="gemini-login-pending" role="status"><strong>正在加入 Gemini 帳號</strong><span>K 已保留原本帳號。請在官方登入程式改用另一個帳號並完成登入；登入程式關閉後回 K 選「完成登入」。取消會回到原本使用的帳號。</span><div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('finish')}>完成登入</button><button type="button" disabled={geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('cancel')}>取消並回原帳號</button></div></div>}
      {geminiAccountRows.length>0&&<div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('login')}>加入另一個帳號</button><button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh')}>刷新目前帳號額度</button></div>}

@@ -37,7 +37,7 @@ try{
   if(url.pathname==='/api/models'){modelsReads++;return respond(route,{models:[{model:'gemini-3.1-pro',displayName:'Gemini 3.1 Pro',provider:'gemini',available:true,inputModalities:['text'],supportedReasoningEfforts:[],nativeModels:{default:'gemini-3.1-pro'}}]});}
   if(url.pathname==='/api/codex/auth')return respond(route,{available:true,auth:{loggedIn:true,authMethod:'chatgpt',planType:'plus'}});
   if(url.pathname==='/api/claude/auth')return respond(route,{available:true,version:'2.1.287',auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'pro'}});
-  if(url.pathname==='/api/gemini/auth'){authInspectPending=true;await new Promise(resolve=>setTimeout(resolve,100));authInspectPending=false;return respond(route,geminiAuth());}
+  if(url.pathname==='/api/gemini/auth'){if(!accounts.length){authInspectPending=true;await new Promise(resolve=>setTimeout(resolve,100));authInspectPending=false;}return respond(route,geminiAuth());}
   if(url.pathname==='/api/usage')return respond(route,{...state.usage});
   if(url.pathname==='/api/gemini/accounts'&&method==='GET')return respond(route,snapshot());
   if(url.pathname==='/api/gemini/accounts/capture'){
