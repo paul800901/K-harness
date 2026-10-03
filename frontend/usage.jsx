@@ -37,7 +37,7 @@ export function UsageDetails({state,online}){
  const quotaLine=(windows,key)=>{const item=windows?.find(w=>w.key===key);return item?.remainingPercent==null?'—':`${item.remainingPercent}%`;};
  const resetLine=(windows,key)=>{const item=windows?.find(w=>w.key===key);return item?.resetsAt?new Date(item.resetsAt*1000).toLocaleString('zh-TW'):'—';};
  return <section className="usage-details" aria-label="額度與用量詳細資訊">
-  <div className="usage-toolbar"><span>剩餘額度 · 各帳號共用，非此對話獨享</span><button type="button" title="更新額度與用量" aria-label="更新額度與用量" disabled={refreshing||!online} onClick={refresh}><RefreshCw size={15}/></button></div>
+  <div className="usage-toolbar"><span>剩餘額度 · 同一帳號的對話共用</span><button type="button" title="更新額度與用量" aria-label="更新額度與用量" disabled={refreshing||!online} onClick={refresh}><RefreshCw size={15}/></button></div>
   <section className="usage-provider-section" aria-label="Claude 訂閱剩餘額度">
    <div className="usage-heading"><strong>Claude 訂閱剩餘額度</strong></div>
    <div className="quota-line">{claude?.windows?.length?claude.windows.map(w=><span key={w.key}>{w.label} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>官方額度暫時無法取得；可用 Claude Code /usage 核對。</span>}</div>
