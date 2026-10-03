@@ -38,10 +38,17 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
   for(const method of ['compact','goal','steer','review','fuzzyFileSearch','directories'])c[method]=async data=>{calls.push([method,data]);return {};};
   native.push(c);return c;
  };
- const controller=createConversationController({root,codexFactory:factory('codex'),claudeFactory:factory('claude'),inspect:async()=>({available:true}),browserRequest,onChange:()=>notifications++});
+ const controller=createConversationController({root,codexFactory:factory('codex'),claudeFactory:factory('claude'),geminiFactory:factory('gemini'),inspect:async()=>({available:true}),browserRequest,onChange:()=>notifications++});
  return {root,controller,native,get notifications(){return notifications;},room:id=>native.find(c=>c.state.threadId===id)};
 }
 const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date.now()>end)throw Error('condition timed out');await new Promise(r=>setTimeout(r,20));}};
+
+test('shared Gemini account quota stays visible while a GPT conversation is selected',async()=>{
+ const f=await fixture();try{
+  await f.controller.usage();const quota={status:'ready',windows:[{key:'seven_day',remainingPercent:97}]};f.native.find(c=>c.state.provider==='gemini').state.usage={gemini:quota};
+  await f.controller.open({model:codexModel});const usage=await f.controller.usage();assert.deepEqual(usage.gemini,quota);assert.deepEqual(f.controller.state.usage.gemini,quota);
+ }finally{await f.controller.close();}
+});
 
 for(const [first,second] of [[claudeModel,claudeModel],[codexModel,codexModel],[claudeModel,codexModel],[codexModel,claudeModel]]){
  test(`working ${first} remains live while opening and sending to ${second}`,async()=>{

@@ -19,6 +19,7 @@
 - 建置介面真瀏覽器測試 PASS，含登入三種狀態、收合顯示、登入按鈕停用、97%／0% 額度、重設時間及舊資料標示；原模型／權限／子代理測試保留。證據 `.runtime/gemini-account-ui.log`、`.runtime/gemini-account-quota-ui.png`。
 - 真實 agy **1.2.16**，2026-10-03 13:27:36 臺灣時間查詢成功：`auth.loggedIn=true`；每週 **97%**、重設 `2026-10-09T14:10:46Z`；5 小時 **97%**、重設 `2026-10-03T08:01:09Z`。證據 `.runtime/bootstrap/gemini-auth-status-live.json`。數字只代表該次查詢。
 - 新增測試驗證額度用完 0% 仍屬已登入、目錄成功不等於登入、失敗不洩漏原始診斷、已有設定不被刷新／登入覆寫。
+- 首次正式介面已讀回「Gemini 已登入」，但額度檢查失敗：`src/conversation-controller.mjs` 的共用額度投影只列 Codex／Claude，切到既有聊天室漏了 Gemini。補成保留所有原生供應商額度，新增切到 GPT 仍可見 Gemini 額度的回歸測試；不把首次失敗當成通過。首次證據保留為 `.runtime/bootstrap/gemini-account-live-ui-attempt1.json`。
 
 ## 正式狀態與南區交接
 
