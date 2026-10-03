@@ -5,6 +5,7 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
+import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
 async function fixture({accessMode='workspace-write',savedSession,root:existingRoot,workerPolicy={model:'gpt-6-luna',effort:'high'},cancelSettles=true,delayToolOutput=false,rejectToolOutput=false}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=existingRoot??await mkdtemp(path.join(base,'codex-flash-'));
@@ -46,6 +47,7 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra',workerPolicy:{model:'gpt-6-luna',effort:'high'}});
   const config=f.calls.find(x=>x.method==='thread/start').params.config;
+  assert.ok(f.calls.find(x=>x.method==='thread/start').params.developerInstructions.includes(MODEL_ROLE_GUIDANCE));
   assert.deepEqual(config.mcp_servers.k_gemini,{url:'http://127.0.0.1:43210/mcp',http_headers:{Authorization:'Bearer fixture-token'}});
   assert.equal(config.mcp_servers.k_luna,undefined);assert.equal(config.mcp_servers.k_flash.enabled,false);
   assert.equal(config.agents.default_subagent_model,'gpt-6-luna');assert.equal(config.agents.default_subagent_reasoning_effort,'high');

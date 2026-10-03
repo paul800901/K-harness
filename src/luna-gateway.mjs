@@ -17,7 +17,7 @@ function createMcpServer(bridge,{geminiOnly=false}={}) {
   const server = new McpServer({name:geminiOnly?'k-gemini-gateway':'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   const policy=bridge.workerPolicy;
   const selectionGuidance=geminiOnly?'此入口只派 Gemini Flash；必須明確指定 low/medium/high。GPT 子代理使用原生派工，不從本入口轉派。':policy.model==='auto'
-    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇 Sol、Luna 或 Flash 及官方支援的推理程度。`
+    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort；一般工人優先 Flash，Sol 為輔助大腦，Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
     : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
     try {
@@ -30,7 +30,7 @@ function createMcpServer(bridge,{geminiOnly=false}={}) {
     }
   });
   if(bridge.accounts)server.registerTool('gemini_accounts',{description:'Read K Gemini account identities and last checked native quotas. Cached percentages are not live proof. For a stopped worker, inspect its results and real project files, then start a NEW requestId with handoffFrom and only the remaining task. accountId explicitly selects an enrolled account; omission keeps the current account unless its official quota is exhausted and another account is available. Never replay a whole task or switch on permission/network failures. This tool does not change login.',inputSchema:z.strictObject({}),annotations:{readOnlyHint:true,idempotentHint:true}},async()=>{const value=await bridge.accounts();return {content:[{type:'text',text:JSON.stringify(value)}]};});
-  register(`${prefix}_start`,`${geminiOnly?'Start one bounded task with Antigravity subscription Gemini 3.8 Flash.':'Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna, or Antigravity Gemini 3.8 Flash.'} Flash 適合範圍明確、要快的機械性工作；困難的設計、除錯、判斷交 Sol。Flash effort 只接受 low|medium|high；非完整存取模式不能跑指令；workspace-write 只能寫工作區（嘗試寫外部會讓該次工作 failed），唯讀不能寫檔；被拒項目列在 deniedTools。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,geminiOnly?geminiTaskSchema:taskSchema,
+  register(`${prefix}_start`,`${geminiOnly?'Start one bounded task with Antigravity subscription Gemini 3.8 Flash.':'Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna, or Antigravity Gemini 3.8 Flash.'} Flash 是使用者優先的一般工人，也適合文章、審美及提出方向，不限機械性工作；依目前 K 分工與明確指定選擇。Sol 寫碼後必須交真正的 Opus 5.5 審核；無審查管道則標示待審，不冒稱完成。Flash effort 只接受 low|medium|high；非完整存取模式不能跑指令；workspace-write 只能寫工作區（嘗試寫外部會讓該次工作 failed），唯讀不能寫檔；被拒項目列在 deniedTools。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,geminiOnly?geminiTaskSchema:taskSchema,
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
   register(`${prefix}_wait`,`Manual recovery only: wait for an existing ${geminiOnly?'Flash':'Sol, Luna or Flash'} subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.`,waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});

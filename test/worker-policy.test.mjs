@@ -1,7 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from '../src/worker-policy.mjs';
+import {MODEL_ROLE_GUIDANCE,normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from '../src/worker-policy.mjs';
 const models=[{model:'gpt-6.1-sol',supportedReasoningEfforts:['low','medium','high','xhigh','max','ultra'].map(reasoningEffort=>({reasoningEffort}))},{model:'gpt-6-luna',supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort}))}];
+
+test('user model roles reach Codex instructions without changing manual defaults or granting new capabilities',()=>{
+ for(const policy of [undefined,{model:'gpt-6.1-sol',effort:'high'},{model:'gemini-3.8-flash',effort:'low'}]){
+  const config=workerPolicyConfig(policy,{models,geminiGateway:true});
+  assert.ok(config.developer_instructions.includes(MODEL_ROLE_GUIDANCE));
+ }
+ assert.match(MODEL_ROLE_GUIDANCE,/Astra：後端、架構/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Opus 5\.5：通才、平常的大腦/);
+ assert.match(MODEL_ROLE_GUIDANCE,/一般工作優先交給 Flash/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Google 商家/);
+ assert.match(MODEL_ROLE_GUIDANCE,/GPT-6\.1 Sol：平常的輔助大腦/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Luna：除非使用者明確指定，僅在小任務對規則遵守有極高要求/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Sol 寫的程式碼，最後必須由真正的 Opus 5\.5 審核/);
+ assert.match(MODEL_ROLE_GUIDANCE,/待 Opus 5\.5 審核/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不是它說了算/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不必要架構、重複檢查/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不需要 Gemini 主代理自動派 GPT／Claude/);
+ assert.match(MODEL_ROLE_GUIDANCE,/角色不代表已有跨供應商派工能力/);
+ assert.match(MODEL_ROLE_GUIDANCE,/已保存的手動模型／推理設定優先/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不增加工具、資料、登入、部署或發布授權/);
+});
 
 test('new worker policy defaults to AI auto while saved explicit preferences remain intact',()=>{
  assert.deepEqual(normalizeWorkerPolicy(),{model:'auto',effort:'auto'});

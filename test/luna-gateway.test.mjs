@@ -89,7 +89,9 @@ test('MCP start forwards both worker choices and an explicit effort to the bridg
   const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list'}));
   const start=listed.result.tools.find(t=>t.name==='luna_start');
   assert.deepEqual(start.inputSchema.properties.model.enum,['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']);
-  assert.match(start.description,/Flash.*機械性工作/);assert.match(start.description,/不能跑指令/);
+  assert.match(start.description,/Flash 是使用者優先的一般工人/);assert.match(start.description,/不限機械性工作/);assert.match(start.description,/不能跑指令/);
+  assert.match(start.description,/Sol 寫碼後必須交真正的 Opus 5\.5 審核/);
+  assert.match(start.description,/Luna 僅用於規則遵守要求極高的小任務/);
   let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']){
    const args={requestId:model,task:'fake task',model,effort:'low'};
    const result=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:args}}));

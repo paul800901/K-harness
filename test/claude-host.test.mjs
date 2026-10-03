@@ -6,6 +6,7 @@ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 await mkdir(base,{recursive:true});
 import path from 'node:path';
 import { CLAUDE_MODEL, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
+import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
 async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }, models) {
   const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
@@ -24,6 +25,7 @@ if (args.includes('auth') && args.includes('status')) {
 if (!args.includes('--setting-sources') || args[args.indexOf('--setting-sources')+1] !== 'user,project,local' || !args.includes('--permission-mode') || !['manual','acceptEdits','auto','bypassPermissions','dontAsk','plan'].includes(args[args.indexOf('--permission-mode')+1]) || !args.includes('--permission-prompts') || args[args.indexOf('--permission-prompts')+1] !== 'host' || !args.includes('--append-system-prompt') || !args.includes('--permission-prompt-tool') || args[args.indexOf('--permission-prompt-tool')+1] !== 'stdio' || args.includes('--strict-mcp-config') || args.includes('--disallowedTools')) process.exit(13);
 if (!args.includes('--include-partial-messages')) process.exit(14);
 if (!args.includes('--forward-subagent-text')) process.exit(15);
+if (!args[args.indexOf('--append-system-prompt')+1].includes(${JSON.stringify(MODEL_ROLE_GUIDANCE)})) process.exit(16);
 if (!args.includes('--input-format') || !args.includes('stream-json')) process.exit(12);
 const rl = readline.createInterface({ input: process.stdin });
 let init = false, asked = false;

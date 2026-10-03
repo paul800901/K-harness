@@ -5,6 +5,20 @@ export const WORKER_MODELS = ['gpt-6.1-sol','gpt-6-luna'];
 export const GEMINI_WORKER_MODELS = ['gemini-3.8-flash'];
 export const GEMINI_WORKER_EFFORTS = ['low','medium','high'];
 
+// One user preference text shared by the three native main-agent entry points.
+export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-03）：
+以下只供 AI 內部選模與安排工作，不向使用者主動重述分工，不新增分工／審核提醒、彈窗或確認流程；原本必要的登入、核准與工作失敗訊息不變。
+這是本人的使用偏好，不是模型能力排名或硬性路由。當輪明確指定、已保存的手動模型／推理設定優先；不自行切換目前主代理，不強制派工。只使用已接通工具與官方目錄實際提供的模型、推理程度；角色不代表已有跨供應商派工能力。
+- Astra：後端、架構、複雜工程與技術判斷主力。
+- Opus 5.5：通才、平常的大腦。文章以 Gemini 與 Opus 5.5 為主；考量本人訂閱成本，通常 Gemini 做多數閱讀、理解、撰寫與修改，Opus 5.5 最後提供不同想法、盲點與第二意見，不是它說了算；採納看理由、證據、文章效果，由使用者決定。
+- Gemini 3.8 Flash：本人的低成本、快速主力工人，能交給 Flash 的一般工作優先交給 Flash；不只機械性工作，也負責文章、審美、Google 商家及相關生態工作，能主導簡單任務或提出大方向。程式可由 GPT／Claude 監工、Flash 執行。這是使用者的分工偏好，不保證 Google 工具已接通或另授權帳號操作。
+- GPT-6.1 Sol：平常的輔助大腦。
+- GPT-6 Luna：除非使用者明確指定，僅在小任務對規則遵守有極高要求時選用，不再當一般預設工人；模型 ID 以官方目錄為準。
+- Opus 5.5 要複查 Astra／GPT 寫的程式是否過度工程化：找不必要架構、重複檢查、無用備援、多餘狀態或設定；採最小完整解，不把小修做成新系統。刪減需核對真實用途，保留必要原生權限、核准與防止未知工作重播。
+- GPT-6.1 Sol 寫的程式碼，最後必須由真正的 Opus 5.5 審核（正確性、錯誤處理、過度工程化）；自查、測試或其他模型不能替代。沒有可用的 Opus 5.5 審查管道時，在工程交接紀錄標示「待 Opus 5.5 審核」，保留給 Opus 聊天室的交接內容，不額外提醒使用者，不宣稱已完成審核，也不自行新增派工管道。審核必須做，意見仍依證據判斷，不是一律照改。
+- 不需要 Gemini 主代理自動派 GPT／Claude；Gemini 做完後，由使用者另開 GPT／Claude 聊天室看成果，不把反向派工列成缺口。
+模型偏好不增加工具、資料、登入、部署或發布授權；失敗／額度不足不暗換模型、不改 API 計費、不重播未確認工作。Gemini 帳號接手只依既有已授權流程，先確認原工人停止並檢查成果，再由新工人接剩餘工作。`;
+
 // Preserve legacy metadata for readback; new execution validates the current policy.
 export function normalizeWorkerPolicy(value = {}) {
  const model=value?.model??DEFAULT_WORKER_MODEL;
@@ -35,6 +49,7 @@ export function workerPolicyConfig(value,{baseInstructions='',models,geminiGatew
  const autoChoices=canUseFlash?`${gptChoices} or gemini-3.8-flash` : gptChoices;
  const effortText=canUseFlash?'low, medium, high for Flash; choose officially supported efforts for GPT':'officially supported reasoning effort';
  const instructions=[
+  MODEL_ROLE_GUIDANCE,
   'K HARNESS delegation preferences selected by the user:',
   'Delegation is optional. Work directly when delegation would not help; send only the necessary bounded context.',
   auto

@@ -7,7 +7,7 @@ import {geminiExecutable,geminiEnvironment,geminiSettings,geminiStream,geminiPro
 import {saveMainSession} from './main-sessions.mjs';
 import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment,loadAttachment,readPresentedFile} from './desktop-files.mjs';
-import {normalizeWorkerPolicy} from './worker-policy.mjs';
+import {normalizeWorkerPolicy,MODEL_ROLE_GUIDANCE} from './worker-policy.mjs';
 import {browserSessionKey} from './browser-mcp-config.mjs';
 
 const sessionId=id=>typeof id==='string'&&/^gemini-[0-9a-f-]{36}$/iu.test(id);
@@ -76,6 +76,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   }
   await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify({mcpServers:browserServer?{k_browser:{serverUrl:browserServer.url,headers:browserServer.http_headers??browserServer.headers}}:{}},null,2));
   await atomicWrite(path.join(home(),'.gemini/antigravity-cli/settings.json'),JSON.stringify(settings,null,2));
+  await atomicWrite(path.join(home(),'.gemini/config/rules/k-model-roles.md'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n`);
   state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};
  }
  const api={

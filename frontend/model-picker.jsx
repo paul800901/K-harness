@@ -7,6 +7,7 @@ import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 
 export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
+const workerOrder=[...GEMINI_WORKER_MODELS,...WORKER_MODELS];
 const modelProvider=model=>model?.provider??providerOf(model?.model);
 const providerLabel=provider=>({claude:'Claude',codex:'GPT',gemini:'Gemini'})[provider];
 const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
@@ -91,7 +92,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
  const isAvailable=item=>item?.available!==false&&(modelProvider(item)!=='claude'||claudeVerified);
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
- const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model)||((provider==='claude'||(provider==='codex'&&catalogGeminiGateway))&&GEMINI_WORKER_MODELS.includes(item.model)));
+ const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model)||((provider==='claude'||(provider==='codex'&&catalogGeminiGateway))&&GEMINI_WORKER_MODELS.includes(item.model))).sort((a,b)=>workerOrder.indexOf(a.model)-workerOrder.indexOf(b.model));
  const canOfferFlash=workerModels.some(item=>GEMINI_WORKER_MODELS.includes(item.model));
  const invalidWorker=provider==='codex'&&GEMINI_WORKER_MODELS.includes(workerPolicy.model)&&(!catalogGeminiGateway||!canOfferFlash);
  const workerEfforts=GEMINI_WORKER_MODELS.includes(workerPolicy.model)?GEMINI_WORKER_EFFORTS.map(reasoningEffort=>({reasoningEffort})):workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
@@ -143,14 +144,14 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
    {!models.length&&<p className="modal-description">目前沒有可用模型。</p>}
    {mode==='switch'?<>
     {hasHistory&&model!==currentModel?<p className="model-switch-warning" role="note">中途切換模型可能影響接續品質，上下文也可能自動壓縮。原對話與檔案保留，但不保證所有細節都能無損接續。需要完全獨立的工作時，可另開新對話。</p>:<p className="model-routing-note">從下一則訊息開始使用；不會立即執行工作。</p>}
-   </>:provider==='gemini'?<p className="step-hint">Gemini 使用 Antigravity 原生核心；目前未接入 K 的跨供應商子代理。</p>:<details className="worker-settings">
+   </>:provider==='gemini'?null:<details className="worker-settings">
     <summary aria-label="子代理設定"><span>子代理</span><span>{workerPolicy.model==='auto'?'AI 自動選擇':`${displayModel(workerModels.find(item=>item.model===workerPolicy.model)??{model:workerPolicy.model})} · ${effortName[workerPolicy.effort]??workerPolicy.effort}`}<ChevronDown size={14}/></span></summary><div className="worker-settings-body">
     <label><span>預設模型</span><select aria-label="子代理模型" value={workerPolicy.model} disabled={disabled} onChange={event=>{const model=workerModels.find(item=>item.model===event.target.value);setWorkerPolicy(model?{model:model.model,effort:model.defaultReasoningEffort??'high'}:{model:'auto',effort:'auto'});}}>
-     <option value="auto">AI 自動選擇（依任務難度）</option>{workerPolicy.model!=='auto'&&!workerModels.some(item=>item.model===workerPolicy.model)&&<option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>}{workerModels.map(item=><option key={item.model} value={item.model}>{displayModel(item)}</option>)}
+     <option value="auto">AI 自動選擇</option>{workerPolicy.model!=='auto'&&!workerModels.some(item=>item.model===workerPolicy.model)&&<option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>}{workerModels.map(item=><option key={item.model} value={item.model}>{displayModel(item)}</option>)}
     </select></label>
     {workerPolicy.model!=='auto'&&<label><span>預設推理程度</span><select aria-label="子代理推理程度" value={workerPolicy.effort} disabled={disabled||!workerEfforts.length} onChange={event=>setWorkerPolicy(current=>({...current,effort:event.target.value}))}>
      {!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort}>{effortName[workerPolicy.effort]??workerPolicy.effort}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
-    </select></label>}<p className="step-hint">{workerPolicy.model==='auto'?(canOfferFlash?'需要派工時，由 AI 選擇 Sol、Luna 或 Gemini 3.8 Flash，以及推理程度。':'需要派工時，由 AI 依任務難度選擇 Sol 或 Luna，以及推理程度。'):'作為派工預設；你也可以在訊息中指定模型與推理程度。'}</p>{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前未由目錄確認可用；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
+    </select></label>}{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前未由目錄確認可用；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
   </>}
   <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||invalidWorker||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </div>;

@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {createGeminiController,geminiModelsFrom} from '../src/gemini-controller.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
 const names=['gemini-3.8-flash-low','gemini-3.8-flash-medium','gemini-3.8-flash-high','gemini-3.1-pro-high','gemini-3.1-pro-low','gemini-new-native'];
 const loginFactory=()=>({status:async()=>({available:true,models:names,version:'fixture'})});
@@ -57,7 +58,11 @@ test('Gemini sends only new input, reopens native history and retains provider m
   const native=JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-sessions',threadId+'.json'),'utf8')).nativeSessionId;
   assert.match(native,/^[0-9a-f-]{36}$/u);assert.equal(c.state.messages.at(-1).text,'native reply');assert.equal(c.state.progress.tokenUsage.last.totalTokens,23);
   await c.close();c=createGeminiController(f.opts);await c.open({threadId,model:'gemini-3.8-flash'});await c.send({text:'second input'});await finish(c);
-  const last=f.calls.at(-1);assert.equal(last.args[last.args.indexOf('--conversation')+1],native);assert.equal(last.args[last.args.indexOf('-p')+1],'second input');assert.equal(last.args.includes('first private context'),false);
+  const last=f.calls.at(-1);assert.equal(last.args[last.args.indexOf('--conversation')+1],native);
+  const prompt=last.args[last.args.indexOf('-p')+1];assert.equal(prompt,'second input');assert.doesNotMatch(prompt,/first private context/);
+  const rules=path.join(last.params.env.HOME,'.gemini/config/rules/k-model-roles.md');
+  assert.equal(await readFile(rules,'utf8'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n`);
+  assert.equal(c.state.messages.filter(m=>m.role==='user').at(-1).text,'second input');
   assert.equal(last.args[last.args.indexOf('--model')+1],'gemini-3.8-flash-medium');assert.equal(last.params.env.GEMINI_API_KEY,undefined);assert.equal(last.params.env.API_KEY,undefined);assert.equal(last.params.env.HOME,last.params.env.USERPROFILE);assert.ok(last.params.env.HOME.startsWith(path.join(f.root,'agent-home','gemini','main')));
   const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.provider,'gemini');assert.equal(saved.model,'gemini-3.8-flash');assert.equal(c.state.messages.length,4);
  }finally{await c.close();}
