@@ -4,13 +4,14 @@ import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {createCodexLogin} from './codex-login.mjs';
+import {createGeminiLogin} from './gemini-login.mjs';
 import {listProjects,addProject,updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 
-export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
+export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
@@ -18,6 +19,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  const cookieMatches=req=>req.headers.cookie?.split(';').some(c=>c.trim()===`k_session=${cookie}`);
  const claudeLogin=claudeLoginFactory({cwd:root});
  const codexLogin=codexLoginFactory({cwd:root,executable});
+ const geminiLogin=geminiLoginFactory({cwd:root});
  const localDictation=localDictationFactory();
  let localDictationClose=null;
  const closeLocalDictation=()=>{
@@ -98,6 +100,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     const heartbeat=setInterval(()=>res.write(': alive\n\n'),20000);req.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
+   if(req.method==='GET'&&url.pathname==='/api/gemini/auth')return json(200,await geminiLogin.status());
    if(req.method==='GET'&&url.pathname==='/api/claude/auth')return json(200,await claudeLogin.status());
    if(req.method==='GET'&&url.pathname==='/api/claude/login')return json(200,claudeLogin.progress());
    if(req.method==='GET'&&url.pathname==='/api/sessions')return json(200,await controller.sessions());
@@ -140,6 +143,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    }
    if(url.pathname==='/api/browser/action')return json(200,await browserRequest(root,controller.state,data.threadId,'/action',data));
    if(url.pathname==='/api/codex/login')return json(200,await codexLogin.start());
+   if(url.pathname==='/api/gemini/login')return json(200,await geminiLogin.start());
    if(url.pathname==='/api/codex/login/cancel')return json(200,await codexLogin.cancel());
    if(url.pathname==='/api/claude/login')return json(200,await claudeLogin.start());
    if(url.pathname==='/api/claude/login/cancel')return json(200,await claudeLogin.cancel());

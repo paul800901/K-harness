@@ -2,12 +2,12 @@
 
 適用於 `D:\K-harness`。使用者當輪要求與全域規則優先；本檔只補充專案邊界。
 
-- 工程專案名稱維持 K HARNESS，以 Codex CLI／Claude Code 原生核心為執行基底；介面品牌顯示「K 執行中樞」，副標「通用工作台」。不得與舊 KAI 或 DSH 正式工作環境混為一談。
+- 工程專案名稱維持 K HARNESS，以 Codex CLI／Claude Code／Antigravity CLI 原生核心為執行基底；介面品牌顯示「K 執行中樞」，副標「通用工作台」。不得與舊 KAI 或 DSH 正式工作環境混為一談。
 - 現況與使用說明見 `README.md`；建置、測試、部署及歷史證據見 `docs/development-log.md`。設計候選不得宣稱為已實作，依賴宣告不得宣稱為已安裝。
 - 初期範圍是通用非臨床工作。不得接入病歷資料、CaseAgent 正式寫入流程或修改既有 DSH/KAI 環境。
 - 產品定位是接近 Codex App／Claude Code 的通用工作台，增加可跨供應商選擇的子代理；不是 Flash 專用流程。主代理可選目前 Codex 登入實際提供的模型，不固定 Astra／Sol 的用途。
 - 不強制派子代理；人與 AI 可依任務選擇 GPT-6.1 Sol、GPT-6 Luna 或 Gemini 3.8 Flash（Flash 目前限 Claude 的 k_luna gateway），推理程度依模型支援清單；新對話預設 AI 自動選擇，Flash 逐項指定 low/medium/high。明確指定優先，不因錯誤或額度暗換模型；模型選擇不擴張工具或資料權限。
-- GPT 主代理與 GPT 子代理沿用 Codex 訂閱；Claude 主代理沿用 Claude Code 訂閱。DeepSeek／Pi 路徑已移除，不搬憑證或改走 API 計費；歷史與上下文壓縮由各原生核心管理。
+- GPT 主代理與 GPT 子代理沿用 Codex 訂閱；Claude 主代理沿用 Claude Code 訂閱；Gemini 主代理與 Flash 子代理沿用 Antigravity 訂閱。DeepSeek／Pi 路徑已移除，不搬憑證或改走 API 計費；歷史與上下文壓縮由各原生核心管理。
 - 桌面權限選單為「要求核准／代我核准／完整存取權」，進階保留「唯讀」。新工作預設要求核准（工作區內可修改）；舊對話保留既有權限。改用代我核准或完整存取必須由使用者明確選用；代我核准接 Codex 原生自動審查，不在 K 內自行一律放行。子代理沿用其原生權限範圍。限定真實測試與模式對應見 `docs/desktop-permissions-20260915.md`；直接讀改測、單次核准／拒絕及停止見 `docs/main-direct-work-20260915.md`。不得以選單宣稱所有工具、Blender 或其他供應商已驗證。
 - 不引入舊 L0／L1／L2 記憶設計。優先驗證原始工作紀錄、必要摘要與按需回讀是否足以完成任務。
 - 優先使用各核心的公開協定／擴充入口；只有觀察到具體限制才修改上游核心或新增抽象。
@@ -126,3 +126,10 @@
 - agy 登入沿用 Windows 帳號，由使用者本人操作；設定、紀錄放 K 專用 profile（覆寫 USERPROFILE/HOME），K 不讀、不複製憑證，不改真實 `~/.gemini`，不用 API key。
 - 權限跟隨主對話且不得超過：read-only 用預設模式加寫檔／指令／unsandboxed／MCP deny；workspace-write 用預設模式加 Windows 原生工作區 allow 與指令／unsandboxed／MCP／TEMP deny；只有 danger-full-access 加 skip。不得把 read-only／workspace-write 改回會忽略 allow 的 strict。
 - 沒有 agy 或未登入只讓 Flash 派工 failed，其他功能照常，不換模、不自動重送。其他電腦依 `docs/antigravity-worker-20261003.md` 啟用並跑權限 probe；版本不同於 1.0.6 務必重驗，FAIL 不使用 Flash。
+
+## 2026-10-03 三原生核心（使用者追加確認）
+
+- 使用者明確要求個人 K 從 GPT／Claude 雙核心升級為 GPT／Claude／Gemini 三核心；本輪接入 Gemini 主代理，全部可用模型與推理程度跟隨 `agy models`，不只預留 Gemini 4 Pro，也不編造未提供的模型。
+- 三家各自保留原生執行、訂閱登入、歷史與壓縮。Gemini 經 Antigravity CLI，設定與紀錄放 K 專用 profile，登入沿用 Windows 帳號；由本人在官方程式與外部瀏覽器操作，K 不讀 Chrome 登入資料、Google 密碼或授權碼，不搬憑證、不用 API key。
+- Flash 3.8 同時保留為第三種子代理；現階段 K 的 Flash gateway 仍只接 Claude 主對話，不把 Gemini 原生工具或主代理接入說成跨供應商派工已接通。權限不得超過主對話。
+- 不為個人工作台新增管理架構；Gemini 不等價的能力明確說明，禁止暗換模型／供應商或重播。工程與實際部署證據見 `docs/gemini-third-core-20261003.md`。

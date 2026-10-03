@@ -37,6 +37,7 @@ dialog:has(.model-picker) .modal-actions{margin-top:20px}
 .provider-auth-status>summary>span:first-child,.worker-settings>summary>span:first-child{color:var(--k-ink-3)}
 .account-summary,.worker-settings>summary>span:last-child{display:flex;align-items:center;gap:14px;font-size:var(--k-text-xs);color:var(--k-ink-3)}
 .account-summary .connected{color:var(--k-ink-2)}
+.account-summary{flex-wrap:wrap;justify-content:flex-end;gap:8px 12px}
 .account-summary svg,.worker-settings>summary svg{flex:none;transition:transform .15s}
 .provider-auth-status[open]>summary svg,.worker-settings[open]>summary svg{transform:rotate(180deg)}
 .provider-auth-status[open]{padding-bottom:10px}

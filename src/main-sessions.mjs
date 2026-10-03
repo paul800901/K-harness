@@ -6,6 +6,7 @@ import {validMainModel} from './main-models.mjs';
 import {normalizeWorkerPolicy} from './worker-policy.mjs';
 import {permissionMode} from './desktop-permissions.mjs';
 import {normalizeClaudeAccessMode} from './claude-host.mjs';
+import {modelProvider} from '../shared/model-provider.mjs';
 const sessionAccessMode=(model,value)=>model.startsWith('claude-')?normalizeClaudeAccessMode(value):permissionMode(value);
 let lastSaveOrder=0;
 const saves=new Map();
@@ -24,7 +25,7 @@ async function writeMainSession(root,{threadId,model,title='',archived=false,pin
   const directory=path.join(root,'.runtime/main-sessions');
   const saveOrder=Math.max(Date.now()*1000,lastSaveOrder+1);lastSaveOrder=saveOrder;
   const target=path.join(directory,`${threadId}-current.json`);
-  await atomicWrite(target,JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:model.startsWith('claude-')?'claude':'codex',accountType:model.startsWith('claude-')?'claude.ai':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));
+  await atomicWrite(target,JSON.stringify({threadId,model,title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:modelProvider(model),accountType:model.startsWith('claude-')?'claude.ai':model.startsWith('gemini-')?'antigravity':'chatgpt',workspace:selectedWorkspace,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),savedAt:new Date().toISOString()},null,2));
   return target;
 }
 export async function listMainSessions(root,{threadId}={}) {
@@ -42,7 +43,7 @@ export async function listMainSessions(root,{threadId}={}) {
       // attached to K's root. A stored external workspace is intentionally
       // allowed, but still must be absolute and not a drive root/HOME.
       const workspace=normalizeWorkspacePath(record.workspace===undefined?root:record.workspace);
-      const item={browserSessionKey:typeof record.browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(record.browserSessionKey)?record.browserSessionKey:null,branchType:record.branchType==='user'?'user':null,parentThreadId:validId(record.parentThreadId)?record.parentThreadId:null,parentTitle:typeof record.parentTitle==='string'?record.parentTitle:null,provider:record.model.startsWith('claude-')?'claude':'codex',threadId:record.threadId,model:record.model,workerPolicy:normalizeWorkerPolicy(record.workerPolicy),effort:typeof record.effort==='string'?record.effort:null,accessMode:sessionAccessMode(record.model,record.accessMode??'read-only'),lastUsedModel:validMainModel(record.lastUsedModel)?record.lastUsedModel:null,modelChanges:normalizeModelChanges(record.modelChanges),title:typeof record.title==='string'?record.title:'',archived:record.archived===true,pinned:record.pinned===true,workspace,lastOpenedAt:info.mtime.toISOString(),mtime:Math.max(info.mtimeMs*1000,record.saveOrder??0)};
+      const item={browserSessionKey:typeof record.browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(record.browserSessionKey)?record.browserSessionKey:null,branchType:record.branchType==='user'?'user':null,parentThreadId:validId(record.parentThreadId)?record.parentThreadId:null,parentTitle:typeof record.parentTitle==='string'?record.parentTitle:null,provider:modelProvider(record.model),threadId:record.threadId,model:record.model,workerPolicy:normalizeWorkerPolicy(record.workerPolicy),effort:typeof record.effort==='string'?record.effort:null,accessMode:sessionAccessMode(record.model,record.accessMode??'read-only'),lastUsedModel:validMainModel(record.lastUsedModel)?record.lastUsedModel:null,modelChanges:normalizeModelChanges(record.modelChanges),title:typeof record.title==='string'?record.title:'',archived:record.archived===true,pinned:record.pinned===true,workspace,lastOpenedAt:info.mtime.toISOString(),mtime:Math.max(info.mtimeMs*1000,record.saveOrder??0)};
       if(!sessions.has(item.threadId)||sessions.get(item.threadId).mtime<item.mtime)sessions.set(item.threadId,item);
     }catch{unreadable++;}
   }

@@ -49,7 +49,7 @@ async function fixture({codexModels,inspect=async()=>({available:true,reason:nul
  const root=await mkdtemp(path.join(TEST_ROOT,'unified-controller-'));
  const codex=createFake('codex',root,{models:codexModels??[{model:CODEX_MODEL,displayName:'GPT-6 Astra'}]});
  let claude;
- const controller=createUnifiedController({root,codexFactory:()=>codex,claudeFactory:()=>{claude=createFake('claude',root);return claude;},inspect});
+ const controller=createUnifiedController({geminiFactory:()=>({state:{},models:async()=>({models:[]}),usage:async()=>({}),close:async()=>{}}),root,codexFactory:()=>codex,claudeFactory:()=>{claude=createFake('claude',root);return claude;},inspect});
  return {root,controller,codex,get claude(){return claude;}};
 }
 
@@ -100,7 +100,7 @@ test('model catalog merges providers independently when either provider fails',a
   await f.controller.models();f.claude.models=async()=>{throw Error('Claude unavailable');};
   let result=await f.controller.models();assert.deepEqual(result.models.map(row=>row.provider),['codex']);assert.match(result.warnings[0],/Claude unavailable/);
   const codexDown=createFake('codex',f.root);codexDown.models=async()=>{throw Error('Codex unavailable');};
-  const other=createUnifiedController({root:f.root,codexFactory:()=>codexDown,claudeFactory:()=>createFake('claude',f.root)});
+  const other=createUnifiedController({geminiFactory:()=>({state:{},models:async()=>({models:[]}),usage:async()=>({}),close:async()=>{}}),root:f.root,codexFactory:()=>codexDown,claudeFactory:()=>createFake('claude',f.root)});
   result=await other.models();assert.deepEqual(result.models.map(row=>row.provider),['claude']);assert.match(result.warnings[0],/Codex unavailable/);await other.close();
  }finally{await f.controller.close();}
 });

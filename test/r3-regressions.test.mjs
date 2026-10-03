@@ -11,7 +11,7 @@ async function fixture(){const base=fileURLToPath(new URL('../.runtime/tests/',i
 
 test('R3 official new Codex model is selectable without changing K',async()=>{
  const root=await fixture(),model={model:'gpt-future-official',supportedReasoningEfforts:[{reasoningEffort:'high'}]};
- const c=createUnifiedController({root,codexFactory:()=>({state:{},models:async()=>({models:[model]})}),claudeFactory:()=>({state:{},models:async()=>({models:[]})})});
+ const c=createUnifiedController({geminiFactory:()=>({state:{},models:async()=>({models:[]}),usage:async()=>({}),close:async()=>{}}),root,codexFactory:()=>({state:{},models:async()=>({models:[model]})}),claudeFactory:()=>({state:{},models:async()=>({models:[]})})});
  const rows=(await c.models()).models;
  assert.deepEqual(rows.find(x=>x.model===model.model),{...model,provider:'codex'});
 });

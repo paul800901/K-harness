@@ -20,6 +20,7 @@ export function Usage({state,online,onDetails}){
    <span className="usage-label">剩餘額度</span>
    <span className="usage-row"><span className="usage-provider">Codex</span><span className="usage-values">{windows.length?[...windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':w.minutes===300?'5 小時':windowName(w)} {w.remainingPercent}%</span></React.Fragment>):'—'}</span>{stale&&<em>舊</em>}</span>
    <span className="usage-row"><span className="usage-provider">Claude</span><span className="usage-values">{state.usage?.claude?.windows?.some(w=>w.remainingPercent!=null)?state.usage.claude.windows.filter(w=>['five_hour','seven_day'].includes(w.key)).sort((a,b)=>a.key==='seven_day'?-1:b.key==='seven_day'?1:0).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={Number.isFinite(w.remainingPercent)&&w.remainingPercent<20?'warning':undefined}>{w.key==='five_hour'?'5 小時':'本週'} {w.remainingPercent??'—'}{w.remainingPercent==null?'':'%'}</span></React.Fragment>):'—'}</span>{(!online||state.usage?.claude?.status==='stale')&&<em>舊</em>}</span>
+   <span className="usage-row"><span className="usage-provider">Gemini</span><span className="usage-values">—</span></span>
   </button>
  </section>;
 }
@@ -32,6 +33,7 @@ export function UsageDetails({state,online}){
   setRefreshing(true);try{await refreshUsage(true);}catch{}finally{setRefreshing(false);}
  }
  return <section className="usage-details" aria-label="額度與用量詳細資訊">
+  <div className="usage-heading"><strong>Gemini / Antigravity 訂閱</strong></div><p className="usage-note">Antigravity 尚未提供可接入的額度介面；請在官方程式使用 /usage 查看。</p>
   <div className="usage-heading"><strong>Codex 訂閱剩餘額度</strong><button type="button" title="更新額度與用量" aria-label="更新額度與用量" disabled={refreshing||!online} onClick={refresh}><RefreshCw size={15}/></button></div>
   <div className="quota-line">{quota?.windows?.some(w=>Number.isFinite(w.remainingPercent))?quota.windows.filter(w=>Number.isFinite(w.remainingPercent)||w.minutes).map(w=><span key={w.key}>{windowName(w)} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>額度暫時無法取得</span>}</div>
   <p className="usage-note">{stale?'舊資料，等待更新。':'約每分鐘更新。'}帳號共用訂閱額度，不是此對話獨享。</p>

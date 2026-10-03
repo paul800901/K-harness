@@ -30,6 +30,7 @@ export async function deleteArchived({root,threadIds,confirmed,currentThreadId=n
  if(!runtimeInfo)throw new Error('K runtime 目錄不存在。');
  const mainDir=await safeDirectory(runtime,'main-sessions');
  const claudeDir=await safeDirectory(runtime,'claude-sessions');
+ const geminiDir=await safeDirectory(runtime,'gemini-sessions');
  const queueDir=await safeDirectory(runtime,'input-queues');
  const deletedIds=[],failed=[];
  for(const threadId of threadIds){
@@ -50,8 +51,8 @@ export async function deleteArchived({root,threadIds,confirmed,currentThreadId=n
    const records=await Promise.all(sources.map(async file=>{const [record,info]=await Promise.all([readFile(file,'utf8').then(JSON.parse),lstat(file)]);return {record,mtime:Math.max(info.mtimeMs*1000,record.saveOrder??0)};}));
    records.sort((a,b)=>b.mtime-a.mtime);
    if(records[0].record.archived!==true)throw new Error('只能刪除已封存的 K 對話。');
-   if(claudeDir){
-    const projection=path.join(claudeDir,`${threadId}.json`);
+   for(const projectionDir of [claudeDir,geminiDir].filter(Boolean)){
+    const projection=path.join(projectionDir,`${threadId}.json`);
     try{const info=await lstat(projection);if(!info.isFile()||info.isSymbolicLink())throw new Error('Claude 投影含 symlink 或非一般檔案，已拒絕。');sources.push(projection);}catch(error){if(error.code!=='ENOENT')throw error;}
    }
    if(queueDir){

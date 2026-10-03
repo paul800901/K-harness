@@ -8,6 +8,11 @@ import {GEMINI_WORKER_MODELS, GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 
 const exec = promisify(execFile);
 
+export function geminiExecutable(env=process.env,executable) {
+  const local=Object.entries(env).find(([key])=>key.toUpperCase()==='LOCALAPPDATA')?.[1];
+  return executable?path.resolve(executable):local?path.resolve(local,'agy','bin','agy.exe'):null;
+}
+
 export function geminiProfile(workspace, accessMode) {
   if (!path.isAbsolute(workspace ?? '') || !['read-only','workspace-write','danger-full-access'].includes(accessMode)) throw Error('Gemini 工作區或權限無效。');
   let canonical=path.resolve(workspace).replaceAll('\\','/').replace(/\/$/u,'');
@@ -51,12 +56,13 @@ function targetFrom(info) {
 }
 
 /** Feed arbitrary UTF-8 chunks; retain only the last result and bounded errors. */
-export function geminiStream() {
+export function geminiStream(onEvent=()=>{}) {
   const decoder=new StringDecoder('utf8');let pending='',result,init;
   const toolErrors=[],deniedTools=[],seen=new Set(),lastTools=new Map();
   const actions={write_to_file:'write_file',replace_file_content:'write_file',multi_replace_file_content:'write_file',view_file:'read_file',run_command:'command',call_mcp_tool:'mcp'};
   function line(text) {
     let event;try{event=JSON.parse(text);}catch{return;}
+    onEvent(event);
     if(event.event==='result'||event.type==='result')result=event.result??event;
     if(event.event==='init')init=event.init;
     const step=event.step_update;if(!step)return;
@@ -160,8 +166,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw Error('Flash timeoutMs 無效。');
   const profile=geminiProfile(workspace,accessMode),home=path.join(profileRoot,profile);
   // Resolve before HOME/USERPROFILE overrides. Never discover through a shell.
-  const local=Object.entries(env).find(([k])=>k.toUpperCase()==='LOCALAPPDATA')?.[1];
-  const binary=executable?path.resolve(executable):local?path.resolve(local,'agy','bin','agy.exe'):null;
+  const binary=geminiExecutable(env,executable);
   const childEnv=geminiEnvironment(env,home);
   const temps=Object.entries(env).filter(([k])=>/^(TEMP|TMP)$/iu.test(k)).map(([,value])=>value);
   let catalog;

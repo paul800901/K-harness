@@ -947,3 +947,125 @@ Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 
 - 從 `Start-K-Desktop.ps1` 正常重開；2026-10-03 **11:59:22 Asia/Taipei** 讀回 `/health` 為 `app: k-harness-desktop`、`deployment: native`、既有 `vault/private-state`；`.local/runtime.json.version` 為上述 `86906bc`。監聽程序 PID 18084 為正式 runtime 的 Electron，視窗標題「K 執行中樞」；launcher 記錄 11:59:15 ready。
 - 證據：`.runtime/bootstrap/antigravity-prepared.json`、`antigravity-activation.json`、`antigravity-live-readback.json` 及 `.runtime/desktop-logs/launcher.log`。既有子代理測試紀錄／worktree 不刪除；probe 本次假資料已刪除。
 - **正式程式與啟動讀回完成，尚未另驗正式 Claude → Flash 完成通知**：依使用者要求，部署後不派 Flash，由原主代理在原對話自行測。南區尚未操作；推送 main 後才能由南區取得本輪來源。
+
+## 三核心接入時重新驗證（agy 1.2.16）
+
+使用者追加 Gemini 主代理後，東區讀回 agy 1.2.16；本輪沒有安裝／升級 agy。再次執行同一個南區自驗腳本，結果 8/8 PASS、8 次模型呼叫；主代理接入與正式版本另見 [三核心紀錄](gemini-third-core-20261003.md)。
+
+```json
+{
+  "status": "PASS",
+  "agyVersion": "1.2.16",
+  "model": "gemini-3.8-flash-low",
+  "modelCalls": 8,
+  "checks": [
+    {
+      "name": "read-only/read",
+      "passed": true,
+      "status": "completed",
+      "readBack": true
+    },
+    {
+      "name": "read-only/forced-writes-command",
+      "passed": true,
+      "status": "completed",
+      "allFilesAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\read-only\\workspace\\inside.txt"
+        },
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\read-only\\parent.txt"
+        },
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\absolute-outside\\readonly.txt"
+        },
+        {
+          "tool": "run_command",
+          "target": "whoami"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/inside-temp",
+      "passed": true,
+      "status": "completed",
+      "insideWritten": true,
+      "tempAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\temp\\blocked.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/parent",
+      "passed": true,
+      "status": "failed",
+      "fileAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\workspace-write\\parent.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/absolute",
+      "passed": true,
+      "status": "failed",
+      "fileAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-xo0axA\\absolute-outside\\workspace-write.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/normal-task",
+      "passed": true,
+      "status": "completed",
+      "fileWritten": true
+    },
+    {
+      "name": "danger-full-access/write",
+      "passed": true,
+      "status": "completed",
+      "fileWritten": true
+    },
+    {
+      "name": "cancel/8-seconds-tree",
+      "passed": true,
+      "status": "cancelled",
+      "abortElapsedMs": 8001,
+      "observedProcesses": [
+        {
+          "pid": 78068,
+          "parentPid": 31396,
+          "name": "agy.exe"
+        },
+        {
+          "pid": 75132,
+          "parentPid": 78068,
+          "name": "conhost.exe"
+        },
+        {
+          "pid": 65032,
+          "parentPid": 78068,
+          "name": "pwsh.exe"
+        }
+      ],
+      "remainingProcesses": []
+    }
+  ],
+  "cleanup": true,
+  "tempMode": "TEMP/TMP redirected inside probe; all file targets outside host TEMP"
+}
+```
+
+PASS — agy 1.2.16 — 8/8 checks; 8/10 model calls

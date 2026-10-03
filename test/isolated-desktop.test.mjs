@@ -122,6 +122,8 @@ async function fixture(t, { allowLogin = false, claudeLoggedIn = false, workspac
 
 test('isolated desktop forces launch-token capability, fixes workspace, and denies login by default', async (t) => {
   const f = await fixture(t);
+  await assert.rejects(f.optionsRead.geminiLoginFactory().start(),/尚未允許真實帳號登入/);
+  assert.equal((await f.optionsRead.geminiLoginFactory().status()).installed,false,'Gemini must use the supplied environment rather than the real Windows profile');
   assert.equal(f.optionsRead.executable, providerExe);
   assert.equal(f.optionsRead.port, 47832);
   assert.equal((await f.app.controller.state).workspace, f.workspace);

@@ -4,11 +4,13 @@
 import assert from 'node:assert/strict';
 import {chromium} from 'playwright';
 import {preview} from 'vite';
+import {modelProvider} from '../shared/model-provider.mjs';
 
 const root=new URL('..',import.meta.url).pathname.replace(/^\/(\w:)/,'$1').replaceAll('/','\\');
 const port=5190,origin=`http://127.0.0.1:${port}`;
 const server=await preview({preview:{host:'127.0.0.1',port,strictPort:true}});
 const models=[
+ ...['3.8-flash','3.7-flash','3.6-flash','3.1-pro'].map(name=>({model:`gemini-${name}`,displayName:`Gemini ${name.replace('-',' ').replace(/flash|pro/u,s=>s[0].toUpperCase()+s.slice(1))}`,provider:'gemini',supportedReasoningEfforts:(name.endsWith('pro')?['high','low']:['high','medium','low']).map(reasoningEffort=>({reasoningEffort})),defaultReasoningEffort:'high'})),
  {model:'gpt-5.6-terra',displayName:'GPT-5.6 Terra',provider:'codex',supportedReasoningEfforts:['low','high'].map(reasoningEffort=>({reasoningEffort})),defaultReasoningEffort:'low'},
  {model:'claude-haiku-4-5',displayName:'Claude Haiku 4.5',provider:'claude',description:'English catalog prose must not appear',supportedReasoningEfforts:[{reasoningEffort:'low'}]},
  {model:'gpt-6-sol',displayName:'GPT-6 Sol',provider:'codex',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low'},
@@ -42,10 +44,12 @@ try{
   else if(url.pathname==='/api/models')body={models};
   else if(url.pathname==='/api/codex/auth')body=auth('codex');
   else if(url.pathname==='/api/claude/auth')body=auth('claude');
+  else if(url.pathname==='/api/gemini/auth')body={installed:true,available:true,version:'fixture',auth:{status:'managed-by-cli'},reason:'登入由官方程式管理。'};
+  else if(url.pathname==='/api/gemini/login')body={login:{status:'opened'},reason:'已開啟官方 Antigravity；請由本人完成登入。'};
   else if(url.pathname==='/api/claude/login')body={...auth('claude'),login:claudeLogin};
   else if(url.pathname==='/api/open'){
    // Fake provider boundary: return local fixture state; never call a host or send a model turn.
-   Object.assign(state,{threadId:'fake-picker-thread',messages:[{id:'fake-history',role:'user',text:'fixture history'}],model:data.model,effort:data.effort??null,provider:data.model.startsWith('claude-')?'claude':'codex',status:'ready',accessMode:data.accessMode??'workspace-write',efforts:models.find(m=>m.model===data.model)?.supportedReasoningEfforts?.map(e=>e.reasoningEffort)??[],workerPolicy:data.workerPolicy});
+   Object.assign(state,{threadId:'fake-picker-thread',messages:[{id:'fake-history',role:'user',text:'fixture history'}],model:data.model,effort:data.effort??null,provider:modelProvider(data.model),status:'ready',accessMode:data.accessMode??'workspace-write',efforts:models.find(m=>m.model===data.model)?.supportedReasoningEfforts?.map(e=>e.reasoningEffort)??[],workerPolicy:data.workerPolicy});
    body={threadId:state.threadId};
    setTimeout(()=>page.evaluate(s=>window.__fakeState?.(s),state).catch(()=>{}),0);
   }else if(url.pathname==='/api/model'){
@@ -159,6 +163,38 @@ try{
  await page.waitForFunction(()=>document.querySelector('[aria-label="主代理模型"]')===null);
  assert.deepEqual(requests.filter(r=>r.path==='/api/open').at(-1).data.workerPolicy,{model:'auto',effort:'auto'});
 
+ // Flash worker defaults remain explicitly selected and cannot leak into GPT native agents.
+ await page.getByRole('button',{name:'新對話',exact:true}).click();
+ await page.getByRole('group',{name:'選擇主代理提供者'}).getByRole('button',{name:'Claude',exact:true}).click();
+ await page.locator('summary[aria-label="子代理設定"]').click();
+ await page.getByLabel('子代理模型',{exact:true}).selectOption('gemini-3.8-flash');
+ await page.getByLabel('子代理推理程度',{exact:true}).selectOption('low');
+ await page.getByRole('group',{name:'選擇主代理提供者'}).getByRole('button',{name:'GPT',exact:true}).click();
+ assert.equal(await page.getByRole('button',{name:'建立對話',exact:true}).isDisabled(),true);
+ await page.getByRole('group',{name:'選擇主代理提供者'}).getByRole('button',{name:'Claude',exact:true}).click();
+ await page.getByRole('button',{name:'建立對話',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('[aria-label="主代理模型"]')===null);
+ assert.deepEqual(requests.filter(r=>r.path==='/api/open').at(-1).data.workerPolicy,{model:'gemini-3.8-flash',effort:'low'});
+
+ // Gemini is an actual third provider; native Pro choices do not invent medium.
+ await page.getByRole('button',{name:'新對話',exact:true}).click();
+ await page.getByRole('group',{name:'選擇主代理提供者'}).getByRole('button',{name:'Gemini',exact:true}).click();
+ await mainModel.click();
+ const geminiMenu=page.getByRole('menu',{name:'主代理模型選單',exact:true});await geminiMenu.waitFor();
+ assert.equal(await geminiMenu.getByRole('menuitemradio').count(),4);
+ await geminiMenu.getByRole('menuitemradio',{name:'Gemini 3.1 Pro',exact:true}).click();
+ assert.deepEqual(await effort.locator('option').evaluateAll(nodes=>nodes.map(n=>n.value)),['','high','low']);await effort.selectOption('low');
+ await page.getByRole('button',{name:'新對話操作權限',exact:true}).click();
+ const permissionMenu=page.getByRole('menu',{name:'操作權限選單',exact:true});
+ assert.equal(await permissionMenu.getByRole('menuitemradio',{name:/代我核准|要求核准/}).count(),0);
+ await permissionMenu.getByRole('menuitemradio',{name:/完整存取權/}).click();await page.getByRole('button',{name:'確認選用',exact:true}).click();
+ await page.screenshot({path:'.runtime/three-core-picker.png'});
+ await page.getByRole('button',{name:'建立對話',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[aria-label="主代理模型"]')===null);
+ const geminiCreate=requests.filter(r=>r.path==='/api/open').at(-1);assert.equal(geminiCreate.data.model,'gemini-3.1-pro');assert.equal(geminiCreate.data.effort,'low');assert.equal(geminiCreate.data.accessMode,'danger-full-access');assert.equal(geminiCreate.data.permissionConfirmed,true);
+ await page.getByRole('button',{name:'選擇主代理模型',exact:true}).click();await mainModel.click();
+ assert.equal(await page.getByRole('menu',{name:'主代理模型選單',exact:true}).getByRole('menuitemradio').count(),4);
+ await page.keyboard.press('Escape');await page.getByRole('button',{name:'取消',exact:true}).click();
+
  // Fresh fake UI with signed-out status proves login entry and Chinese cancel feedback remain.
  state.threadId=null;state.messages=[];codexLoggedIn=false;claudeLoggedIn=false;claudeLogin={status:'running',url:'https://claude.ai/oauth/authorize?fixture=1'};
  await page.reload();await page.getByRole('button',{name:'新對話',exact:true}).click();
@@ -170,5 +206,5 @@ try{
  assert(requests.some(r=>r.path==='/api/claude/login/cancel'),'cancel was not sent to fake API');
  await page.getByRole('button',{name:'登入 Claude 訂閱',exact:true}).waitFor();
  assert.deepEqual(pageErrors,[]);
- console.log(JSON.stringify({passed:true,checks:['accessible compact picker and native main-effort select','collapsed worker details preserve chosen official model and effort','account connection collapsed when authenticated; signed-out login auto-expands and stop-login remains available','all fake catalog models retained and grouped; numeric version order newest-first','menu Escape, Home, End, ArrowDown and Enter behavior plus focus/outside/provider dismissal','English catalog copy hidden while usage-credit badge and selected note remain localized','fake create transmits chosen model, official effort, and worker policy once without provider turn','existing-conversation switch is provider-bound; Chinese cancel sends no model request'],models:models.length,openRequests:requests.filter(r=>r.path==='/api/open').length}));
+ console.log(JSON.stringify({passed:true,checks:['accessible compact picker and native main-effort select','collapsed worker details preserve chosen official model and effort','account connection collapsed when authenticated; signed-out login auto-expands and stop-login remains available','all fake catalog models retained and grouped; numeric version order newest-first','menu Escape, Home, End, ArrowDown and Enter behavior plus focus/outside/provider dismissal','English catalog copy hidden while usage-credit badge and selected note remain localized','fake create transmits chosen model, official effort, and worker policy once without provider turn','existing-conversation switch is provider-bound; Chinese cancel sends no model request','Flash worker selected on Claude, rejected on GPT without fallback','Gemini third provider, all native models, exact Pro effort choices, explicit full access and provider-bound switch'],models:models.length,openRequests:requests.filter(r=>r.path==='/api/open').length}));
 }finally{await browser?.close();await new Promise(resolve=>server.httpServer.close(resolve));}
