@@ -75,6 +75,6 @@ Windows 10 實機、真正登入及新電腦麥克風仍待當地驗收。工程
 
 ## 三家原生核心的手動更新
 
-本入口已實作於候選，正式套用狀態見[黑窗與手動更新紀錄](console-flash-investigation-20261004.md)。在設定中按「更新 Claude Code／Codex／Antigravity」才查詢官方正式版本；有新版才下載到 K 專用目錄。準備完成後，先完成工作，再「離開並停止 K」並重新開啟。只關視窗不會換核心。
+本入口已套用南區正式 K，其他電腦的版本／驗證界線見[黑窗與手動更新紀錄](console-flash-investigation-20261004.md)。在設定中按「更新 Claude Code／Codex／Antigravity」才查詢官方正式版本；有新版才下載到 K 專用目錄。準備完成後，先完成工作，再「離開並停止 K」並重新開啟。只關視窗不會換核心。
 
 平常不自動查新版或更新，不影響目前工作、不改登入或計費。舊核心保留，可請 AI 協助退回。上述 `Update-K.ps1 -Rollback` 只退 K 程式；核心另以 `trusted-providers/selected-cores.json` 的上一版位置還原，不還原對話。

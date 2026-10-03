@@ -3,8 +3,8 @@
 ## 結論與正式狀態
 
 - 黑窗根因已捕捉：**K 查詢 Gemini 額度時，Antigravity CLI 自己啟動背景更新程序，開出了 Windows Terminal**。不是使用者手動更新，也不是 K 的 Git 更新器。
-- 已在候選修復，並加入使用者要求的三個小按鈕：更新 Claude Code、更新 Codex、更新 Antigravity。**平常不查新版、不下載、不自動更新；按下才處理，完全離開並停止 K、重開後生效。** 只準備新版本、不熱換正在工作的核心，因此不用新增工作鎖或更新排程。
-- 維護來源：`C:\Users\Paulus\.codex\worktrees\r2-simplification\K-harness`，基準 `9f99dab`。正式仍是 `0e49308`；本人已明確同意套用並「離開並停止 K」，部署前會再查程序／連接埠。本批未 push、未打 tag、東區不動，亦不順便升級三家核心。
+- 已套用南區正式程式，並加入使用者要求的三個小按鈕：更新 Claude Code、更新 Codex、更新 Antigravity。**平常不查新版、不下載、不自動更新；按下才處理，完全離開並停止 K、重開後生效。** 只準備新版本、不熱換正在工作的核心，因此不用新增工作鎖或更新排程。
+- 維護來源：`C:\Users\Paulus\.codex\worktrees\r2-simplification\K-harness`，基準 `9f99dab`。正式程式於 02:18 更新為 **`6830927`**；本人已明確同意套用並「離開並停止 K」，啟用前程序清單為空、連接埠 47831 未監聽。本批未 push、未打 tag、東區不動，亦不順便升級三家核心。
 - 保留原有 `browser-extension/extension-protocol.cjs` 換行修改，不納入本批。
 
 ## 實際根因證據
@@ -17,7 +17,7 @@
 I1004 01:33:30.148697 1 auto_updater.go:334] Spawned background update process with PID 6316
 ```
 
-更新結果為 `Already on the latest version.`，檔案仍是 **agy 1.2.16**，没有真的升版。官方[疑難排解](https://www.antigravity.google/docs/cli/troubleshooting/)記載背景自更新、15 分鐘節流，以及 `AGY_CLI_DISABLE_AUTO_UPDATE=true`。此文件與現場程序／可見視窗／原生日誌吻合，並非只看見 conhost 就推論根因。
+更新結果為 `Already on the latest version.`，檔案仍是 **agy 1.2.16**，沒有真的升版。官方[疑難排解](https://www.antigravity.google/docs/cli/troubleshooting/)記載背景自更新、15 分鐘節流，以及 `AGY_CLI_DISABLE_AUTO_UPDATE=true`。此文件與現場程序／可見視窗／原生日誌吻合，並非只看見 conhost 就推論根因。
 
 之前的 85 秒程序快照、125 秒及 320 秒視窗觀察未捕捉到黑窗，沒有當作「不存在」的證據；WMI ProcessStartTrace 權限不足，未提升權限。後續 15 分鐘上限記錄於捕捉黑窗時提前結束；全部觀察器已退出，沒有新增常駐程式、排程或開機啟動。
 
@@ -57,6 +57,7 @@ I1004 01:33:30.148697 1 auto_updater.go:334] Spawned background update process w
 | 新位置的真 Gemini 執行檔 | 使用獨立下載位置的官方 agy 1.2.16 與新測試 profile 查額度，3/3 成功；未保存／切換帳號，未啟動背景 updater。人工 Google 登入未重做 |
 | 真 UI（假 API） | 三按鈕順序、未點無更新請求、處理中停用、已是新版、下載錯誤及窄版顯示全部通過；只送三次指定假更新，不操作真帳號 |
 | UI 建置 | 通過；既有大 bundle 提醒保留，不擴張為前端拆包工程 |
+| 正式重開後觀察 | 02:21:20–02:22:35，75 秒；兩個 agy 子程序直接來自正式 K PID 22292，包含真 /usage 查詢；0 個可見 Terminal／Console，原生日誌無背景 updater，觀察器已退出 |
 | Opus 5.5 複查 | 真正官方 Claude 訂閱 `claude-opus-5-5` 初查及補查均成功；補查結論「沒有剩下值得修的問題，也沒有過度設計」。原文另存，審查不代替實測 |
 
 ## Opus 實際複查與取捨
@@ -69,11 +70,22 @@ I1004 01:33:30.148697 1 auto_updater.go:334] Spawned background update process w
 
 ## 還原與限制
 
-- 本批候選與複查已完成，準備依本人本輪關閉授權、程序／連接埠確認、保留程式版本與正式讀回流程套用；尚未以候選結果冒稱正式修復。
+- 本批已正式套用，02:20 由原入口重開，視窗／health／程式版本與服務中資產讀回完成；四帳號及手動更新入口已在正式介面核對。
 - 日後手動更新核心僅替換程式位置，不還原對話、記憶、登入或帳號；`Update-K.ps1 -Rollback` 是 K 殼程式退版，**不是三家核心退版**。核心需停止 K 後，將 `selected-cores.json` 該供應商切回其 `previous`；首次 Codex／Claude 沒有 previous 時移除該供應商選用紀錄，沿用原本保留的 trusted-providers 執行檔。可由 AI 協助，不加三個退版按鈕。
-- 目前真下載驗證為 Windows x64；ARM64 的官方 metadata 對應有自動測試，沒有 ARM64 實機驗收。無新版、無網路或官方發行格式改變時會明確失敗，不暗换來源。
+- 目前真下載驗證為 Windows x64；ARM64 的官方 metadata 對應有自動測試，沒有 ARM64 實機驗收。無新版會明確說明未更新；無網路或官方發行格式改變會明確失敗，不暗換來源。
 - 本次下載／讀回不代表未來任意供應商新版與 K 的所有功能都相容，也不保證未來官方核心永遠不開其他視窗；舊版保留供退回。
 - 未處理原先四項 Gemini 遺留問題，不與本次黑窗或更新入口混算。
+
+## 本輪正式套用
+
+- 本人回覆「同意套用，已離開並停止 K」，之後才啟用。無執行中 K 程序，既有更新器也確認 47831 未監聽；沒有強制結束或重送任何工作。
+- 從本機 commit `683092707d7d70e42e5a0b170a980214bbdb18ef` 重新封裝乾淨候選，沿用正式相依，沒有安裝套件。建置 UI／擴充／啟動器，完整 **657/657**，0 failed／skipped；啟用前 450 個 Git 檔案與候選一致。
+- 首次準備被 Windows PowerShell 5 的 stderr 處理中止：Vite 已成功，但既有 bundle 警告被當成 NativeCommandError。未啟用任何程式；用本機既有 PowerShell 7 接續同一候選，重新建置與完整測試通過。原失敗與後續日誌都保留，沒有改產品程式或環境來掩蓋警告。
+- 舊正式 `0e49308` 與啟動器保留於 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791051524099`；舊版 index 與目前三個 UI 資產、啟動器雜湊讀回一致。
+- 本機語音／Node 位置與 Codex 設定未變；三家核心執行檔和四帳號登錄檔啟用前後雜湊完全相同，未建立 `selected-cores.json`。因此這次只部署 K 修正／手動入口，**沒有替本人按更新核心**。原生對話／登入目錄原地保留，不建立對話備份或還原機制。
+- 正式 UI 讀回：三按鈕順序正確；四個已保存帳號與原帳號不變，額度順序 Claude → GPT → Gemini，子代理 auto → Flash → Sol → Luna。驗收沒有送出任何 POST，沒有代替本人更新或切換帳號。
+- 02:20:23 原入口重開，視窗「K 執行中樞」、PID 22292、health 為 native、版本 `6830927`；服務中的 CSS／JS／標誌三個資產 hash 全吻合，未授權 state 仍 403。
+- 本批未 push、未打 tag、未更新東區。部署收據位於 `D:\K-harness\.runtime\console-core-update-deploy-20261004`。
 
 ## 本機證據位置
 
