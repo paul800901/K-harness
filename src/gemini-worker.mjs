@@ -127,7 +127,7 @@ export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,m
     signal?.addEventListener('abort',abort,{once:true});
     child.stdout.on('data',b=>{outBytes+=b.length;if(outBytes>maxStdout){stop('stdout limit exceeded');return;}stdout+=b.toString();onChunk(b);});
     child.stderr.on('data',b=>{errBytes+=b.length;if(errBytes>maxStderr){stop('stderr limit exceeded');return;}stderr+=b.toString();});
-    child.once('error',error=>{ended=true;clearTimeout(timer);clearTimeout(cleanupTimer);signal?.removeEventListener('abort',abort);reject(error);});
+    child.once('error',error=>{ended=true;clearTimeout(timer);clearTimeout(cleanupTimer);signal?.removeEventListener('abort',abort);reject(error.code==='ENOENT'?Error('找不到 agy，請安裝 Antigravity CLI 並登入。',{cause:error}):error);});
     child.once('close',code=>{void finish(code);});
     try{onStart(child.pid);}catch{stop('start callback failed');}
     if(signal?.aborted)abort();
@@ -166,7 +166,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   const temps=Object.entries(env).filter(([k])=>/^(TEMP|TMP)$/iu.test(k)).map(([,value])=>value);
   let catalog;
   async function prepare() {
-    if(!binary)throw Error('agy executable 未設定且 LOCALAPPDATA 不存在。');
+    if(!binary)throw Error('找不到 agy，請安裝 Antigravity CLI 並登入（LOCALAPPDATA 未設定）。');
     await atomicWrite(path.join(home,'.gemini','antigravity-cli','settings.json'),JSON.stringify(geminiSettings(workspace,accessMode,temps),null,2));
   }
   async function models() {
@@ -176,7 +176,10 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
       // caller's AbortSignal. Cancelling a task must not cancel another task's
       // catalog lookup; cancelled runs wait for this bounded lookup, then stop.
       const result=await geminiProcess(binary,['models'],{cwd:workspace,env:childEnv,timeoutMs:Math.min(timeoutMs,30000),spawnImpl,killTree});
-      if(result.code!==0||result.reason||result.cleanupError)throw Error('agy models 無法取得；未換用其他供應商。');
+      if(result.code!==0||result.reason||result.cleanupError){
+        const failure=geminiOutcome({}, {...result,stderr:`${result.stdout}\n${result.stderr}`});
+        throw Error(`agy models 無法取得：${failure.error} 未換用其他供應商。`);
+      }
       const names=new Set(result.stdout.split(/\r?\n/u).map(line=>line.trim().split(/\s/u)[0]).filter(Boolean));
       if(!names.size)throw Error('agy models 清單為空。');
       return names;

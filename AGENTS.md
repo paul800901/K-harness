@@ -6,7 +6,7 @@
 - 現況與使用說明見 `README.md`；建置、測試、部署及歷史證據見 `docs/development-log.md`。設計候選不得宣稱為已實作，依賴宣告不得宣稱為已安裝。
 - 初期範圍是通用非臨床工作。不得接入病歷資料、CaseAgent 正式寫入流程或修改既有 DSH/KAI 環境。
 - 產品定位是接近 Codex App／Claude Code 的通用工作台，增加可跨供應商選擇的子代理；不是 Flash 專用流程。主代理可選目前 Codex 登入實際提供的模型，不固定 Astra／Sol 的用途。
-- 不強制派子代理；人與 AI 可依任務選擇 GPT-6.1 Sol 或 GPT-6 Luna，推理程度依目前官方清單，未指定沿用 Luna/high。明確指定優先，不因錯誤或額度暗換模型；模型選擇不擴張工具或資料權限。
+- 不強制派子代理；人與 AI 可依任務選擇 GPT-6.1 Sol、GPT-6 Luna 或 Gemini 3.8 Flash（Flash 目前限 Claude 的 k_luna gateway），推理程度依模型支援清單；新對話預設 AI 自動選擇，Flash 逐項指定 low/medium/high。明確指定優先，不因錯誤或額度暗換模型；模型選擇不擴張工具或資料權限。
 - GPT 主代理與 GPT 子代理沿用 Codex 訂閱；Claude 主代理沿用 Claude Code 訂閱。DeepSeek／Pi 路徑已移除，不搬憑證或改走 API 計費；歷史與上下文壓縮由各原生核心管理。
 - 桌面權限選單為「要求核准／代我核准／完整存取權」，進階保留「唯讀」。新工作預設要求核准（工作區內可修改）；舊對話保留既有權限。改用代我核准或完整存取必須由使用者明確選用；代我核准接 Codex 原生自動審查，不在 K 內自行一律放行。子代理沿用其原生權限範圍。限定真實測試與模式對應見 `docs/desktop-permissions-20260915.md`；直接讀改測、單次核准／拒絕及停止見 `docs/main-direct-work-20260915.md`。不得以選單宣稱所有工具、Blender 或其他供應商已驗證。
 - 不引入舊 L0／L1／L2 記憶設計。優先驗證原始工作紀錄、必要摘要與按需回讀是否足以完成任務。
@@ -95,7 +95,7 @@
 - 保留 Codex／Claude 原生接入與 GPT 子代理。舊程式留 Git，既有 job、金鑰檔及登入資料原地保留，不呼叫 DeepSeek、不改全域設定或 API 計費。
 
 ## 2026-09-30 子代理選擇與 Sonnet 5.5（使用者追加）
-- 子代理不再限定 Luna：GPT-6.1 Sol 與 GPT-6 Luna 都可由人或 AI 選用，effort 依官方清單。新對話可選預設，AI 依任務可明確改選；不增加模型失敗的 fallback 或自動重送。
+- 子代理不再限定 Luna：GPT-6.1 Sol 與 GPT-6 Luna 都可由人或 AI 選用，effort 依官方清單；2026-10-03 另加入 Gemini 3.8 Flash，接入範圍與推理程度見下節。新對話可選預設，AI 依任務可明確改選；不增加模型失敗的 fallback 或自動重送。
 - Claude 主代理加入官方 Sonnet 5.5，與 Opus 等依原生目錄顯示，不把 Sonnet 5 假標成 5.5。
 - 使用者明確允許 K 專用 Claude Code 2.1.280 升至官方 2.1.285；只更新專案內執行檔、保留舊版，不改全域安裝、登入資料或計費。
 
@@ -103,7 +103,7 @@
 - 工程通知留在後台診斷，不要求非工程師使用者閱讀或確認；保留真正工作失敗、額度、登入、核准與需要人決定的訊息。不得為隱藏工程提示而刪除原始事件或宣稱底層問題已修復。
 
 ## 2026-10-01 子代理自動選擇（使用者確認）
-- 新對話子代理預設「AI 自動選擇」：主代理依子任務難度選 GPT-6.1 Sol 或 GPT-6 Luna，並明確選擇該模型支援的推理程度。K 不自行分類難度、不增加失敗換模或重送。
+- 新對話子代理預設「AI 自動選擇」：主代理依子任務難度選 GPT-6.1 Sol、GPT-6 Luna 或 Gemini 3.8 Flash（2026-10-03 加入，限 Claude 的 k_luna gateway），並明確選擇該模型支援的推理程度。K 不自行分類難度、不增加失敗換模或重送。
 - 保留手動模型／推理預設及既有對話設定；自動模式不傳送假的 auto 模型給供應商，也不暗中固定成 Luna／high。
 
 ## 2026-10-01 資料取捨與目前不提供的功能（使用者確認）
@@ -120,3 +120,9 @@
 - Claude 主對話選「略過權限提示」（`claude-bypassPermissions`），或 Codex 主對話選完全信任／完整存取權（`danger-full-access`），表示使用者信任主代理。主代理決定子代理工作的核准與否，不再把子代理核准交給使用者；子代理權限只能等於主代理，不得超過主代理授權。其他模式維持現狀，未改動 `claude-dontAsk`、`claude-auto`。
 - Claude 權限切換時，未結束的 Codex 子代理仍會阻止切換；切換後重新建立 bridge，後續派工使用新模式。缺少原生檔案變更內容時仍只能拒絕，不得放寬為可核准。
 - 使用者另行確認：安裝／更新時，K 專用 Codex 家目錄若缺少 `config.toml`，補上 `[windows] sandbox = "unelevated"` 並套用東區；已有設定檔一律不覆寫，不改全域 Codex 設定。實際驗證及部署狀態見 `docs/subagent-approval-20261003.md`。
+
+## 2026-10-03 Antigravity Flash 子代理（使用者確認）
+- Gemini 3.8 Flash 使用 Antigravity 訂閱，為與 Sol／Luna 並存的第三種子代理，由主代理逐項選擇 low/medium/high；目前只有走 k_luna gateway 的 Claude 主對話能派 Flash，Codex 原生子代理不接 Flash。
+- agy 登入沿用 Windows 帳號，由使用者本人操作；設定、紀錄放 K 專用 profile（覆寫 USERPROFILE/HOME），K 不讀、不複製憑證，不改真實 `~/.gemini`，不用 API key。
+- 權限跟隨主對話且不得超過：read-only 用預設模式加寫檔／指令／unsandboxed／MCP deny；workspace-write 用預設模式加 Windows 原生工作區 allow 與指令／unsandboxed／MCP／TEMP deny；只有 danger-full-access 加 skip。不得把 read-only／workspace-write 改回會忽略 allow 的 strict。
+- 沒有 agy 或未登入只讓 Flash 派工 failed，其他功能照常，不換模、不自動重送。其他電腦依 `docs/antigravity-worker-20261003.md` 啟用並跑權限 probe；版本不同於 1.0.6 務必重驗，FAIL 不使用 Flash。

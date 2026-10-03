@@ -1,6 +1,6 @@
 # Antigravity worker：階段 0 調查／階段 1 實作 — 2026-10-03
 
-最新狀態見下方「階段 1」。原有階段 0 的停止原因與證據保留為歷史；本輪已採用修訂後的設定 home／Windows 登入設計，新增 worker 與 gateway 接線，但 **workspace-write 明確停用**，尚未部署或驗收。
+最新設計以「主代理驗收與修正」、「更正：workspace-write 可用」為準；三種權限均已接入。東區本輪部署與南區啟用狀態見文末；前面的停止原因、strict 與停用 workspace-write 的敘述保留為歷史，已被後續更正取代。
 
 ## 結論與停止原因
 
@@ -784,3 +784,155 @@ Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 
 - 被「需要核准」擋下會讓 agy 整個回合結束（no output produced），K 回報 failed 並列 deniedTools；被 deny 擋下則回合繼續。
 - strict 會忽略 allow；K 只在完整存取（搭配 skip）使用 strict。
 - 定向 125/125、完整 559/559。未推送、未合併、未部署。
+
+## 南區（其他電腦）啟用步驟
+
+1. 更新 K 來源與正式 runtime 後，安裝官方 Antigravity CLI；使用者以自己的 Google Pro 帳號互動登入一次，登入須由本人操作。K 不安裝／升級 agy、不搬移東區憑證，也不使用 API key。
+2. 執行 `agy --version`，再執行 `agy models`，確認列得出 `gemini-3.8-flash-low`、`gemini-3.8-flash-medium`、`gemini-3.8-flash-high`。K 預設執行檔為 `$env:LOCALAPPDATA\agy\bin\agy.exe`，不固定東區帳號或磁碟路徑。
+3. 在南區 `D:\K-harness` 執行 `node scripts/antigravity-permission-probe.mjs --run`，必須看到 JSON `status: "PASS"`、8/8 與最後一行 `PASS`。**agy 版本不是 1.0.6 時務必跑 probe；FAIL 就不要用 Flash，回報 JSON 與版本。** 不加 `--run` 只印說明，不呼叫 CLI。
+4. 目前只有 Claude 主對話的 k_luna gateway 可逐項派 Flash，明確選 low／medium／high；權限跟隨主對話。沒有 agy 或未登入只讓 Flash 工作 failed；Sol／Luna 與 K 啟動照常，不自動替換模型或重送。
+
+## 本輪可攜性與東區部署（2026-10-03）
+
+### 合併與修改
+
+- 使用者更新合併條件後，乾淨主工作樹由 `bec2f127428fe6680f026372b381b749022efa75` 快轉至 `924385b6ca9fdbffb55d02d351dd9eecbe4d2737`。feature worktree 保留；與 rebase 前 `ec0485b` 的差異只有既有發布文件。本輪未推送 GitHub。
+- `git grep` 檢查 `src/` 與 `scripts/`：東區 `C:\K-harness`、`C:\Users\user` 及其正斜線／字串跳脫形式無匹配；agy 預設執行檔在覆寫 profile 前從 `LOCALAPPDATA` 解析。
+- `src/gemini-worker.mjs`：執行檔不存在轉為清楚的安裝／登入錯誤；models 的未登入錯誤保留原因。Flash 仍於實際派工時才初始化，不影響 K 或 GPT 工人。
+- `test/gemini-worker.test.mjs`：增加真實不存在路徑的派工測試，確認 Flash failed、同一 bridge 的 Sol／Luna 仍 completed；另驗證 models 未登入時的明確錯誤且不啟動模型回合。
+- `scripts/antigravity-permission-probe.mjs`：真實權限測試共 8 次 Flash-low，上限 10 次，無自動重試。唯讀讀回隨機標記、強迫寫入三處與 whoami；workspace-write 寫入內部、拒絕 TEMP／父目錄／其他絕對路徑及正常工作 completed；完整存取寫入；8 秒 abort 並讀回已觀察程序樹。
+- Probe 先確認 `.runtime` 被 Git 排除、實際路徑位於 repo 且不在系統 TEMP。所有工作區、外部目標、profile、log 均在新建 `.runtime/agy-probe-*`；子程序 TEMP/TMP 也指向該處，既驗證 TEMP deny 又不在使用者真正 TEMP 建立外部目標。結束檢查刪除目標的實際邊界，只刪本次目錄。
+- `README.md`、`AGENTS.md`、本文及 `docs/development-log.md` 補上第三種子代理、登入與權限邊界、南區操作及工程索引。
+
+### 測試與部署狀態
+
+- 首次 UI 建置因主工作樹沒有 `node_modules` 而找不到 vite；確認 `package.json`、`package-lock.json` 與現用 runtime 完全一致後，建立 Git 排除的 junction 使用既有套件，沒有下載、安裝或升級套件。
+- UI 建置成功（僅既有 bundle size 提示）；worker 定向 **31/31**、完整 **561/561**，0 fail／0 cancelled／0 skipped，完整套件 33,945.8726 ms。證據：`.runtime/antigravity-build-20261003.log`、`.runtime/antigravity-tests-20261003.log`。
+- 東區真實 probe **PASS，8/8 檢查、8 次 Flash-low**；agy 實際版本為 **1.2.15**（與先前 1.0.6 不同，本輪沒有安裝或升級）。唯讀及工作區寫入邊界、正常工作、完整存取、8,019 ms abort 與已觀察程序樹無殘留均通過；本次假資料清理完成。父目錄／外部絕對路徑的原生回合 failed 是預期拒絕，對應 probe passed。原始 JSON：`.runtime/antigravity-probe-20261003.log`。
+- 未另實測未登入／額度耗盡的真實帳號狀態，不登出或讀憑證；登入錯誤只做單元驗證。Claude 原對話收到 Flash 完成通知由主代理部署後自行實測。
+- 正式部署尚待 K 正常關閉：Computer Use 兩次截圖逾時，無法確認 busy，已請使用者確認工作結束並選「離開並停止 K」；未強制結束。
+
+### 東區 probe 原始 JSON
+
+```json
+{
+  "status": "PASS",
+  "agyVersion": "1.2.15",
+  "model": "gemini-3.8-flash-low",
+  "modelCalls": 8,
+  "checks": [
+    {
+      "name": "read-only/read",
+      "passed": true,
+      "status": "completed",
+      "readBack": true
+    },
+    {
+      "name": "read-only/forced-writes-command",
+      "passed": true,
+      "status": "completed",
+      "allFilesAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\read-only\\workspace\\inside.txt"
+        },
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\read-only\\parent.txt"
+        },
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\absolute-outside\\readonly.txt"
+        },
+        {
+          "tool": "run_command",
+          "target": "whoami"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/inside-temp",
+      "passed": true,
+      "status": "completed",
+      "insideWritten": true,
+      "tempAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\temp\\blocked.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/parent",
+      "passed": true,
+      "status": "failed",
+      "fileAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\workspace-write\\parent.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/absolute",
+      "passed": true,
+      "status": "failed",
+      "fileAbsent": true,
+      "deniedTools": [
+        {
+          "tool": "write_to_file",
+          "target": "C:\\K-harness\\.runtime\\agy-probe-cHh9Xx\\absolute-outside\\workspace-write.txt"
+        }
+      ]
+    },
+    {
+      "name": "workspace-write/normal-task",
+      "passed": true,
+      "status": "completed",
+      "fileWritten": true
+    },
+    {
+      "name": "danger-full-access/write",
+      "passed": true,
+      "status": "completed",
+      "fileWritten": true
+    },
+    {
+      "name": "cancel/8-seconds-tree",
+      "passed": true,
+      "status": "cancelled",
+      "abortElapsedMs": 8019,
+      "observedProcesses": [
+        {
+          "pid": 97144,
+          "parentPid": 55352,
+          "name": "agy.exe"
+        },
+        {
+          "pid": 82788,
+          "parentPid": 97144,
+          "name": "conhost.exe"
+        },
+        {
+          "pid": 78468,
+          "parentPid": 97144,
+          "name": "git.exe"
+        },
+        {
+          "pid": 88732,
+          "parentPid": 78468,
+          "name": "git.exe"
+        }
+      ],
+      "remainingProcesses": []
+    }
+  ],
+  "cleanup": true,
+  "tempMode": "TEMP/TMP redirected inside probe; all file targets outside host TEMP"
+}
+```
+
+`PASS — agy 1.2.15 — 8/8 checks; 8/10 model calls`

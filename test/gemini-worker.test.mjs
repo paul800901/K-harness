@@ -149,3 +149,35 @@ test('Codex native agents config excludes Gemini even if the catalog advertises 
  const models=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'gemini-3.8-flash'}];assert.equal(JSON.stringify(workerPolicyConfig(undefined,{models}).agents).includes('gemini'),false);
  assert.throws(()=>workerPolicyConfig({model:'gemini-3.8-flash',effort:'low'},{models}),/未自動換模/);
 });
+
+test('missing agy executable fails only Flash; bridge starts and both GPT workers still complete',async()=>{
+ const models=['gpt-6.1-sol','gpt-6-luna'];let turns=0;
+ const bridge=await createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',
+  geminiOptions:{executable:path.join(root,'does-not-exist','agy.exe')},
+  hostFactory:()=>({notify(){},async close(){},async request(method,p){
+   if(method==='account/read')return {account:{type:'chatgpt'}};
+   if(method==='model/list')return {data:models.map(model=>({model,supportedReasoningEfforts:[{reasoningEffort:'high'}]}))};
+   if(method==='thread/start')return {thread:{id:`native-${++turns}`}};
+   if(method==='turn/start')return {turn:{id:`turn-${turns}`}};
+   if(method==='thread/read')return {thread:{id:p.threadId,cwd:workspace,status:{type:'idle'},turns:[{id:`turn-${p.threadId.split('-')[1]}`,status:'completed',items:[]}]}};
+   if(method==='thread/backgroundTerminals/list')return {data:[]};return {};
+  }})});
+ try{
+  assert.equal(turns,0);await bridge.start(args);
+  const failed=await bridge.wait({requestId:'flash',timeoutMs:2000});
+  assert.equal(failed.status,'failed');assert.equal(failed.settled,true);assert.match(failed.error,/找不到 agy.*安裝 Antigravity CLI 並登入/);assert.equal(turns,0);
+  for(const model of models){await bridge.start({requestId:model,task:'bounded',model,effort:'high'});assert.equal((await bridge.wait({requestId:model,timeoutMs:2000})).status,'completed');}
+  assert.equal(turns,2);
+ }finally{await bridge.close();}
+});
+
+test('agy models authentication failure explains login without launching a model turn',async()=>{
+ let calls=0;const spawnImpl=()=>{
+  calls++;const child=new EventEmitter();Object.assign(child,{pid:43210,stdout:new PassThrough(),stderr:new PassThrough()});
+  queueMicrotask(()=>{child.stderr.write('authentication required');child.emit('close',1);});
+  return child;
+ };
+ const worker=make({spawnImpl});
+ await assert.rejects(worker.run({task:'bounded',effort:'low'}),/agy 未登入/);
+ assert.equal(calls,1);
+});
