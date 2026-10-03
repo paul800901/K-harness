@@ -150,6 +150,83 @@ test('an explicit exhausted account never falls back to another account',async()
  assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[]);
 });
 
+test('direct add from an empty registry preserves the existing native account before opening login',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'}});
+ assert.equal((await f.accounts.list()).accounts.length,0);
+ const pending=await f.accounts.startLogin();
+ assert.equal(pending.loginPending,true);assert.equal(pending.activeAccountId,null);
+ assert.deepEqual(pending.accounts.map(row=>row.id),[A]);
+ assert.equal(f.calls.capture,1);assert.equal(f.calls.prepareLogin,1);assert.equal(f.calls.start,1);
+ f.current={accountId:B,email:'b@example.test'};await f.accounts.finishLogin();
+ const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true});
+ const saved=await restarted.list();assert.equal(saved.loginPending,false);assert.equal(saved.activeAccountId,B);
+ assert.deepEqual(saved.accounts.map(row=>row.id),[A,B]);
+});
+
+test('first login with no native account can finish or cancel without inventing a previous account',async()=>{
+ const f=await fixture();await f.accounts.startLogin();
+ assert.equal(f.calls.capture,0);assert.equal((await f.accounts.list()).loginPending,true);
+ await f.accounts.cancelLogin();
+ assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).activeAccountId,null);
+ await f.accounts.startLogin();f.current={accountId:A,email:'a@example.test'};
+ const saved=await f.accounts.finishLogin();assert.equal(saved.activeAccountId,A);assert.equal(saved.loginPending,false);
+ assert.equal(saved.accounts.length,1);
+});
+
+test('failed official login launch leaves an explicit cancel path restoring the initial native account',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'}});
+ f.login.start=async()=>{throw Error('fixture launch failed');};
+ await assert.rejects(f.accounts.startLogin(),/fixture launch failed/);
+ const pending=await f.accounts.list();assert.equal(pending.loginPending,true);assert.equal(f.current,null);
+ const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true});
+ const restored=await restarted.cancelLogin();assert.equal(f.current.accountId,A);assert.equal(restored.loginPending,false);
+ assert.equal(restored.activeAccountId,A);assert.deepEqual(restored.accounts.map(row=>row.id),[A]);
+});
+
+test('unfinished first add remains pending after failed finish and can restore the original account',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'}});await f.accounts.startLogin();
+ await assert.rejects(f.accounts.finishLogin(),/no identity fixture/);
+ assert.equal((await f.accounts.list()).loginPending,true);
+ const restored=await f.accounts.cancelLogin();assert.equal(restored.activeAccountId,A);assert.equal(restored.loginPending,false);
+ assert.deepEqual(restored.accounts.map(row=>row.id),[A]);
+});
+
+test('failed login verification does not enroll the new identity or mark it active',async()=>{
+ let verified=true;
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:()=>verified?authStatus():{auth:{status:'unknown'},reason:'fixture offline'}});
+ await f.accounts.startLogin();f.current={accountId:B,email:'b@example.test'};verified=false;
+ await assert.rejects(f.accounts.finishLogin(),/尚未確認官方登入成功/u);
+ let state=await f.accounts.list();assert.equal(state.loginPending,true);assert.equal(state.activeAccountId,null);
+ assert.deepEqual(state.accounts.map(row=>row.id),[A]);
+ const persisted=JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-accounts.json'),'utf8'));
+ assert.deepEqual(persisted.accounts.map(row=>row.id),[A]);
+ verified=true;state=await f.accounts.cancelLogin();assert.equal(state.activeAccountId,A);assert.equal(state.loginPending,false);
+ assert.deepEqual(state.accounts.map(row=>row.id),[A]);
+});
+
+test('adding a third account preserves both enrolled accounts through cancel and finish',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'}});await f.accounts.capture();
+ f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
+ await f.accounts.startLogin();f.current={accountId:C,email:'c@example.test'};
+ const cancelled=await f.accounts.cancelLogin();assert.equal(cancelled.activeAccountId,A);assert.deepEqual(cancelled.accounts.map(row=>row.id),[A,B]);
+ await f.accounts.startLogin();f.current={accountId:C,email:'c@example.test'};
+ const saved=await f.accounts.finishLogin();assert.equal(saved.activeAccountId,C);assert.deepEqual(saved.accounts.map(row=>row.id),[A,B,C]);
+});
+
+test('starting login is blocked before credential changes while K or the official program is busy',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'}});
+ const lease=await f.accounts.acquire();await assert.rejects(f.accounts.startLogin(),/正在工作/u);await lease.release();
+ f.idle=false;await assert.rejects(f.accounts.startLogin(),/fixture busy/);
+ assert.equal(f.calls.capture,0);assert.equal(f.calls.prepareLogin,0);assert.equal(f.calls.start,0);assert.equal((await f.accounts.list()).loginPending,false);
+});
+
+test('cancel without a previous identity leaves a completed official login intact but not enrolled',async()=>{
+ const f=await fixture();await f.accounts.startLogin();f.current={accountId:B,email:'b@example.test'};
+ const cancelled=await f.accounts.cancelLogin();
+ assert.equal(f.current.accountId,B);assert.equal(cancelled.loginPending,false);assert.equal(cancelled.activeAccountId,null);
+ assert.deepEqual(cancelled.accounts,[]);assert.equal(f.calls.capture,0);assert.deepEqual(f.calls.activate,[]);
+});
+
 test('selecting a cached exhausted account does not activate it before rejection',async()=>{
  const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?0:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();f.calls.activate.length=0;

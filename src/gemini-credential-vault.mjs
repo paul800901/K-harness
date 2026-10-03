@@ -19,7 +19,7 @@ function parseOutput(stdout,operation){
 function safeFailureMessage(error){
  let code;
  try{code=JSON.parse(String(error?.stdout??'')).errorCode;}catch{}
- if(code==='busy')return 'Antigravity 正在執行，不能切換帳號。';
+ if(code==='busy')return 'Antigravity 正在執行；請先關閉官方視窗並等工作停止，再新增、保存、取消或切換帳號。';
  if(code==='identity')return '憑證身分缺失或不唯一，拒絕操作。';
  if(code==='credential')return 'Windows 憑證操作失敗；未輸出憑證內容。';
  return 'Windows 憑證 helper 執行失敗；未輸出憑證內容。';
@@ -42,7 +42,7 @@ export function createGeminiCredentialVault({root,env=process.env,execImpl=execF
   catch(error){throw Error(safeFailureMessage(error));}
   const payload=parseOutput(result?.stdout??'',operation);
   if(operation==='assertIdle'){
-   if(payload?.idle!==true)throw Error('Antigravity 正在執行，不能切換帳號。');
+   if(payload?.idle!==true)throw Error('Antigravity 正在執行；請先關閉官方視窗並等工作停止，再新增、保存、取消或切換帳號。');
    return {idle:true};
   }
   if(operation==='prepareLogin'){

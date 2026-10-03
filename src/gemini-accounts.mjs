@@ -75,8 +75,11 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   });},
   async finishLogin(){assertEnabled();return exclusive(async()=>{
    if(!data.loginPending)throw Error('目前沒有等待完成的 Gemini 登入。');
-   const row=remember(await vault.capture());await save();await query(row);
+   const identity=await vault.capture(),row={id:identity.accountId,email:identity.email};
+   // Verify before adding a card or marking the new identity as active.
+   await query(row);
    if(row.auth.status!=='authenticated')throw Error('尚未確認官方登入成功，請完成登入並關閉官方程式後再試。');
+   Object.assign(remember(identity),row);
    data.loginPending=null;await save();return snapshot();
   });},
   async cancelLogin(){assertEnabled();return exclusive(async()=>{

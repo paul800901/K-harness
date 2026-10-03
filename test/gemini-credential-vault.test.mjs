@@ -46,17 +46,18 @@ test('safe helper error codes preserve busy and identity explanations without ex
 
 test('helper is restricted to the exact live target and contains no credential enumeration or logout path',async()=>{
  const helper=await readFile(fileURLToPath(new URL('../scripts/gemini-credentials.ps1',import.meta.url)),'utf8');
- assert.match(helper,/\$liveTarget='antigravity\.gemini'/u);assert.match(helper,/CredReadW/u);assert.match(helper,/CredWriteW/u);assert.match(helper,/CredDeleteW/u);
+ assert.match(helper,/\$liveTarget='gemini:antigravity'/u);assert.match(helper,/CredReadW/u);assert.match(helper,/CredWriteW/u);assert.match(helper,/CredDeleteW/u);
  assert.doesNotMatch(helper,/CredEnumerateW|\/logout|\.gemini[\\/]|Chrome|Get-ChildItem.*Credential/iu);
  assert.match(helper,/Get-Process/u);assert.doesNotMatch(helper,/Win32_Process|CommandLine|Kill\(/u);
 });
 
-test('PowerShell 5.1 executes identity parsing and hashing on fake UTF-16 blobs only',{skip:process.platform!=='win32'},async()=>{
+test('PowerShell 5.1 executes identity parsing and hashing on fake UTF-8 blobs only',{skip:process.platform!=='win32'},async()=>{
  const helper=fileURLToPath(new URL('../scripts/gemini-credentials.ps1',import.meta.url));
  const helperB64=Buffer.from(helper,'utf8').toString('base64');
- const valid=Buffer.from(JSON.stringify({profile:{displayName:'王小明',identity:{email:'User@example.test'}}}),'utf16le').toString('base64');
- const ambiguous=Buffer.from(JSON.stringify({a:{email:'one@example.test'},b:{nested:{email_address:'two@example.test'}}}),'utf16le').toString('base64');
- const missing=Buffer.from(JSON.stringify({profile:{displayName:'王小明'}}),'utf16le').toString('base64');
+ const blob=claims=>Buffer.from(JSON.stringify({token:{access_token:'fake-only'},auth_method:'oauth',id_token:'fake.'+Buffer.from(JSON.stringify(claims)).toString('base64url')+'.fake'}),'utf8').toString('base64');
+ const valid=blob({name:'王小明',email:'User@example.test'});
+ const ambiguous=blob({email:['one@example.test','two@example.test']});
+ const missing=blob({name:'王小明'});
  const expected=createHash('sha256').update('user@example.test').digest('hex').slice(0,32);
  const command=String.raw`
 $ErrorActionPreference='Stop'
@@ -66,7 +67,7 @@ $tokens=$null;$parseErrors=$null;$ast=[System.Management.Automation.Language.Par
 if($parseErrors.Count){throw 'PowerShell parse failed.'}
 $nativeAst=$ast.Find({param($n)$n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left -is [System.Management.Automation.Language.VariableExpressionAst] -and $n.Left.VariablePath.UserPath -eq 'native'},$true)
 if($null -eq $nativeAst -or $nativeAst.Right -isnot [System.Management.Automation.Language.CommandExpressionAst] -or $nativeAst.Right.Expression -isnot [System.Management.Automation.Language.StringConstantExpressionAst]){throw 'Native source was not a literal.'}
-$functions=$ast.FindAll({param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Get-Email','Get-AccountId')},$true)
+$functions=$ast.FindAll({param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Get-Email','Get-AccountId','Write-SafeJson')},$true)
 foreach($function in $functions){Invoke-Expression $function.Extent.Text}
 Add-Type -TypeDefinition $nativeAst.Right.Expression.Value -ErrorAction Stop
 $valid=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${valid}')}
@@ -75,10 +76,12 @@ $missing=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${missing}')}
 $email=Get-Email $valid;$accountId=Get-AccountId $email;$upper=Get-AccountId 'USER@example.test'
 $ambiguousRejected=$false;try{Get-Email $ambiguous|Out-Null}catch{$ambiguousRejected=$_.Exception.Message -like 'IDENTITY:*'}
 $missingRejected=$false;try{Get-Email $missing|Out-Null}catch{$missingRejected=$_.Exception.Message -like 'IDENTITY:*'}
+Write-SafeJson $null
 [Console]::Out.WriteLine((ConvertTo-Json -Compress @{email=$email;accountId=$accountId;upperAccountId=$upper;ambiguousRejected=$ambiguousRejected;missingRejected=$missingRejected}))
 `;
  const encoded=Buffer.from(command,'utf16le').toString('base64');
  const ps=await execFileAsync(`${process.env.SystemRoot??'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',encoded],{windowsHide:true,encoding:'utf8',timeout:15000,maxBuffer:4096});
- const result=JSON.parse(ps.stdout.trim());
+ const lines=ps.stdout.trim().split(/\r?\n/u);assert.equal(lines[0],'null','missing credentials must serialize as JSON null on PowerShell 5.1');
+ const result=JSON.parse(lines[1]);
  assert.deepEqual(result,{email:'user@example.test',accountId:expected,upperAccountId:expected,ambiguousRejected:true,missingRejected:true});
 });

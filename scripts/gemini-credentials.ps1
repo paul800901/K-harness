@@ -5,7 +5,8 @@ param(
  [Parameter(Mandatory=$false)][switch]$SkipCaptureCurrent
 )
 $ErrorActionPreference='Stop'
-$liveTarget='antigravity.gemini'
+# agy 1.2.16 uses go-keyring: service:user target and UTF-8 secret bytes.
+$liveTarget='gemini:antigravity'
 
 $native=@'
 using System;
@@ -48,24 +49,23 @@ public static class KGeminiCredentialNative {
 }
 '@
 
-function Write-SafeJson($Value){[Console]::Out.WriteLine((ConvertTo-Json -InputObject $Value -Compress -Depth 5))}
+function Write-SafeJson($Value){if($null -eq $Value){[Console]::Out.WriteLine('null')}else{[Console]::Out.WriteLine((ConvertTo-Json -InputObject $Value -Compress -Depth 5))}}
 function Get-Email($Record){
  if($null -eq $Record){throw 'IDENTITY:Credential identity is missing.'}
- try{$json=[Text.Encoding]::Unicode.GetString($Record.Blob).TrimEnd([char]0);$data=ConvertFrom-Json -InputObject $json -ErrorAction Stop}catch{throw 'IDENTITY:Credential identity JSON is invalid.'}
- $found=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
- $visit=$null
- $visit={param($Value)
-  if($null -eq $Value){return}
-  if($Value -is [Collections.IDictionary]){
-   foreach($key in $Value.Keys){$item=$Value[$key];if([string]$key -in @('email','email_address','emailAddress') -and $item -is [string] -and $item -match '^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$'){[void]$found.Add($item.ToLowerInvariant())};& $visit $item}
-  }elseif($Value -is [System.Management.Automation.PSCustomObject]){
-   foreach($property in $Value.PSObject.Properties){$item=$property.Value;if($property.Name -in @('email','email_address','emailAddress') -and $item -is [string] -and $item -match '^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$'){[void]$found.Add($item.ToLowerInvariant())};& $visit $item}
-  }elseif($Value -is [Collections.IEnumerable] -and $Value -isnot [string]){foreach($item in $Value){& $visit $item}}
- }
- & $visit $data
- if($found.Count -eq 0){throw 'IDENTITY:Credential identity email is missing.'}
- if($found.Count -ne 1){throw 'IDENTITY:Credential identity is ambiguous.'}
- foreach($email in $found){return $email}
+ try{$json=[Text.UTF8Encoding]::new($false,$true).GetString($Record.Blob).TrimEnd([char]0);$data=ConvertFrom-Json -InputObject $json -ErrorAction Stop}catch{throw 'IDENTITY:Credential identity JSON is invalid.'}
+
+ # The native JSON stores the account identity in its OIDC id_token. This only
+ # identifies the saved account; K still requires the official /usage check.
+ try{
+  if($data.id_token -isnot [string]){throw 'missing'}
+  $parts=$data.id_token.Split('.')
+  if($parts.Length -ne 3){throw 'invalid'}
+  $payload=$parts[1].Replace('-','+').Replace('_','/')
+  $payload=$payload.PadRight($payload.Length+(4-$payload.Length%4)%4,'=')
+  $claims=ConvertFrom-Json ([Text.UTF8Encoding]::new($false,$true).GetString([Convert]::FromBase64String($payload)))
+  if($claims.email -isnot [string] -or $claims.email -notmatch '^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$'){throw 'missing'}
+  return $claims.email.ToLowerInvariant()
+ }catch{throw 'IDENTITY:Credential id_token email is missing or invalid.'}
 }
 function Get-AccountId([string]$Email){$sha=[Security.Cryptography.SHA256]::Create();try{$hash=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Email.ToLowerInvariant()));return ([BitConverter]::ToString($hash).Replace('-','').Substring(0,32).ToLowerInvariant())}finally{$sha.Dispose()}}
 function Get-ManagedTarget([string]$Id){return "K-Harness.Antigravity.$($Namespace.ToLowerInvariant()).$Id"}

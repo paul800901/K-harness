@@ -51,18 +51,16 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
    const response=await fetch(`/api/gemini/accounts/${action}`,{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(data)});
    const result=await response.json();if(!response.ok)throw Error(result.error||'無法更新 Gemini 帳號狀態。');
    setGeminiAccounts(result);const current=await refreshGeminiAccounts();
+   if(action==='finish')setGeminiNotice('Gemini 帳號已保存並確認登入。');
+   if(['capture','cancel'].includes(action)&&!current?.accounts?.length)await refreshGeminiStatus();
+   if(action==='cancel')setGeminiNotice(result.activeAccountId?'已取消新增，原有帳號已恢復。':'已取消新增；若已在官方程式登入，該登入仍保留，尚未加入 K。');
+   if(action==='login')setGeminiNotice('已開啟官方登入，請本人完成登入。登入完成後關閉官方視窗，再回來保存帳號。');
    if(['capture','finish','cancel','activate','refresh'].includes(action)&&current?.activeAccountId&&!current.loginPending){
     const active=current.accounts?.find(account=>account.id===current.activeAccountId);
     if(active?.auth?.status==='authenticated')await onRefresh?.('gemini');
    }
    window.dispatchEvent(new Event('k-gemini-usage-refresh'));
   }catch(error){setGeminiNotice(error.message||'無法更新 Gemini 帳號狀態。');await refreshGeminiAccounts();}
-  finally{setGeminiAction(false);}
- };
- const startGeminiLogin=async()=>{
-  setGeminiAction(true);setGeminiNotice('');
-  try{const response=await fetch('/api/gemini/login',{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:'{}'});const result=await response.json();if(!response.ok)throw Error(result.error);setGeminiNotice(result.reason);}
-  catch(error){setGeminiNotice(error.message||'無法開啟 Antigravity 官方登入。');}
   finally{setGeminiAction(false);}
  };
  useEffect(()=>{refreshClaudeStatus();refreshCodexStatus();refreshGeminiStatus();refreshGeminiAccounts();},[]);
@@ -173,11 +171,12 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
        {!active&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('activate',{accountId:account.id})}>切換使用</button>}
       </div>;
      })}
-     {!geminiAccountRows.length&&<div className="gemini-account-empty"><span>{geminiLoading?'正在確認登入狀態…':geminiLegacyVerified?'目前 Antigravity 登入已驗證，可保存為帳號。':geminiStatus?.auth?.loggedIn===false?'目前尚未登入 Gemini。':'尚未確認目前登入狀態。'}</span>
-      <div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||geminiBusy||geminiLoginPending||!geminiAccountsEnabled||!geminiLegacyVerified} onClick={()=>geminiAccountAction('capture')}>保存目前登入</button><button type="button" disabled={disabled||geminiAction||geminiLoading||geminiBusy||geminiLoginPending||geminiLegacyVerified||!geminiStatus?.installed||!geminiAccountsEnabled} onClick={startGeminiLogin}>登入 Gemini 訂閱</button><button type="button" disabled={geminiAction||geminiLoading||geminiLoginPending||(geminiUncertain&&!geminiAccountsEnabled)} onClick={async()=>{if(geminiUncertain)await geminiAccountAction('refresh');void refreshGeminiStatus();void refreshGeminiAccounts();}}><RefreshCw size={14}/>刷新狀態</button></div>
+     {!geminiAccountRows.length&&<div className="gemini-account-empty"><span>{geminiLoading?'正在確認登入狀態…':geminiLegacyVerified?'目前 Antigravity 登入已驗證；可直接新增帳號，或選擇保存目前登入。':geminiStatus?.auth?.loggedIn===false?'目前尚未登入 Gemini，可直接開始新增帳號。':'尚未確認目前登入狀態，可直接開始新增帳號。'}</span>
+      <div className="provider-auth-actions">{geminiLegacyVerified&&<button type="button" disabled={disabled||geminiAction||geminiBusy||geminiLoginPending||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('capture')}>保存目前登入</button>}<button type="button" disabled={disabled||geminiAction||geminiBusy||geminiLoginPending||!geminiAccountsEnabled||!geminiStatus?.installed} onClick={()=>geminiAccountAction('login')}>新增 Gemini 帳號</button><button type="button" disabled={geminiAction||geminiLoading||geminiLoginPending||(geminiUncertain&&!geminiAccountsEnabled)} onClick={async()=>{if(geminiUncertain)await geminiAccountAction('refresh');void refreshGeminiStatus();void refreshGeminiAccounts();}}><RefreshCw size={14}/>刷新狀態</button></div>
+      <small>開始新增前請先關閉官方 Antigravity／agy；保存或取消前也請先關閉。K 不會強制關閉程式。</small>
      </div>}
-     {geminiLoginPending&&<div className="gemini-login-pending" role="status"><strong>正在加入 Gemini 帳號</strong><span>K 已保留原本帳號。請在官方登入程式改用另一個帳號並完成登入；登入程式關閉後回 K 選「完成登入」。取消會回到原本使用的帳號。</span><div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('finish')}>完成登入</button><button type="button" disabled={geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('cancel')}>取消並回原帳號</button></div></div>}
-     {geminiAccountRows.length>0&&<div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('login')}>加入另一個帳號</button><button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh')}>刷新目前帳號額度</button></div>}
+     {geminiLoginPending&&<div className="gemini-login-pending" role="status"><strong>正在新增 Gemini 帳號</strong><span>請本人在官方 Antigravity 登入程式完成 Google 登入；完成後先關閉官方視窗，再按「登入完成，保存帳號」。取消前也請先關閉官方視窗；K 不會強制關閉。若已有原帳號，取消會恢復原帳號；若原本未登入，取消不會撤銷你在官方程式完成的登入，該登入仍未加入 K。</span><div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('finish')}>登入完成，保存帳號</button><button type="button" disabled={geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('cancel')}>取消新增</button></div></div>}
+     {geminiAccountRows.length>0&&<div className="provider-auth-actions">{!geminiLoginPending&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('login')}>新增 Gemini 帳號</button>}<button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh')}>刷新目前帳號額度</button></div>}
      {geminiBusy&&!geminiUncertain&&<small role="status">Gemini 正在工作，請等目前工作結束後再切換或登入其他帳號。</small>}
      {!geminiAccountsEnabled&&<small role="status">此版本尚未開放帳號保存、登入或切換；不會更動目前登入。</small>}
      {geminiAccounts?.reason&&<small>{geminiAccounts.reason}</small>}
