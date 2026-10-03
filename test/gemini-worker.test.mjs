@@ -40,7 +40,9 @@ test('Gemini profile hashes canonical workspace and access mode; settings keep e
 });
 test('Gemini environment forwards only OS basics and the private home; removes every credential and K variable',()=>{
  const source=Object.fromEntries(['SystemRoot','WINDIR','TEMP','TMP','Path','GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_APPLICATION_CREDENTIALS','ANTHROPIC_API_KEY','OPENAI_API_KEY','CODEX_HOME','CLAUDE_CONFIG_DIR','K_MCP_TOKEN','MCP_SERVER','APPDATA','LOCALAPPDATA','NODE_OPTIONS','USERPROFILE','HOME'].map(k=>[k,'private']));
- assert.deepEqual(geminiEnvironment(source,'k-home'),{SystemRoot:'private',WINDIR:'private',TEMP:'private',TMP:'private',Path:'private',USERPROFILE:'k-home',HOME:'k-home'});
+ source.AGY_CLI_DISABLE_AUTO_UPDATE='false';
+ assert.deepEqual(geminiEnvironment(source,'k-home'),{SystemRoot:'private',WINDIR:'private',TEMP:'private',TMP:'private',Path:'private',USERPROFILE:'k-home',HOME:'k-home',AGY_CLI_DISABLE_AUTO_UPDATE:'true'});
+ assert.equal(source.AGY_CLI_DISABLE_AUTO_UPDATE,'false'); // K child only; never alter the caller/global environment.
 });
 for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves executable before overrides, caches catalog, isolates settings/logs and closes stdin`,async()=>{
  const fake=fakeSpawn(),worker=make(fake);const result=await worker.run({task:'bounded',effort});
@@ -49,6 +51,7 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
  assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'600s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
  assert.match(launch.args[1],/不得超過主代理的授權/);assert.match(launch.args[1],/不得再委派子代理、啟動背景服務/);assert.match(launch.args[1],/不能跑指令/);assert.match(launch.args[1],/<DELEGATED_TASK>\nbounded\n<\/DELEGATED_TASK>/);
  assert.equal(launch.options.env.USERPROFILE,worker.home);assert.equal(launch.options.env.HOME,worker.home);assert.equal(launch.options.env.LOCALAPPDATA,undefined);assert.ok(launch.args[launch.args.indexOf('--log-file')+1].startsWith(worker.home+path.sep));
+ assert.equal(launch.options.env.AGY_CLI_DISABLE_AUTO_UPDATE,'true');
  assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'read-only'));
  await worker.run({task:'different',effort});assert.equal(fake.calls.filter(c=>c.args[0]==='models').length,1);
 });

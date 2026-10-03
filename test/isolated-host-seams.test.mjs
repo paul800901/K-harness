@@ -51,7 +51,7 @@ test('Codex host exposes the process runner seam and forwards only the supplied 
   const env={PATH:'sandbox-path',USERPROFILE:'sandbox-home'};
   const host=openCodexHost({executable:'codex-runner',cwd:'C:\\sandbox',env,spawnImpl:(...args)=>{captured=args;return child;}});
   assert.equal(captured[0],'codex-runner');
-  assert.deepEqual(captured[1],['app-server','--stdio']);
+  assert.deepEqual(captured[1],['app-server','--stdio','-c','check_for_update_on_startup=false']);
   assert.deepEqual(captured[2],{cwd:'C:\\sandbox',env,windowsHide:true,stdio:['pipe','pipe','pipe']});
   await host.close();
   assert.deepEqual(await host.closed,{code:0,signal:null});
@@ -89,6 +89,8 @@ test('Claude preflight and long-lived process use the same explicit runner and e
   assert.equal(calls.length,3);
   assert.ok(calls.every(call=>call.env.USERPROFILE===env.USERPROFILE&&call.env.CLAUDE_CONFIG_DIR===config));
   assert.ok(calls.every(call=>!Object.hasOwn(call.env,'ANTHROPIC_API_KEY')));
+  assert.ok(calls.every(call=>call.env.DISABLE_AUTOUPDATER==='1'));
+  assert.equal(spawnArgs[2].env.DISABLE_AUTOUPDATER,'1');
   assert.equal(spawnArgs[0],'claude-runner');assert.equal(spawnArgs[2].env.USERPROFILE,env.USERPROFILE);
   assert.ok(!Object.hasOwn(spawnArgs[2].env,'ANTHROPIC_API_KEY'));
   await host.close();assert.deepEqual(await host.closed,{code:0,signal:null});

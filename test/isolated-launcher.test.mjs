@@ -46,6 +46,17 @@ test('launcher defaults to the module candidate and honors K_CANDIDATE_ROOT',()=
  }
 });
 
+test('formal startup freezes all three selected cores without changing subscription homes or global Gemini',async()=>{
+ const {p}=await fixture();const selected={};let received;
+ for(const provider of ['codex','claude','gemini']){const file=path.join('updates',provider,'core.exe');await mkdir(path.dirname(path.join(p.trustedProviders,file)),{recursive:true});await writeFile(path.join(p.trustedProviders,file),'fixture');selected[provider]={version:'1.0.1',file};}
+ await writeFile(path.join(p.trustedProviders,'selected-cores.json'),JSON.stringify(selected));
+ const sourceEnv={LOCALAPPDATA:'C:\\Fixture'};
+ await startIsolatedOwner({paths:p,sourceEnv,browserFactory:()=>({close:async()=>{}}),desktopFactory:async options=>{received=options;return {close:async()=>{}};}});
+ assert.equal(received.executable,path.join(p.trustedProviders,selected.codex.file));assert.equal(received.commandSpec.command,path.join(p.trustedProviders,selected.claude.file));
+ assert.equal(received.env.K_GEMINI_EXECUTABLE,path.join(p.trustedProviders,selected.gemini.file));assert.equal(sourceEnv.K_GEMINI_EXECUTABLE,undefined);
+ assert.equal(received.env.CODEX_HOME,path.join(p.agentHome,'.codex'));assert.equal(received.env.CLAUDE_CONFIG_DIR,path.join(p.agentHome,'.claude'));await received.coreUpdates.close();
+});
+
 test('native supervisor events omit the bootstrap capability and await native open',async()=>{
  const input=new PassThrough();let text='',shown=0,closed=0;
  const output=new Writable({write(chunk,_encoding,callback){text+=chunk.toString();callback();}});

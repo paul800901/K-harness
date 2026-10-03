@@ -88,7 +88,7 @@ export function claudeModelsFrom(rows){
 }
 
 function sanitizedEnv(source = process.env) {
-  const env = { ...source };
+  const env = { ...source,DISABLE_AUTOUPDATER:'1' };
   for (const name of Object.keys(env)) if (AUTH_ENV_NAMES.test(name)) delete env[name];
   return env;
 }

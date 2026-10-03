@@ -75,6 +75,8 @@ test('an injected isolated environment is passed consistently to inspection and 
  assert.equal('CLAUDE_CODE_OAUTH_TOKEN' in inspected[0].env,false);
  await login.start();
  assert.deepEqual(spawned[0].env,inspected[0].env);
+ assert.equal(spawned[0].env.DISABLE_AUTOUPDATER,'1');
+ assert.equal(supplied.DISABLE_AUTOUPDATER,undefined);
  assert.equal(spawned[0].command,'isolated-claude');
  await login.cancel();
 });

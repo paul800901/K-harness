@@ -19,6 +19,14 @@ test('missing agy yields an actionable isolated failure without starting a login
  assert.match((await login.status()).reason,/找不到 agy.*安裝.*登入/);await assert.rejects(login.start(),/找不到 agy/);assert.equal(invoked,false);
 });
 
+test('selected K Gemini core is shared by quota, models and the visible native login',async()=>{
+ const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-selected-')),calls=[];
+ const binary=path.join(cwd,'updates','agy.exe'),env={SystemRoot:process.env.SystemRoot,LOCALAPPDATA:cwd,K_GEMINI_EXECUTABLE:binary};let launched;
+ const login=createGeminiLogin({cwd,env,exists:async()=>{},run:async(file,args)=>{calls.push({file,args});return {code:0,stdout:'fixture'};},execImpl:async(_cmd,_args,options)=>{launched=options.env.K_AGY_LOGIN_EXECUTABLE;}});
+ await login.status();await login.status({checkAuth:false});await login.start();
+ assert.ok(calls.length>=4);assert.ok(calls.every(call=>call.file===binary));assert.equal(launched,binary);
+});
+
 test('Gemini auth requires the native account report, including exhausted quota, and distinguishes signed out from unknown',async()=>{
  const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-auth-')),calls=[];
  let report={code:0,stdout:'Gemini Models\tWeekly Limit Remaining\t0%\t2026-10-10T05:23:48Z\n',stderr:''};

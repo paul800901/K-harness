@@ -11,7 +11,7 @@ import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 
-export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
+export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
@@ -43,6 +43,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
   const pending=(async()=>{
   closing=true;
   launchToken=null;pickerAbort?.abort();clearTimeout(scheduled);scheduled=null;
+  await coreUpdates?.close();
   const failures=[];
   for(const [name,close] of [['本機語音辨識',closeLocalDictation],['Claude 登入',()=>claudeLogin.close()],['Codex 登入',()=>codexLogin.close()],['對話控制器',()=>controller.close()]]){
    if(closedResources.has(name))continue;
@@ -134,6 +135,10 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    }
    if(req.method!=='POST'||req.headers['x-k-request']!=='1'||!req.headers['content-type']?.startsWith('application/json'))return json(403,{error:'Explicit local request required'});
    let raw='';const maxBody=url.pathname==='/api/upload'?12*1024*1024:url.pathname==='/api/dictation/transcribe'?MAX_JSON_BYTES:65536;for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>maxBody){if(url.pathname==='/api/dictation/transcribe')throw new LocalDictationError('請求過大。',{code:'REQUEST_TOO_LARGE',statusCode:413});throw new Error('請求過大。');}}const data=JSON.parse(raw||'{}');
+   if(url.pathname==='/api/core-update'){
+    if(!coreUpdates)throw Error('請從正式桌面入口更新核心。');
+    return json(200,await coreUpdates.update(data.provider));
+   }
    if(url.pathname==='/api/dictation/transcribe'){
     if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).length!==1||typeof data.audioBase64!=='string')
      throw new LocalDictationError('請提供 audioBase64 音訊資料。',{code:'INVALID_REQUEST',statusCode:400});

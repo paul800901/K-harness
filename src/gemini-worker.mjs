@@ -9,6 +9,7 @@ import {GEMINI_WORKER_MODELS, GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 const exec = promisify(execFile);
 
 export function geminiExecutable(env=process.env,executable) {
+  executable??=env.K_GEMINI_EXECUTABLE;
   const local=Object.entries(env).find(([key])=>key.toUpperCase()==='LOCALAPPDATA')?.[1];
   return executable?path.resolve(executable):local?path.resolve(local,'agy','bin','agy.exe'):null;
 }
@@ -39,7 +40,8 @@ export function geminiEnvironment(source, home) {
   // injection variables. Never read/copy credentials or inherit provider config.
   const env={};
   for(const [key,value] of Object.entries(source))if(/^(SystemRoot|WINDIR|TEMP|TMP|PATH)$/iu.test(key))env[key]=value;
-  return {...env,USERPROFILE:home,HOME:home};
+  // The native background updater can open a Windows terminal even in print mode.
+  return {...env,USERPROFILE:home,HOME:home,AGY_CLI_DISABLE_AUTO_UPDATE:'true'};
 }
 export function geminiInstruction(task, accessMode) {
   const restriction=accessMode==='danger-full-access'?'':`\nFlash 在非完整存取模式下不能跑指令；不得執行終端機指令。${accessMode==='read-only'?'本工作為唯讀，不得寫檔。':'只能寫入指定工作區。'}`;

@@ -13,7 +13,7 @@ export function disabledCodexMcpServer() {
 export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, signal, spawnImpl=spawn }) {
   signal?.throwIfAborted();
   let abortClose;
-  const child = spawnImpl(executable, ['app-server', '--stdio'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawnImpl(executable, ['app-server','--stdio','-c','check_for_update_on_startup=false'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   child.stderr.resume();
   const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false;
   const startup = new Map(); const startupWaiters = new Set();

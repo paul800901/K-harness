@@ -22,7 +22,7 @@ import {validateWorkspace} from './workspaces.mjs';
 
 /** Native desktop composition. Provider permissions remain provider-owned. */
 export async function startIsolatedDesktop({root,workspace,port,executable,commandSpec,
-  env,browsers,allowLogin=false,workspaceLabel='隔離測試工作區',startDesktopImpl=startDesktop,pickWorkspace=pickWorkspaceDirectory}={}){
+  env,browsers,coreUpdates,allowLogin=false,workspaceLabel='隔離測試工作區',startDesktopImpl=startDesktop,pickWorkspace=pickWorkspaceDirectory}={}){
   if(!browsers?.session||!browsers?.request||!browsers?.close)throw Error('Execution and owner browser services are required.');
   if(!Number.isInteger(port)||port<1024||port>65535)throw Error('A fixed, network-protected desktop port is required.');
   if(!path.isAbsolute(executable??'')||!path.isAbsolute(commandSpec?.command??''))throw Error('Explicit trusted provider executables are required.');
@@ -71,7 +71,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
     await addProject(stateRoot,selected);
     await updateProject(stateRoot,{path:stateRoot,archived:true});
     if(!knownWorkspace)await updateProject(stateRoot,{path:selected,name:workspaceLabel,archived:false});
-    app=await startDesktopImpl({root:stateRoot,executable,port,controllerFactory,browserRequest:browsers.request,
+    app=await startDesktopImpl({root:stateRoot,executable,port,controllerFactory,browserRequest:browsers.request,coreUpdates,
       claudeLoginFactory:()=>loginGate(createClaudeLogin({cwd:selected,env,inspect,resolve:async()=>commandSpec})),
       codexLoginFactory:()=>loginGate(createCodexLogin({cwd:selected,executable,hostFactory:codexHost})),
       geminiLoginFactory:()=>loginGate(geminiLogin),geminiAccounts,

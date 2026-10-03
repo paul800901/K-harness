@@ -92,3 +92,6 @@ dialog{border:0;border-radius:var(--k-radius-lg);background:var(--k-raised);colo
 
 
 .connection-loading{display:flex;align-items:center;justify-content:space-between;padding:12px 20px;border-bottom:1px solid var(--k-line);font-size:var(--k-text-md)}
+
+.core-updates{padding:16px 0;border-bottom:1px solid var(--k-line);font-size:var(--k-text-sm)}
+.core-updates .provider-auth-actions{margin:10px 0}.core-updates small{display:block;color:var(--k-ink-3)}.core-updates p{margin:8px 0 0}

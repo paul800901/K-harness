@@ -4,6 +4,8 @@ import {createInterface} from 'node:readline';
 import {fileURLToPath} from 'node:url';
 import {createOwnerBrowserRegistry} from './owner-browser-registry.mjs';
 import {startIsolatedDesktop} from './isolated-desktop.mjs';
+import {createCoreUpdates,selectedCoreExecutables} from './core-updates.mjs';
+import {geminiExecutable} from './gemini-worker.mjs';
 
 const moduleDirectory=path.dirname(fileURLToPath(import.meta.url));
 const inferredCandidateRoot=path.basename(path.dirname(moduleDirectory)).toLowerCase()==='trusted-runtime'
@@ -55,6 +57,9 @@ export async function startIsolatedOwner({
   });
   // State is created by the trusted owner under the candidate vault. Existing candidate state remains untouched.
   const env={...sourceEnv,CODEX_HOME:path.join(p.agentHome,'.codex'),CLAUDE_CONFIG_DIR:path.join(p.agentHome,'.claude')};
+  const cores=await selectedCoreExecutables(p.trustedProviders,{codex:p.executable,claude:p.claudeCommand,gemini:geminiExecutable(env)});
+  if(cores.gemini)env.K_GEMINI_EXECUTABLE=cores.gemini;
+  const coreUpdates=createCoreUpdates({root:p.trustedProviders,active:cores});
   // Keep provider subscription homes and prevent inherited API billing credentials.
   for(const key of Object.keys(env)){
     if(/^(OPENAI_API_KEY|ANTHROPIC_API_KEY|ANTHROPIC_AUTH_TOKEN|CLAUDE_CODE_OAUTH_TOKEN|DEEPSEEK_API_KEY)$/i.test(key))delete env[key];
@@ -63,7 +68,7 @@ export async function startIsolatedOwner({
   try{
     browsers=browserFactory({vault:p.browserProfiles,outputRoot:p.browserOutput,testOnly:false,gatewayFactory});
     app=await desktopFactory({root:p.stateRoot,workspace:p.workspace,port:ISOLATED_FORMAL_PORT,
-      executable:p.executable,commandSpec:{command:p.claudeCommand,argsPrefix:[]},env,browsers,allowLogin:true,workspaceLabel:'私人工作區'});
+      executable:cores.codex,commandSpec:{command:cores.claude,argsPrefix:[]},env,browsers,coreUpdates,allowLogin:true,workspaceLabel:'私人工作區'});
     return {app,browsers};
   }catch(error){
     await app?.close().catch(()=>{});await browsers?.close().catch(()=>{});

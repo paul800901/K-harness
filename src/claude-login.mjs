@@ -6,7 +6,7 @@ const AUTH_ENV=/^(ANTHROPIC_|CLAUDE_CODE_OAUTH_|CLAUDE_CODE_USE_|CLAUDE_CODE_API
 const STOP_TIMEOUT_MS=10000;
 
 function loginEnvironment(source){
- const result={...source};
+ const result={...source,DISABLE_AUTOUPDATER:'1'};
  for(const key of Object.keys(result))if(AUTH_ENV.test(key))delete result[key];
  return result;
 }
