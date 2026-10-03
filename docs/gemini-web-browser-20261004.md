@@ -4,7 +4,7 @@
 
 使用者要求補齊 Gemini 主代理及 Flash 工人的原生搜尋／讀公開網頁，以及 K 專用 Chrome 操作。這不是 Google 商家 API 接入；該份外部盤點的核對見 [Google Ops 核對](google-ops-audit-20261004.md)。本批不新增人用設定，不改四帳號、登入、計費或對話。
 
-**目前是已完成真實連線驗證的候選，已通過最後回歸／複查，正在部署準備，尚未部署／push。** 主代理原有瀏覽器接線保留；Flash 新增同一 K 瀏覽器通道。
+**已完成實測、複查與南區正式部署／讀回；本批尚未 push。** 主代理原有瀏覽器接線保留；Flash 新增同一 K 瀏覽器通道。
 
 2026-10-04 使用者在明確說明「補原生讀網址許可、開啟 K 專用 Chrome、完成實測、確認無工作後保留退版並部署」後回覆「全權處理，我沒有在電腦前了」。依此加入原生 `read_url(*)` 許可並由助手開啟原有 K Chrome；沒有加入自動開窗功能，沒有改用 skip 繞過其他權限。不含 GitHub 發布、東區更新或 Google 營運發布。
 
@@ -25,7 +25,7 @@ agy 1.2.16、真正 Gemini 3.8 Flash low、K `createGeminiWorker`、新建空白
 - CLI 回傳退出碼 0，但沒有最終回答；K 正確標為 failed，而不是把 exit 0 算成功。
 - 上述是修正前基準。取得「全權處理」後，加入原生 `read_url(*)`；未增加 execute_url、指令或全面略過權限。
 - 補許可後真正 Flash 工人（唯讀）與 Gemini 主代理（工作區編輯）均完成 `search_web`、`read_url_content`、讀取原生回傳檔，零工具錯誤／拒絕。
-- **原生讀網址會回快取內容**：這次 example.com 回傳明示 Cached Content，與 Chrome 當下頁面不同。搜尋／读網址接線成功不是資料必定即時；需要即時或動態頁面時用 K Chrome，不能憑記憶補連結。
+- **原生讀網址會回快取內容**：這次 example.com 回傳明示 Cached Content，與 Chrome 當下頁面不同。搜尋／讀網址接線成功不是資料必定即時；需要即時或動態頁面時用 K Chrome，不能憑記憶補連結。
 
 官方 [headless 文件](https://www.antigravity.google/docs/cli/headless/) 說明，需核准的工具在背景模式會被拒絕；不支援用 `control_response` 補做互動核准。僅有官方工具名稱不等於本次權限下可用。設定語意另見 [官方原生權限](https://www.antigravity.google/docs/permissions?tab=cli)。
 
@@ -43,7 +43,7 @@ agy 1.2.16、真正 Gemini 3.8 Flash low、K `createGeminiWorker`、新建空白
 
 `src/gemini-worker.mjs`、`src/gemini-controller.mjs`、`src/isolated-desktop.mjs`、`src/owner-browser-registry.mjs`、`test/gemini-worker.test.mjs`、`test/gemini-browser.test.mjs`、`test/gemini-controller.test.mjs`，以及 AGENTS、README、本文件與索引。`browser-extension/extension-protocol.cjs` 原有 EOL 差異不是本批修改，不重設、不提交。
 
-正式 K 仍是上一批 `6830927`；東區不更新。未執行 Google 發布、回評、影片上傳、廣告調整或憑證轉移。
+部署前正式 K 為上一批 `6830927`，本次已更新為 `b8bd031`；東區不更新。未執行 Google 發布、回評、影片上傳、廣告調整或憑證轉移。
 
 ## 真正 Opus 5.5 複查
 
@@ -65,7 +65,7 @@ Opus 沒有執行測試、也沒有查驗 Chrome；不把靜態複查當成實�
 - `chrome-worker-1791056123651`／`chrome-main-1791056561187`：第一次真 Chrome 讀頁／點擊／截圖；含上述參數錯誤，沒有刪除失敗紀錄。
 - 本輪沒有測網站登入、Google 後台發佈、原生新生成圖、影片上傳，也沒有讓 Gemini 主代理派 GPT／Claude。
 - 多個主代理／工人同時操作同一個 Chrome 的並行真實驗收未做；已驗證的是每工人 profile／連線分離的自動測試及先後各一個真任務。不把它說成多帳號並行。
-- 後續正式部署與讀回收據將記於本節；目前 formal 仍為 `6830927`，不把候選當成正式版。
+- 正式部署與讀回收據見下一節；候選測試和正式狀態分開記錄。
 
 ## 最後回歸與補查（授權後）
 
@@ -74,3 +74,16 @@ Opus 沒有執行測試、也沒有查驗 Chrome；不把靜態複查當成實�
 - 真正 Opus 5.5 最終補查：`authorized-review/opus-review.md`、`opus-raw.jsonl`、`opus-result.json`；官方 Claude Code 2.1.285、Claude 訂閱，回傳 `claude-opus-5-5`，session `829a5634-77f5-4273-9dcb-f84fbdb89db3`，成功且無阻擋問題。
 - Opus 確認指令／寫檔／MCP 邊界沒有退化，短工具指引不屬過度工程化。提醒原生 read_url 許可不是資料外送授權；模型仍須依任務與規則使用，沒有另建 URL 防火牆。執行紀錄持續保留，未新增清理架構。
 - Opus 建議的無瀏覽器反向指引測試不另加一套：既有 controller 測試已檢查無助手時原生規則全文恰為原分工文字，新增工人測試亦覆蓋無瀏覽器不送指引。
+
+## 南區正式部署與讀回
+
+- 程式版本：`b8bd03160e3764621253abbb9783aacbf7fdd486`，維護分支 `codex/r3-2`；**只本機 commit，未 push／未移動遠端 tag**。
+- 本輪核對了 K 的三個現有聊天室，均顯示已完成、沒有處理中或待核准；原生程序樹只有閒置核心／視窗，沒有 Flash 任務，12 個輸入佇列均空。03:54 在 K 設定按正常「停止後端」；讀回 supervisor confirmed close、exit 0、原生程序退出及 47831 釋放。之後只結束已無後端的系統匣啟動器，不強殺工作。
+- 乾淨 Git archive 候選建置成功，完整 **664/664**，35 秒；沒有安裝／升級套件。UI 的既有 bundle 大小警告保留，不為此重構。452 個 Git 檔案逐一核對，套用後 UI／啟動器雜湊一致。
+- 03:55 套用正式 `<base>/trusted-runtime`；可退回版本 `6830927` 保存於 `<base>/releases/before-1791057340554`，含舊程式、啟動器、入口及本機設定。`<base>` 為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee`。這是程式退版，不是對話備份。
+- 新正式模組以原本正式資料開啟一次只讀 Electron 介面驗證：四帳號與目前帳號、額度排序 Claude→GPT→Gemini、子代理排序 auto→Flash→Sol→Luna、三個手動更新按鈕均正確，零 POST；驗證介面關閉後，再從原正式入口重開。
+- 03:57 原入口啟動成功，正式 Electron PID 12760、47831 health 為 native，版本 `b8bd031`；實際提供的三個 UI 資產雜湊一致，未授權 `/api/state` 仍 403。
+- 四帳號與目前帳號不變；共 183 個受保護檔案核對不變（原生執行檔、Codex／瀏覽器設定及對話紀錄）。登入與 Chrome 設定檔未搬取；原生網頁／Chrome 能力用本次測試，不另送工作到既有聊天室。
+- Chrome 保持原專用設定檔，未關閉使用者分頁；測試產物保留，沒有新增常駐程序、自動啟動或更新排程。手動開啟 Chrome 是本次驗收授權，不變更 K 平常不強開 Chrome 的行為。
+- 部署收據：`D:\K-harness\.runtime\gemini-web-browser-deploy-20261004`（preparation、full-tests、idle-stop-readback、activation、live-ui-readback、normal-start-readback、served-readback、protection-after）。
+- 文件同步至 `D:\K-harness\docs`；README 對齊本次能力。舊根目錄程式及其未知修改未被覆蓋，AGENTS 僅追加本次授權，不覆蓋原有差異。
