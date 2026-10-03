@@ -20,6 +20,8 @@
 - 真實 agy **1.2.16**，2026-10-03 13:27:36 臺灣時間查詢成功：`auth.loggedIn=true`；每週 **97%**、重設 `2026-10-09T14:10:46Z`；5 小時 **97%**、重設 `2026-10-03T08:01:09Z`。證據 `.runtime/bootstrap/gemini-auth-status-live.json`。數字只代表該次查詢。
 - 新增測試驗證額度用完 0% 仍屬已登入、目錄成功不等於登入、失敗不洩漏原始診斷、已有設定不被刷新／登入覆寫。
 - 首次正式介面已讀回「Gemini 已登入」，但額度檢查失敗：`src/conversation-controller.mjs` 的共用額度投影只列 Codex／Claude，切到既有聊天室漏了 Gemini。補成保留所有原生供應商額度，新增切到 GPT 仍可見 Gemini 額度的回歸測試；不把首次失敗當成通過。首次證據保留為 `.runtime/bootstrap/gemini-account-live-ui-attempt1.json`。
+- 接線補修後最終完整套件 **578/578**，失敗／取消／跳過 0，32275.1339 ms，證據 `.runtime/gemini-account-full-tests-final.log`。前端未再變動，沿用上面已驗證的建置。第二次工程 UI 啟動等待後腳本未找到預期控制項，留存 `gemini-account-live-ui-attempt2.json`，再次檢查加入階段與畫面定位證據；沒有據此更改產品或宣稱延遲根因已定位。
+- 後續讀回查到官方 `models` 卡在「Fetching available models...」並於 30 秒逾時；帳號與額度不需要模型清單，拆開兩條查詢以免連帶受阻。未知／網路失敗仍不假報已登入或 0% 額度。
 
 ## 正式狀態與南區交接
 

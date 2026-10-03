@@ -35,11 +35,12 @@ export function createGeminiLogin({cwd,env=process.env,executable,run=geminiProc
     const options={cwd:home,env:childEnv,timeoutMs:30000};
     const version=await run(binary,['--version'],options);
     if(version.code!==0||version.reason||version.cleanupError)throw Error('無法確認 Antigravity CLI 版本。');
-    const catalog=await run(binary,['models'],options);
-    if(catalog.code!==0||catalog.reason||catalog.cleanupError)throw Error(geminiOutcome({}, {...catalog,stderr:`${catalog.stdout}\n${catalog.stderr}`}).error);
-    const models=[...new Set(catalog.stdout.split(/\r?\n/u).map(line=>line.trim().split(/\s/u)[0]).filter(name=>/^gemini-[\w.-]+$/u.test(name)))];
-    const base={installed:true,available:true,version:version.stdout.trim(),models};
-    if(!checkAuth)return base;
+    const base={installed:true,available:true,version:version.stdout.trim(),models:[]};
+    if(!checkAuth){
+     const catalog=await run(binary,['models'],options);
+     if(catalog.code!==0||catalog.reason||catalog.cleanupError)throw Error(geminiOutcome({}, {...catalog,stderr:`${catalog.stdout}\n${catalog.stderr}`}).error);
+     return {...base,models:[...new Set(catalog.stdout.split(/\r?\n/u).map(line=>line.trim().split(/\s/u)[0]).filter(name=>/^gemini-[\w.-]+$/u.test(name)))]};
+    }
     // /usage is answered by the CLI, without a model turn. A successful account
     // quota report proves authentication; the public model catalog does not.
     let report;

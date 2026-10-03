@@ -9,7 +9,7 @@ test('Antigravity catalog never claims authenticated status and login opens only
  const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-login-')),calls=[];
  const env={LOCALAPPDATA:path.join(cwd,'Paulus-local'),SystemRoot:process.env.SystemRoot??cwd,GEMINI_API_KEY:'do-not-inherit',HOME:'do-not-use'};
  const login=createGeminiLogin({cwd,env,exists:async()=>{},run:async(_b,args)=>({code:0,stdout:args[0]==='models'?'gemini-3.8-flash-low\n':'agy fixture'}),execImpl:async(...args)=>{calls.push(args);}});
- const status=await login.status();assert.equal(status.available,true);assert.equal(status.auth.loggedIn,undefined);assert.deepEqual(status.models,['gemini-3.8-flash-low']);
+ const status=await login.status({checkAuth:false});assert.equal(status.available,true);assert.equal(status.auth,undefined);assert.deepEqual(status.models,['gemini-3.8-flash-low']);assert.equal((await login.status()).auth.status,'unknown');
  await login.start();const [binary,args,options]=calls[0];assert.ok(binary.endsWith('powershell.exe'));assert.ok(args.at(-1).includes('Start-Process'));assert.ok(args.at(-1).includes('-WindowStyle Normal'));assert.equal(options.env.GEMINI_API_KEY,undefined);assert.equal(options.env.K_AGY_LOGIN_EXECUTABLE,path.join(env.LOCALAPPDATA,'agy/bin/agy.exe'));assert.equal(options.env.HOME,path.join(cwd,'agent-home/gemini/account'));
 });
 
@@ -25,7 +25,7 @@ test('Gemini auth requires the native account report, including exhausted quota,
  const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd},exists:async()=>{},run:async(_binary,args)=>{
   calls.push(args);return args[0]==='--version'?{code:0,stdout:'1.2.16'}:args[0]==='models'?{code:0,stdout:'gemini-3.8-flash-low'}:report;
  }});
- const verified=await login.status();assert.equal(verified.auth.loggedIn,true);assert.ok(Date.parse(verified.auth.checkedAt));assert.deepEqual(calls.at(-1),['-p','/usage']);
+ const verified=await login.status();assert.equal(verified.auth.loggedIn,true);assert.ok(Date.parse(verified.auth.checkedAt));assert.deepEqual(calls,[['--version'],['-p','/usage']],'account queries must not wait for the model catalog');
  report={code:1,stdout:'',stderr:'authentication required'};const out=await login.status();assert.equal(out.auth.loggedIn,false);assert.equal(out.available,true);assert.match(out.reason,/尚未登入/);
  for(const invalid of [{code:0,stdout:'gemini-3.8-flash-low'},{code:0,stdout:'new unknown report format'},{code:1,stderr:'network timeout secret diagnostic'},{code:0,stdout:'Gemini Models\tWeekly Limit Remaining\t97%\t2026-10-10T05:23:48Z',reason:'timeout'}]){
   report=invalid;const unknown=await login.status();assert.equal(unknown.auth.status,'unknown');assert.equal(unknown.auth.loggedIn,undefined);assert.doesNotMatch(unknown.reason,/secret diagnostic/);
