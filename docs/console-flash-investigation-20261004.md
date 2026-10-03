@@ -4,7 +4,7 @@
 
 - 黑窗根因已捕捉：**K 查詢 Gemini 額度時，Antigravity CLI 自己啟動背景更新程序，開出了 Windows Terminal**。不是使用者手動更新，也不是 K 的 Git 更新器。
 - 已套用南區正式程式，並加入使用者要求的三個小按鈕：更新 Claude Code、更新 Codex、更新 Antigravity。**平常不查新版、不下載、不自動更新；按下才處理，完全離開並停止 K、重開後生效。** 只準備新版本、不熱換正在工作的核心，因此不用新增工作鎖或更新排程。
-- 維護來源：`C:\Users\Paulus\.codex\worktrees\r2-simplification\K-harness`，基準 `9f99dab`。正式程式於 02:18 更新為 **`6830927`**；本人已明確同意套用並「離開並停止 K」，啟用前程序清單為空、連接埠 47831 未監聽。本批未 push、未打 tag、東區不動，亦不順便升級三家核心。
+- 維護來源：`C:\Users\Paulus\.codex\worktrees\r2-simplification\K-harness`，基準 `9f99dab`。正式程式於 02:18 更新為 **`6830927`**；本人已明確同意套用並「離開並停止 K」，啟用前程序清單為空、連接埠 47831 未監聽。本批程式與部署紀錄已推送私人 GitHub `origin/main` 並核對 SHA；未打 tag、東區不動，亦不順便升級三家核心。
 - 保留原有 `browser-extension/extension-protocol.cjs` 換行修改，不納入本批。
 
 ## 實際根因證據
@@ -85,7 +85,8 @@ I1004 01:33:30.148697 1 auto_updater.go:334] Spawned background update process w
 - 本機語音／Node 位置與 Codex 設定未變；三家核心執行檔和四帳號登錄檔啟用前後雜湊完全相同，未建立 `selected-cores.json`。因此這次只部署 K 修正／手動入口，**沒有替本人按更新核心**。原生對話／登入目錄原地保留，不建立對話備份或還原機制。
 - 正式 UI 讀回：三按鈕順序正確；四個已保存帳號與原帳號不變，額度順序 Claude → GPT → Gemini，子代理 auto → Flash → Sol → Luna。驗收沒有送出任何 POST，沒有代替本人更新或切換帳號。
 - 02:20:23 原入口重開，視窗「K 執行中樞」、PID 22292、health 為 native、版本 `6830927`；服務中的 CSS／JS／標誌三個資產 hash 全吻合，未授權 state 仍 403。
-- 本批未 push、未打 tag、未更新東區。部署收據位於 `D:\K-harness\.runtime\console-core-update-deploy-20261004`。
+- 本人隨後明確要求「那就发送 Git 吧」：確認遠端仍是本批基準 `9f99dab`，正常快轉 push 至 `f302ea932d652a0148a6159888af5ebbebbc9cc2`（包含程式 `6830927` 與部署收據），`ls-remote` 完整 SHA 一致。發布狀態文件另提交同步；沒有 force push、移動／新增 tag、重啟 K 或更新東區。未提交 `.runtime`、帳號或登入資料，既有無關換行修改仍原地保留。
+- 部署與發布收據位於 `D:\K-harness\.runtime\console-core-update-deploy-20261004`。
 
 ## 本機證據位置
 
