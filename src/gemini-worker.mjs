@@ -7,9 +7,6 @@ import {atomicWrite} from './atomic-write.mjs';
 import {GEMINI_WORKER_MODELS, GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 
 const exec = promisify(execFile);
-// agy 1.0.6 live: strict rejected the in-workspace allow and permitted unlisted
-// external writes. Do not offer a write mode until its full matrix passes.
-export const GEMINI_WORKSPACE_WRITE_ERROR = 'Flash workspace-write 尚不可用：agy strict 允許未授權的工作區外寫入，且工作區內 allow 未通過；拒絕派工，未改用完整存取。Flash 在非完整存取模式下不能跑指令。';
 
 export function geminiProfile(workspace, accessMode) {
   if (!path.isAbsolute(workspace ?? '') || !['read-only','workspace-write','danger-full-access'].includes(accessMode)) throw Error('Gemini 工作區或權限無效。');
@@ -17,14 +14,18 @@ export function geminiProfile(workspace, accessMode) {
   if(process.platform==='win32')canonical=canonical.toLowerCase();
   return createHash('sha256').update(`${accessMode}\n${canonical}`).digest('hex').slice(0,16);
 }
-export function geminiSettings(workspace, accessMode) {
+export function geminiSettings(workspace, accessMode, tempDirs=[]) {
   geminiProfile(workspace,accessMode);
-  const deny=['command(*)','unsandboxed(*)','mcp(*)'];
-  // agy 1.0.6 strict ignores allow (even read_file(*)) and turns reads into headless
-  // Ask; read-only therefore relies on the default mode plus deny, which live tests honor.
-  return {...(accessMode==='read-only'?{}:{toolPermission:'strict'}),permissions:{
-    allow:accessMode==='workspace-write'?[`write_file(${path.resolve(workspace).replaceAll('\\','/')})`]:[],
-    deny:accessMode==='read-only'?['write_file(*)',...deny]:accessMode==='danger-full-access'?['mcp(*)']:deny,
+  const deny=['command(*)','unsandboxed(*)','mcp(*)'],root=path.resolve(workspace);
+  // agy 1.0.6 live, workspace outside %TEMP%: the default mode asks (headless: denies)
+  // for every write, even in the cwd, but always lets %TEMP% through. A native-path
+  // allow opens only the workspace; drive-stripped allow does not match; strict ignores
+  // allow entirely. Deny wins over allow, so %TEMP% is denied unless it holds the workspace.
+  const inside=(dir,child)=>{const r=path.relative(path.resolve(dir),child);return !r||!r.startsWith('..')&&!path.isAbsolute(r);};
+  const temps=[...new Set(tempDirs.filter(Boolean).map(dir=>path.resolve(dir)))].filter(dir=>!inside(dir,root));
+  return {...(accessMode==='danger-full-access'?{toolPermission:'strict'}:{}),permissions:{
+    allow:accessMode==='workspace-write'?[`write_file(${root})`]:[],
+    deny:accessMode==='read-only'?['write_file(*)',...deny]:accessMode==='danger-full-access'?['mcp(*)']:[...deny,...temps.map(dir=>`write_file(${dir})`)],
     ask:[],
   }};
 }
@@ -162,10 +163,11 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   const local=Object.entries(env).find(([k])=>k.toUpperCase()==='LOCALAPPDATA')?.[1];
   const binary=executable?path.resolve(executable):local?path.resolve(local,'agy','bin','agy.exe'):null;
   const childEnv=geminiEnvironment(env,home);
+  const temps=Object.entries(env).filter(([k])=>/^(TEMP|TMP)$/iu.test(k)).map(([,value])=>value);
   let catalog;
   async function prepare() {
     if(!binary)throw Error('agy executable 未設定且 LOCALAPPDATA 不存在。');
-    await atomicWrite(path.join(home,'.gemini','antigravity-cli','settings.json'),JSON.stringify(geminiSettings(workspace,accessMode),null,2));
+    await atomicWrite(path.join(home,'.gemini','antigravity-cli','settings.json'),JSON.stringify(geminiSettings(workspace,accessMode,temps),null,2));
   }
   async function models() {
     if(!catalog)catalog=(async()=>{
@@ -184,7 +186,6 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   return {profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart}={}) {
     if(!GEMINI_WORKER_MODELS.includes(model)||!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash 只接受 gemini-3.8-flash 與 low|medium|high；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
-    if(accessMode==='workspace-write')throw Error(GEMINI_WORKSPACE_WRITE_ERROR);
     const nativeModel=`${model}-${effort}`;
     if(signal?.aborted)return {status:'cancelled',settled:true,output:'',outputFiles:[],acceptance:'not-reviewed'};
     if(!(await models()).has(nativeModel))throw Error(`${nativeModel} 目前不可用；未自動換模。`);

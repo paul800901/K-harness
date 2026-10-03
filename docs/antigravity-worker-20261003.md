@@ -763,3 +763,24 @@ Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 
 - 可用：主對話「略過權限提示」（子代理完整存取）與「計畫模式」（唯讀）。一般權限（workspace-write）仍拒絕派 Flash，不提升權限。
 - 仍未驗證：Claude 主對話實際收到 Flash 完成通知（需部署後於正式 K 實測）、未登入／額度用完的真實錯誤樣本、完整存取下 `mcp(*)` deny 是否生效（K profile 為空家目錄，本來就沒有 MCP）。
 - 未推送、未合併、未部署。
+
+## 更正：workspace-write 可用（主代理追查，2026-10-03）
+
+使用者質疑「agy 擋不住工作區外寫入」不合理。追查後確認先前結論錯誤，原因是**測試設計瑕疵**：Sol 的 S4/S5 與主代理第一次探測，工作區及所有「工作區外」目標都在 `%TEMP%` 底下，而 agy 1.0.6 預設允許寫入 `%TEMP%`（類似 Codex 預設開放 TMPDIR）。官方文件：專案資料夾內讀寫自動允許，非工作區檔案需要核准（[permissions](https://antigravity.google/docs/permissions?tab=cli)）。
+
+改以 `C:\K-harness工作區` 下的暫存資料夾當工作區（非 `%TEMP%`）重測，共 8 次 Flash-low，測完刪除：
+
+| 設定 | 工作區內 | 父目錄 | 其他絕對路徑 | `%TEMP%` |
+|---|---|---|---|---|
+| 預設模式、無檔案規則 | 需要核准→headless 拒絕 | （回合已停止） | — | 對照：可寫 |
+| 預設＋`trustedWorkspaces:[ws]` | 拒絕 | 拒絕 | — | — |
+| 預設＋allow 去磁碟代號正斜線路徑 | 拒絕 | — | — | — |
+| **預設＋allow 原生路徑 `write_file(C:\...\ws)`** | **可寫** | **拒絕** | — | — |
+| 實作（上列＋deny `write_file(%TEMP%)`），刻意要求寫外部 | 可寫 | 拒絕 | 拒絕 | 拒絕（deny，回合繼續） |
+| 實作，正常任務只寫工作區 | completed，可寫 | 未寫 | 未寫 | 未寫 |
+
+結論與實作：
+- workspace-write：不用 strict；`allow:["write_file(<原生工作區路徑>)"]`，deny 加 `command(*)`、`unsandboxed(*)`、`mcp(*)`，以及 `%TEMP%`／`%TMP%`（工作區本身在其中時不加，以免 deny 蓋過 allow）。移除 `GEMINI_WORKSPACE_WRITE_ERROR` 拒絕派工。
+- 被「需要核准」擋下會讓 agy 整個回合結束（no output produced），K 回報 failed 並列 deniedTools；被 deny 擋下則回合繼續。
+- strict 會忽略 allow；K 只在完整存取（搭配 skip）使用 strict。
+- 定向 125/125、完整 559/559。未推送、未合併、未部署。

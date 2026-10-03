@@ -5,6 +5,7 @@
 ## 2026-10-03
 - [Antigravity Flash worker 階段 1](antigravity-worker-20261003.md#階段-1修訂設計)：修訂設定 home／Windows 訂閱登入後，新增 agy worker、Luna gateway 分流與持久化／通知；定向 125/125、完整 559/559，10 次 Flash-low live 發現 strict 允許外部寫入，workspace-write 明確停用；唯讀讀檔、取消程序樹及 skip MCP 的驗證限制見文件。僅指定 worktree 實作，未部署或驗收。
 - [Antigravity Flash worker 主代理驗收](antigravity-worker-20261003.md#主代理驗收與修正claude-opus-552026-10-03)：read-only 改預設模式＋deny（strict 會擋讀檔）、逾時 600 秒；live 驗證唯讀可讀且強制寫入／指令全被 deny、完整存取成功寫檔、取消無殘留；完整 559/559。未部署。
+- [Antigravity Flash workspace-write 更正](antigravity-worker-20261003.md#更正workspace-write-可用主代理追查2026-10-03)：先前「越界寫入」是測試全在 %TEMP% 的瑕疵；原生路徑 allow＋deny %TEMP% 實測只准寫工作區，workspace-write 啟用；完整 559/559。未部署。
 - [子代理權限與檔案核准修正](subagent-approval-20261003.md)：信任模式的工人跟隨主代理，檔案核准補上原生待核准 item，K 私有 Windows 沙箱設定缺檔才建立；108/108 定向、529/529 完整，正式 Claude→Luna/low 信任／手動核准及切換實測通過。已部署、正常入口重開讀回；依使用者授權合入 main 並正常推送，GitHub 精確提交讀回一致，南區取得與套用步驟已記錄；首次失敗與驗證界線見紀錄。
 - [東區更新合入 main 與南區取得方式](dongqu-main-publish-20261003.md)：已合 main 並正常推送，GitHub 精確 commit 讀回一致；保留遠端工程紀錄與東區七個提交，程式一致性及 20/20 驗證完成。南區取得與正式更新步驟見紀錄。
 - [東區複查補修](review-followup-20261003.md)：固定兩個 Whisper 測試來源，共用 Codex 官方登入網址判斷；兩種環境各 20/20，候選及 Git 狀態見紀錄，未推送。

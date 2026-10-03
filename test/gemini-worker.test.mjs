@@ -30,7 +30,11 @@ test('Gemini profile hashes canonical workspace and access mode; settings keep e
  if(process.platform==='win32')assert.equal(p,geminiProfile(workspace.toUpperCase(),'read-only'));
  // Default mode + deny: strict would turn reads into headless Ask and ignores allow.
  assert.deepEqual(geminiSettings(workspace,'read-only'),{permissions:{allow:[],deny:['write_file(*)','command(*)','unsandboxed(*)','mcp(*)'],ask:[]}});
- const write=geminiSettings(workspace,'workspace-write');assert.deepEqual(write.permissions.allow,[`write_file(${workspace.replaceAll('\\','/')})`]);assert.equal(write.permissions.deny.includes('write_file(*)'),false);
+ // Native-path allow (drive-stripped did not match live); %TEMP% denied unless it holds the workspace.
+ const temp=path.join(root,'temp'),write=geminiSettings(workspace,'workspace-write',[temp,temp,'']);
+ assert.equal(write.toolPermission,undefined);assert.deepEqual(write.permissions.allow,[`write_file(${path.resolve(workspace)})`]);
+ assert.deepEqual(write.permissions.deny,['command(*)','unsandboxed(*)','mcp(*)',`write_file(${path.resolve(temp)})`]);
+ assert.deepEqual(geminiSettings(workspace,'workspace-write',[root]).permissions.deny,['command(*)','unsandboxed(*)','mcp(*)']);
  assert.deepEqual(geminiSettings(workspace,'danger-full-access').permissions,{allow:[],deny:['mcp(*)'],ask:[]});
  assert.throws(()=>geminiProfile('relative','read-only'));assert.throws(()=>geminiSettings(workspace,'unknown'));
 });
@@ -48,10 +52,12 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
  assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'read-only'));
  await worker.run({task:'different',effort});assert.equal(fake.calls.filter(c=>c.args[0]==='models').length,1);
 });
-test('Gemini danger mode alone passes skip; unsupported workspace-write fails before any subprocess',async()=>{
+test('Gemini danger mode alone passes skip; workspace-write runs without skip under its own settings',async()=>{
  const fake=fakeSpawn(),result=await make(fake,{accessMode:'danger-full-access',executable:path.join(root,'agy.exe')}).run({task:'fake',effort:'low'});
  assert.equal(result.status,'completed');assert.ok(fake.calls[1].args.includes('--dangerously-skip-permissions'));assert.doesNotMatch(fake.calls[1].args[1],/不能跑指令/);
- const blocked=fakeSpawn();await assert.rejects(make(blocked,{accessMode:'workspace-write'}).run({task:'fake',effort:'low'}),/工作區外寫入/);assert.equal(blocked.calls.length,0);
+ const write=fakeSpawn(),worker=make(write,{accessMode:'workspace-write'});assert.equal((await worker.run({task:'fake',effort:'low'})).status,'completed');
+ assert.equal(write.calls[1].args.includes('--dangerously-skip-permissions'),false);assert.match(write.calls[1].args[1],/只能寫入指定工作區/);
+ assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'workspace-write'));
 });
 test('Gemini rejects absent native model and invalid effort without a model turn or substitute',async()=>{
  const fake=fakeSpawn(undefined,'gemini-3.8-flash-high\tFlash');
