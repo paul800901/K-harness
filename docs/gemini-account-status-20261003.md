@@ -28,3 +28,13 @@
 本次修正已實作並完成本機驗證；正式部署與 GitHub 發布另於下方記錄，不以候選結果冒充正式套用。既有正式版本為 `383c744`。圖片、K 瀏覽器助手及更多 Gemini 主代理能力未在本次擴張。
 
 南區取得最新 main 後，以現有 `Update-K.ps1 -Ref 'origin/main'` 更新；由本人安裝／登入 agy，先確認 `agy --version`、`agy models`，再執行 `node scripts/antigravity-permission-probe.mjs --run` 並取得 PASS。其他電腦尚未實測，不搬東區登入資料。
+
+## 使用者出發前停止（正式更新延後）
+
+使用者表示必須關閉東區電腦返家，明確要求延後東區更新，停止後續部署／重開。截至停止時：
+
+- 最新程式提交 `352297e`：登入／額度查詢已與模型目錄分開；最終完整 **578/578**，失敗／取消／跳過 0，33844.9748 ms，證據 `.runtime/gemini-account-full-tests-release.log`。此提交尚未套用東區。
+- 東區曾依本人「已停止 K，套用東區」授權，於 13:29:13 正常退出後先套用 `e56d946`、再套用 `51d0f9c`。目前正式 runtime 為 **`51d0f9c` 中間版，未完成最終正式驗收**；不宣稱部署完成。K 未透過正常入口重開。
+- 舊正式 `383c744` 保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791005402840/runtime`；之後兩版亦各有備份。Codex／Claude 設定與聽寫設定讀回未變。
+- 真 CLI 登入／額度與建置 UI 已通過；正式 UI 讀到「Gemini 已登入」，額度最終畫面尚未完成驗收。四次工程檢查的失敗證據保留於 `.runtime/bootstrap/gemini-account-live-ui-attempt1.json` 至 `attempt4.json`；後續查到模型目錄逾時，已在最新來源拆開依賴，不冒充最新正式成功。
+- 南區優先拉取 main 的 `352297e` 或後續純文件提交，套用後驗證設定的登入狀態、額度視窗／側欄與切換聊天室，再執行 Flash 權限 probe。圖片及其他多功能留在這些基本確認之後，不擴張本輪。
