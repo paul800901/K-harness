@@ -6,7 +6,7 @@
 - 現況與使用說明見 `README.md`；建置、測試、部署及歷史證據見 `docs/development-log.md`。設計候選不得宣稱為已實作，依賴宣告不得宣稱為已安裝。
 - 初期範圍是通用非臨床工作。不得接入病歷資料、CaseAgent 正式寫入流程或修改既有 DSH/KAI 環境。
 - 產品定位是接近 Codex App／Claude Code 的通用工作台，增加可跨供應商選擇的子代理；不是 Flash 專用流程。主代理可選目前 Codex 登入實際提供的模型，不固定 Astra／Sol 的用途。
-- 不強制派子代理；人與 AI 可依任務選擇 GPT-6.1 Sol、GPT-6 Luna 或 Gemini 3.8 Flash（Flash 目前限 Claude 的 k_luna gateway），推理程度依模型支援清單；新對話預設 AI 自動選擇，Flash 逐項指定 low/medium/high。明確指定優先，不因錯誤或額度暗換模型；模型選擇不擴張工具或資料權限。
+- 不強制派子代理；人與 AI 可依任務選擇 GPT-6.1 Sol、GPT-6 Luna 或 Gemini 3.8 Flash（GPT 使用 k_gemini、Claude 使用 k_luna gateway），推理程度依模型支援清單；新對話預設 AI 自動選擇，Flash 逐項指定 low/medium/high。明確指定優先，不因錯誤或額度暗換模型；模型選擇不擴張工具或資料權限。
 - GPT 主代理與 GPT 子代理沿用 Codex 訂閱；Claude 主代理沿用 Claude Code 訂閱；Gemini 主代理與 Flash 子代理沿用 Antigravity 訂閱。DeepSeek／Pi 路徑已移除，不搬憑證或改走 API 計費；歷史與上下文壓縮由各原生核心管理。
 - 桌面權限選單為「要求核准／代我核准／完整存取權」，進階保留「唯讀」。新工作預設要求核准（工作區內可修改）；舊對話保留既有權限。改用代我核准或完整存取必須由使用者明確選用；代我核准接 Codex 原生自動審查，不在 K 內自行一律放行。子代理沿用其原生權限範圍。限定真實測試與模式對應見 `docs/desktop-permissions-20260915.md`；直接讀改測、單次核准／拒絕及停止見 `docs/main-direct-work-20260915.md`。不得以選單宣稱所有工具、Blender 或其他供應商已驗證。
 - 不引入舊 L0／L1／L2 記憶設計。優先驗證原始工作紀錄、必要摘要與按需回讀是否足以完成任務。
@@ -149,3 +149,5 @@
 - 使用者在 GPT／Claude 派 Flash 候選 632/632 與兩條真實流程通過後，明確要求「那就部署，剛好也讓 Claude 看過」；本輪先由官方 Claude 訂閱只讀複查，再核對無執行中工作、保留程式與啟動器可退回版本，套用南區正式 K 並讀回。
 - 部署不等於多帳號真實驗收：不因此保存／切換 Antigravity 憑證、不代替本人登入第二帳號；未加入帳號時仍沿用現有官方登入。GPT／Claude 帳號、計費及語音設定不變。
 - 本輪不 push／打 tag，不更新東區。重大複查發現或無法確認工作停止時，先停下說明；工程結果見 docs/flash-deploy-claude-review-20261003.md。
+
+- 本輪正式讀回已完成：南區 GPT／Claude 皆能派 Flash；這取代前文 Flash 僅限 Claude 的當時狀態。多帳號入口已部署，不表示真憑證保存／切換已驗收，尚待本人授權與登入；工程證據及未處理的首次並行查詢限制見本輪紀錄。

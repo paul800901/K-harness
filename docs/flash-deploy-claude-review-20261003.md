@@ -2,7 +2,7 @@
 
 ## 授權與狀態
 
-使用者明確要求「那就部署，剛好也讓 Claude 看過」。本輪先完成 Claude 官方訂閱只讀複查，再修復實質問題、完整測試、保留上一版程式與啟動器，最後部署南區並做正式讀回。**本段建立時仍在補修及準備，尚未部署；最終收據附於後段。**
+使用者明確要求「那就部署，剛好也讓 Claude 看過」。本輪先完成 Claude 官方訂閱只讀複查，再修復實質問題、完整測試、保留上一版程式與啟動器，最後部署南區並做正式讀回。**南區正式版已部署並完成讀回，版本 `b9a3633b2e7e8bbe4be8a104fa4b94eeedd30a05`；原入口重開成功。**
 
 本輪不 push、不打 tag、不更新東區，不保存／切換真實 Antigravity 憑證、不代替本人登入第二帳號。未加入帳號時沿用目前官方登入；正式多帳號使用仍須另取得真憑證測試授權及本人登入。聽寫、GPT／Claude 帳號及 API 計費不變。
 
@@ -24,7 +24,7 @@
 | F2：背景刷新額度與派工相撞 | 只讀刷新被誤當登入切換，直接讓新工作失敗 | 等目前既有的 refreshPending 完成，再檢查真正登入／切換鎖；失敗傳回，不重送工作 |
 | F3：派工失敗前已換帳號 | 指定已知用盡／登出的帳號，切換後才拒絕 | 真切換之前先拒絕已知不合格目標；保留切換後原生身分與額度查詢 |
 
-修正限 `src/gemini-accounts.mjs` 與測試，由 Luna/high 限定實作，Astra 獨立讀 diff／驗證。修前失敗、修後成功與最終完整測試待下方填入，不以讀碼推論冒充已重現。
+修正限 `src/gemini-accounts.mjs` 與測試，由 Luna/high 限定實作，Astra 獨立讀 diff／驗證。修前失敗、修後成功與最終完整測試已記在後段，不以讀碼推論冒充已重現。
 
 ## 仍保留的限制
 
@@ -177,3 +177,45 @@
 最終改為：帳號清單回傳 busy 時，畫面每秒只讀更新清單，直到 busy 解除即停止；不重新執行模型、不改後端鎖、不在未確認停止或本人登入中背景嘗試恢復。安靜刷新不把帳號卡片切回讀取畫面；關閉介面時取消計時器。前一個順序查詢修法撤回，避免維持無效的接線。這是已重現的忙碌狀態更新需求，不新增常駐服務或無條件輪詢。
 
 假資料 probe 已模擬未加入帳號時的原生查詢暫時占用；有帳號後官方路由直接返回已知狀態，不再錯誤模擬每次都啟動原生查詢。修正前後的 fixture 失敗 log 保留，最終假資料 UI 及完整測試見 `accounts-busy-settled.log`／`busy-settled-full.log`；仍須以最後真 UI 證據判斷是否部署。
+
+## 南區正式部署與讀回
+
+- 使用本機 Git 提交 `b9a3633b2e7e8bbe4be8a104fa4b94eeedd30a05` 匯出全新候選；沒有推送 GitHub 或打新標記，東區不動。
+- package／lock 與原正式版一致，只複製已安裝相依，沒有安裝或升級套件。UI、Chrome 擴充、Windows 啟動器重新建置；候選完整測試 **638/638**，35000.4455 ms，fail／cancelled／skipped 0。
+- 首次準備受 Windows PowerShell 5.1 的 stderr 處理影響：Vite 已成功建置，但既有 bundle 警告讓工程腳本提前停止；同時準備收據的中文設定被隱含 ANSI 解碼。正式設定沒有寫入。保留原收據及 log，改用 UTF-8 讀回原設定，再以 PowerShell 7 繼續候選建置／測試；沒有重送任何模型工作。詳見 `preparation-recovery.md`。
+- 候選真 UI 通過後，更新前再次檢查 K 程序為空，47831 無監聽，未強制結束工作；原生審查與測試程序已退出。
+- `2026-10-03T10:17:01.152Z` 依既有 activateRuntime 交易交換程式。438 個 Git 檔案內容吻合（文字只正規化 CRLF/LF），未把測試產生的瀏覽器診斷部署出去。
+- 可退回版本：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791022621083`。舊程式、啟動器及原設定皆保留並讀回；**這不是對話備份**，退版不還原對話。
+- 本機設定只有 version／previous 更新；Whisper 路徑、K 專用 Codex 設定、核心執行檔與資料位置不變。
+- 候選及正式的隱藏工程視窗都以真服務／真建置 UI 讀回：三家登入、Gemini 官方額度、GPT 可選 Flash（low／medium／high）、帳號入口。沒有攔截假 API、沒有建立對話、沒有送模型回合、沒有按保存／加入／切換帳號。正式帳號清單仍為空，帳號紀錄檔沒有新增。
+- 工程視窗正常退出後，另執行原 Start-K-Desktop.ps1，不以工程殼冒充日常啟動器。正式視窗「K 執行中樞」、native health、b9a3633 版本及執行檔位置均讀回；3 個服務資產 HTTP 200 且 hash 相同，未授權 /api/state 仍 403。
+- 實體麥克風、真 Chrome 操作與真雙帳號接手未新增實測；前輪真 GPT／Claude 各派 Flash 的 2/2 證據沿用，不宣稱這次又跑了兩次。
+
+部署證據目錄：`D:\K-harness\.runtime\flash-deploy-20261003`，包含 `preparation.json`、建置／完整測試 log、`candidate-ui-readback.json`、`pre-activate-processes.json`、`activation.json`、`live-ui-readback.json`、`normal-start-readback.json`、`served-readback.json`。審查、補修及假資料 UI 證據保留於維護來源同名 .runtime 目錄。
+
+## Claude 最終 UI 補看與結案
+
+- 最後帳號 busy 清單刷新修正也交由同一 Claude Opus 5.5 session 只讀補看，exit 0、7 native turns，2026-10-03 18:14:55 完成。Claude 未見直接 regression 或阻擋部署問題。它沒有找到 packet 內的 probe（工程副本只收了本次來源程式），因此只確認前端實作；probe 與 638 項測試由 Astra 實際執行，不冒稱 Claude 已審過測試。
+- 保留的低嚴重度限制：只讀清單刷新若網路失敗，會顯示不可用、停止刷新，需手動按原有刷新。沿用既有失敗處理，不為本次部署另加自動重試。
+- 最後真 UI 證據已確認 busy=false、保存按鈕可用，但沒有按下。前一個讀回腳本仍使用舊的「更新 Gemini 額度」按鈕名稱而逾時；改為程式現行的「更新目前 Gemini 帳號額度」後候選及正式均通過，原失敗保留 `candidate-ui-old-quota-selector-failed.*`。
+- 南區原入口於 **18:17:32** 啟動，**18:17:33** ready／視窗與 native health 讀回，18:17:34 三個服務資產 hash 及未授權 API 拒絕通過。沒有更新東區或推上 GitHub。
+- 本輪實際修復合計：Claude 指出 3 項帳號行為問題，加上真 UI 發現 1 項忙碌狀態滯留；真多帳號啟用前的既有首次並行查詢限制仍列明，不宣稱所有多帳號驗收完成。
+
+### Claude 最終 UI 補看原文（未改寫）
+
+**結論：這個最小修正沒有直接 regression，也沒有阻擋部署的問題。** 我只讀了 `current/frontend/account-connections.jsx`。`current/test/gemini-accounts-ui-probe.mjs` 不在 ui-review-packet 裡（Glob 找不到），所以 probe 我沒審，修前失敗、修後通過的結果也沒能從程式確認。
+
+## 確認過的行為（`account-connections.jsx:129-135`）
+
+- **條件正確**：只有帳號清單 busy，而且不是 uncertain、loginPending、本人操作中、讀取中時，才會排程重查。
+- **會停**：每次重查都換新的帳號清單物件，所以 busy 時每秒重排一次；busy 變 false 就停。effect 的 cleanup 會在條件改變或 unmount 時清掉計時器。
+- **不會蓋掉本人操作**：quiet 重查也會遞增 generation。重查還在路上時，本人按下帳號操作或手動刷新，這次重查的結果會被丟掉，不會覆蓋。
+- **不會跟一般讀取重疊**：有 `!geminiAccountsLoading` 的條件，quiet 和非 quiet 讀取不會同時排程；quiet 也不切換 loading，所以帳號卡片不會閃。
+- **不碰後端鎖或憑證**：`/api/gemini/accounts` 只呼叫 `list()`，不會碰 vault 或 agy，每秒輪詢的成本很低。
+- **掛載範圍有限**：元件只在設定視窗和模型選擇視窗裡掛載。切換模式下是 hidden，但 hooks 仍會執行；只會在 busy 時輕量輪詢，可以接受。
+
+## 一個低嚴重度觀察（不擋部署）
+
+- **現象**：quiet 重查若遇到網路或 HTTP 失敗，會走既有的 catch，把清單設成「不可用」（`enabled:false`、`busy:false`）。輪詢因此停止，畫面顯示「此版本尚未開放…」，按鈕也變 disabled，要手動刷新才恢復。
+- **為什麼不是新問題**：非 quiet 讀取原本就是這樣處理失敗的。但 Flash 長時間執行、busy 一直是 true 時，每秒輪詢會讓偶發失敗比較容易遇到。
+- **可選修正**：quiet 模式失敗時保留上一份清單，不要換成「不可用」。
