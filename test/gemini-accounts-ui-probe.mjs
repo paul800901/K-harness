@@ -133,12 +133,12 @@ try{
  assert.match(await page.locator('.usage-summary').innerText(),/2 個帳號/u);
  await page.getByRole('button',{name:'查看額度與用量詳情'}).click();
  const usage=page.getByRole('dialog',{name:'額度與用量',exact:true});
- await usage.getByText('額度與用量詳細資訊').waitFor().catch(()=>{});
+ await usage.getByRole('region',{name:'額度與用量詳細資訊',exact:true}).waitFor();
  assert.equal(await usage.locator('.gemini-usage-account').count(),2);
  assert.match(await usage.locator('.gemini-usage-accounts').innerText(),/a@example\.test[\s\S]*每週[\s\S]*5 小時[\s\S]*b@example\.test/u);
  assert.match(await usage.locator('.gemini-usage-accounts').innerText(),/上次查詢|尚未更新/u);
  assert.doesNotMatch(await usage.locator('.gemini-usage-accounts').innerText(),/合計|總額/u);
- assert.match(await usage.innerText(),/Codex 訂閱剩餘額度[\s\S]*Claude 訂閱剩餘額度/u);
+ assert.match(await usage.innerText(),/Claude 訂閱剩餘額度[\s\S]*GPT \/ Codex 訂閱剩餘額度[\s\S]*Gemini \/ Antigravity 訂閱剩餘額度/u);
  await usage.getByRole('button',{name:'完成',exact:true}).click();
  activeAccountId=null;refreshUiState();await page.addInitScript(initial=>{window.EventSource=class{constructor(){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'snapshot',state:initial})}),0);}close(){}};},state);await page.reload();
  const modelReadsAtStart=modelsReads;await page.getByRole('button',{name:'新對話',exact:true}).click();
