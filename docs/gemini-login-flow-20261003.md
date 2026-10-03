@@ -29,7 +29,7 @@
 
 ## 部署與未驗證事項
 
-目前仍在候選開發；正式 K 未替換，未 push／打 tag，東區不動。真實雙帳號保存、A→B→A、實際 Google 本人登入尚未驗收。首次並行派工遇上帳號查詢的既有限制沿用前份紀錄，不因改好新增入口宣稱已修復。
+正式程式已替換為 87d0ec2，439 個 Git 檔案及部署資產讀回一致；前版保存在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791026493023`。不搬對話、語音或其他供應商登入，Codex 設定 hash 與本機設定（除版本／退版位置）不變。**四帳號已保存並逐一驗證可從安全儲存切換，正式四帳號 UI 通過；20:05 原入口重開且正式讀回完成，目前回到原帳號 A。切回 A 時兩次官方查詢未確認，均另做只查額度的刷新後成功，失敗收據保留，未宣稱整批一次通過。** 未 push／打 tag，東區不動。首次並行派工遇上帳號查詢的既有限制沿用前份紀錄，不因改好新增入口宣稱已修復。
 
 維護來源：`C:\Users\Paulus\.codex\worktrees\r2-simplification\K-harness`。證據在其 `.runtime/gemini-login-flow-20261003`。正式 runtime 與舊實驗根目錄分開處理；不覆蓋舊實驗來源。
 
@@ -126,3 +126,124 @@
 - 我沒有執行任何測試、build 或程式；以上全部來自靜態閱讀。
 
 另外，你要求不得寫檔，所以我沒有建立 plan mode 預設的計畫檔，只在這裡回報。
+## 部署後進度與本人登入交接
+
+- 新候選使用既有相依，無安裝／升級；UI、Chrome 擴充、啟動器建置完成，候選完整 **646/646**（35,252 ms），fail／cancelled／skipped 0。
+- 主代理獨立重跑建置、多帳號 UI probe、GPT Flash UI probe 均 PASS，不只採用子代理回報。兩個 UI probe 都另跑，不混入 646 的數量。
+- 候選真服務 UI 已確認 GPT／Claude／Gemini 登入、新增按鈕可用、目前帳號官方額度、Flash effort；沒有假 API、模型工作或帳號寫入。隱藏 Electron 截圖逾時保留失敗收據，不以切前景修正；後續改讀真 DOM，未把截圖宣稱成功。
+- 正式第一次真 UI 等待登入逾時；單獨原生 /usage 仍確認 A 已登入。第二次正式 UI 已讀到三家登入與新增按鈕可用，但額度查詢暫時未確認而失敗；工程腳本的舊 Gemini.*% 條件會誤匹配下方 GPT／Claude 數字，已識別此缺陷，後續雙帳號讀回改逐張 Gemini 帳號卡，不放寬為成功。兩份失敗收據保留；不宣稱正式額度已完成驗收，也不因只讀查詢失敗重送模型工作。
+- 官方訂閱 Opus 5.5 同 session 補看 exit 0：確認前述 4 項及原生格式修正，未見直接阻擋更新問題。原文如下；其「寫入尚未驗」是審查時點，後續 A 安全保存已有真讀回，但 B 與切換仍待。
+- 19:26:29 執行正式新版的 start 流程：先保存 A，官方 /usage 確認登入及額度，再保存 pending 並清除限定 Gemini live 槽，開官方 agy。19:27:01 A 的官方查詢成功，流程回傳 opened，agy PID 6524 存在。K 保持關閉，等待本人登入第二帳號並關閉官方程式；尚未 finish、activate A 或重開 K。
+- 本人截圖確認官方登入選單，已說明選「1. Google OAuth」並按 Enter，不選 Google Cloud project。登入仍本人完成，不讀 Chrome 密碼、不接收 Google 授權碼。
+- 接手工程：目前正式資料的 loginPending=true，原 A 憑證已安全保存。使用 `.runtime/gemini-login-flow-20261003/live-accounts.mjs finish` 前先確認本人完成且 agy/Antigravity 已關；其要求 B 不同於 A。完成後 `restore-a` 再核對官方額度，`live-enrolled-ui-readback.mjs` 查真正雙帳號介面，最後普通啟動器啟動與 served readback。不得重跑 start；不能因中斷自行清除 pending 或換第三帳號。
+
+### Opus 補看原文（未改寫）
+
+# 補看結論（Claude Opus 5.5，只讀）
+
+**結論：** 上次的問題 1–4 都已在根因上處理；憑證儲存格式這個真正會擋住流程的問題也已修正。我沒有找到直接阻擋更新的問題。下面兩項建議在真 A→B→A 時順便確認，都不需要改程式。
+
+## 實際看過的範圍
+- `followup-packet/changes.diff`（全檔）
+- `current/src/gemini-accounts.mjs` 第 39–90 行
+- `current/test/gemini-credential-vault.test.mjs` 第 1–50 行，其餘從 diff 看
+- 用 grep 核對了 `current/scripts/gemini-credentials.ps1` 和 `current/frontend/account-connections.jsx` 的修改位置
+- 第一輪讀過的其餘檔案，這次只看了 diff，沒有全檔重讀
+- 沒有執行任何程式，也沒有讀憑證
+
+## 逐項核對
+| 項目 | 判定 |
+|---|---|
+| 問題 1：pending 中重新整理後取消，按鈕卡停用 | **已修。** `account-connections.jsx:55` 在取消後若沒有帳號會重查官方狀態。mock 的 `/api/gemini/auth` 在 pending 時改回 400，和真後端一致；測試涵蓋「重新整理 → 取消 → 新增按鈕重新可用」（probe diff 第 293–302 行）。真後端在 pending 時仍回 400，標題會暫時顯示「無法確認」，可以接受。 |
+| 問題 2：原本未登入時，取消沒有撤銷官方登入 | **已改為誠實文案。** 第 55、178 行明講取消不會撤銷官方登入、該登入也還沒加入 K；新測試 `gemini-accounts.test.mjs`「cancel without a previous identity」確認不會加入 K、也不刪除該登入。 |
+| 問題 3：保存失敗時新帳號仍被寫入列表 | **已修根因。** `gemini-accounts.mjs:78-82` 先用一個沒放進清單的暫存身分做官方查詢，確認登入成功後才加入清單並設為目前使用。查詢過程中途存檔時，暫存身分不在清單裡，所以不會寫入；身分變動時只會把目前使用設為 null，pending 期間本來就是 null。回歸測試另外讀回存檔，確認只有 A。 |
+| 問題 4：官方視窗未關的提示與錯誤文案 | **已修。** 補了關閉視窗的提示（第 176、178 行），忙碌錯誤訊息也改了（`gemini-credential-vault.mjs:22,45`）。 |
+| `Write-SafeJson(null)` | **這其實是直接阻擋：** 舊版在 PS5.1 輸出空行，`parseOutput` 會判定「回傳格式無效」，導致「原生未登入」時 `current`／`prepareLogin` 一定失敗，新增流程走不下去。新版 `ps1:52` 輸出 `null`，PS5.1 有實測。 |
+| 儲存格式改為 go-keyring | 目標改為 `gemini:antigravity`，內容用嚴格 UTF-8 解碼，沒有加任何備用格式。身分只取 `id_token` 裡的 `email`，要求必須是字串並符合格式，陣列或缺少都拒絕（`ps1:57-68`）。登入是否有效仍要靠官方 `/usage` 確認。原本的 C# 讀寫與讀回驗證都沒動，也沒有新增列舉憑證的路徑（測試第 50 行有 grep 防護）。 |
+| 新增測試 | A+B 新增 C 後取消／保存、K 或官方程式忙碌時在任何改動前就擋下、原本未登入但已完成官方登入再取消，這幾個情境的斷言都對準真後端邏輯，不是驗證 mock。 |
+
+## 低優先建議（不擋更新）
+1. **`AGENTS.md` 的授權紀錄：** diff 第 12 行仍寫「保存／切換真實憑證仍須前述獨立授權」。你剛授權了「兩個本人帳號保存與 A→B→A，Google 登入由本人操作」。依專案慣例，建議在真驗收前把這次授權範圍補記進去。
+2. **helper 測試沒涵蓋的格式錯誤：** 目前沒測 `id_token` 不是三段、或 base64 錯誤的情況。程式碼都會落到 `IDENTITY` 錯誤，判斷正確，只是沒有測試保護。
+
+## 還沒驗證、建議在真 A→B→A 時順便確認
+- **寫入與刪除路徑從沒碰過真格式：** helper 測試只抽出 `Get-Email`、`Get-AccountId`、`Write-SafeJson` 三個函式，`capture`、`activate`、`prepareLogin` 的真實 `CredWrite`／`CredDelete` 都還沒在 go-keyring 的資料上跑過。要確認的是：agy 能不能接受 K 寫回的內容（`UserName` 和 `Persist` 會沿用原本的設定），以及切換後 agy 能不能正常查 `/usage`。
+- **agy 背景程序：** `Assert-Idle` 只認 `agy` 和 `Antigravity` 這兩個程序名稱。如果 agy 會留下其他名稱的背景程序，並在 token 更新時寫回 `gemini:antigravity`，就可能把剛切換好的帳號蓋掉。建議切換後隔一段時間再讀一次 `current`，確認仍是預期帳號。
+- **token 更新後 `id_token` 還在不在：** 如果 agy 更新 token 後沒有保留 `id_token`，`current` 就會開始回報身分錯誤。建議在超過一小時、有過實際工作之後再讀一次 `current`。
+- **其他未驗證項：** agy 是否還有其他登入儲存位置、`login.start` 開出的視窗是否真被 `Assert-Idle` 認得，都沒驗證。
+- **測試數字是你回報的，我沒有執行：** 包括 38/38、6/6，以及前面那次 31 pass／1 fail。UI probe 仍不在 `npm test` 內，它驗證的是 mock，不是真後端。
+- **一般限制：** go-keyring 的格式、`gemini:antigravity` 確實存在，都來自你的回報與公開原始碼，我無法獨立核對。
+
+## 19:42 第二帳號官方資格仍未通過
+
+- 使用者本人完成 Google OAuth、官方初始設定，之後 CLI 顯示 Eligibility Check 失敗。本人再按官方驗證連結，瀏覽器顯示「驗證成功」；未接收授權碼、未操作本人 Google 驗證，也未讀 Chrome 資料。
+- 使用者回覆「已關閉」後，重新確認 agy／Antigravity 無程序、47831 無監聽，才執行一次 finish。第二身分確實不同於 A；helper 已安全保存 B，但官方查詢未成功，因此沒有把 B 加入 K 清單、沒有標為目前可用，也沒有清除 pending。
+- 19:41:20 開始的 finish 失敗收據原為 `live-finish.json`，後續已完整另存 `.runtime/gemini-login-flow-20261003/live-finish-before-phone-verification.json`。沒有重跑 start，也沒有重送 finish。
+- 19:42:21 另做一次只查官方登入的診斷，`--version` 為 1.2.16；`-p /usage` 2,839 ms、exit 1，輸出識別為 eligibility + verify your account，沒有工作區信任／初始化提示。前後身分一致，模型工作數 0。證據為 `diagnose-b.json`；只記分類、長度、退出碼與雜湊身分，不保存錯誤中的驗證網址或 token。
+- 可確認是新的官方資格拒絕，不只是舊視窗紅字；不能由網頁「驗證成功」推論 Antigravity 後端已放行，也不能據此斷言是 Pro 訂閱、年齡或地區哪一項原因。
+- 目前 A 原登入副本保留；B 的本機副本保留但未列入帳號清單；pending 仍在、原生目前為 B，K 未重開。已詢問使用者是否先取消本次新增、回到可用的 A 並重開 K，或保留現況由本人繼續驗證。尚未代替使用者決定。
+- A→B→A、正式雙帳號介面及真實額度不足後工人接手均未完成；不執行依賴成功 B 的後續讀回。沒有 push／打 tag／東區更新，也沒有改計費、其他供應商登入或權限。
+- 本階段沒有修改產品程式；完整測試仍以前述 646/646 為準，不能把這次資格拒絕算成通過。
+
+
+## 19:48 本人確認同帳號及 Pro 後的單次讀回
+
+- 本人提供 Gemini 網頁帳號面板，顯示與官方 CLI 相同的第二帳號及 Pro 標示，並回覆「沒錯啊」。不再以登入錯帳號或沒有 Pro 為推定原因；網頁 Pro 顯示不等於 Antigravity 資格已通過。
+- 相隔約六分鐘後，只再做一次原生 /usage 查詢：19:48:54 回傳 exit 1，eligibility + verificationRequired，沒有信任資料夾／初始化提示，身分未變，模型工作數 0。收據 `diagnose-b-after-confirm.json`，前份失敗收據未覆寫。停止重複查詢與登入，不改帳號、安全設定、計費或權限。
+- Google 完成頁 https://developers.google.com/gemini-code-assist/auth/auth_success_gemini?hl=zh-tw 可公開讀取，只憑該頁不能判定帳號即時資格。官方 CLI issue https://github.com/google-antigravity/antigravity-cli/issues/785 有使用者回報類似現象，但不是本機根因的證明。
+- 本機根因仍未知，下一個有辨別力的步驟是由本人在官方 Antigravity 桌面版確認同一帳號的資格畫面；尚未執行，不把原生 CLI 被拒絕推成整個 Google 訂閱失效。K、pending 及原生 B 狀態保持不變，未切回 A。
+
+
+## 19:53 手機驗證後通過，使用者擴充至四帳號
+
+- 本人回報官方桌面程式另要求手機掃 QR 驗證，完成後提供同帳號官方額度畫面，Gemini 每週及五小時均 100%。使用者明確要求保存 B、切回 A，再加入第三與第四帳號，並表示所有官方視窗已關閉。此授權已同步補進 AGENTS.md；仍由本人處理 Google／手機驗證，不擴為第五個帳號、其他憑證、計費或 Git 發布。
+- 先確認 agy／Antigravity 無程序、47831 無監聽。保留先前失敗 `live-finish-before-phone-verification.json` 並核對 hash 後，才在驗證狀態已變更的條件下執行一次 finish；不是自動重送模型工作。
+- `live-finish.json`：19:53:55 官方查詢確認 B authenticated、每週 100%／五小時 100%；兩帳號已加入清單、B 為目前使用、pending=false。這取代前文當時「B 資格未過」的最新狀態，原失敗證據仍保留。
+- `live-restore-a.json`：19:54:28 用安全儲存的 A 恢復原生登入，官方查詢 authenticated、每週 97%／五小時 100%，helper 再讀身分確實為 A；不用本人重登。B 已保存且仍在清單，額度標示為非目前帳號的前次查詢，不誤當即時。
+- `live-start-c.json`：19:55 先保存 A，再建立 pending 並開啟第三帳號官方登入。目前清單 A+B、active=null、loginPending=true；等待本人第三帳號登入並關閉所有官方程式，K 保持關閉。未同時開第四帳號登入、未重跑第一次 start。
+- 後續限定操作腳本 `.runtime/gemini-login-flow-20261003/live-four-accounts.mjs`：收到本人完成後先確認無 agy／Antigravity，執行 finish-c（必須是 A/B 之外的新身分），restore-a-c，再 start-d；依序 finish-d、restore-a-d。每步單獨收據，已有收據先查清結果，不直接重播；不把任一步命令已送出當完成。
+- 已完成的是 B 真保存與回 A；仍待 C/D 本人登入、四個已保存身分的重用切換、真正式帳號／額度介面及原入口讀回。沒有送出模型工作；真正額度耗盡的工人接手仍另列未驗。產品程式無新變更，完整測試仍 646/646。
+
+
+## 19:57 第三帳號保存及回原帳號成功，第四帳號待本人登入
+
+- 本人提供第三帳號官方桌面畫面並回覆「第三個好了」。先重新確認沒有 agy／Antigravity 程序及 47831 監聽，再完成保存；不是只以截圖認定 K 已保存。
+- `live-finish-c.json`：第三身分不同於 A/B，19:57:39 官方 authenticated、Gemini 每週 100%／五小時 100%，三筆帳號、目前 C、pending=false。
+- `live-restore-a-c.json`：19:58:22 從本機安全保存切回 A，官方 authenticated、97%／100%，helper 身分再讀回一致，不要求本人重登。
+- `live-start-d.json`：19:58:25 開始新增第四帳號，先保存 A、再建立 pending 並開啟官方登入。A/B/C 均保留，目前 active=null、loginPending=true；本人操作 D 登入／手機驗證，K 仍關閉。
+- 已準備但尚未執行：`live-four-ui-readback.mjs` 檢查四張真帳號卡、逐帳號額度、目前 A、側欄四帳號及 GPT Flash 選單；`live-reuse-four.mjs` 在 D 保存及回 A 成功後，依序從安全保存切到 B→C→D→A，每次確認官方額度／身分，不開登入、不送模型工作。已有收據即停止，失敗先查既有結果，不重播整批。
+- 仍待第四帳號本人登入、保存／回 A、四筆安全登入重用及最後正式 UI／普通入口讀回。產品程式無新修改，646/646 不變；尚未 push、打 tag 或更新東區。
+
+
+## 20:05 四帳號完成與正式重開讀回
+
+### 完成結果
+- 本人提供第四帳號官方 CLI 顯示 Google AI Pro、無資格錯誤及官方額度畫面。實際程序檢查確認 agy／Antigravity 都已關閉、47831 無監聽後，20:00:30 `live-finish-d.json` 完成 D 保存及官方 authenticated、每週 100%／五小時 100%，四身分互不重複。
+- 四筆登入保存在本機 Windows 憑證管理員的 K 專用命名空間；Node、HTTP 及工程收據只接身分／額度中繼資料，不接 token。Google OAuth、手機 QR 驗證皆本人完成，不搬 Chrome 設定檔、Google 密碼或授權碼，不動 GPT／Claude 登入及 API 計費。
+- 已從安全保存實際切換 B→C→D→A，不必再開官方登入視窗。B/C/D 在各次切換後立即查詢成功；A 身分恢復成功但該次查詢未確認，後續單獨刷新成功。最終原生目前身分 A、四帳號、pending=false；不是四帳號同時登入執行。
+
+| 帳號 | 最後成功官方確認（臺灣時間） | 每週 | 五小時 | 證據 |
+| --- | --- | --- | --- | --- |
+| 原帳號 A | 20:04:48 | 97% | 100% | live-refresh-final-a.json；無再次 activate |
+| 第二帳號 B | 20:02:56 | 100% | 100% | live-reuse-four.json 的 B step |
+| 第三帳號 C | 20:03:12 | 100% | 100% | live-reuse-four.json 的 C step |
+| 第四帳號 D | 20:03:26 | 100% | 100% | live-reuse-four.json 的 D step |
+
+百分比各自屬於該帳號，不合計；非目前帳號標示為前次查詢／舊資料，不假稱即時。上述皆官方 /usage，不是送模型工作或耗盡額度測試。
+
+### 失敗及處理界線
+- `live-restore-a-d.json`：20:00:57 開始，A 已寫回且身分讀回正確，但官方查詢 auth=unknown，整步收據 passed=false。沒有重跑 activate；`live-refresh-restored-a.json` 在原 A 不變下只刷新額度，20:02:30 成功，原生 /usage 13,647 ms。
+- `live-reuse-four.json`：B/C/D passed steps 均保留；最後 A 的身分已切回，但查詢再次為 unknown，收據仍 passed=false／startedStep=A。未重播整批；`live-refresh-final-a.json` 確認目前確實 A，零次 activate、只查額度，20:04:48 成功，原生 /usage 3,070 ms。不能將整批收據改寫為 passed=true。
+- 官方查詢偶發未確認的直接原因仍未定案。沒有提高 timeout、偷偷增加模型／帳號重試、刪除保護或假造 ready；K 既有 stale／unknown 呈現保留。這與 B 先前資格驗證拒絕分開記錄，不能混稱同一根因。
+- B 的「網頁驗證成功但原生資格拒絕」失敗完整保留；本人再完成額外手機 QR 驗證後，原生才取得成功的額度結果。不推論所有帳號都必須經相同步驟。
+
+### 介面、測試及正式部署
+- `D:\K-harness\.runtime\gemini-login-flow-20261003\live-four-ui-readback.json`：正式 runtime、真後端／真四帳號資料，無 API mock。設定內四張卡各自顯示每週／五小時額度，原 A 為目前使用、切換及新增入口可用，GPT／Claude／Gemini 登入摘要正確；側欄四帳號及額度詳情四卡通過，GPT 新對話 Flash low/medium/high 回歸通過。帳號變更 POST 0、模型回合 0，測試未真的建立新對話。
+- 隱藏 Electron 只做 DOM／互動讀回，未將先前截圖逾時冒稱成功；fixture 正常關閉後才由原入口啟動，不並行操作正式帳號。
+- 20:05:48 `normal-start-readback.json`：原 `Start-K-Desktop.ps1` 啟動成功，PID 12180、視窗「K 執行中樞」、health deployment=native、正式 workspace／執行檔／版本 87d0ec2 一致。`served-readback.json`：三個正式資產 HTTP 200 且 hash 符合，未授權 /api/state 403。
+- 程式測試：維護來源 646/646（33,784 ms）；乾淨候選 646/646（35,252 ms），fail/cancelled/skipped 0。先前帳號 UI 與 GPT Flash UI probe 另跑 PASS；本輪真四帳號 UI 亦另外 PASS，不混入 646。登入實測階段只改工程腳本與說明文件，未再改產品程式。
+- 程式／啟動器還原版仍為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791026493023`，不是對話／登入資料備份；不因程式退版刪除已保存帳號。
+
+### 留存限制
+- 真實額度耗盡後的新工人接手、首次多項 Gemini 派工競爭，以及長時間／token 到期後的連續穩定性，沒有在這次四帳號保存驗收中宣稱完成。GPT／Claude 各派 Flash 的先前限定真流程 2/2 證據沿用原紀錄，本輪未重做或擴權。
+- 四帳號及原入口可用狀態已達成本輪登入／切換目標；後續不能因理論風險擴改程式。未 push／打 tag、未更新東區、未安裝套件、未清理資料。README、AGENTS.md 及本文件／索引同步至 D 根目錄，未整批覆蓋舊實驗工作樹。
