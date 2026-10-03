@@ -11,7 +11,7 @@ import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 
-export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
+export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
@@ -32,8 +32,9 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  };
  let closing=false;
  let pickerAbort=null;
+ const publicState=()=>{const state=controller.state;return geminiAccounts?.cachedUsage?{...state,usage:{...state.usage,gemini:geminiAccounts.cachedUsage}}:state;};
  const controller=controllerFactory({root,executable,onChange(){
-  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const event=stateStream.update(controller.state);if(!event)return;const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);},60);
+  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const event=stateStream.update(publicState());if(!event)return;const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);},60);
  }});
  const closedResources=new Set();
  let resourceCloseAttempt=null;
@@ -95,18 +96,23 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(!cookieMatches(req))return json(403,{error:'請從桌面啟動 K。'});
    if(req.headers.origin&&req.headers.origin!==origin)return json(403,{error:'Cross-origin request denied'});
  if(req.method==='GET'&&url.pathname==='/api/events'){
-    if(scheduled){clearTimeout(scheduled);scheduled=null;const pendingEvent=stateStream.update(controller.state);if(pendingEvent){const frame=`data: ${JSON.stringify(pendingEvent)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}}
-    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});res.write(`data: ${JSON.stringify(stateStream.snapshot(controller.state))}\n\n`);clients.add(res);
+    if(scheduled){clearTimeout(scheduled);scheduled=null;const pendingEvent=stateStream.update(publicState());if(pendingEvent){const frame=`data: ${JSON.stringify(pendingEvent)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}}
+    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});res.write(`data: ${JSON.stringify(stateStream.snapshot(publicState()))}\n\n`);clients.add(res);
     const heartbeat=setInterval(()=>res.write(': alive\n\n'),20000);req.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
-   if(req.method==='GET'&&url.pathname==='/api/gemini/auth')return json(200,await geminiLogin.status());
+   if(req.method==='GET'&&url.pathname==='/api/gemini/accounts')return json(200,geminiAccounts?await geminiAccounts.list():{enabled:false,activeAccountId:null,busy:false,loginPending:false,accounts:[]});
+   if(req.method==='GET'&&url.pathname==='/api/gemini/auth'){
+    const managed=await geminiAccounts?.list();
+    if(managed?.accounts.length){const row=managed.accounts.find(a=>a.id===managed.activeAccountId);return json(200,{available:true,auth:row?.auth??{status:'unknown'},quota:row?.quota,reason:managed.reason});}
+    return json(200,await (geminiAccounts?geminiAccounts.inspect(()=>geminiLogin.status()):geminiLogin.status()));
+   }
    if(req.method==='GET'&&url.pathname==='/api/claude/auth')return json(200,await claudeLogin.status());
    if(req.method==='GET'&&url.pathname==='/api/claude/login')return json(200,claudeLogin.progress());
    if(req.method==='GET'&&url.pathname==='/api/sessions')return json(200,await controller.sessions());
    if(req.method==='GET'&&url.pathname==='/api/projects')return json(200,await listProjects(root,(await controller.sessions()).sessions));
    if(req.method==='GET'&&url.pathname==='/api/models')return json(200,await controller.models());
-   if(req.method==='GET'&&url.pathname==='/api/state')return json(200,controller.state);
+   if(req.method==='GET'&&url.pathname==='/api/state')return json(200,publicState());
    if(req.method==='GET'&&['/api/browser/state','/api/browser/frame','/api/browser/download'].includes(url.pathname)){
     const pageId=url.searchParams.get('pageId'),download=url.pathname==='/api/browser/download',downloadId=url.searchParams.get('id');
     if(download&&!/^[a-f0-9-]{36}$/.test(downloadId??''))throw new Error('下載識別無效。');
@@ -117,7 +123,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     if(result.bytes){res.setHeader('Content-Type',download?'application/octet-stream':'image/jpeg');if(download)res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(result.downloadName)}`);return res.end(result.bytes);}
     return json(200,result);
    }
-   if(req.method==='GET'&&url.pathname==='/api/usage')return json(200,await controller.usage(url.searchParams.get('refresh')==='1'));
+   if(req.method==='GET'&&url.pathname==='/api/usage'){const refresh=url.searchParams.get('refresh')==='1',usage=await controller.usage(refresh),managed=await geminiAccounts?.usage(false);return json(200,{...usage,...(managed?{gemini:managed}:{})});}
    if(req.method==='GET'&&url.pathname==='/api/directories')return json(200,await controller.directories(url.searchParams.get('path')??undefined));
    if(req.method==='GET'&&['/api/artifact','/api/attachment'].includes(url.pathname)){
     const context={threadId:url.searchParams.get('threadId')};
@@ -143,7 +149,15 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    }
    if(url.pathname==='/api/browser/action')return json(200,await browserRequest(root,controller.state,data.threadId,'/action',data));
    if(url.pathname==='/api/codex/login')return json(200,await codexLogin.start());
-   if(url.pathname==='/api/gemini/login')return json(200,await geminiLogin.start());
+   if(url.pathname.startsWith('/api/gemini/accounts/')){
+    const operation={'capture':'capture','login':'startLogin','finish':'finishLogin','cancel':'cancelLogin','activate':'activate','refresh':'refresh'}[url.pathname.slice('/api/gemini/accounts/'.length)];
+    if(!operation||!geminiAccounts)throw Error('此版本未提供 Gemini 多帳號操作。');
+    const result=await geminiAccounts[operation](data);const event=stateStream.update(publicState());if(event){const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}return json(200,result);
+   }
+   if(url.pathname==='/api/gemini/login'){
+    if((await geminiAccounts?.list())?.accounts.length)throw Error('請在 Gemini 多帳號區使用加入帳號或重新登入。');
+    return json(200,await (geminiAccounts?geminiAccounts.inspect(()=>geminiLogin.start()):geminiLogin.start()));
+   }
    if(url.pathname==='/api/codex/login/cancel')return json(200,await codexLogin.cancel());
    if(url.pathname==='/api/claude/login')return json(200,await claudeLogin.start());
    if(url.pathname==='/api/claude/login/cancel')return json(200,await claudeLogin.cancel());

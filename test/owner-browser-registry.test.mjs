@@ -15,7 +15,7 @@ test('fresh installations without browser setup allow default text conversations
  assert.equal(gatewayFactory,undefined);
  const registry=createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory});
  try{
-  for(const [provider,accessMode] of [['codex','workspace-write'],['claude','claude-manual']]){
+  for(const [provider,accessMode] of [['codex','workspace-write'],['claude','claude-manual'],['gemini','workspace-write']]){
    const session=registry.session();
    assert.equal(await session.config({conversationId:`${provider}-text`,provider,accessMode}),null);
    const state={threadId:`${provider}-text`,browserAccess:{enabled:false}};
@@ -82,6 +82,18 @@ test('read-only reconfiguration closes the previous owner gateway before disabli
     const reopened=await config(session,'conversation-a','workspace-write');
     assert.ok(reopened);assert.equal(f.calls.length,2);
   }finally{await session.close();await f.registry.close();}
+});
+
+test('Gemini uses the same owner browser authority and disables it in read-only mode',async()=>{
+ const f=await fixture(),session=f.registry.session();
+ try{
+  const server=await config(session,'gemini-conversation','workspace-write','gemini');
+  assert.equal(browserSessionKey(server),'gemini-conversation');
+  assert.equal(f.calls.length,1);
+  assert.equal(await config(session,'gemini-conversation','read-only','gemini'),null);
+  assert.equal(f.calls[0].closed,1);
+  assert.ok(await config(session,'gemini-conversation','danger-full-access','gemini'));
+ }finally{await session.close();await f.registry.close();}
 });
 
 test('a conversation profile cannot be owned by two live sessions',async()=>{

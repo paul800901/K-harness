@@ -113,3 +113,26 @@ test('MCP tool description reflects a concrete user default without implying AI-
   assert.match(description,/目前預設為 gpt-6\.1-sol \/ ultra/);assert.doesNotMatch(description,/AI 自動選擇目前啟用/);
  }finally{await gateway.close();}
 });
+
+test('Codex Flash gateway exposes only Gemini tools and forwards account handoff without GPT fallback',async()=>{
+ const f=fixture(),calls=[];
+ f.bridge.accounts=async()=>({activeAccountId:'a'.repeat(32),accounts:[{id:'a'.repeat(32),email:'fake@example.test',quota:{status:'stale',windows:[]}}]});
+ f.bridge.start=async args=>{calls.push(args);return {requestId:args.requestId,provider:'gemini',model:args.model,accountId:args.accountId,handoffFrom:args.handoffFrom,status:'running',settled:false};};
+ const gateway=await createLunaGateway({bridge:f.bridge,geminiOnly:true});
+ try{
+  assert.deepEqual(Object.keys(gateway.mcpConfig.mcpServers),['k_gemini']);
+  const config=gateway.mcpConfig.mcpServers.k_gemini,token=config.headers.Authorization.slice(7);
+  const call=async(id,name,args)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}}));
+  const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:1,method:'tools/list'}));
+  assert.deepEqual(listed.result.tools.map(t=>t.name).sort(),['gemini_accounts','gemini_cancel','gemini_inspect','gemini_start','gemini_wait']);
+  const info=await call(2,'gemini_accounts',{});assert.match(info.result.content[0].text,/fake@example.test/);
+  const args={requestId:'remaining',task:'only remaining',effort:'low',accountId:'b'.repeat(32),handoffFrom:'previous'};
+  const result=await call(3,'gemini_start',args);assert.equal(result.result.structuredContent.accountId,args.accountId);
+  assert.deepEqual(calls,[{...args,model:'gemini-3.8-flash'}]);
+  for(const override of [{model:'gpt-6-luna'},{effort:'ultra'},{effort:undefined}]){
+   const bad=await call(4,'gemini_start',{...args,...override});assert.equal(bad.result.isError,true);
+  }
+  const wrong=await call(5,'luna_start',args);assert.ok(wrong.error||wrong.result?.isError);
+  assert.equal(calls.length,1);
+ }finally{await gateway.close();}
+});

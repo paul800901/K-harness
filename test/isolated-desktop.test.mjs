@@ -72,6 +72,7 @@ function fakePool({ claudeLoggedIn = false } = {}) {
             if (message.method === 'windowsSandbox/readiness') result = { status: 'notConfigured' };
             if (message.method === 'turn/start') result = { turn: { id: 'isolated-test-turn' } };
             setImmediate(() => child.stdout.write(`${JSON.stringify({ id: message.id, result })}\n`));
+            if (['thread/start','thread/resume'].includes(message.method) && message.params?.config?.mcp_servers?.k_gemini) setImmediate(() => child.stdout.write(`${JSON.stringify({method:'mcpServer/startupStatus/updated',params:{threadId:result.thread.id,name:'k_gemini',status:'ready'}})}\n`));
           }
         }, final() { setImmediate(() => { child.stdout.end(); child.emit('exit', 0, null); child.emit('close', 0, null); }); } });
         setImmediate(() => child.emit('spawn'));

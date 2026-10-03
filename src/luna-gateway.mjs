@@ -8,13 +8,15 @@ import {lunaResult} from './luna-bridge.mjs';
 
 const requestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
 const idSchema = z.strictObject({requestId});
-const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']).optional(),effort:z.string().min(1).optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)}).refine(args=>args.model!=='gemini-3.8-flash'||['low','medium','high'].includes(args.effort),{message:'Flash effort 必須是 low|medium|high'});
+const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']).optional(),effort:z.string().min(1).optional(),accountId:z.string().regex(/^[a-f0-9]{32}$/u).optional(),handoffFrom:requestId.optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)}).refine(args=>args.model!=='gemini-3.8-flash'||['low','medium','high'].includes(args.effort),{message:'Flash effort 必須是 low|medium|high'});
+const geminiTaskSchema = z.strictObject({requestId,model:z.literal('gemini-3.8-flash').default('gemini-3.8-flash'),effort:z.enum(['low','medium','high']),accountId:z.string().regex(/^[a-f0-9]{32}$/u).optional(),handoffFrom:requestId.optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
 const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).max(60000).default(30000)});
 
-function createMcpServer(bridge) {
-  const server = new McpServer({name:'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
+function createMcpServer(bridge,{geminiOnly=false}={}) {
+  const prefix=geminiOnly?'gemini':'luna';
+  const server = new McpServer({name:geminiOnly?'k-gemini-gateway':'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   const policy=bridge.workerPolicy;
-  const selectionGuidance=policy.model==='auto'
+  const selectionGuidance=geminiOnly?'此入口只派 Gemini Flash；必須明確指定 low/medium/high。GPT 子代理使用原生派工，不從本入口轉派。':policy.model==='auto'
     ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort，由主代理依任務難度選擇 Sol、Luna 或 Flash 及官方支援的推理程度。`
     : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
@@ -27,13 +29,14 @@ function createMcpServer(bridge) {
       return {isError:true,content:[{type:'text',text:`${String(error?.message ?? error)} Inspect the same requestId; do not retry under a new ID.`}]};
     }
   });
-  register('luna_start',`Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna, or Antigravity Gemini 3.8 Flash. Flash 適合範圍明確、要快的機械性工作；困難的設計、除錯、判斷交 Sol。Flash effort 只接受 low|medium|high；非完整存取模式不能跑指令；workspace-write 只能寫工作區（嘗試寫外部會讓該次工作 failed），唯讀不能寫檔；被拒項目列在 deniedTools。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,taskSchema,
+  if(bridge.accounts)server.registerTool('gemini_accounts',{description:'Read K Gemini account identities and last checked native quotas. Cached percentages are not live proof. For a stopped worker, inspect its results and real project files, then start a NEW requestId with handoffFrom and only the remaining task. accountId explicitly selects an enrolled account; omission keeps the current account unless its official quota is exhausted and another account is available. Never replay a whole task or switch on permission/network failures. This tool does not change login.',inputSchema:z.strictObject({}),annotations:{readOnlyHint:true,idempotentHint:true}},async()=>{const value=await bridge.accounts();return {content:[{type:'text',text:JSON.stringify(value)}]};});
+  register(`${prefix}_start`,`${geminiOnly?'Start one bounded task with Antigravity subscription Gemini 3.8 Flash.':'Start one bounded task with subscription Codex GPT-6.1 Sol or GPT-6 Luna, or Antigravity Gemini 3.8 Flash.'} Flash 適合範圍明確、要快的機械性工作；困難的設計、除錯、判斷交 Sol。Flash effort 只接受 low|medium|high；非完整存取模式不能跑指令；workspace-write 只能寫工作區（嘗試寫外部會讓該次工作 failed），唯讀不能寫檔；被拒項目列在 deniedTools。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work or end your turn; do not poll. Reuse the requestId only for the identical task.`,geminiOnly?geminiTaskSchema:taskSchema,
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
-  register('luna_wait','Manual recovery only: wait for an existing Sol, Luna or Flash subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.',waitSchema,
+  register(`${prefix}_wait`,`Manual recovery only: wait for an existing ${geminiOnly?'Flash':'Sol, Luna or Flash'} subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.`,waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
-  register('luna_inspect','Read existing Luna task state without starting or replaying work.',idSchema,
+  register(`${prefix}_inspect`,'Read existing worker task state without starting or replaying work.',idSchema,
     args=>bridge.inspect(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
-  register('luna_cancel','Request cancellation of an existing Luna task and read back its native state.',idSchema,
+  register(`${prefix}_cancel`,'Request cancellation of an existing worker task and read back its native state.',idSchema,
     args=>bridge.cancel(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
   return server;
 }
@@ -54,10 +57,10 @@ function bearerMatches(header, token) {
 }
 
 /** Start a token-authenticated, loopback-only MCP HTTP gateway for one Luna bridge. */
-export async function createLunaGateway({bridge}) {
+export async function createLunaGateway({bridge,geminiOnly=false}) {
   if(!bridge||!['start','wait','inspect','cancel'].every(name=>typeof bridge[name]==='function'))throw new TypeError('A complete Luna bridge is required.');
   const token=randomBytes(32).toString('base64url');
-  const mcp=createMcpServer(bridge);
+  const mcp=createMcpServer(bridge,{geminiOnly});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined});
   await mcp.connect(transport);
   let closed=false, closing=false, closePromise, expectedHost, expectedOrigin;
@@ -85,7 +88,7 @@ export async function createLunaGateway({bridge}) {
   const url=`http://127.0.0.1:${address.port}/mcp`;
   expectedHost=`127.0.0.1:${address.port}`;
   expectedOrigin=`http://${expectedHost}`;
-  const mcpConfig={mcpServers:{k_luna:{type:'http',url,headers:{Authorization:`Bearer ${token}`}}}};
+  const mcpConfig={mcpServers:{[geminiOnly?'k_gemini':'k_luna']:{type:'http',url,headers:{Authorization:`Bearer ${token}`}}}};
   async function close(){
     if(closed)return;
     if(closing)return closePromise;

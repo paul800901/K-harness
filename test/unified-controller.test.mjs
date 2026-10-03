@@ -246,3 +246,14 @@ test('archive deletion cannot race asynchronous metadata update',async()=>{
   release();await updating;
  }finally{release();await f.controller.close();}
 });
+
+test('model catalog exposes Codex Flash gateway capability only from the actual Codex controller',async()=>{
+ const f=await fixture();
+ try{
+  assert.equal((await f.controller.models()).geminiGateway,false);
+  f.codex.models=async()=>({models:[{model:CODEX_MODEL}],geminiGateway:true});
+  assert.equal((await f.controller.models()).geminiGateway,true);
+  f.codex.models=async()=>{throw Error('offline');};
+  assert.equal((await f.controller.models()).geminiGateway,false);
+ }finally{await f.controller.close();}
+});

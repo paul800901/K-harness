@@ -162,7 +162,7 @@ export function geminiOutputFiles(before,after,workspace) {
   return {outputFiles,outputFilesNote:'git status 前後差異；無法歸因並行寫入，亦無法辨認原本已 dirty 且狀態相同的內容變更。'};
 }
 
-export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=600000,gitStatus=geminiGitStatus}={}) {
+export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=600000,gitStatus=geminiGitStatus,accounts}={}) {
   if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw Error('Flash timeoutMs 無效。');
   const profile=geminiProfile(workspace,accessMode),home=path.join(profileRoot,profile);
   // Resolve before HOME/USERPROFILE overrides. Never discover through a shell.
@@ -183,7 +183,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
       const result=await geminiProcess(binary,['models'],{cwd:workspace,env:childEnv,timeoutMs:Math.min(timeoutMs,30000),spawnImpl,killTree});
       if(result.code!==0||result.reason||result.cleanupError){
         const failure=geminiOutcome({}, {...result,stderr:`${result.stdout}\n${result.stderr}`});
-        throw Error(`agy models 無法取得：${failure.error} 未換用其他供應商。`);
+        throw Object.assign(Error(`agy models 無法取得：${failure.error} 未換用其他供應商。`),{settled:!result.cleanupError});
       }
       const names=new Set(result.stdout.split(/\r?\n/u).map(line=>line.trim().split(/\s/u)[0]).filter(Boolean));
       if(!names.size)throw Error('agy models 清單為空。');
@@ -191,7 +191,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     })();
     return new Set(await catalog);
   }
-  return {profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart}={}) {
+  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart}={}) {
     if(!GEMINI_WORKER_MODELS.includes(model)||!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash 只接受 gemini-3.8-flash 與 low|medium|high；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
     const nativeModel=`${model}-${effort}`;
@@ -206,4 +206,10 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     const parsed=parser.end();
     return {...geminiOutcome(parsed,result),...geminiOutputFiles(before,await gitStatus(workspace),workspace),acceptance:'not-reviewed',nativeModel,profile,exitCode:result.code};
   }};
+  if(accounts){const run=worker.run;worker.run=options=>accounts.run({accountId:options?.accountId,worker:true},async lease=>{
+    // Catalog availability may differ across subscriptions; never carry A's
+    // cached model catalog into B's worker. The settings home remains shared.
+    catalog=null;options?.onAccount?.(lease);return run(options);
+  });}
+  return worker;
 }

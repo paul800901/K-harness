@@ -364,6 +364,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       // The gateway acknowledges only after the model-facing result is prepared successfully.
       resultReady(args,result){if(result?.settled)disarm(args.requestId);},
       list:args=>ensureBridge().then(value=>value.list(args)),
+      accounts:()=>ensureBridge().then(value=>value.accounts()),
       async close(){const value=bridgeInstance??(bridgeInitPromise?await bridgeInitPromise.catch(()=>null):null);if(value){await value.close();if(bridgeInstance===value)bridgeInstance=null;}}
     };
     bridge=lazyBridge;

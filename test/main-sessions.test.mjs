@@ -120,3 +120,13 @@ test('owner browser session key round-trips and survives ordinary metadata saves
  session=(await listMainSessions(root)).sessions.find(item=>item.threadId==='browser-owned');
  assert.equal(session.title,'Updated title');assert.equal(session.browserSessionKey,'owner-session-01');
 });
+
+test('worker notification attempts round-trip and survive unrelated session saves',async()=>{
+ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'worker-notifications-'));
+ await saveMainSession(root,{threadId:'codex-flash',model:'gpt-6-luna',workerNotifications:{'flash.request-1':'delivery-attempted','invalid':'retry'}});
+ let session=(await listMainSessions(root)).sessions.find(item=>item.threadId==='codex-flash');
+ assert.deepEqual(session.workerNotifications,{'flash.request-1':'delivery-attempted'});
+ await saveMainSession(root,{threadId:'codex-flash',model:'gpt-6-luna',title:'Renamed'});
+ session=(await listMainSessions(root)).sessions.find(item=>item.threadId==='codex-flash');
+ assert.equal(session.title,'Renamed');assert.deepEqual(session.workerNotifications,{'flash.request-1':'delivery-attempted'});
+});

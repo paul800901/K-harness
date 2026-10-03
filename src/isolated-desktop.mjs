@@ -13,6 +13,9 @@ import {openCodexHost} from './codex-host.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {createCodexLogin} from './codex-login.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
+import {createHash} from 'node:crypto';
+import {createGeminiAccounts} from './gemini-accounts.mjs';
+import {createGeminiCredentialVault} from './gemini-credential-vault.mjs';
 import {addProject,listProjects,updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
@@ -41,6 +44,9 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
   const inspect=({signal}={})=>inspectClaude({commandSpec,cwd:selected,env,signal});
   const codexHost=(options,workspace=selected)=>hosts.codex({...options,executable,cwd:workspace});
   const claudeHost=(options,workspace=selected)=>hosts.claude({...options,commandSpec,cwd:workspace});
+  const geminiLogin=createGeminiLogin({cwd:stateRoot,env});
+  const geminiAccounts=createGeminiAccounts({root:stateRoot,login:geminiLogin,enabled:allowLogin,
+    vault:createGeminiCredentialVault({root:createHash('sha256').update(stateRoot.toLowerCase()).digest('hex'),env,enabled:allowLogin})});
   function restrictWorkspace(controller){
     const change=controller.selectWorkspace.bind(controller);
     controller.selectWorkspace=async data=>{
@@ -51,9 +57,9 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
   }
   const controllerFactory=options=>restrictWorkspace(createConversationController({...options,browserRequest:browsers.request,
     sessionFactory:settings=>restrictWorkspace(createUnifiedController({...settings,inspect,
-      geminiFactory:opts=>createGeminiController({...opts,env}),
-      codexFactory:opts=>{const browser=browsers.session();let current;const hostFactory=hostOptions=>{const candidate=current?.state.workspace??selected;return codexHost(hostOptions,candidate.toLowerCase()===stateRoot.toLowerCase()?selected:candidate);};current=createDesktopController({...opts,hostFactory,browserConfig:browser.config,closeBrowser:browser.close,browserRequest:browsers.request});return current;},
-      claudeFactory:opts=>{const browser=browsers.session();let current;const selectedHostWorkspace=()=>{const candidate=current?.state.workspace??selected;return candidate.toLowerCase()===stateRoot.toLowerCase()?selected:candidate;};const hostFactory=hostOptions=>claudeHost(hostOptions,selectedHostWorkspace());const lunaHostFactory=hostOptions=>codexHost(hostOptions,selectedHostWorkspace());current=createClaudeController({...opts,commandSpec,hostFactory,browserConfig:browser.config,closeBrowser:browser.close,bridgeFactory:params=>createLunaBridge({...params,executable,hostFactory:lunaHostFactory})});return current;},
+      geminiFactory:opts=>{const browser=browsers.session();return createGeminiController({...opts,env,accounts:geminiAccounts,browserConfig:browser.config,closeBrowser:browser.close});},
+      codexFactory:opts=>{const browser=browsers.session();let current;const hostFactory=hostOptions=>{const candidate=current?.state.workspace??selected;return codexHost(hostOptions,candidate.toLowerCase()===stateRoot.toLowerCase()?selected:candidate);};current=createDesktopController({...opts,hostFactory,bridgeFactory:params=>createLunaBridge({...params,geminiOptions:{env,accounts:geminiAccounts}}),browserConfig:browser.config,closeBrowser:browser.close,browserRequest:browsers.request});return current;},
+      claudeFactory:opts=>{const browser=browsers.session();let current;const selectedHostWorkspace=()=>{const candidate=current?.state.workspace??selected;return candidate.toLowerCase()===stateRoot.toLowerCase()?selected:candidate;};const hostFactory=hostOptions=>claudeHost(hostOptions,selectedHostWorkspace());const lunaHostFactory=hostOptions=>codexHost(hostOptions,selectedHostWorkspace());current=createClaudeController({...opts,commandSpec,hostFactory,browserConfig:browser.config,closeBrowser:browser.close,bridgeFactory:params=>createLunaBridge({...params,executable,hostFactory:lunaHostFactory,geminiOptions:{env,accounts:geminiAccounts}})});return current;},
     })),
   }));
   const loginGate=login=>allowLogin?login:{...login,async start(){throw Error('本候選僅供假資料驗證；尚未允許真實帳號登入。');}};
@@ -68,7 +74,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
     app=await startDesktopImpl({root:stateRoot,executable,port,controllerFactory,browserRequest:browsers.request,
       claudeLoginFactory:()=>loginGate(createClaudeLogin({cwd:selected,env,inspect,resolve:async()=>commandSpec})),
       codexLoginFactory:()=>loginGate(createCodexLogin({cwd:selected,executable,hostFactory:codexHost})),
-      geminiLoginFactory:()=>loginGate(createGeminiLogin({cwd:stateRoot,env})),
+      geminiLoginFactory:()=>loginGate(geminiLogin),geminiAccounts,
       pickWorkspace,validateProjectWorkspace:validateSelectableWorkspace,
     });
     await app.controller.selectWorkspace({path:selected});

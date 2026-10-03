@@ -22,11 +22,24 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('Gemini native conversation persists its account binding and releases the lease after actual completion',async()=>{
+ const acquired=[],released=[],accountId='a'.repeat(32);
+ const accounts={inspect:fn=>fn(),acquire:async data=>{acquired.push(data);return {accountId,release:async result=>released.push(result)};}};
+ const f=await fixture({accounts});
+ try{
+  const {threadId}=await f.controller.open({model:'gemini-3.8-flash',effort:'low'});
+  await f.controller.send({text:'first'});await finish(f.controller);
+  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-sessions',threadId+'.json'),'utf8'));assert.equal(saved.accountId,accountId);
+  await f.controller.send({text:'second'});await finish(f.controller);
+  assert.equal(acquired[1].accountId,accountId);assert.equal(acquired[1].unboundHistory,false);assert.equal(released.length,2);assert.equal(released[0].settled,true);
+ }finally{await f.controller.close();}
+});
+
 test('Gemini catalog preserves every native model and only supplied effort variants',()=>{
  const catalog=geminiModelsFrom(names);assert.deepEqual(catalog.map(x=>x.model),['gemini-3.8-flash','gemini-3.1-pro','gemini-new-native']);
  assert.deepEqual(catalog[1].supportedReasoningEfforts.map(e=>e.reasoningEffort),['high','low']);assert.equal(catalog[1].nativeModels.medium,undefined);
  assert.equal(catalog[2].nativeModels.default,'gemini-new-native');assert.equal(catalog.some(x=>/4-pro/u.test(x.model)),false);
- assert.deepEqual(catalog[0].inputModalities,['text']);
+ assert.deepEqual(catalog[0].inputModalities,['text','image']);assert.deepEqual(catalog[1].inputModalities,['text']);assert.deepEqual(catalog[2].inputModalities,['text']);
 });
 
 test('Gemini quota polling coalesces and preserves dated stale values after a failed refresh',async()=>{
@@ -87,12 +100,26 @@ test('Gemini login failure remains on Gemini and does not replay a turn with unk
  try{await c.open({model:'gemini-3.8-flash'});await c.send({text:'hello'});await finish(c);assert.equal(c.state.status,'failed');assert.match(c.state.error,/未登入/);assert.equal(c.state.provider,'gemini');await assert.rejects(c.send({text:'again'}),/原生對話 ID/);assert.equal(calls,1);}finally{await c.close();}
 });
 
-test('Gemini document attachments use validated workspace paths; images are not claimed as supported',async()=>{
+test('Gemini accepts image formats verified with native view_file and injects only validated paths',async()=>{
  const f=await fixture(),c=f.controller;
  try{
   const {threadId}=await c.open({model:'gemini-3.8-flash'});
-  await assert.rejects(c.upload({threadId,name:'image.png',base64:'AAAA'}),/文字與文件/);
-  const a=await c.upload({threadId,name:'example.txt',base64:Buffer.from('fake document').toString('base64')});await c.send({text:'read attachment',attachmentIds:[a.id]});await finish(c);assert.ok(f.calls[0].args[1].includes(path.resolve(f.root,a.textPath).replaceAll('\\','\\\\')));
+  assert.deepEqual(c.state.inputModalities,['text','image']);
+  const images=[];
+  for(const name of ['test.png','test.jpg','test.webp'])images.push(await c.upload({threadId,name,base64:Buffer.from(`synthetic ${name} private image payload`).toString('base64')}));
+  const doc=await c.upload({threadId,name:'example.txt',base64:Buffer.from('fake document').toString('base64')});
+  await c.send({text:'read attachments',attachmentIds:[...images.map(x=>x.id),doc.id]});await finish(c);
+  const call=f.calls[0],prompt=call.args[call.args.indexOf('-p')+1];
+  for(const image of images)assert.ok(prompt.includes(path.resolve(f.root,image.path).replaceAll('\\','\\\\')));
+  assert.ok(prompt.includes(path.resolve(f.root,doc.textPath).replaceAll('\\','\\\\')));assert.ok(!prompt.includes('private image payload'));
+  for(const image of images)assert.ok(!prompt.includes(Buffer.from(`synthetic ${image.name} private image payload`).toString('base64')));
+  assert.ok(!call.args.join(' ').includes('must-not-inherit'));
+  assert.equal(call.params.env.GEMINI_API_KEY,undefined);assert.equal(call.params.env.API_KEY,undefined);
+  assert.deepEqual(c.state.messages.find(m=>m.role==='user').attachments.map(x=>x.name),['test.png','test.jpg','test.webp','example.txt']);
+  await c.close();const next=await c.open({model:'gemini-3.1-pro',effort:'low'});assert.deepEqual(c.state.inputModalities,['text']);
+  await assert.rejects(c.send({text:'wrong thread',attachmentIds:[images[0].id]}),/其他對話/);assert.equal(f.calls.length,1);
+  const unsupported=await c.upload({threadId:next.threadId,name:'test.webp',base64:Buffer.from('another synthetic image').toString('base64')});
+  await assert.rejects(c.send({text:'unsupported model',attachmentIds:[unsupported.id]}),/其他型號尚未驗證/);assert.equal(f.calls.length,1);
  }finally{await c.close();}
 });
 

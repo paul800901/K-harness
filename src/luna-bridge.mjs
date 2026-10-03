@@ -16,7 +16,7 @@ const clone = value => structuredClone(value);
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','acceptance','threadId','turnId','error','deniedTools','toolErrors','outputFilesNote'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
   if(!record.settled)return result;
@@ -97,7 +97,7 @@ function extractThread(thread, workspace, record) {
   }
 }
 
-export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, geminiFactory=createGeminiWorker, geminiOptions={}, onRequest, onChange=()=>{}}) {
+export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, geminiFactory=createGeminiWorker, geminiOptions={}, geminiOnly=false, onRequest, onChange=()=>{}}) {
   if (!root || !path.isAbsolute(workspace??'') || !safeId(parentId)) throw new Error('root、workspace 與 parentId 必須有效。');
   const directory = path.join(root, '.runtime', 'luna-bridge', parentId);
   let requestGuard=()=>undefined;
@@ -165,7 +165,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     return onRequest?.(message,item);
   };
   requestGuard=guardedRequest;
-  try {
+  if(!geminiOnly)try {
     if(!executable)throw Error('Codex executable 必須有效。');
     host=hostFactory({executable, cwd:root, onEvent: event, onRequest:message=>requestGuard(message)});
     await host.request('initialize', {clientInfo:{name:'k_harness_luna_bridge',version:'0.1.0'},capabilities:{experimentalApi:true}});
@@ -209,11 +209,13 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     }
     return clone(record);
   }
-  async function start({requestId, task, model, effort}) {
+  async function start({requestId, task, model, effort, accountId, handoffFrom}) {
     if (closed || closing) throw new Error('Luna bridge 正在關閉或已關閉。');
     if (!safeId(requestId) || typeof task !== 'string' || !task.trim() || task.length > 32000) throw new Error('requestId 或 task 無效。');
     const choice={model:model??defaults.model,effort:effort??defaults.effort};
-    if(GEMINI_WORKER_MODELS.includes(choice.model))return startGemini({requestId,task,...choice});
+    if(geminiOnly&&!GEMINI_WORKER_MODELS.includes(choice.model))throw Error('此入口只提供 Gemini Flash；GPT 子代理仍使用 Codex 原生派工。');
+    if(GEMINI_WORKER_MODELS.includes(choice.model))return startGemini({requestId,task,accountId,handoffFrom,...choice});
+    if(accountId!==undefined||handoffFrom!==undefined)throw Error('帳號選用與接手欄位只適用 Gemini Flash。');
     if(choice.model==='auto'||choice.effort==='auto')throw new Error('目前是「AI 自動選擇」：請依這項工作的難度，明確指定 GPT-6.1 Sol 或 GPT-6 Luna，或 Gemini 3.8 Flash，以及該模型支援的推理程度；尚未開始工作。');
     if(codexError)throw Error(`Codex 子代理初始化失敗：${codexError.message}；未轉派 Gemini。`);
     const policy=validateWorkerPolicy(choice,models);
@@ -260,21 +262,28 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     operations.set(requestId, operation);
     return operation;
   }
-  async function startGemini({requestId,task,model,effort}) {
+  async function startGemini({requestId,task,model,effort,accountId,handoffFrom}) {
     if(!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash effort 只接受 low|medium|high；未換模。');
+    if(accountId!==undefined&&!/^[a-f0-9]{32}$/u.test(accountId))throw Error('Gemini 帳號識別無效。');
+    if(handoffFrom!==undefined&&(!safeId(handoffFrom)||handoffFrom===requestId))throw Error('接手必須使用新的工作 ID。');
     const existing=await inspect({requestId});
     if(existing){
-      if(existing.task!==task||existing.model!==model||existing.effort!==effort)throw Error('相同 requestId 已綁定不同 task 或模型設定；拒絕重送。');
+      if(existing.task!==task||existing.model!==model||existing.effort!==effort||existing.requestedAccountId!==accountId||existing.handoffFrom!==handoffFrom)throw Error('相同 requestId 已綁定不同 task、帳號或模型設定；拒絕重送。');
       return operations.get(requestId)??existing;
     }
     // inspect yields; reserve synchronously after it to deduplicate concurrent starts.
     const pending=records.get(requestId);
     if(pending){
-      if(pending.task!==task||pending.model!==model||pending.effort!==effort)throw Error('相同 requestId 已綁定不同 task 或模型設定；拒絕重送。');
+      if(pending.task!==task||pending.model!==model||pending.effort!==effort||pending.requestedAccountId!==accountId||pending.handoffFrom!==handoffFrom)throw Error('相同 requestId 已綁定不同 task、帳號或模型設定；拒絕重送。');
       return operations.get(requestId)??clone(pending);
     }
     if(closed||closing)throw Error('Luna bridge 正在關閉或已關閉。');
-    const record={requestId,parentId,provider:'gemini',model,effort,status:'starting',settled:false,acceptance:'not-reviewed',task,output:'',outputFiles:[],workspace,accessMode};
+    if(handoffFrom){const previous=await inspect({requestId:handoffFrom});if(!previous||previous.provider!=='gemini'||previous.settled!==true)throw Error('原 Gemini 工作尚未確認停止，不能接手或重播。');return reserveGemini();}
+    return reserveGemini();
+    function reserveGemini(){
+    if(closed||closing)throw Error('Luna bridge 正在關閉或已關閉。');
+    if(records.has(requestId))return startGemini({requestId,task,model,effort,accountId,handoffFrom});
+    const record={requestId,parentId,provider:'gemini',model,effort,...(accountId?{requestedAccountId:accountId}:{}),...(handoffFrom?{handoffFrom}:{}),status:'starting',settled:false,acceptance:'not-reviewed',task,output:'',outputFiles:[],workspace,accessMode};
     records.set(requestId,record);
     const controller=new AbortController();
     const handle={controller,completion:null};geminiRuns.set(requestId,handle);
@@ -282,11 +291,11 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       await persist(record);changed(record);
       try{
         gemini??=geminiFactory({...geminiOptions,root,workspace,accessMode});
-        handle.completion=Promise.resolve().then(()=>gemini.run({task,model,effort,signal:controller.signal,onStart:pid=>{
+        handle.completion=Promise.resolve().then(()=>gemini.run({task,model,effort,accountId,signal:controller.signal,onAccount:identity=>{record.accountId=identity.accountId;record.accountEmail=identity.accountEmail;},onStart:pid=>{
           record.pid=pid;record.status='running';record.startedAt=new Date().toISOString();
           void persist(record).then(()=>changed(record)).catch(()=>{});
         }})).then(result=>Object.assign(record,result)).catch(error=>{
-          Object.assign(record,{status:controller.signal.aborted?'cancelled':'failed',settled:true,error:error.message});
+          Object.assign(record,{status:error.settled===false?'unresolved':controller.signal.aborted?'cancelled':'failed',settled:error.settled!==false,error:error.message});
         }).then(async()=>{
           record.acceptance='not-reviewed';record.endedAt=new Date().toISOString();
           await persist(record);changed(record);return clone(record);
@@ -304,6 +313,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       throw error;
     }).finally(()=>operations.delete(requestId));
     operations.set(requestId,operation);return operation;
+    }
   }
   async function cancel({requestId}) {
     const current = await inspect({requestId});
@@ -388,6 +398,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   }
   return {
     start, inspect, cancel, workerPolicy:clone(defaults),
+    accounts:()=>geminiOptions.accounts?.list()??{enabled:false,accounts:[]},
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
       const deadline = Date.now() + timeoutMs;

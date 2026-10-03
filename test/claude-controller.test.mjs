@@ -863,3 +863,12 @@ for(const model of ['claude-sonnet-5','claude-sonnet-5-5'])test(`${model} from t
   await assert.rejects(f.controller.selectModel({threadId,model:'claude-not-in-catalog'}),/目前帳號未提供/);
  }finally{await f.controller.close();}
 });
+
+test('Claude lazy gateway exposes the same read-only Gemini account list without starting a worker',async()=>{
+ const f=await fixture();let reads=0;f.bridge.accounts=async()=>{reads++;return {accounts:[{id:'a'.repeat(32),email:'fake@example.test'}]};};
+ try{
+  await f.controller.open({});assert.equal(f.bridgeOptions,undefined);
+  const result=await f.gatewayOptions.bridge.accounts();assert.equal(result.accounts[0].email,'fake@example.test');assert.equal(reads,1);
+  assert.equal(f.bridge.records,undefined);assert.equal(f.controller.state.workers.length,0);
+ }finally{await f.controller.close();}
+});

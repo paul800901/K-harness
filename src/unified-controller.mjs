@@ -76,7 +76,7 @@ export function createUnifiedController(options){
     if(result.status==='fulfilled')models.push(...result.value.models.filter(m=>m.hidden!==true).map(m=>({...m,provider})));
     else warnings.push(`${provider} 目錄暫時不可用：${String(result.reason?.message??result.reason)}`);
    }
-   return {models,warnings};
+   return {models,warnings,geminiGateway:gpt.status==='fulfilled'&&gpt.value.geminiGateway===true};
   },
   async open(data,{signal}={}){
    if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw new Error('請先結束目前工作與核准，再切換對話。');

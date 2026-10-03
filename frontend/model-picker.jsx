@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState,useId} from 'react';
 import {Check,ChevronDown,RefreshCw} from 'lucide-react';
-import {WORKER_MODELS,GEMINI_WORKER_MODELS,normalizeWorkerPolicy} from '../src/worker-policy.mjs';
+import {WORKER_MODELS,GEMINI_WORKER_MODELS,GEMINI_WORKER_EFFORTS,normalizeWorkerPolicy} from '../src/worker-policy.mjs';
 import {PermissionPicker} from './permission-picker.jsx';
 import {AccountConnections} from './account-connections.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
@@ -47,9 +47,10 @@ function ModelMenu({models,selected,disabled,isAvailable,onChange}){
  </div>;
 }
 
-export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode='create',hasHistory=false,disabled,loadModels,onCatalog,onClose,onCreate}){
+export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode='create',hasHistory=false,disabled,geminiGateway=false,loadModels,onCatalog,onClose,onCreate}){
  const [models,setModels]=useState([]),[provider,setProvider]=useState(mode==='switch'?modelProvider({model:currentModel}):'codex'),[model,setModel]=useState(''),[effort,setEffort]=useState(undefined),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const [accountStatus,setAccountStatus]=useState({});
+ const [catalogGeminiGateway,setCatalogGeminiGateway]=useState(geminiGateway===true);
  const [workerPolicy,setWorkerPolicy]=useState(()=>normalizeWorkerPolicy(currentWorkerPolicy));
  const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
  const initializedProvider=useRef(mode==='switch'?modelProvider({model:currentModel}):'codex');
@@ -57,6 +58,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const refreshModels=async kind=>{
   try{
    const catalog=await loadModels(),list=catalog.models??[];
+   setCatalogGeminiGateway(catalog.geminiGateway===undefined?geminiGateway===true:catalog.geminiGateway===true);
    setModels(list);onCatalog(list,catalog.warnings??[]);setError('');setLoading(false);
    if(kind==='codex'){
     const currentProvider=modelProvider({model:currentModel}),choices=mode==='switch'?list.filter(item=>modelProvider(item)===currentProvider):list;
@@ -67,8 +69,10 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  };
  useEffect(()=>{
   let cancelled=false;setLoading(true);setError('');
-  loadModels().then(({models:list,warnings=[]})=>{
+  loadModels().then(catalog=>{
    if(cancelled)return;
+   const {models:list,warnings=[]}=catalog;
+   setCatalogGeminiGateway(catalog.geminiGateway===undefined?geminiGateway===true:catalog.geminiGateway===true);
    const supported=list;
    setModels(supported);onCatalog(list,warnings);
    const currentProvider=modelProvider({model:currentModel});
@@ -87,9 +91,10 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
  const isAvailable=item=>item?.available!==false&&(modelProvider(item)!=='claude'||claudeVerified);
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
- const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model)||(provider==='claude'&&GEMINI_WORKER_MODELS.includes(item.model)));
- const invalidWorker=provider==='codex'&&GEMINI_WORKER_MODELS.includes(workerPolicy.model);
- const workerEfforts=workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
+ const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model)||((provider==='claude'||(provider==='codex'&&catalogGeminiGateway))&&GEMINI_WORKER_MODELS.includes(item.model)));
+ const canOfferFlash=workerModels.some(item=>GEMINI_WORKER_MODELS.includes(item.model));
+ const invalidWorker=provider==='codex'&&GEMINI_WORKER_MODELS.includes(workerPolicy.model)&&(!catalogGeminiGateway||!canOfferFlash);
+ const workerEfforts=GEMINI_WORKER_MODELS.includes(workerPolicy.model)?GEMINI_WORKER_EFFORTS.map(reasoningEffort=>({reasoningEffort})):workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
  const inheritedEffort=mode==='switch'&&supportedEfforts.some(item=>item.reasoningEffort===currentEffort)?currentEffort:selected?.defaultReasoningEffort;
  const visibleModels=models.filter(item=>modelProvider(item)===provider);
 
@@ -145,7 +150,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
     </select></label>
     {workerPolicy.model!=='auto'&&<label><span>預設推理程度</span><select aria-label="子代理推理程度" value={workerPolicy.effort} disabled={disabled||!workerEfforts.length} onChange={event=>setWorkerPolicy(current=>({...current,effort:event.target.value}))}>
      {!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort}>{effortName[workerPolicy.effort]??workerPolicy.effort}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
-    </select></label>}<p className="step-hint">{workerPolicy.model==='auto'?(provider==='claude'?'需要派工時，由 AI 選擇 Sol、Luna 或 Gemini 3.8 Flash，以及推理程度。':'需要派工時，由 AI 依任務難度選擇 Sol 或 Luna，以及推理程度。'):'作為派工預設；你也可以在訊息中指定模型與推理程度。'}</p>{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前由 Claude 派工；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
+    </select></label>}<p className="step-hint">{workerPolicy.model==='auto'?(canOfferFlash?'需要派工時，由 AI 選擇 Sol、Luna 或 Gemini 3.8 Flash，以及推理程度。':'需要派工時，由 AI 依任務難度選擇 Sol 或 Luna，以及推理程度。'):'作為派工預設；你也可以在訊息中指定模型與推理程度。'}</p>{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前未由目錄確認可用；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
   </>}
   <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||invalidWorker||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </div>;

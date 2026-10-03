@@ -16,7 +16,7 @@ const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'
 const history=text=>({turns:[{items:[{type:'userMessage',id:`u-${text}`,content:[{type:'text',text:`要求 ${text}`}]},{type:'agentMessage',id:`a-${text}`,text:`回答 ${text}`}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[],beforeRequest,controllerOptions={}}={}){
+async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[],beforeRequest,geminiReady=true,controllerOptions={}}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-switch-'));
  const workspaceB=path.join(root,'workspace-b');await mkdir(workspaceB);
@@ -29,7 +29,7 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
   const calls=[],waiters=[];let closeHost;
   const host={closed:new Promise(resolve=>{closeHost=resolve;}),calls,waiters,closeCount:0,
    notify(message){calls.push({method:'$notify',p:message});},
-   waitForMcp(threadId,name){return new Promise((resolve,reject)=>waiters.push({threadId,name,resolve,reject}));},
+   waitForMcp(threadId,name){return new Promise((resolve,reject)=>{waiters.push({threadId,name,resolve,reject});if(name==='k_gemini'){if(geminiReady===true)resolve();else if(geminiReady===false)reject(new Error('Gemini gateway not ready'));}});},
    async close(){this.closeCount++;closeHost();},
    async request(method,p={}){
     const call={method,p};calls.push(call);allCalls.push({host:this,...call});
@@ -75,9 +75,13 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
   if(options.onEvent){activeHost=host;activeHooks=options;}
   return host;
  };
- const c=createDesktopController({root,executable:'fixture',hostFactory,...controllerOptions});
+ let bridgeFactoryCalls=0;
+ const c=createDesktopController({root,executable:'fixture',hostFactory,...controllerOptions,
+  bridgeFactory:async()=>{bridgeFactoryCalls++;throw new Error('Flash worker must remain lazy in a normal GPT conversation');},
+  gatewayFactory:async()=>({mcpConfig:{mcpServers:{k_gemini:{type:'http',url:'http://127.0.0.1:43123/mcp',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}}),
+ });
  const openSaved=threadId=>c.open({model:MODEL,threadId});
- return {c,root,workspaceB,hosts,allCalls,histories,get activeHost(){return activeHost;},get hooks(){return activeHooks;},openSaved};
+ return {c,root,workspaceB,hosts,allCalls,histories,get activeHost(){return activeHost;},get hooks(){return activeHooks;},get bridgeFactoryCalls(){return bridgeFactoryCalls;},openSaved};
 }
 
 test('reopening the same ready conversation is a no-op',async()=>{
@@ -119,18 +123,28 @@ test('saved conversations share one initialized host and read each history befor
  }finally{await f.c.close();}
 });
 
-test('normal subscription conversations disable the removed Flash server and keep AI-auto delegation',async()=>{
+test('normal GPT conversations wait for only the Flash gateway and keep native AI-auto delegation lazy',async()=>{
  const f=await fixture();
  try{
   await f.openSaved('thread-a');
   assert.equal(f.c.state.workerConnection,'ready');
-  assert.equal(f.activeHost.waiters.length,0);
+  assert.deepEqual(f.activeHost.waiters.map(waiter=>waiter.name),['k_gemini']);
   const resume=f.activeHost.calls.find(call=>call.method==='thread/resume').p;
   const disabled={enabled:false,command:process.execPath,args:['--version']};
-  assert.deepEqual(resume.config.mcp_servers,{k_flash:disabled,k_browser:disabled});
+  assert.deepEqual(resume.config.mcp_servers,{k_flash:disabled,k_gemini:{url:'http://127.0.0.1:43123/mcp',http_headers:{Authorization:'Bearer fixture'}},k_browser:disabled});
   assert.deepEqual(resume.config.agents,{enabled:true});
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
   await f.c.send({text:'直接工作，不啟動 Flash'});
+  assert.equal(f.bridgeFactoryCalls,0);
+ }finally{await f.c.close();}
+});
+test('Codex does not open a conversation or send a turn before its Flash MCP gateway is ready',async()=>{
+ const f=await fixture({geminiReady:false});
+ try{
+  await assert.rejects(f.openSaved('thread-a'),/Gemini gateway not ready/);
+  assert.equal(f.activeHost.waiters.length,1);assert.equal(f.activeHost.waiters[0].name,'k_gemini');
+  assert.equal(f.activeHost.calls.some(call=>call.method==='turn/start'),false);
+  assert.equal(f.c.state.status,'error');
  }finally{await f.c.close();}
 });
 test('an exact native archived precondition is unarchived once before resume without replaying a turn',async()=>{
@@ -197,13 +211,14 @@ test('permissions, approval decisions, and stop remain scoped to the selected co
  }finally{await f.c.close();}
 });
 
-test('A to B to A keeps normal workers independent of external MCP readiness',async()=>{
+test('A to B to A keeps normal Codex delegation independent of Flash worker readiness',async()=>{
  const f=await fixture();
  try{
   for(const id of ['thread-a','thread-b','thread-a'])await f.openSaved(id);
   assert.equal(f.c.state.threadId,'thread-a');
   assert.equal(f.c.state.workerConnection,'ready');
-  assert.equal(f.activeHost.waiters.length,0);
+  assert.deepEqual(f.activeHost.waiters.map(waiter=>waiter.name),['k_gemini','k_gemini','k_gemini']);
+  assert.equal(f.bridgeFactoryCalls,0);
   assert.equal(f.c.state.workerError,null);
  }finally{await f.c.close();}
 });

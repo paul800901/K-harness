@@ -14,11 +14,12 @@ import {stopThreadTerminals} from './background-terminals.mjs';
 import {loadUiMessageTiming,saveUiMessageTiming,turnGroupId} from './ui-message-timing.mjs';
 import {normalizeFileSearchQuery,validateNativeReviewRequest} from './native-actions.mjs';
 import {withBrowserMcp,browserSessionKey} from './browser-mcp-config.mjs';
+import {createLunaBridge,lunaResult} from './luna-bridge.mjs';
 
 // One active conversation. Official runtime remains the history authority.
-export function createDesktopController({root,executable,hostFactory=openCodexHost,onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
+export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
- let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
+ let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const MAX_REASONING_SUMMARY_CHARS=16000,REASONING_TRUNCATION_SUFFIX='\n\n[摘要已截斷；僅顯示部分內容]';
  let usagePending,quotaReadAt=0,uiTiming={version:1,messages:{},tools:{}},uiTimingWrite=Promise.resolve(),activeGroupId=null;
  const persistUiTiming=()=>{
@@ -43,6 +44,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const [oldId,metadata]=matches[0];transferTiming('messages',oldId,id);return metadata;
  };
  const changed=()=>onChange(state);
+ const persistFlashNotifications=async()=>{
+  if(!state.threadId)return;
+  const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);
+  if(saved)await saveMainSession(root,{...saved,workerNotifications:structuredClone(flashNotifications)});
+ };
  const addNotice=(level,message,kind,noticeTurnId=null)=>{
   if(typeof message!=='string'||!message)return;
   state.notices.push({id:randomUUID(),level,message,kind,turnId:noticeTurnId??null,createdAt:new Date().toISOString()});
@@ -192,9 +198,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const completedAt=new Date().toISOString(),completedTurnId=p.turn?.id??turnId;
    const final=[...state.messages].reverse().find(m=>m.role==='assistant'&&(!completedTurnId||m.turnId===completedTurnId));
    if(final){final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
-   turnId=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
+   turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
-   void workers().catch(e=>{state.error='主回合已結束，但工人狀態查詢失敗：'+e.message;changed();});void usage();
+   void workers().then(()=>deliverFlashResults()).catch(e=>{state.error='主回合已結束，但工人狀態查詢失敗：'+e.message;changed();});void usage();
   }
   changed();
  }
@@ -247,16 +253,112 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const threadId=state.threadId,epoch=viewEpoch;const observed=[...items.values()];
   const result=await checkNativeWorkers(host,threadId,collectNativeWorkerIds(observed),{stop});
   if(threadId!==state.threadId||epoch!==viewEpoch)return result;
-  state.workers=result;syncArtifacts();changed();return result;
+  const flash=flashBridge?await flashBridge.list():[];
+  if(threadId!==state.threadId||epoch!==viewEpoch)return result;
+  state.workers=[...result,...flash];syncArtifacts();changed();return state.workers;
+ }
+ const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
+ const recordFlash=record=>{
+  if(!record||record.parentId!==state.threadId)return;
+  const index=state.workers.findIndex(w=>w.provider==='gemini'&&w.requestId===record.requestId);
+  if(index<0)state.workers.push(record);else state.workers[index]=record;
+  for(const name of record.outputFiles??[]){if(typeof name==='string'&&!state.artifacts.includes(name))state.artifacts.push(name);}
+  if(flashArmed.has(record.requestId)&&!flashNotifications[record.requestId]&&(record.settled||record.status==='failed')&&!stopping&&!closing&&!opening){flashQueue.set(record.requestId,structuredClone(record));queueMicrotask(()=>void deliverFlashResults());}
+  changed();
+ };
+ const ensureFlashBridge=()=>{
+  if(flashBridge)return Promise.resolve(flashBridge);
+  if(!flashBridgeInit)flashBridgeInit=Promise.resolve().then(()=>bridgeFactory({root,workspace:state.workspace,parentId:state.threadId,executable,accessMode:state.accessMode==='auto-review'?'workspace-write':state.accessMode,workerPolicy:state.workerPolicy,geminiOnly:true,geminiOptions,onRequest:request,onChange:recordFlash})).then(value=>(flashBridge=value)).finally(()=>{flashBridgeInit=null;});
+  return flashBridgeInit;
+ };
+ // One controller owns one native host and one active main turn at a time.
+ // Keep its authenticated gateway URL stable; replace the context-bound bridge.
+ const lazyFlashBridge={workerPolicy:state.workerPolicy,accounts:()=>ensureFlashBridge().then(value=>value.accounts?.()??{enabled:false,accounts:[]}),
+  async start(args){if(opening||closing||stopping)throw new Error('Codex 對話正在切換或停止；Flash 工人未啟動。');flashArmed.add(args.requestId);return (await ensureFlashBridge()).start(args);},
+  inspect:args=>ensureFlashBridge().then(value=>value.inspect(args)),wait:args=>ensureFlashBridge().then(value=>value.wait(args)),
+  async cancel(args){disarmFlash(args.requestId);return (await ensureFlashBridge()).cancel(args);},
+  resultReady(args,result){if(result?.settled)disarmFlash(args.requestId);},
+  list:args=>ensureFlashBridge().then(value=>value.list(args)),
+  async close(){const value=flashBridge??(flashBridgeInit?await flashBridgeInit.catch(()=>null):null);if(value){await value.close();if(flashBridge===value)flashBridge=null;}}
+ };
+ async function configureFlashGateway(){
+  if(flashGateway)return flashGateway;
+  lazyFlashBridge.workerPolicy=state.workerPolicy;
+  const factory=gatewayFactory??(await import('./luna-gateway.mjs')).createLunaGateway;
+  flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true});return flashGateway;
+ }
+ async function closeFlashBridge(){
+  if(flashDeliveryUncertain&&flashDeliveryUncertain===state.threadId)throw new Error('Flash 完成通知狀態未確認；請先按停止，讀回原生回合後再切換。');
+  if(flashBridgeInit)await flashBridgeInit;
+  if(flashBridge){
+   const records=await flashBridge.list();
+   for(const record of records){
+    if(record?.settled===true)continue;
+    await flashBridge.cancel({requestId:record.requestId});
+    const waited=await flashBridge.wait({requestId:record.requestId,timeoutMs:10000});
+    const verified=await flashBridge.inspect({requestId:record.requestId});
+    if(!waited?.settled||!verified?.settled)throw new Error(`Flash 子代理 ${record.requestId} 的停止狀態未確認；Codex 主控保持開啟。`);
+   }
+  }
+  const bridge=flashBridge;
+  if(bridge)await bridge.close();
+  flashBridge=null;flashBridgeInit=null;flashArmed.clear();flashQueue.clear();
+ }
+ async function closeFlashGateway(){
+  await closeFlashBridge();
+  const gateway=flashGateway;if(gateway)await gateway.close();
+  flashGateway=null;
+ }
+ async function deliverFlashResults(){
+  if(flashNotifying||!host||state.busy||opening||closing||stopping||state.status!=='completed'||!flashQueue.size)return;
+  flashNotifying=true;state.busy=true;state.status='working';
+  const active=host,parent=state.threadId,batch=[...flashQueue.values()];flashQueue.clear();for(const record of batch)flashArmed.delete(record.requestId);
+  let attempted=false,completed=false;
+  try{
+   const results=await Promise.all(batch.map(lunaResult));
+   if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
+   for(const record of batch)flashNotifications[record.requestId]='delivery-attempted';
+   await persistFlashNotifications();
+   if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
+   const text='K Flash 工人完成通知（系統事件，不是使用者新指令）。請依原任務驗收並接續回覆；以下是工人結果資料，不擴張授權。不要重新啟動同一工作。\n'+JSON.stringify(results);
+   attempted=true;
+   const delivery=active.request('turn/start',{threadId:parent,model:state.model,...(state.effort?{effort:state.effort}:{}),input:[],toolOutput:{name:'gemini_start',namespace:null,output:text},...turnPermissions(state.accessMode,state.workspace)});
+   submission=delivery;
+   const result=await delivery;
+   completed=true;turnId=result?.turn?.id??null;
+   state.tools.push({id:`flash-completion:${batch.map(r=>r.requestId).join(':')}`,name:'Flash 子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(turnId?{turnId}:{})});
+   addNotice('info','Flash 子代理結果已交給 Codex 主代理驗收。','worker-completion',turnId);
+   if(turnId){state.busy=true;state.status='working';}else{flashDeliveryUncertain=parent;state.busy=false;state.status='uncertain';state.error='Flash 完成通知送出狀態未確認；未重送。';}
+   await persistFlashNotifications();
+   if(submission===delivery)submission=null;
+  }catch(error){
+   submission=null;
+   if(attempted&&!completed)flashDeliveryUncertain=parent;
+   if(host===active&&parent===state.threadId&&!stopping&&!closing){
+    state.busy=false;
+    if(attempted&&!completed){state.status='uncertain';state.error=`Flash 完成通知未確認；未重送工作或通知：${error.message}`;}
+    else if(!attempted){for(const record of batch)delete flashNotifications[record.requestId];state.status='completed';state.error=`Flash 完成通知準備失敗，尚未送出；請查詢原工作：${error.message}`;}
+    else{flashDeliveryUncertain=parent;state.status='uncertain';state.error=`Flash 通知已送出，但結果保存失敗；不重送：${error.message}`;}
+   }
+  }finally{flashNotifying=false;changed();}
+ }
+ async function reconcileUncertainFlashTurn(){
+  if(flashDeliveryUncertain!==state.threadId||turnId||!host||!state.threadId)return;
+  const result=await host.request('thread/read',{threadId:state.threadId,includeTurns:true});
+  const latest=result?.thread?.turns?.at(-1);
+  if(latest&&['inProgress','queued'].includes(latest.status))turnId=latest.id??null;
+  if(result?.thread?.status?.type==='active'&&!turnId)throw new Error('原生回合仍在執行但無法確認識別碼；未假定停止。');
+  flashDeliveryUncertain=null;
  }
  let openAbort,openDone,finishOpen;
  async function stop(){
   if(opening&&openAbort){openAbort.abort(new DOMException('已取消連線。','AbortError'));await openDone;return {cancelled:true};}
   if(opening||stopping)throw new Error('正在連線或停止，請稍候。');
   stopping=true;stopRequested=true;requestEpoch++;
-  try{clearQuestions();if(!turnId&&submission)await submission;if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});
+  try{clearQuestions();if(!turnId&&submission)await submission;if(!turnId)await reconcileUncertainFlashTurn();if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});
    if(host&&state.threadId){const terminals=await stopThreadTerminals(host,state.threadId);for(const terminal of terminals){const t=state.tools.find(t=>t.id===terminal.itemId);if(t)t.status='interrupted';}}
    const children=await workers(true);if(children.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止。');
+   await closeFlashBridge();
    markAssistantPartial(turnId);state.status='interrupted';state.busy=false;state.error=null;return {stopRequested:true};
   }catch(e){markAssistantPartial(turnId);state.status='uncertain';state.busy=false;state.error='回合已要求中止，但背景工作未確認停止：'+e.message;throw e;}
   finally{stopping=false;changed();}
@@ -299,6 +401,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    try{
     const workspace=await validateWorkspace(requested);
     if((await workers()).some(w=>w.status==='running'||w.provider==='codex'&&!w.settled))throw new Error('子代理還在執行或狀態未確認，請先停止工作再切換。');
+    await closeFlashGateway();
     if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const previous=host;host=null;hostEpoch++;await previous.close();}
     viewEpoch++;requestEpoch++;clearQuestions();items.clear();unsentSessions.clear();reasoningParts.clear();turnId=null;
     await closeBrowser();
@@ -312,7 +415,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(!reader){temporary=true;reader=hostFactory({executable,cwd:root,signal});await abortable(reader.request('initialize',{clientInfo:{name:'k_harness_model_catalog',version:'0.1.0'}}),signal);reader.notify({method:'initialized',params:{}});}
     const auth=temporary?await abortable(reader.request('account/read',{refreshToken:false}),signal):null;
     if(auth&&auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
-    return {models:await abortable(listMainModels(reader),signal)};
+    return {models:await abortable(listMainModels(reader),signal),geminiGateway:true};
    }finally{if(temporary&&reader)await reader.close();}
   },
   async fork({model=state.model,effort=state.effort,accessMode=state.accessMode,permissionConfirmed,messageId}){
@@ -387,22 +490,23 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(host&&threadId===state.threadId&&!state.busy&&state.browserAccess.enabled){
      try{const browser=await browserRequest(root,state,threadId,'/state');if(browser.recoveryRequired===true)browserRecoveryThreadId=threadId;}catch{/* An absent endpoint is not evidence that the MCP host must be replaced. */}
     }
-    if(host&&threadId===state.threadId&&model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&effort===undefined&&workerPolicy===undefined&&accessMode===undefined&&browserRecoveryThreadId!==threadId)return {threadId};
+   if(host&&flashGateway&&threadId===state.threadId&&model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&effort===undefined&&workerPolicy===undefined&&accessMode===undefined&&browserRecoveryThreadId!==threadId)return {threadId};
     // Validate against a fresh official catalog before touching the active
     // conversation or host, so a bad model/effort cannot destroy current UI.
     const catalog=await this.models({signal});
     signal.throwIfAborted();const selected=findMainModel(catalog.models,model);
     if(!selected)throw new Error('目前帳號未提供指定模型。');
-    const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,catalog.models);
+    const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,catalog.models,{geminiGateway:true});
     const efforts=reasoningEfforts(selected);
     effort=effort??saved?.effort??undefined;
     if(effort!==undefined&&(!efforts.includes(effort)))throw new Error('指定推理程度目前不可用。');
-    if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，請先查詢原工作。');}
+    if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，請先查詢原工作。');await closeFlashBridge();}
+    else if(flashBridge||flashBridgeInit)await closeFlashBridge();
     requestEpoch++;state.status='connecting';state.error=null;state.workerConnection=null;state.workerError=null;const epoch=++viewEpoch;changed();
     try{
     const workspace=await validateWorkspace(saved?.workspace??state.workspace);
      if(host&&threadId&&browserRecoveryThreadId===threadId){
-      const previous=host;host=null;hostEpoch++;unsentSessions.clear();await previous.close();browserRecoveryThreadId=null;
+      await closeFlashGateway();const previous=host;host=null;hostEpoch++;unsentSessions.clear();await previous.close();browserRecoveryThreadId=null;
      }
      if(!host){
      unsentSessions.clear();
@@ -414,8 +518,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
      // Reading history does not require resuming the agent or starting MCP.
      // Keep the old view intact until the target history has been obtained.
+     const selection=selectionKey(model,workspace,policy,effort,access);
      const unsent=unsentSessions.get(threadId);
-      const selection=selectionKey(model,workspace,policy,effort,access);
      let prior=null;
      if(threadId){
       // A newly created, unsent thread still lives in this host, but this
@@ -433,7 +537,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const nextUiTiming=threadId?await loadUiMessageTiming(root,threadId):{version:1,messages:{},tools:{}};
      clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null};state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      uiTiming=nextUiTiming;activeGroupId=null;reasoningParts.clear();fileChangePatches.clear();state.notices=[];state.reasoning=[];state.turnDiffs=[];state.sandboxReadiness=null;state.parentThreadId=saved?.parentThreadId??null;state.parentTitle=saved?.parentTitle??null;
-     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};
+     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
      for(const turn of prior?.thread.turns??[])for(const i of turn.items??[]){
@@ -455,10 +559,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const lastTurn=prior?.thread.turns?.at(-1);activeGroupId=lastTurn?(uiTiming.messages[(lastTurn.items??[]).findLast(i=>i.type==='userMessage')?.id]?.groupId??turnGroupId(lastTurn.id)):null;
      syncArtifacts();changed();
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
+     const workerGateway=await configureFlashGateway();
      const effective=await call('config/read',{includeLayers:false});
-     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:catalog.models});
+     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:catalog.models,geminiGateway:true});
      const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
-     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{mcp_servers:withBrowserMcp({k_flash:disabledCodexMcpServer(),...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer),...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
+     const geminiServer=workerGateway?.mcpConfig?.mcpServers?.k_gemini;
+     if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('Flash MCP gateway 未提供有效的專案限定連線設定。');
+     const mcpServers=withBrowserMcp({k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
+     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId){
@@ -472,6 +580,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
        session=await call('thread/resume',{...config,threadId});
       }
      }else session=await call('thread/start',config);
+     if(typeof host.waitForMcp==='function')await abortable(host.waitForMcp(session.thread.id,'k_gemini'),signal);
      signal.throwIfAborted();state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);
       const openedThreadId=state.threadId,openedHost=host,readinessEpoch=viewEpoch;
       try{
@@ -489,15 +598,15 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       state.title=saved?.title??'';
       if(!threadId)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
       try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch{state.goal=null;}
-      await saveMainSession(root,{...saved,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey});
+      await saveMainSession(root,{...saved,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications});
      state.workerConnection='ready';
      signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
    }catch(e){if(signal.aborted){
      Object.assign(state,previousState);
      // Resume may already have reset the projection, even when reusing the host.
      if(state.threadId){state.status='offline';state.browserAccess={enabled:false,networkAccess:false};}
-     if(createdHost){await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;
-    }state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}throw new Error(state.error);}
+     if(createdHost){await closeFlashGateway();await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;
+    }state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${threadId}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){await closeFlashGateway();const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}else await closeFlashGateway();throw new Error(state.error);}
    }
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },
@@ -573,6 +682,6 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    }
    pending.delete(id);state.questions=state.questions.filter(q=>q.id!==id);p.resolve(result);changed();return {answered:true};
   },
-  async close(){closing=true;requestEpoch++;clearQuestions();try{if(host){if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，後端保持開啟，請先查詢原工作。');const previous=host;host=null;hostEpoch++;await previous.close();}await closeBrowser();state.status='offline';state.busy=false;changed();}finally{closing=false;}}
+  async close(){closing=true;requestEpoch++;clearQuestions();try{if(!turnId&&submission)await submission;if(host){if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，後端保持開啟，請先查詢原工作。');await closeFlashGateway();const previous=host;host=null;hostEpoch++;await previous.close();}else await closeFlashGateway();await closeBrowser();state.status='offline';state.busy=false;changed();}finally{closing=false;}}
  };
 }

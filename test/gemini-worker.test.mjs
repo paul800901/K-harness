@@ -181,3 +181,50 @@ test('agy models authentication failure explains login without launching a model
  await assert.rejects(worker.run({task:'bounded',effort:'low'}),/agy 未登入/);
  assert.equal(calls,1);
 });
+
+test('managed Flash binds account metadata without changing permissions or replaying; catalog refreshes for each account',async()=>{
+ const fake=fakeSpawn(),seen=[];let id='a'.repeat(32);
+ const accounts={run:async(options,fn)=>{seen.push(options);return {...await fn({accountId:id,accountEmail:`${id[0]}@example.test`}),accountId:id};}};
+ const worker=make(fake,{accounts});
+ const first=await worker.run({task:'remaining A',effort:'low'});id='b'.repeat(32);
+ const second=await worker.run({task:'remaining B',effort:'low',accountId:id});
+ assert.equal(first.accountId,'a'.repeat(32));assert.equal(second.accountId,id);
+ assert.deepEqual(seen,[{worker:true,accountId:undefined},{worker:true,accountId:id}]);
+ assert.equal(fake.calls.filter(c=>c.args[0]==='models').length,2);
+ assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,2);
+ assert.ok(fake.calls.every(c=>c.options.env.HOME===worker.home));
+ assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'read-only'));
+});
+
+test('Flash handoff requires a settled predecessor, new request id, and retains account identity in persisted results',async()=>{
+ let done;const calls=[];const bridge=await geminiBridge({factory:()=>({run:async options=>{
+  calls.push(options);options.onAccount({accountId:options.accountId,accountEmail:'fixture@example.test'});options.onStart(123);
+  if(options.task==='first')await new Promise(resolve=>{done=resolve;});
+  return {status:'completed',settled:true,output:options.task,accountId:options.accountId};
+ }})});
+ try{
+  const first={...args,requestId:'first',task:'first',accountId:'a'.repeat(32)};await bridge.start(first);
+  await assert.rejects(bridge.start({...args,requestId:'next',handoffFrom:'first'}),/尚未確認停止/);
+  done();await bridge.wait({requestId:'first',timeoutMs:2000});
+  const next={...args,requestId:'next',task:'only remaining',accountId:'b'.repeat(32),handoffFrom:'first'};
+  await Promise.all([bridge.start(next),bridge.start(next)]);
+  const final=await bridge.wait({requestId:'next',timeoutMs:2000});assert.equal(final.handoffFrom,'first');assert.equal(final.accountId,next.accountId);
+  assert.equal((await lunaResult(final)).accountId,next.accountId);assert.equal(calls.length,2);assert.equal(calls[1].task,'only remaining');
+  await assert.rejects(bridge.start({...next,accountId:first.accountId}),/不同 task、帳號/);
+  await assert.rejects(bridge.start({...args,requestId:'self',handoffFrom:'self'}),/新的工作 ID/);
+ }finally{await bridge.close();}
+});
+
+test('Flash-only bridge never opens a Codex worker host and refuses GPT dispatch',async()=>{
+ let hosts=0,runs=0;
+ const bridge=await createLunaBridge({root,workspace,parentId:randomUUID(),geminiOnly:true,
+  hostFactory:()=>{hosts++;throw Error('must not open GPT runtime');},
+  geminiFactory:()=>({run:async()=>{runs++;return {provider:'gemini',status:'completed',settled:true,output:'done'};}})});
+ try{
+  assert.equal(hosts,0);
+  await assert.rejects(bridge.start({requestId:'gpt',task:'bounded',model:'gpt-6-luna',effort:'high'}),/只提供 Gemini Flash/);
+  await bridge.start({...args,requestId:'flash-only'});
+  const result=await bridge.wait({requestId:'flash-only',timeoutMs:2000});assert.equal(result.status,'completed');
+  assert.equal(hosts,0);assert.equal(runs,1);
+ }finally{await bridge.close();}
+});

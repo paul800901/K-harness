@@ -42,3 +42,33 @@ test('Sol and Luna accept every advertised effort; unsupported selections are re
  assert.throws(()=>validateWorkerPolicy({model:'gpt-6-luna',effort:'ultra'},models),/不支援/);
  assert.throws(()=>validateWorkerPolicy({model:'gpt-6.1-sol',effort:'imaginary'},models),/不支援/);
 });
+
+test('Gemini Flash is accepted only with an explicitly enabled gateway and never becomes a native GPT default',()=>{
+ for(const effort of ['low','medium','high']){
+  const policy={model:'gemini-3.8-flash',effort};
+  assert.throws(()=>validateWorkerPolicy(policy,models),/gateway/);
+  assert.deepEqual(validateWorkerPolicy(policy,models,{geminiGateway:true}),policy);
+  const config=workerPolicyConfig(policy,{models,geminiGateway:true});
+  assert.deepEqual(config.agents,{enabled:true});
+  assert.equal(config.agents.default_subagent_model,undefined);
+  assert.match(config.developer_instructions,/k_gemini/);
+  assert.match(config.developer_instructions,/gemini_start、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts/);
+  assert.match(config.developer_instructions,/accountId\/handoffFrom/);
+  assert.match(config.developer_instructions,/inspect the original result first/);
+  assert.match(config.developer_instructions,/Do not replay unknown failures/);
+  assert.match(config.developer_instructions,/do not change GPT accounts or subscription/);
+  assert.throws(()=>validateWorkerPolicy(policy,models),/gateway/);
+ }
+ assert.throws(()=>validateWorkerPolicy({model:'gemini-3.8-flash',effort:'xhigh'},models,{geminiGateway:true}),/low、medium 或 high/);
+});
+
+test('Codex auto policy exposes Flash only when its Gemini gateway is enabled',()=>{
+ const config=workerPolicyConfig(undefined,{models,geminiGateway:true});
+ assert.match(config.developer_instructions,/gpt-6\.1-sol or gpt-6-luna or gemini-3\.8-flash/);
+ assert.match(config.developer_instructions,/For Flash, use low, medium, or high/);
+ assert.match(config.developer_instructions,/k_gemini/);
+ const legacy=workerPolicyConfig(undefined,{models});
+ assert.doesNotMatch(legacy.developer_instructions,/gemini-3\.8-flash/);
+ assert.doesNotMatch(legacy.developer_instructions,/k_gemini|For Flash/u);
+ assert.throws(()=>workerPolicyConfig({model:'gemini-3.8-flash',effort:'high'},{models}),/gateway/);
+});

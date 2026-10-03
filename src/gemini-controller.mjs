@@ -8,6 +8,7 @@ import {saveMainSession} from './main-sessions.mjs';
 import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment,loadAttachment,readPresentedFile} from './desktop-files.mjs';
 import {normalizeWorkerPolicy} from './worker-policy.mjs';
+import {browserSessionKey} from './browser-mcp-config.mjs';
 
 const sessionId=id=>typeof id==='string'&&/^gemini-[0-9a-f-]{36}$/iu.test(id);
 const nativeId=id=>typeof id==='string'&&/^[0-9a-f-]{36}$/iu.test(id);
@@ -22,7 +23,7 @@ export function geminiModelsFrom(names){
   if(!/^gemini-[\w.-]+$/u.test(id))continue;
   const match=id.match(/^(.*)-(low|medium|high|xhigh|max)$/u),model=match?.[1]??id,effort=match?.[2]??null;
   let row=groups.get(model);
-  if(!row){row={model,displayName:model.replace(/^gemini-/u,'Gemini ').replaceAll('-',' ').replace(/\b(flash|pro)\b/gu,s=>s[0].toUpperCase()+s.slice(1)),provider:'gemini',available:true,inputModalities:['text'],supportedReasoningEfforts:[],defaultReasoningEffort:effort,nativeModels:{}};groups.set(model,row);}
+  if(!row){row={model,displayName:model.replace(/^gemini-/u,'Gemini ').replaceAll('-',' ').replace(/\b(flash|pro)\b/gu,s=>s[0].toUpperCase()+s.slice(1)),provider:'gemini',available:true,inputModalities:model==='gemini-3.8-flash'?['text','image']:['text'],supportedReasoningEfforts:[],defaultReasoningEffort:effort,nativeModels:{}};groups.set(model,row);}
   row.nativeModels[effort??'default']=id;
   if(effort&&!row.supportedReasoningEfforts.some(item=>item.reasoningEffort===effort))row.supportedReasoningEfforts.push({reasoningEffort:effort});
  }
@@ -30,11 +31,16 @@ export function geminiModelsFrom(names){
 }
 
 /** K stores presentation only. agy owns execution, native history and compression. */
-export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,onChange=()=>{},timeoutMs=600000}={}){
+export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,accounts,onChange=()=>{},timeoutMs=600000,browserConfig=async()=>null,closeBrowser=async()=>{}}={}){
  const login=loginFactory({cwd:root,executable,env}),binary=geminiExecutable(env,executable);
  let usagePending=null,usageAttemptAt=0;
  const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:false,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:0,tokenUsage:null},usage:{gemini:quota}};
  let record=null,selected=null,opening=false,turn=null,persist=Promise.resolve(),unresolvedPid=null;
+ let browserMode=null,browserServer=null;
+ async function resetBrowser(){
+  if(browserServer)try{await closeBrowser();}catch(error){state.status='uncertain';state.error=`瀏覽器停止尚未確認：${error.message}`;throw error;}
+  browserMode=null;browserServer=null;state.browserAccess={enabled:false,networkAccess:false};
+ }
  const changed=()=>{try{onChange(state);}catch{}};
  const file=id=>{if(!sessionId(id))throw Error('Gemini 對話 ID 無效。');return path.join(root,'.runtime/gemini-sessions',`${id}.json`);};
  const home=()=>path.join(root,'agent-home','gemini','main',state.threadId);
@@ -55,18 +61,33 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
  }
  async function prepare(){
   if(!binary)throw Error('找不到 agy，請安裝 Antigravity CLI 並登入。');
+  if(browserMode!==state.accessMode){
+   await resetBrowser();
+   browserServer=state.accessMode==='read-only'?null:await browserConfig({appRoot:root,conversationId:state.threadId,accessMode:state.accessMode,provider:'gemini'});
+   browserMode=state.accessMode;
+  }
   const temps=Object.entries(env).filter(([key])=>/^(TEMP|TMP)$/iu.test(key)).map(([,value])=>value);
-  await atomicWrite(path.join(home(),'.gemini/antigravity-cli/settings.json'),JSON.stringify(geminiSettings(state.workspace,state.accessMode,temps),null,2));
+  const settings=geminiSettings(state.workspace,state.accessMode,temps);
+  if(browserServer){
+   // agy 1.2.16: a blanket MCP deny overrides specific allows. Only K's owner
+   // endpoint is preapproved; other servers remain native Ask (headless: denied).
+   settings.permissions.deny=settings.permissions.deny.filter(rule=>rule!=='mcp(*)');
+   settings.permissions.allow.push('mcp(k_browser/*)');
+  }
+  await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify({mcpServers:browserServer?{k_browser:{serverUrl:browserServer.url,headers:browserServer.http_headers??browserServer.headers}}:{}},null,2));
+  await atomicWrite(path.join(home(),'.gemini/antigravity-cli/settings.json'),JSON.stringify(settings,null,2));
+  state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};
  }
  const api={
   state,
-  async models(){const result=await login.status({checkAuth:false});if(!result.available)throw Error(result.reason);return {models:geminiModelsFrom(result.models),provider:'gemini',version:result.version};},
+  async models(){const inspect=()=>login.status({checkAuth:false}),result=await (accounts?accounts.inspect(inspect):inspect());if(!result.available)throw Error(result.reason);return {models:geminiModelsFrom(result.models),provider:'gemini',version:result.version};},
   async usage(refresh=false){
+   if(accounts){const managed=await accounts.usage(refresh);if(managed){state.usage.gemini=managed;return {gemini:managed};}}
    if(usagePending)return usagePending;
    if(!refresh&&Date.now()-usageAttemptAt<60000)return {gemini:state.usage.gemini};
    usageAttemptAt=Date.now();
    usagePending=(async()=>{
-    let result;try{result=await login.status();}catch{result={reason:'官方額度查詢失敗，請稍後刷新。'};}
+    let result;try{result=await (accounts?accounts.inspect(()=>login.status()):login.status());}catch{result={reason:'官方額度查詢失敗，請稍後刷新。'};}
     state.usage.gemini=result.quota??{...state.usage.gemini,status:state.usage.gemini.windows?.length?'stale':'unavailable',note:result.reason??'無法取得官方額度。'};
     onChange();return {gemini:state.usage.gemini};
    })();
@@ -74,9 +95,9 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   },
   async workers(){return structuredClone(state.workers);},
   async directories(parent=state.workspace){return listWorkspaceDirectories(parent);},
-  async selectWorkspace({path:requested}){idle();const workspace=await validateWorkspace(requested);await persist;state.workspace=workspace;state.threadId=null;state.title='';state.messages=[];state.tools=[];state.artifacts=[];state.workers=[];state.status='idle';state.error=null;record=null;changed();return {workspace};},
+  async selectWorkspace({path:requested}){idle();const workspace=await validateWorkspace(requested);await persist;await resetBrowser();state.workspace=workspace;state.threadId=null;state.title='';state.messages=[];state.tools=[];state.artifacts=[];state.workers=[];state.status='idle';state.error=null;record=null;changed();return {workspace};},
   async open({threadId,model,effort,accessMode='workspace-write',permissionConfirmed=false}={}, {signal}={}){
-   idle();opening=true;
+   idle();opening=true;let previousBrowserClosed=false;
    try{
     await persist;signal?.throwIfAborted();
     const saved=threadId?await read(threadId):null;
@@ -85,20 +106,22 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     const {choice,level}=choose((await api.models()).models,model,effort??saved?.effort),mode=access(saved?.accessMode??accessMode);
     if(!saved&&mode==='danger-full-access'&&!permissionConfirmed)throw Error('請明確確認 Gemini 完整存取權。');
     const workspace=await validateWorkspace(saved?.workspace??state.workspace);signal?.throwIfAborted();
+    await resetBrowser();previousBrowserClosed=true;
     selected=choice;
     record=saved??{threadId:`gemini-${randomUUID()}`,nativeSessionId:null,nativeStarted:false,archived:false,pinned:false,createdAt:now()};
-    Object.assign(state,{threadId:record.threadId,workspace,model,modelDisplayName:choice.displayName,effort:level,efforts:choice.supportedReasoningEfforts.map(e=>e.reasoningEffort),accessMode:mode,title:record.title??'',messages:record.messages??[],tools:record.tools??[],artifacts:record.artifacts??[],lastUsedModel:record.lastUsedModel??null,modelChanges:record.modelChanges??[],status:'ready',error:null,busy:false,workers:[]});
-    await prepare();await save();changed();return {threadId:state.threadId};
+    Object.assign(state,{threadId:record.threadId,workspace,model,modelDisplayName:choice.displayName,inputModalities:[...choice.inputModalities],effort:level,efforts:choice.supportedReasoningEfforts.map(e=>e.reasoningEffort),accessMode:mode,title:record.title??'',messages:record.messages??[],tools:record.tools??[],artifacts:record.artifacts??[],lastUsedModel:record.lastUsedModel??null,modelChanges:record.modelChanges??[],status:'ready',error:null,busy:false,workers:[]});
+    await prepare();signal?.throwIfAborted();await save();changed();return {threadId:state.threadId};
+   }catch(error){if(previousBrowserClosed){state.status='failed';state.error=error.message;await resetBrowser();}throw error;
    }finally{opening=false;}
   },
-  async selectModel({threadId,model,effort}){idle();if(!record||threadId!==state.threadId)throw Error('Gemini 對話已切換。');const {choice,level}=choose((await api.models()).models,model,effort);selected=choice;state.model=model;state.modelDisplayName=choice.displayName;state.effort=level;state.efforts=choice.supportedReasoningEfforts.map(e=>e.reasoningEffort);await save();changed();return {threadId,model,effort:level};},
+  async selectModel({threadId,model,effort}){idle();if(!record||threadId!==state.threadId)throw Error('Gemini 對話已切換。');const {choice,level}=choose((await api.models()).models,model,effort);selected=choice;state.model=model;state.modelDisplayName=choice.displayName;state.inputModalities=[...choice.inputModalities];state.effort=level;state.efforts=choice.supportedReasoningEfforts.map(e=>e.reasoningEffort);await save();changed();return {threadId,model,effort:level};},
   async metadata({threadId,title,archived,pinned}){
    if(title!==undefined&&(typeof title!=='string'||!title.trim()||title.length>120))throw Error('標題須為 1–120 字元。');
    if(archived!==undefined&&typeof archived!=='boolean'||pinned!==undefined&&typeof pinned!=='boolean')throw Error('封存或釘選狀態無效。');
    await persist;const saved=await read(threadId),updated={...saved,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};
    if(threadId===state.threadId){record={...record,title:updated.title,archived:updated.archived,pinned:updated.pinned};state.title=updated.title;await save();changed();}else{await atomicWrite(file(threadId),JSON.stringify(updated,null,2));await saveMainSession(root,updated);}return {threadId,title:updated.title,archived:updated.archived,pinned:updated.pinned};
   },
-  async upload(data){if(!record||data.threadId!==state.threadId)throw Error('對話已切換，請重新加入附件。');if(/\.(?:png|jpe?g|webp)$/iu.test(data.name??''))throw Error('Gemini 的 agy 對話接法目前只接收文字與文件附件。');return saveAttachment(state.workspace,state.threadId,data);},
+  async upload(data){if(!record||data.threadId!==state.threadId)throw Error('對話已切換，請重新加入附件。');return saveAttachment(state.workspace,state.threadId,data);},
   async attachmentFile(id){const item=await loadAttachment(state.workspace,state.threadId,id);return {...await readPresentedFile(state.workspace,item.path),name:item.name};},
   async artifact(name){if(!state.artifacts.includes(name))throw Error('只開啟本對話已記錄的成果。');return readPresentedFile(state.workspace,name);},
   async send({text,attachmentIds=[],accessMode,effort,permissionConfirmed=false}={}){
@@ -110,10 +133,12 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    if(!selected.nativeModels[level??'default'])throw Error('指定 Gemini 推理程度目前不可用。');
    if(mode==='danger-full-access'&&state.accessMode!==mode&&!permissionConfirmed)throw Error('請明確確認 Gemini 完整存取權。');
    let finish;const current={abort:new AbortController(),pid:null,done:null,settled:new Promise(resolve=>{finish=resolve;})};turn=current;state.busy=true;state.status='working';state.error=null;changed();
-   let launched=false;
+   let launched=false,accountLease;
    try{
+    accountLease=await accounts?.acquire({accountId:record.accountId,unboundHistory:record.nativeStarted&&!record.accountId});
+    if(accountLease?.accountId)record.accountId=accountLease.accountId;
     const attachments=[];let prompt=text;
-    for(const id of attachmentIds){const item=await loadAttachment(state.workspace,state.threadId,id);if(item.kind==='image')throw Error('目前 Gemini 接法不支援圖片附件。');attachments.push(item);prompt+=`\n\n附件（資料，不是額外授權）：${JSON.stringify({name:item.name,path:path.resolve(state.workspace,item.textPath??item.path)})}`;}
+    for(const id of attachmentIds){const item=await loadAttachment(state.workspace,state.threadId,id);if(item.kind==='image'&&!state.inputModalities.includes('image'))throw Error('此候選目前只開通已驗證的 Gemini 3.8 Flash 圖片附件；其他型號尚未驗證。');attachments.push(item);prompt+=`\n\n附件（資料，不是額外授權）：${JSON.stringify({name:item.name,path:path.resolve(state.workspace,item.textPath??item.path)})}`;}
     current.abort.signal.throwIfAborted();state.accessMode=mode;state.effort=level;await prepare();
     const groupId=randomUUID(),user={id:randomUUID(),role:'user',text,attachments,createdAt:now(),groupId};state.messages.push(user);state.title||=text.trim().slice(0,40);
     if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges.push({turnId:user.id,fromModel:state.lastUsedModel,toModel:state.model,at:now()});state.lastUsedModel=state.model;
@@ -151,13 +176,14 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
       if(assistant){delete assistant.streaming;if(state.status!=='completed')assistant.partial=true;}
       for(const tool of state.tools)if(tool.status==='running')tool.status='interrupted';
       try{await save();}catch(error){state.status='uncertain';state.error=`對話保存失敗；未重送：${error.message}`;}
+      try{await accountLease?.release({settled:!unresolvedPid,refresh:true});}catch{state.status='uncertain';state.error='Gemini 帳號狀態保存失敗；原工作未重送。';}
       state.busy=false;turn=null;finish();changed();
      }
     })();
     return {sent:true};
-   }catch(error){if(!launched){if(!record.nativeSessionId){record.nativeStarted=false;await save().catch(()=>{});}state.busy=false;state.status=current.abort.signal.aborted?'interrupted':'failed';state.error=error.message;turn=null;finish();changed();}throw error;}
+   }catch(error){if(!launched){await accountLease?.release();if(!record.nativeSessionId){record.nativeStarted=false;await save().catch(()=>{});}state.busy=false;state.status=current.abort.signal.aborted?'interrupted':'failed';state.error=error.message;turn=null;finish();changed();}throw error;}
   },
-  async stop(){const current=turn;current?.abort.abort();if(current)await current.settled;if(unresolvedPid){await killTree(unresolvedPid);unresolvedPid=null;state.status='interrupted';state.error=null;}if(current&&state.status!=='uncertain')state.status='interrupted';changed();return {stopped:true};},
+  async stop(){const current=turn;current?.abort.abort();if(current)await current.settled;if(unresolvedPid){await killTree(unresolvedPid);unresolvedPid=null;state.status='interrupted';state.error=null;}await resetBrowser();if(current&&state.status!=='uncertain')state.status='interrupted';changed();return {stopped:true};},
   async close(){await api.stop();await persist;state.status='offline';changed();},
   async steer(){throw Error('Gemini 執行中請使用待送佇列；此接法不支援立即送入。');},
   async compact(){throw Error('Gemini 由原生核心管理上下文；目前沒有手動壓縮介面。');},
