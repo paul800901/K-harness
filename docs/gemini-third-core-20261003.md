@@ -67,3 +67,7 @@ Gemini 主對話 profile 位於 K 資料根的 `agent-home/gemini/main/<K thread
 - 證據 `.runtime/bootstrap/three-core-normal-readback.json` 及 `.runtime/desktop-logs/launcher.log`。
 
 未推送 GitHub，Flash worktree 保留。原 Claude 對話的 Flash 完成通知依使用者要求留給主代理自行派工驗收；沒有替使用者重新登入 Google，也沒有讀取／複製憑證。
+
+## GitHub 發布（2026-10-03）
+
+使用者回覆「推送」後，正常推送 `origin/main`，從 `bec2f12` 前進至 `339dc250d951575de2dadad1ab7beab531bc72ff`；`git ls-remote --heads origin main` 與本機 HEAD 讀回一致，工作樹乾淨。包含 Flash 可攜性、第三核心及正式部署紀錄，沒有強制推送或刪除 worktree。此次僅發布既有已驗證提交，沒有重新部署或中斷正式 K。

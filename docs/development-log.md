@@ -3,6 +3,7 @@
 使用者要求：每項變更記錄專案內，Opus 可直接複查，不需要使用者轉貼聊天。
 
 ## 2026-10-03
+- [三核心與 Flash 推送 GitHub](gemini-third-core-20261003.md#github-發布2026-10-03)：依使用者「推送」授權，正常推送 main 至 `339dc25`，GitHub 精確提交讀回一致；此次未重新部署或中斷正式 K，Flash worktree 保留。
 - [Gemini 第三原生核心](gemini-third-core-20261003.md)：使用者追加將個人 K 升為 GPT／Claude／Gemini 三核心；原生目錄、對話與續接、外部登入、Flash 子代理預設；12/12 定向、573/573 完整、介面 PASS、真實主代理 2/2 回合，agy 1.2.16 權限 probe 8/8 PASS；正式 `383c744` 已部署、保留 `86906bc`；16/16 程式與實際三提供者／四個 Gemini 模型讀回，12:22 原入口重開、health／版本確認，未推送。
 - [Antigravity Flash 可攜性與東區部署](antigravity-worker-20261003.md#本輪可攜性與東區部署2026-10-03)：本機快轉至 `924385b`，補 agy 缺失／登入錯誤、南區權限 probe 與啟用說明；31/31 定向、561/561 完整；東區 agy 1.2.15 真實 probe 8/8 PASS、8 次呼叫、取消無殘留。正式 `86906bc` 已套用、保留舊版，11:59 重開與 health／版本／6 檔讀回完成；原對話完成通知待主代理自行測，本輪未推送。
 - [Antigravity Flash worker 階段 1](antigravity-worker-20261003.md#階段-1修訂設計)：修訂設定 home／Windows 訂閱登入後，新增 agy worker、Luna gateway 分流與持久化／通知；定向 125/125、完整 559/559，10 次 Flash-low live 發現 strict 允許外部寫入，workspace-write 明確停用；唯讀讀檔、取消程序樹及 skip MCP 的驗證限制見文件。僅指定 worktree 實作，未部署或驗收。
