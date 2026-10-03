@@ -12,9 +12,9 @@ const state={threadId:null,workspace:process.cwd(),status:'idle',busy:false,mess
 const quota=(weekly,hourly,status='ready',checkedAt='2026-10-03T10:00:00Z')=>({status,checkedAt,windows:[{key:'seven_day',label:'每週',remainingPercent:weekly,resetsAt:1791555046},{key:'five_hour',label:'5 小時',remainingPercent:hourly,resetsAt:1791020000}]});
 const account=(id,email,authStatus,remaining,status='ready')=>({id,email,auth:{status:authStatus,checkedAt:'2026-10-03T10:00:00Z'},quota:quota(remaining,remaining-5,status)});
 let enabled=false,busy=false,uncertain=false,loginPending=false,activeAccountId=null,accounts=[],legacyLoggedIn=true,unknownAccountId=null,modelsReads=0;
-let browser;
+let browser,authInspectPending=false;
 const requests=[],errors=[];
-const snapshot=()=>({enabled,activeAccountId,busy:busy||uncertain,uncertain,loginPending,accounts:accounts.map(row=>({...structuredClone(row),...(row.id===unknownAccountId?{auth:{status:'unknown',checkedAt:row.auth?.checkedAt}}:{})})),...((enabled&&!uncertain)?{}:{reason:uncertain?'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。':'目前為預覽版本，尚未開放帳號登入與切換。'})});
+const snapshot=()=>({enabled,activeAccountId,busy:busy||uncertain||authInspectPending,uncertain,loginPending,accounts:accounts.map(row=>({...structuredClone(row),...(row.id===unknownAccountId?{auth:{status:'unknown',checkedAt:row.auth?.checkedAt}}:{})})),...((enabled&&!uncertain)?{}:{reason:uncertain?'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。':'目前為預覽版本，尚未開放帳號登入與切換。'})});
 const usageAccounts=()=>accounts.map(row=>({...structuredClone(row),quota:row.id==='acct-b'?quota(43,38,'stale','2026-10-02T08:00:00Z'):row.quota}));
 const refreshUiState=()=>{
  state.usage.gemini={accountId:activeAccountId,accountEmail:accounts.find(row=>row.id===activeAccountId)?.email??null,status:accounts.find(row=>row.id===activeAccountId)?.quota?.status??'unavailable',checkedAt:accounts.find(row=>row.id===activeAccountId)?.quota?.checkedAt??null,windows:accounts.find(row=>row.id===activeAccountId)?.quota?.windows??[],accounts:usageAccounts()};
@@ -37,7 +37,7 @@ try{
   if(url.pathname==='/api/models'){modelsReads++;return respond(route,{models:[{model:'gemini-3.1-pro',displayName:'Gemini 3.1 Pro',provider:'gemini',available:true,inputModalities:['text'],supportedReasoningEfforts:[],nativeModels:{default:'gemini-3.1-pro'}}]});}
   if(url.pathname==='/api/codex/auth')return respond(route,{available:true,auth:{loggedIn:true,authMethod:'chatgpt',planType:'plus'}});
   if(url.pathname==='/api/claude/auth')return respond(route,{available:true,version:'2.1.287',auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'pro'}});
-  if(url.pathname==='/api/gemini/auth')return respond(route,geminiAuth());
+  if(url.pathname==='/api/gemini/auth'){authInspectPending=true;await new Promise(resolve=>setTimeout(resolve,100));authInspectPending=false;return respond(route,geminiAuth());}
   if(url.pathname==='/api/usage')return respond(route,{...state.usage});
   if(url.pathname==='/api/gemini/accounts'&&method==='GET')return respond(route,snapshot());
   if(url.pathname==='/api/gemini/accounts/capture'){
@@ -75,6 +75,9 @@ try{
  assert.equal(await settings.getByRole('button',{name:'登入 Gemini 訂閱',exact:true}).isDisabled(),true);
  enabled=true;await settings.getByRole('button',{name:'刷新狀態'}).filter({has:page.locator('svg')}).last().click();
  await settings.getByRole('button',{name:'保存目前登入',exact:true}).waitFor();
+ await page.waitForFunction(()=>Array.from(document.querySelectorAll('.gemini-account-row button')).some(button=>button.textContent==='保存目前登入'&&!button.disabled));
+ assert.doesNotMatch(await settings.locator('.gemini-account-row').innerText(),/Gemini 正在工作/u);
+ assert.equal(await settings.getByRole('button',{name:'保存目前登入',exact:true}).isEnabled(),true);
  await settings.getByRole('button',{name:'保存目前登入',exact:true}).click();
  await settings.getByText('a@example.test',{exact:true}).waitFor();
  assert.match(await settings.locator('[data-account-id="acct-a"]').innerText(),/已驗證登入|目前使用/u);
