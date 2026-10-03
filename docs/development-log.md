@@ -3,7 +3,7 @@
 使用者要求：每項變更記錄專案內，Opus 可直接複查，不需要使用者轉貼聊天。
 
 ## 2026-10-03
-- [Antigravity Flash 可攜性與東區部署](antigravity-worker-20261003.md#本輪可攜性與東區部署2026-10-03)：本機快轉至 `924385b`，補 agy 缺失／登入錯誤、南區權限 probe 與啟用說明；31/31 定向、561/561 完整；東區 agy 1.2.15 真實 probe 8/8 PASS、8 次呼叫、取消無殘留。部署狀態見本文，本輪未推送。
+- [Antigravity Flash 可攜性與東區部署](antigravity-worker-20261003.md#本輪可攜性與東區部署2026-10-03)：本機快轉至 `924385b`，補 agy 缺失／登入錯誤、南區權限 probe 與啟用說明；31/31 定向、561/561 完整；東區 agy 1.2.15 真實 probe 8/8 PASS、8 次呼叫、取消無殘留。正式 `86906bc` 已套用、保留舊版，11:59 重開與 health／版本／6 檔讀回完成；原對話完成通知待主代理自行測，本輪未推送。
 - [Antigravity Flash worker 階段 1](antigravity-worker-20261003.md#階段-1修訂設計)：修訂設定 home／Windows 訂閱登入後，新增 agy worker、Luna gateway 分流與持久化／通知；定向 125/125、完整 559/559，10 次 Flash-low live 發現 strict 允許外部寫入，workspace-write 明確停用；唯讀讀檔、取消程序樹及 skip MCP 的驗證限制見文件。僅指定 worktree 實作，未部署或驗收。
 - [Antigravity Flash worker 主代理驗收](antigravity-worker-20261003.md#主代理驗收與修正claude-opus-552026-10-03)：read-only 改預設模式＋deny（strict 會擋讀檔）、逾時 600 秒；live 驗證唯讀可讀且強制寫入／指令全被 deny、完整存取成功寫檔、取消無殘留；完整 559/559。未部署。
 - [Antigravity Flash workspace-write 更正](antigravity-worker-20261003.md#更正workspace-write-可用主代理追查2026-10-03)：先前「越界寫入」是測試全在 %TEMP% 的瑕疵；原生路徑 allow＋deny %TEMP% 實測只准寫工作區，workspace-write 啟用；完整 559/559。未部署。

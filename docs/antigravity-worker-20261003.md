@@ -810,7 +810,7 @@ Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 
 - UI 建置成功（僅既有 bundle size 提示）；worker 定向 **31/31**、完整 **561/561**，0 fail／0 cancelled／0 skipped，完整套件 33,945.8726 ms。證據：`.runtime/antigravity-build-20261003.log`、`.runtime/antigravity-tests-20261003.log`。
 - 東區真實 probe **PASS，8/8 檢查、8 次 Flash-low**；agy 實際版本為 **1.2.15**（與先前 1.0.6 不同，本輪沒有安裝或升級）。唯讀及工作區寫入邊界、正常工作、完整存取、8,019 ms abort 與已觀察程序樹無殘留均通過；本次假資料清理完成。父目錄／外部絕對路徑的原生回合 failed 是預期拒絕，對應 probe passed。原始 JSON：`.runtime/antigravity-probe-20261003.log`。
 - 未另實測未登入／額度耗盡的真實帳號狀態，不登出或讀憑證；登入錯誤只做單元驗證。Claude 原對話收到 Flash 完成通知由主代理部署後自行實測。
-- 正式部署尚待 K 正常關閉：Computer Use 兩次截圖逾時，無法確認 busy，已請使用者確認工作結束並選「離開並停止 K」；未強制結束。
+- 部署前 Computer Use 兩次截圖逾時（`FrameArrived timed out`／`window capture timed out`），未憑不完整畫面判定閒置，也未強制結束。請使用者正常關閉後，11:58:17 讀回 supervisor confirmed close、exit 0；47831 無監聽，K 專用 launcher／Electron／核心程序均已停止，才開始套用。
 
 ### 東區 probe 原始 JSON
 
@@ -936,3 +936,14 @@ Sol 階段 1 交付後，主代理審查程式並補三項修正，另以真實 
 ```
 
 `PASS — agy 1.2.15 — 8/8 checks; 8/10 model calls`
+
+
+### 正式部署讀回完成
+
+- 本機可攜性提交暨正式程式版本：`86906bcfde681212433478c143724957b5550345`，包含前述快轉的 Flash 與核准修正。後續部署紀錄只改文件，不再重跑測試或重啟 K。main、feature worktree 均保留；未推送 GitHub。
+- 以該提交的 Git archive 建立獨立候選；套件宣告／lock 與現用 runtime 位元組一致，複製已安裝相依，不執行 npm ci、不安裝／升級 agy。介面使用本輪先建置再通過 561/561 的產物；啟動器與瀏覽器擴充來源相對舊版沒有差異，沿用其既有建置。
+- 沿用 `scripts/install-runtime.mjs` 的 `activateRuntime` 與停止檢查。舊程式、啟動器及版本設定保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1790999947656`；這是程式退版資料，不是對話備份。沒有移動對話、供應商 home、登入或瀏覽器資料。
+- 正式 `src/gemini-worker.mjs`、`src/luna-bridge.mjs`、`src/luna-gateway.mjs`、`src/worker-policy.mjs`、`src/claude-controller.mjs`、`scripts/antigravity-permission-probe.mjs` 共 **6/6** 與來源一致（文字只正規化換行比較）。K 專用 Codex `config.toml` 前後 SHA-256 一致；Claude `settings.json` 前後均不存在，未新增；`dictationProvider: windows` 保持原值。
+- 從 `Start-K-Desktop.ps1` 正常重開；2026-10-03 **11:59:22 Asia/Taipei** 讀回 `/health` 為 `app: k-harness-desktop`、`deployment: native`、既有 `vault/private-state`；`.local/runtime.json.version` 為上述 `86906bc`。監聽程序 PID 18084 為正式 runtime 的 Electron，視窗標題「K 執行中樞」；launcher 記錄 11:59:15 ready。
+- 證據：`.runtime/bootstrap/antigravity-prepared.json`、`antigravity-activation.json`、`antigravity-live-readback.json` 及 `.runtime/desktop-logs/launcher.log`。既有子代理測試紀錄／worktree 不刪除；probe 本次假資料已刪除。
+- **正式程式與啟動讀回完成，尚未另驗正式 Claude → Flash 完成通知**：依使用者要求，部署後不派 Flash，由原主代理在原對話自行測。南區尚未操作；推送 main 後才能由南區取得本輪來源。
