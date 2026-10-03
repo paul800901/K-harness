@@ -45,4 +45,16 @@
 
 ## 部署與發布狀態
 
-本輪已完成來源修改、測試與 Opus 複查，**尚未部署／push**。準備延續前一批授權套用，但讀回正式 K 仍在執行（47831，PID 28572），已請本人先完成工作並「離開並停止 K」；不強制結束或熱改執行中程式。先前南區正式程式為 `5b83aa6`，GitHub main 為 `379957f`（本輪 `ls-remote` 已核對）。不動四個帳號、對話、語音或東區；本輪未修前次 Opus 整批回查列出的四項遺留問題。
+**南區正式已套用並原入口重開，GitHub 程式已推送並讀回。**
+
+- 使用者回覆「已離開並停止 K」後，確認自有程序與 47831 連接埠已停止；沒有強制結束或熱改執行中程式。
+- 來源／正式程式版本：`0e49308ebce6b2686f1b96a8c869a423f8ea4649`。乾淨 Git ZIP 候選重新建置 UI、擴充與啟動器，完整 **647/647**（35,941.0174 ms）再次通過；444 個 Git 檔案逐一比對（文字只正規化 CRLF）。相依定義未變，沿用現有 node_modules，沒有安裝／升級套件。
+- 保留前版 `5b83aa6` 程式、啟動器與本機設定，可退至 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791045852666`；讀回舊版備份一致。這不是對話／憑證的備份還原。
+- 正式三份指引程式逐檔讀回與來源相同。Codex 設定、語音及其餘本機設定未變；替換程式前後帳號登記檔 hash 相同。
+- 正式服務的隱藏 Electron 介面讀回通過：四帳號與目前帳號不變、子代理順序 auto → Flash → Sol → Luna、Claude → GPT → Gemini 額度排列保留；沒有 POST 帳號或對話操作。這是介面／接線讀回，不是本輪重新登入四帳號或真模型品質評估。
+- 2026-10-04 **00:45:37 +08** 由原 `Start-K-Desktop.ps1` 開啟「K 執行中樞」，PID 15836、47831、native health 及實際執行檔／版本均核對；三個實際供應的 UI 資產 HTTP 200 且 hash 相同，未授權狀態請求保持 403。
+- 首次啟用前的程序檢查把同一次維護命令中提到 K 路徑的 PowerShell 自身算入，**在呼叫更新器前就停止**；核對正式仍 `5b83aa6`、候選仍在且沒有啟用收據後，將啟用命令單獨執行，原防護不變，檢查通過才套用。失敗輸出及 `pre-activate-self-match.json` 保留，不以放寬檢查解決。
+- 既有私人儲存庫 `origin/main` 由 `379957f` 正常快轉到 `0e49308`，已以 `ls-remote` 核對同一 SHA；部署收據文件另提交並發布。沒有 force push 或移動／新增 tag。
+- 東區不更新；四個帳號、對話與計費不搬移。先前 Opus 整批回查的四項遺留問題沒有因本次指引更新而修好。
+
+部署證據：`D:\K-harness\.runtime\sol-role-deploy-20261004` 下的 `preparation.json`、`full-tests.log`、`activation.json`、`activation-summary.json`、`guidance-readback.json`、`live-ui-readback.json`、`normal-start-readback.json`、`served-readback.json`、`github-code-readback.json`；文件最後推送後另留 `github-final-readback.json`。新指引沿既有入口於後續主代理開啟／接續時帶入，沒有直接更改任何已送出的原生訊息。
