@@ -53,4 +53,17 @@ Gemini 主對話 profile 位於 K 資料根的 `agent-home/gemini/main/<K thread
 
 ## 部署狀態
 
-先前 Flash-only 正式版 `86906bc` 已在 11:59 重開並讀回；本頁三核心變更尚未部署。未推送 GitHub。正式更新前仍確認沒有執行中的工作，保留可還原程式版本，更新後再讀回 health、版本與三核心介面。
+正式三核心程式提交 **`383c744eafe81a9c88c2a27630c7b169570aeb28`** 已部署。原 Flash 版 K 在 12:00:15 由 supervisor 正常關閉、exit 0；套用前正式連接埠沒有監聽，K 自有 launcher／Electron 已不存在。保留原 `86906bc` 的可還原程式於 `C:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791001162339`，不是對話資料快照。
+
+來源與部署的 **16/16** 個程式／介面檔案讀回一致；既有 Codex config、Claude settings 狀態及 Windows 聽寫設定前後一致。相依宣告／lock 與原正式版完全一致，複用已安裝的相依、擴充與啟動器，沒有安裝或升級套件。證據 `.runtime/bootstrap/three-core-prepared.json`、`three-core-activation.json`。
+
+正式 native owner 使用既有資料位置與原生核心，透過 Electron 的實際 UI 檢查新對話：提供者為 **GPT／Claude／Gemini**；Gemini 四個模型均可選，Flash 3.8 為 high／medium／low，權限顯示「工作區編輯」。沒有建立新正式對話、送主代理回合或派工；關閉時 idle、busy=false、questions=0、沒有背景對話工作。證據 `.runtime/bootstrap/three-core-live-ui.json`、`three-core-live-ui.png`、`three-core-live-ui.log`。首次介面等待 60 秒逾時，保存為 `three-core-live-ui-attempt1.json`，未送工作且正常關閉；加入讀回定位資料後重開驗證通過，沒有為此改動產品或宣稱已定位原生延遲原因。
+
+最後經原 `Start-K-Desktop.ps1` 重開，2026-10-03 12:22:39（臺灣時間）讀回：
+
+- `/health`：`app=k-harness-desktop`、`deployment=native`、正確 private-state。
+- `.local/runtime.json`：`383c744eafe81a9c88c2a27630c7b169570aeb28`。
+- 正式 Electron PID 25792，執行檔來自新的 trusted-runtime，視窗「K 執行中樞」；launcher 12:22:09 回報 ready。
+- 證據 `.runtime/bootstrap/three-core-normal-readback.json` 及 `.runtime/desktop-logs/launcher.log`。
+
+未推送 GitHub，Flash worktree 保留。原 Claude 對話的 Flash 完成通知依使用者要求留給主代理自行派工驗收；沒有替使用者重新登入 Google，也沒有讀取／複製憑證。
