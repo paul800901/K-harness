@@ -29,6 +29,14 @@ test('Gemini catalog preserves every native model and only supplied effort varia
  assert.deepEqual(catalog[0].inputModalities,['text']);
 });
 
+test('Gemini quota polling coalesces and preserves dated stale values after a failed refresh',async()=>{
+ let calls=0,complete;const native={status:'ready',checkedAt:'2026-10-03T05:00:00Z',windows:[{key:'seven_day',minutes:10080,remainingPercent:97,resetsAt:1791555046}]};
+ const f=await fixture({loginFactory:()=>({status:()=>{calls++;return new Promise(resolve=>{complete=resolve;});}})});
+ const first=f.controller.usage(),overlap=f.controller.usage();assert.equal(calls,1);complete({quota:native});assert.deepEqual((await first).gemini,native);await overlap;
+ await f.controller.usage();assert.equal(calls,1);
+ const failed=f.controller.usage(true);assert.equal(calls,2);complete({reason:'network unavailable'});const stale=(await failed).gemini;assert.equal(stale.status,'stale');assert.equal(stale.checkedAt,native.checkedAt);assert.deepEqual(stale.windows,native.windows);assert.equal(stale.note,'network unavailable');await f.controller.close();
+});
+
 test('Gemini sends only new input, reopens native history and retains provider metadata',async()=>{
  const f=await fixture();let c=f.controller;
  try{

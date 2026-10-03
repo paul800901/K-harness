@@ -28,6 +28,7 @@ const models=[
 ].map(m=>({...m,inputModalities:['text','image']}));
 const state={threadId:null,workspace:root,status:'idle',busy:false,messages:[],tools:[],questions:[],artifacts:[],accessMode:'workspace-write',provider:'codex',capabilities:{},conversationActivity:[]};
 const requests=[];let codexLoggedIn=true,claudeLoggedIn=true,claudeLogin={status:'idle'},browser;
+let geminiAuth={status:'authenticated',loggedIn:true,checkedAt:'2026-10-03T05:00:00Z'};
 const auth=provider=>provider==='claude'?{available:true,version:'2.1.285',auth:{loggedIn:claudeLoggedIn,authMethod:claudeLoggedIn?'claude.ai':undefined,apiProvider:claudeLoggedIn?'firstParty':undefined,subscriptionType:claudeLoggedIn?'pro':undefined},login:claudeLogin}:{available:true,auth:{loggedIn:codexLoggedIn,authMethod:codexLoggedIn?'chatgpt':undefined,planType:codexLoggedIn?'Plus':undefined},login:{status:'idle'}};
 try{
  browser=await chromium.launch({channel:'msedge',headless:true});
@@ -44,7 +45,7 @@ try{
   else if(url.pathname==='/api/models')body={models};
   else if(url.pathname==='/api/codex/auth')body=auth('codex');
   else if(url.pathname==='/api/claude/auth')body=auth('claude');
-  else if(url.pathname==='/api/gemini/auth')body={installed:true,available:true,version:'fixture',auth:{status:'managed-by-cli'},reason:'登入由官方程式管理。'};
+  else if(url.pathname==='/api/gemini/auth')body={installed:true,available:true,version:'fixture',auth:geminiAuth,reason:geminiAuth.loggedIn===true?'已登入 Antigravity 訂閱，官方帳號查詢成功。':geminiAuth.loggedIn===false?'尚未登入 Gemini，請完成官方登入。':'無法確認登入狀態，請稍後刷新。'};
   else if(url.pathname==='/api/gemini/login')body={login:{status:'opened'},reason:'已開啟官方 Antigravity；請由本人完成登入。'};
   else if(url.pathname==='/api/claude/login')body={...auth('claude'),login:claudeLogin};
   else if(url.pathname==='/api/open'){
@@ -205,6 +206,17 @@ try{
  await page.getByRole('button',{name:'停止登入',exact:true}).waitFor();await page.getByRole('button',{name:'停止登入',exact:true}).click();
  assert(requests.some(r=>r.path==='/api/claude/login/cancel'),'cancel was not sent to fake API');
  await page.getByRole('button',{name:'登入 Claude 訂閱',exact:true}).waitFor();
+ const geminiRow=signedOutAccount.locator('.provider-auth-row').filter({hasText:'Gemini / Antigravity 訂閱'}),accountSummary=signedOutAccount.locator('summary');
+ for(const [auth,label] of [[{status:'signed-out',loggedIn:false},'未登入'],[{status:'unknown'},'尚未確認'],[{status:'authenticated',loggedIn:true,checkedAt:'2026-10-03T05:00:00Z'},'已登入']]){
+  geminiAuth=auth;await geminiRow.getByRole('button',{name:'刷新狀態',exact:true}).click();await page.waitForFunction(expected=>document.querySelector('summary[aria-label="帳號連線"]').textContent.includes(expected),`Gemini ${label}`);
+  assert.equal(await geminiRow.getByRole('button',{name:'登入 Gemini 訂閱',exact:true}).isDisabled(),auth.loggedIn===true);
+ }
+ await accountSummary.click();assert.equal(await signedOutAccount.evaluate(el=>el.open),false);assert.match(await accountSummary.textContent(),/Gemini 已登入/);
+ await page.getByRole('button',{name:'取消',exact:true}).click();
+ state.usage={gemini:{status:'ready',checkedAt:'2026-10-03T05:00:00Z',windows:[{key:'seven_day',minutes:10080,remainingPercent:97,resetsAt:1791555046},{key:'five_hour',minutes:300,remainingPercent:0,resetsAt:1791014469}]}};await page.evaluate(s=>window.__fakeState(s),state);
+ await page.getByRole('button',{name:'查看額度與用量詳情',exact:true}).click();const usage=page.getByRole('region',{name:'額度與用量詳細資訊',exact:true});await usage.waitFor();assert.match(await usage.textContent(),/每週\s*97%/);assert.match(await usage.textContent(),/5 小時\s*0%/);assert.match(await usage.textContent(),/上次取得/);assert.doesNotMatch(await usage.textContent(),/尚未提供可接入/);
+ await page.screenshot({path:'.runtime/gemini-account-quota-ui.png'});await page.getByRole('button',{name:'完成',exact:true}).click();
+ state.usage.gemini.status='stale';await page.evaluate(s=>window.__fakeState(s),state);assert.equal(await page.locator('.usage-row').filter({hasText:'Gemini'}).locator('em').textContent(),'舊');
  assert.deepEqual(pageErrors,[]);
  console.log(JSON.stringify({passed:true,checks:['accessible compact picker and native main-effort select','collapsed worker details preserve chosen official model and effort','account connection collapsed when authenticated; signed-out login auto-expands and stop-login remains available','all fake catalog models retained and grouped; numeric version order newest-first','menu Escape, Home, End, ArrowDown and Enter behavior plus focus/outside/provider dismissal','English catalog copy hidden while usage-credit badge and selected note remain localized','fake create transmits chosen model, official effort, and worker policy once without provider turn','existing-conversation switch is provider-bound; Chinese cancel sends no model request','Flash worker selected on Claude, rejected on GPT without fallback','Gemini third provider, all native models, exact Pro effort choices, explicit full access and provider-bound switch'],models:models.length,openRequests:requests.filter(r=>r.path==='/api/open').length}));
 }finally{await browser?.close();await new Promise(resolve=>server.httpServer.close(resolve));}

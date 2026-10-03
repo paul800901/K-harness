@@ -23,7 +23,7 @@ Gemini 主對話 profile 位於 K 資料根的 `agent-home/gemini/main/<K thread
 - 唯讀與工作區編輯採 Flash probe 已驗證的原生 allow／deny；工作區編輯使用預設權限模式＋Windows 原生工作區絕對路徑 allow，拒絕命令、MCP、unsandboxed、%TEMP% 與工作區外寫入。不能改回 strict。這是原生工具權限，不宣稱為作業系統隔離。
 - agy headless 不提供與 Codex／Claude 等價的逐項互動核准，需要核准即由原生拒絕，故不顯示「要求核准／代我核准」。完整存取權須人明確選用，傳官方 `--dangerously-skip-permissions`。
 - 已接文字與可擷取文字的文件附件；此接法未接圖片內容、立即插話、手動壓縮、原生同供應商分支、K 瀏覽器助手與 K 跨供應商子代理 gateway。Gemini 原生工具能力不能因此宣稱與其他兩家完全相同。Flash 子代理仍由 Claude 的 k_luna gateway 派工。
-- 官方 `/usage` 是互動介面，目前未找到可供 K 讀取的正式額度介面；K 顯示未提供，不從 token 或目錄查詢猜額度／登入。
+- 更正：原先未找到可讀額度的判斷不完整；官方 `/usage` 支援獨立 `agy -p /usage`，後續補修已接入登入確認及官方額度，詳見 [登入與額度補修](gemini-account-status-20261003.md)。
 
 原生來源：[安裝與登入](https://antigravity.google/docs/cli/install/)、[Headless 與原生續接](https://antigravity.google/docs/cli/headless/)、[官方 usage](https://antigravity.google/docs/cli/commands/usage/)。
 

@@ -13,7 +13,7 @@ const sessionId=id=>typeof id==='string'&&/^gemini-[0-9a-f-]{36}$/iu.test(id);
 const nativeId=id=>typeof id==='string'&&/^[0-9a-f-]{36}$/iu.test(id);
 const access=value=>{if(!['read-only','workspace-write','danger-full-access'].includes(value))throw Error('Gemini 提供唯讀、工作區編輯或完整存取權；未提供互動核准／自動審查。');return value;};
 const now=()=>new Date().toISOString();
-const quota={status:'unavailable',note:'Antigravity 尚未提供可接入的額度介面；請在官方程式使用 /usage 查看。'};
+const quota={status:'unavailable',windows:[],note:'尚未取得 Antigravity 官方額度。'};
 
 // Every choice comes from `agy models`, including its supported effort variants.
 export function geminiModelsFrom(names){
@@ -32,6 +32,7 @@ export function geminiModelsFrom(names){
 /** K stores presentation only. agy owns execution, native history and compression. */
 export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,onChange=()=>{},timeoutMs=600000}={}){
  const login=loginFactory({cwd:root,executable,env}),binary=geminiExecutable(env,executable);
+ let usagePending=null,usageAttemptAt=0;
  const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:false,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:0,tokenUsage:null},usage:{gemini:quota}};
  let record=null,selected=null,opening=false,turn=null,persist=Promise.resolve(),unresolvedPid=null;
  const changed=()=>{try{onChange(state);}catch{}};
@@ -59,8 +60,18 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
  }
  const api={
   state,
-  async models(){const result=await login.status();if(!result.available)throw Error(result.reason);return {models:geminiModelsFrom(result.models),provider:'gemini',version:result.version};},
-  async usage(){return {gemini:quota};},
+  async models(){const result=await login.status({checkAuth:false});if(!result.available)throw Error(result.reason);return {models:geminiModelsFrom(result.models),provider:'gemini',version:result.version};},
+  async usage(refresh=false){
+   if(usagePending)return usagePending;
+   if(!refresh&&Date.now()-usageAttemptAt<60000)return {gemini:state.usage.gemini};
+   usageAttemptAt=Date.now();
+   usagePending=(async()=>{
+    let result;try{result=await login.status();}catch{result={reason:'官方額度查詢失敗，請稍後刷新。'};}
+    state.usage.gemini=result.quota??{...state.usage.gemini,status:state.usage.gemini.windows?.length?'stale':'unavailable',note:result.reason??'無法取得官方額度。'};
+    onChange();return {gemini:state.usage.gemini};
+   })();
+   try{return await usagePending;}finally{usagePending=null;}
+  },
   async workers(){return structuredClone(state.workers);},
   async directories(parent=state.workspace){return listWorkspaceDirectories(parent);},
   async selectWorkspace({path:requested}){idle();const workspace=await validateWorkspace(requested);await persist;state.workspace=workspace;state.threadId=null;state.title='';state.messages=[];state.tools=[];state.artifacts=[];state.workers=[];state.status='idle';state.error=null;record=null;changed();return {workspace};},
