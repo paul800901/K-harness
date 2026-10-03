@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {atomicWrite} from './atomic-write.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
-import {geminiExecutable,geminiEnvironment,geminiSettings,geminiStream,geminiProcess,geminiOutcome,killGeminiTree} from './gemini-worker.mjs';
+import {geminiExecutable,geminiEnvironment,geminiSettings,geminiMcpConfig,geminiStream,geminiProcess,geminiOutcome,killGeminiTree,GEMINI_BROWSER_GUIDANCE} from './gemini-worker.mjs';
 import {saveMainSession} from './main-sessions.mjs';
 import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment,loadAttachment,readPresentedFile} from './desktop-files.mjs';
@@ -67,16 +67,10 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    browserMode=state.accessMode;
   }
   const temps=Object.entries(env).filter(([key])=>/^(TEMP|TMP)$/iu.test(key)).map(([,value])=>value);
-  const settings=geminiSettings(state.workspace,state.accessMode,temps);
-  if(browserServer){
-   // agy 1.2.16: a blanket MCP deny overrides specific allows. Only K's owner
-   // endpoint is preapproved; other servers remain native Ask (headless: denied).
-   settings.permissions.deny=settings.permissions.deny.filter(rule=>rule!=='mcp(*)');
-   settings.permissions.allow.push('mcp(k_browser/*)');
-  }
-  await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify({mcpServers:browserServer?{k_browser:{serverUrl:browserServer.url,headers:browserServer.http_headers??browserServer.headers}}:{}},null,2));
+  const settings=geminiSettings(state.workspace,state.accessMode,temps,browserServer);
+  await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify(geminiMcpConfig(browserServer),null,2));
   await atomicWrite(path.join(home(),'.gemini/antigravity-cli/settings.json'),JSON.stringify(settings,null,2));
-  await atomicWrite(path.join(home(),'.gemini/config/rules/k-model-roles.md'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n`);
+  await atomicWrite(path.join(home(),'.gemini/config/rules/k-model-roles.md'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${browserServer?`${GEMINI_BROWSER_GUIDANCE}\n`:''}`);
   state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};
  }
  const api={

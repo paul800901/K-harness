@@ -5,6 +5,7 @@ import {mkdir,mkdtemp,readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {createGeminiController} from '../src/gemini-controller.mjs';
 import {identifyBrowserServer} from '../src/browser-mcp-config.mjs';
+import {GEMINI_BROWSER_GUIDANCE} from '../src/gemini-worker.mjs';
 
 const models=['gemini-3.8-flash-low'];
 const loginFactory=()=>({status:async()=>({available:true,models,version:'fixture'})});
@@ -56,12 +57,13 @@ test('Gemini browser native profile exposes only k_browser endpoint and AI heade
   await c.open({model:'gemini-3.8-flash',accessMode:'workspace-write'});
   assert.equal(f.configs.length,1);assert.equal(f.configs[0].provider,'gemini');assert.equal(f.configs[0].accessMode,'workspace-write');
   assert.equal(c.state.browserAccess.sessionKey,c.state.threadId);
+  assert.ok((await readFile(path.join(f.root,'agent-home/gemini/main',c.state.threadId,'.gemini/config/rules/k-model-roles.md'),'utf8')).includes(GEMINI_BROWSER_GUIDANCE));
   const config=await nativeMcp(f),settings=await nativeSettings(f);
   assert.deepEqual(Object.keys(config.mcpServers),['k_browser']);
   assert.equal(config.mcpServers.k_browser.serverUrl,'http://127.0.0.1:45678/mcp');
   assert.deepEqual(config.mcpServers.k_browser.headers,{Authorization:'Bearer fake-test-only-secret'});
   assert.doesNotMatch(JSON.stringify(config),/humanRequest|human-token|\/state|\/action/);
-  assert.deepEqual(settings.permissions.allow,[`write_file(${f.opts.root})`,'mcp(k_browser/*)']);
+  assert.deepEqual(settings.permissions.allow,['read_url(*)',`write_file(${f.opts.root})`,'mcp(k_browser/*)']);
   assert.ok(!settings.permissions.allow.some(rule=>/^mcp\((?!k_browser\/\*)/u.test(rule)));
   for(const rule of ['command(*)','unsandboxed(*)',`write_file(${f.opts.env.TEMP})`])assert.ok(settings.permissions.deny.includes(rule));
   assert.ok(!settings.permissions.deny.includes('mcp(*)'));

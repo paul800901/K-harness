@@ -75,7 +75,7 @@ test('Gemini full access requires confirmation, never maps auto-review and uses 
   await assert.rejects(c.open({model:'gemini-3.8-flash',accessMode:'auto-review'}),/未提供/);
   await c.open({model:'gemini-3.8-flash'});await assert.rejects(c.send({text:'work',accessMode:'danger-full-access'}),/明確確認/);
   await c.send({text:'work'});await finish(c);let call=f.calls.at(-1);assert.equal(call.args.includes('--dangerously-skip-permissions'),false);
-  let settings=JSON.parse(await readFile(path.join(call.params.env.HOME,'.gemini/antigravity-cli/settings.json'),'utf8'));assert.deepEqual(settings.permissions.allow,[`write_file(${f.root})`]);assert.equal(settings.toolPermission,undefined);assert.ok(settings.permissions.deny.includes('command(*)'));
+  let settings=JSON.parse(await readFile(path.join(call.params.env.HOME,'.gemini/antigravity-cli/settings.json'),'utf8'));assert.deepEqual(settings.permissions.allow,['read_url(*)',`write_file(${f.root})`]);assert.equal(settings.toolPermission,undefined);assert.ok(settings.permissions.deny.includes('command(*)'));
   await c.send({text:'explicit full access',accessMode:'danger-full-access',permissionConfirmed:true});await finish(c);call=f.calls.at(-1);assert.ok(call.args.includes('--dangerously-skip-permissions'));
  }finally{await c.close();}
 });

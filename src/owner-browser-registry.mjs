@@ -27,7 +27,7 @@ export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory,test
           if(!gatewayFactory||!modes.includes(accessMode))return null;
           if(!/^[A-Za-z0-9-]{1,100}$/.test(conversationId??''))throw Error('Invalid browser conversation identifier.');
           if(entries.has(conversationId))throw Error('Browser profile is already owned by another conversation connection.');
-          const entry={key:conversationId,gateway:null};active=entry;entries.set(entry.key,entry);
+          const entry={key:conversationId,gateway:null};active=entry;entries.set(entry.key,entry);sessions.add(controller);
           entry.closing=false;
           entry.opening=(async()=>{
             entry.gateway=await gatewayFactory({profile:await childDirectory(vault,entry.key),directory:await childDirectory(outputRoot,entry.key),onControlChange});
@@ -38,7 +38,7 @@ export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory,test
             const server=await entry.opening;
             if(entry.closing||entries.get(entry.key)!==entry)throw Error('Browser owner was closed while opening.');
             return server;
-          }catch(error){if(!entry.closing&&entries.get(entry.key)===entry){entries.delete(entry.key);if(active===entry)active=null;}throw error;}
+          }catch(error){if(!entry.closing&&entries.get(entry.key)===entry){entries.delete(entry.key);if(active===entry)active=null;sessions.delete(controller);}throw error;}
         }finally{changing=false;}
       },
       async close(){
@@ -52,12 +52,13 @@ export function createOwnerBrowserRegistry({vault,outputRoot,gatewayFactory,test
             await entry?.gateway?.close();
             if(entry&&entries.get(entry.key)===entry)entries.delete(entry.key);
             if(active===entry)active=null;
+            sessions.delete(controller);
           }finally{closing=false;closeOperation=null;}
         })();
         return closeOperation;
       },
     };
-    sessions.add(controller);return controller;
+    return controller;
   }
   async function request(_root,state,threadId,route,body){
     if(!threadId||threadId!==state.threadId)throw Error('對話已切換，請重新開啟瀏覽器分頁。');

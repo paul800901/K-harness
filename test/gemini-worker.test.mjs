@@ -5,11 +5,15 @@ import {PassThrough} from 'node:stream';
 import {mkdir,readFile,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
-import {createGeminiWorker,geminiSettings,geminiEnvironment,geminiProfile,geminiStream,geminiOutcome,geminiProcess,geminiOutputFiles,killGeminiTree} from '../src/gemini-worker.mjs';
+import {createGeminiWorker,geminiSettings,geminiEnvironment,geminiProfile,geminiStream,geminiOutcome,geminiProcess,geminiOutputFiles,killGeminiTree,geminiInstruction,GEMINI_BROWSER_GUIDANCE} from '../src/gemini-worker.mjs';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {workerPolicyConfig,GEMINI_WORKER_MODELS,WORKER_MODELS} from '../src/worker-policy.mjs';
 
 const root=path.resolve('.runtime','gemini-tests',randomUUID()),workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
+test('browser guidance teaches current tool parameters only when the browser is connected',()=>{
+ assert.ok(geminiInstruction('test','workspace-write',{url:'http://127.0.0.1:45678/mcp'}).includes(GEMINI_BROWSER_GUIDANCE));
+ assert.ok(!geminiInstruction('test','read-only').includes(GEMINI_BROWSER_GUIDANCE));
+});
 const modelList=['low','medium','high'].map(e=>`gemini-3.8-flash-${e}\tFlash`).join('\n');
 const success=response=>JSON.stringify({event:'result',result:{status:'SUCCESS',response}})+'\n';
 function fakeSpawn(answer=success('done'),models=modelList) {
@@ -24,18 +28,82 @@ function fakeSpawn(answer=success('done'),models=modelList) {
 }
 const make=(fake,options={})=>createGeminiWorker({root,workspace,accessMode:'read-only',env:{LOCALAPPDATA:path.join(root,'original-local'),Path:'fake-path',SystemRoot:'C:/Windows',OPENAI_API_KEY:'do-not-forward',NODE_OPTIONS:'do-not-forward'},spawnImpl:fake.spawnImpl,gitStatus:async()=>null,...options});
 
+function browserFixture({server=true,closeError=false}={}){
+ const sessions=[];
+ const browserSession=()=>{
+  const session={closed:0,input:null,async config(input){this.input=input;return server?{url:`http://127.0.0.1:45678/${input.conversationId}`,http_headers:{Authorization:`Bearer fake-${input.conversationId}`}}:null;},async close(){this.closed++;if(closeError)throw Error('fixture close failed');}};
+  sessions.push(session);return session;
+ };
+ return {sessions,browserSession};
+}
+
+test('Flash browser is task-owned: parallel runs use distinct homes and only their AI endpoint',async()=>{
+ const browser=browserFixture(),fake=fakeSpawn(),worker=make(fake,{accessMode:'workspace-write',browserSession:browser.browserSession});
+ const results=await Promise.all(['one','two'].map(task=>worker.run({task,effort:'low'})));
+ assert.ok(results.every(r=>r.status==='completed'));
+ const launches=fake.calls.filter(c=>c.args[0]==='-p');assert.equal(launches.length,2);
+ assert.notEqual(launches[0].options.env.HOME,launches[1].options.env.HOME);
+ for(const launch of launches){
+  const home=launch.options.env.HOME,id=`flash-${path.basename(home)}`;
+  const config=JSON.parse(await readFile(path.join(home,'.gemini/config/mcp_config.json')));
+  assert.deepEqual(config,{mcpServers:{k_browser:{serverUrl:`http://127.0.0.1:45678/${id}`,headers:{Authorization:`Bearer fake-${id}`}}}});
+  const settings=JSON.parse(await readFile(path.join(home,'.gemini/antigravity-cli/settings.json')));
+  assert.ok(settings.permissions.allow.includes('mcp(k_browser/*)'));
+  assert.ok(!settings.permissions.deny.includes('mcp(*)'));
+  assert.ok(settings.permissions.deny.includes('command(*)'));assert.ok(settings.permissions.deny.includes('unsandboxed(*)'));
+  assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
+  assert.equal(browser.sessions.find(s=>s.input.conversationId===id).closed,1);
+ }
+ assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/config/mcp_config.json'))),{mcpServers:{}});
+});
+
+test('Flash read-only never opens a browser; no configured helper still permits ordinary work',async()=>{
+ const readonly=make(fakeSpawn(),{browserSession:()=>{throw Error('must not open');}});
+ assert.equal((await readonly.run({task:'read',effort:'low'})).status,'completed');
+ const fake=fakeSpawn(),browser=browserFixture({server:false});
+ assert.equal((await make(fake,{accessMode:'workspace-write',browserSession:browser.browserSession}).run({task:'text',effort:'low'})).status,'completed');
+ const home=fake.calls.find(c=>c.args[0]==='-p').options.env.HOME;
+ assert.deepEqual(JSON.parse(await readFile(path.join(home,'.gemini/config/mcp_config.json'))),{mcpServers:{}});
+ assert.ok(JSON.parse(await readFile(path.join(home,'.gemini/antigravity-cli/settings.json'))).permissions.deny.includes('mcp(*)'));
+ assert.equal(browser.sessions[0].closed,1);
+});
+
+test('Flash closes its browser after process cancellation, not another run or the main browser',async()=>{
+ const fake=fakeSpawn(null),browser=browserFixture(),signal=new AbortController();let started;
+ const ready=new Promise(r=>started=r);
+ const worker=make(fake,{accessMode:'workspace-write',browserSession:browser.browserSession,killTree:async pid=>fake.children.find(c=>c.pid===pid).emit('close',1)});
+ const result=worker.run({task:'cancel',effort:'low',signal:signal.signal,onStart:()=>started()});
+ await ready;assert.equal(browser.sessions[0].closed,0);signal.abort();
+ assert.equal((await result).status,'cancelled');assert.equal(browser.sessions[0].closed,1);
+});
+
+test('Flash does not claim settled if its browser cannot close, and does not retry close',async()=>{
+ const browser=browserFixture({closeError:true});
+ await assert.rejects(make(fakeSpawn(),{accessMode:'workspace-write',browserSession:browser.browserSession}).run({task:'test',effort:'low'}),error=>error.settled===false&&/不得重播/.test(error.message));
+ assert.equal(browser.sessions[0].closed,1);
+});
+
+test('Flash model validation precedes browser creation; browser setup failure never starts a model turn',async()=>{
+ const fake=fakeSpawn(undefined,'gemini-3.8-flash-high'),browser=browserFixture();
+ await assert.rejects(make(fake,{accessMode:'workspace-write',browserSession:browser.browserSession}).run({task:'bad model',effort:'low'}),/目前不可用/);
+ assert.equal(browser.sessions.length,0);
+ let closed=0;const setup=fakeSpawn();
+ await assert.rejects(make(setup,{accessMode:'workspace-write',browserSession:()=>({config:async()=>{throw Error('setup failed');},close:async()=>closed++})}).run({task:'setup',effort:'low'}),/setup failed/);
+ assert.equal(closed,1);assert.equal(setup.calls.some(c=>c.args[0]==='-p'),false);
+});
+
 test('Gemini profile hashes canonical workspace and access mode; settings keep each mode separate',()=>{
  const p=geminiProfile(workspace,'read-only');assert.match(p,/^[a-f0-9]{16}$/);
  assert.equal(p,geminiProfile(workspace+path.sep,'read-only'));assert.notEqual(p,geminiProfile(workspace,'danger-full-access'));assert.notEqual(p,geminiProfile(root,'read-only'));
  if(process.platform==='win32')assert.equal(p,geminiProfile(workspace.toUpperCase(),'read-only'));
  // Default mode + deny: strict would turn reads into headless Ask and ignores allow.
- assert.deepEqual(geminiSettings(workspace,'read-only'),{permissions:{allow:[],deny:['write_file(*)','command(*)','unsandboxed(*)','mcp(*)'],ask:[]}});
+ assert.deepEqual(geminiSettings(workspace,'read-only'),{permissions:{allow:['read_url(*)'],deny:['write_file(*)','command(*)','unsandboxed(*)','mcp(*)'],ask:[]}});
  // Native-path allow (drive-stripped did not match live); %TEMP% denied unless it holds the workspace.
  const temp=path.join(root,'temp'),write=geminiSettings(workspace,'workspace-write',[temp,temp,'']);
- assert.equal(write.toolPermission,undefined);assert.deepEqual(write.permissions.allow,[`write_file(${path.resolve(workspace)})`]);
+ assert.equal(write.toolPermission,undefined);assert.deepEqual(write.permissions.allow,['read_url(*)',`write_file(${path.resolve(workspace)})`]);
  assert.deepEqual(write.permissions.deny,['command(*)','unsandboxed(*)','mcp(*)',`write_file(${path.resolve(temp)})`]);
  assert.deepEqual(geminiSettings(workspace,'workspace-write',[root]).permissions.deny,['command(*)','unsandboxed(*)','mcp(*)']);
- assert.deepEqual(geminiSettings(workspace,'danger-full-access').permissions,{allow:[],deny:['mcp(*)'],ask:[]});
+ assert.deepEqual(geminiSettings(workspace,'danger-full-access').permissions,{allow:['read_url(*)'],deny:['mcp(*)'],ask:[]});
  assert.throws(()=>geminiProfile('relative','read-only'));assert.throws(()=>geminiSettings(workspace,'unknown'));
 });
 test('Gemini environment forwards only OS basics and the private home; removes every credential and K variable',()=>{
@@ -110,6 +178,13 @@ test('headless denied_actions can annotate a DONE tool without error, preserving
  const parser=geminiStream();parser.write(Buffer.from(JSON.stringify({event:'step_update',step_update:{state:'DONE',tool_info:{name:'run_command',parameters:{CommandLine:'echo fake'}}}})+'\n'));
  parser.write(Buffer.from(JSON.stringify({event:'result',result:{status:'SUCCESS',response:'denied',denied_actions:[{action:'command',display_name:'RunCommand'}]}})));
  assert.deepEqual(geminiOutcome(parser.end(),{code:0}).deniedTools,[{tool:'run_command',target:'echo fake'}]);
+});
+
+test('native URL denial preserves the URL and is not duplicated by denied_actions',()=>{
+ const parser=geminiStream();
+ parser.write(Buffer.from(JSON.stringify({event:'step_update',step_update:{state:'ERROR',tool_info:{name:'read_url_content',parameters:{Url:'https://example.com/'},error:{message:'permission check failed for read_url "example.com": user denied permission for read_url(example.com)'}}}})+'\n'));
+ parser.write(Buffer.from(JSON.stringify({event:'result',result:{status:'SUCCESS',response:'denied',denied_actions:[{action:'read_url',display_name:'ReadUrlContent'}]}})));
+ assert.deepEqual(parser.end().deniedTools,[{tool:'read_url_content',target:'https://example.com/'}]);
 });
 test('concurrent runs share catalog and atomic profile writes; cancelling one never cancels the other',async()=>{
  const fake=fakeSpawn(),worker=make(fake),ac=new AbortController();
