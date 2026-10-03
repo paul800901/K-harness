@@ -8,11 +8,15 @@ test('user model roles reach Codex instructions without changing manual defaults
   const config=workerPolicyConfig(policy,{models,geminiGateway:true});
   assert.ok(config.developer_instructions.includes(MODEL_ROLE_GUIDANCE));
  }
- assert.match(MODEL_ROLE_GUIDANCE,/Astra：後端、架構/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Astra：非日常必要步驟；只有使用者明確選用且實際可用/);
  assert.match(MODEL_ROLE_GUIDANCE,/Opus 5\.5：通才、平常的大腦/);
  assert.match(MODEL_ROLE_GUIDANCE,/一般工作優先交給 Flash/);
  assert.match(MODEL_ROLE_GUIDANCE,/Google 商家/);
- assert.match(MODEL_ROLE_GUIDANCE,/GPT-6\.1 Sol：平常的輔助大腦/);
+ assert.match(MODEL_ROLE_GUIDANCE,/GPT-6\.1 Sol：取代 Astra 的日常技術主腦/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不持續輪詢進度/);
+ assert.match(MODEL_ROLE_GUIDANCE,/仍有實質進展就可繼續；不設固定失敗次數/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Flash → Sol → Opus/);
+ assert.match(MODEL_ROLE_GUIDANCE,/Claude 派出的 Sol 子代理目前不能再派 Flash/);
  assert.match(MODEL_ROLE_GUIDANCE,/Luna：除非使用者明確指定，僅在小任務對規則遵守有極高要求/);
  assert.match(MODEL_ROLE_GUIDANCE,/Sol 寫的程式碼，最後必須由真正的 Opus 5\.5 審核/);
  assert.match(MODEL_ROLE_GUIDANCE,/待 Opus 5\.5 審核/);

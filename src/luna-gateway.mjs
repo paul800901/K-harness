@@ -17,7 +17,7 @@ function createMcpServer(bridge,{geminiOnly=false}={}) {
   const server = new McpServer({name:geminiOnly?'k-gemini-gateway':'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   const policy=bridge.workerPolicy;
   const selectionGuidance=geminiOnly?'此入口只派 Gemini Flash；必須明確指定 low/medium/high。GPT 子代理使用原生派工，不從本入口轉派。':policy.model==='auto'
-    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort；一般工人優先 Flash，Sol 為輔助大腦，Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
+    ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort；一般工人優先 Flash，Sol 為日常技術主腦，可交付規劃、架構、除錯與複查，但此入口派出的 Sol 子代理不能再派工；Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
     : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設，也可依任務明確改選。`;
   const register = (name,description,inputSchema,execute,annotations) => server.registerTool(name,{description,inputSchema,annotations},async args=>{
     try {
