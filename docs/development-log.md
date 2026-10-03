@@ -2,6 +2,9 @@
 
 使用者要求：每項變更記錄專案內，Opus 可直接複查，不需要使用者轉貼聊天。
 
+## 2026-10-04
+- [個人模型分工正式部署與 GitHub 發布](model-role-guidance-20261003.md)：南區正式 `5b83aa6` 已套用並原入口重開，四帳號／語音／Codex 設定保留；可退 `df9bc7f`。乾淨候選 647/647、選單真 UI 讀回、真 Gemini 原生規則一回合通過；private origin/main 程式已推送及 SHA 讀回，文件同步發布，不動舊 tag。東區不動，前四項遺留問題未修。
+
 ## 2026-10-03
 - [個人模型分工與子代理選單](model-role-guidance-20261003.md)：指引接入 GPT／Claude／Gemini 既有入口，Flash 優先工人、Sol 寫碼須 Opus 5.5 真審；只供 AI、不加提醒。選單為 auto → Flash → GPT-6.1 Sol → GPT-6 Luna，保存選擇不變。完整 647/647、假資料真 UI、建置通過；Opus 5.5 實際複查與補看。尚未部署／push／打 tag；真 Gemini 規則讀入尚未驗，前四項遺留問題未修，正式 df9bc7f／四帳號與東區不動。
 - [Opus 整批回查：Gemini／Flash／四帳號與額度頁](opus-batch-review-20261003.md)：真正 Opus 5.5 初查及兩次補讀，原文與撤回理由完整保留；Astra 6/6 假資料診斷、完整 646/646。確認中斷收尾、同帳號並行、完成等待額度及錯誤格式快取問題，尚未修；額度頁無新 finding，必要安全防護保留。本輪只審查與文件，正式 df9bc7f／四帳號不動，未部署／push／打 tag，東區不動。

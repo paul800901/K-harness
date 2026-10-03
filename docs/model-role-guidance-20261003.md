@@ -1,6 +1,20 @@
 # 個人模型分工：AI 內部指引與子代理選單（2026-10-03）
 
-## 結論與生效狀態
+## 2026-10-04 更新：已部署南區並推上 GitHub
+
+使用者明確要求「部署、推上 GitHub」，本次已完成；以下時間均為臺灣時間。
+
+- **正式程式版本：`5b83aa61e9988ffc480ff25c5e88003b8eb443c1`。** 00:14 套用、00:15 原入口重開；視窗「K 執行中樞」、正式 executable、native health、三個實際供應的介面資產讀回皆通過，未授權 state 請求仍為 403。
+- 套用前核對無 K 自有程序及 47831 監聽；原版 `df9bc7f` 已保留於 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791044043994`，可依既有流程退程式。四個帳號、目前原帳號、對話資料、語音位置及 Codex 設定保持不變；不是資料備份。
+- 乾淨 Git 候選完整測試 **647/647**，fail／cancelled／skipped 0（35,486 ms）；介面、擴充與啟動器建置通過，沿用一致 lockfile 的既有相依，未安裝／升級環境。套用前驗證候選 443 個 Git 檔案一致，原生訊息本機設定保持不變。
+- 候選假資料真瀏覽器的子代理排序／選取回歸通過。正式介面再讀回 **auto → gemini-3.8-flash → gpt-6.1-sol → gpt-6-luna**，沒有多餘提示；GPT 名稱沿用官方顯示 `GPT-6.1-Sol`／`GPT-6-Luna`。額度頁 Claude → GPT → Gemini、四個帳號及目前帳號均不變。檢查期間沒有工作或帳號操作 POST，未建立正式新對話。
+- **真實 Gemini 規則讀入已補驗通過**：透過本批 controller、官方 `gemini-3.8-flash-low`、獨立假工作區／唯讀權限做一回合，答案正確回傳 `normalWorker: Gemini 3.8 Flash`、`solCodeReviewer: Opus 5.5`、`articleDecision: false`。測試問題未提供前兩個答案；無工具呼叫，沒有讀其他檔案、切換／保存憑證或 API 計費。這是接線驗收，不是模型品質評比，亦不代表真 Sol → Opus 工作流程已另驗收。
+- 00:15 已將程式推到已確認為 private 的 `origin/main`：由 `0ae4be1` 快轉至 `5b83aa6`，遠端 SHA 讀回相符；沒有 force push、刪／移舊標記或搬本機資料。其後工程文件提交會同樣推到 main；程式碼不變，部署版本仍為上列 SHA。
+- **東區未更新**，下次當地依 `origin/main` 安裝／更新；登入與語音設定仍留在各自電腦。前四項遺留問題沒有因本次部署而修復，仍見整批回查紀錄。
+
+部署證據在 `D:\K-harness\.runtime\model-role-deploy-20261004`：`gemini-native-rules.json`、`preparation.json`、`full-tests.log`、`candidate-worker-ui.json`、`pre-activate-processes.json`、`activation.json`、`live-ui-readback.json`、`normal-start-readback.json`、`served-readback.json`、`github-code-readback.json`；文件推送後另留 `github-final-readback.json`。
+
+## 2026-10-03 開發階段紀錄（當時尚未部署）
 
 已寫入維護來源的三家主代理接線，不只存文件；已通過本機回歸與假資料介面操作。**本批尚未部署正式 K，未 push／打 tag，東區不動。** 正式版本讀回仍為 `df9bc7f339c4a82557c3cec50cdd9e3c97e221ee`，四帳號、對話及登入均未更動。
 

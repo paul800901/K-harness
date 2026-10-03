@@ -2,7 +2,7 @@
 
 ## 使用方式
 
-目前安裝與更新來源使用 **`origin/main`**：包含沒有瀏覽器助手也能開文字聊天室、本機聽寫免 K 重複同意、設定內兩家訂閱登入、官方登入頁及工作列品牌修正。Chrome 助手仍為分開設定。舊標記保留不動，最新整合與發布狀態見 [東區合入 main 紀錄](dongqu-main-publish-20261003.md)。
+目前安裝與更新來源使用 **`origin/main`**。截至 2026-10-04，已包含 Gemini 四帳號操作、GPT／Claude 派 Flash、額度頁整理及個人模型分工／子代理排序；發布版本與驗收界線見 [模型分工部署紀錄](model-role-guidance-20261003.md)。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動；先前東區整合歷史見 [東區合入 main 紀錄](dongqu-main-publish-20261003.md)。
 
 K 程式由私人儲存庫 `https://github.com/paul800901/K-harness` 取得；新電腦需先以本人 GitHub 帳號取得存取權。使用乾淨 clone，不把目前開發機整個資料夾複製過去。
 
