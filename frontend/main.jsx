@@ -15,6 +15,7 @@ import kLogo from './assets/k-logo.jpg';
 import {Usage,UsageDetails} from './usage.jsx';
 import './sidebar.css';
 import {ProjectSidebar} from './project-sidebar.jsx';
+import {useCompletionAttention} from './completion-attention.jsx';
 import {workspaceName,sameWorkspace} from './workspace.jsx';
 import {projectKey,isVisibleMainSession,moveSessionOrder,searchSessions,sortSessions} from './project-groups.mjs';
 import {AppearanceSettings} from './appearance.jsx';
@@ -115,6 +116,7 @@ function App(){
  useEffect(()=>{applyAppearance(saveAppearance(appearance));},[appearance]);
  const [state,setState]=useState({messages:[],status:'idle'}),[sessions,setSessions]=useState([]),[projects,setProjects]=useState([]),[online,setOnline]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[archiveMessage,setArchiveMessage]=useState(''),[busy,setBusy]=useState(false),[sidebar,setSidebar]=useState(true),[inspector,setInspector]=useState(false),[panel,setPanel]=useState('artifacts'),[panelTabsByThread,setPanelTabsByThread]=useState(()=>({['']:['artifacts']})),[panelMenuOpen,setPanelMenuOpen]=useState(false),[browserInfo,setBrowserInfo]=useState(null),[modal,setModal]=useState(null),[models,setModels]=useState([]),[uploadsByThread,setUploadsByThread]=useState({}),[effort,setEffort]=useState(''),[accessMode,setAccessMode]=useState('workspace-write'),[theme,setTheme]=useState(()=>readTheme()),[sidebarLayout,setSidebarLayout]=useState(()=>readSidebarPreference('k-sidebar-layout','grouped',['grouped','flat'])),[sidebarSort,setSidebarSort]=useState(()=>readSidebarPreference('k-sidebar-sort','recent',['recent','manual'])),[manualOrder,setManualOrder]=useState(()=>readSidebarOrder()),[viewOpen,setViewOpen]=useState(false),[panelWidth,setPanelWidth]=useState(null);
  const groups=useMemo(()=>{const list=groupConversationMessages(state.messages);return new Map(list.flatMap(group=>group.messages.map(message=>[message.id,group])));},[state.messages]);
+ useCompletionAttention(state,{online,covered:!!modal||!!state.connectionOpening,api});
  const lastAssistantId=useMemo(()=>[...(state.messages??[])].reverse().find(message=>message.role==='assistant')?.id,[state.messages]);
  const workspaceDisplayName=path=>projects.find(project=>sameWorkspace(project.path,path))?.name??workspaceName(path);
    const [permissionConfirmed,setPermissionConfirmed]=useState(false);

@@ -7,7 +7,7 @@ test('voice selects local dictation using the actual native preload after browse
   const preload=await readFile(new URL('../src/electron-owner-preload.cjs',import.meta.url),'utf8');
   const composer=await readFile(new URL('../frontend/voice-composer.jsx',import.meta.url),'utf8');
   const window={};
-  runInNewContext(preload,{require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>{window[name]=value;}},ipcRenderer:{}})});
+  runInNewContext(preload,{require:()=>({contextBridge:{exposeInMainWorld:(name,value)=>{window[name]=value;}},ipcRenderer:{on(){},removeListener(){}}})});
   const expression=composer.match(/const native=(.*);/)[1];
   assert.equal(runInNewContext(expression,{window}),true);
   assert.equal(runInNewContext(expression,{window:{}}),false);

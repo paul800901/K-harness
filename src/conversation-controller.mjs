@@ -1,16 +1,19 @@
 import {createUnifiedController} from './unified-controller.mjs';
 import {listMainSessions} from './main-sessions.mjs';
 import {deleteArchived} from './archive-delete.mjs';
+import {createCompletionAttention} from './completion-attention.mjs';
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
 export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,browserRequest,...options}){
  const rooms=new Map(),controllers=new Set(),locked=new Set();
+ const attention=createCompletionAttention();
  const openedOrder=new Map();let openSequence=0;
  let pendingOpen;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
  const create=()=>{
-  const controller=sessionFactory({...options,root,onChange:()=>{if(!closing)onChange();}});
+  let controller;
+  controller=sessionFactory({...options,root,onChange:()=>{if(!closing){if(controller)attention.observe(controller.state);onChange();}}});
   controllers.add(controller);return controller;
  };
  const catalog=create();active=catalog;
@@ -91,7 +94,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity()};},
+  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),completionAttention:attention.state};},
+  markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),
   async usage(refresh=false){sharedUsage=await catalog.usage(refresh);onChange();return api.state.usage;},
@@ -148,7 +152,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    }
   },
   async metadata(data){
-   focusLock();try{return await (rooms.get(data.threadId)??active).metadata(data);}finally{focusDone();}
+   focusLock();try{const result=await (rooms.get(data.threadId)??active).metadata(data);if(data.archived)attention.forget(data.threadId);return result;}finally{focusDone();}
   },
   async moveWorkspace(data){
    focusLock();let controller;

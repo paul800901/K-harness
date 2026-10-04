@@ -57,7 +57,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   let currentGroupId=null,activeAssistantId=null,currentTurnId=null;const nativePending=new Set();const nativeStreams=new Map();let streamingNativeId=null;
   const workerArmed=new Set(), workerQueue=new Map(),nativeChildEventIds=new Set();
   let workerNotifications={},notifying=false,usageRequest=null,lastUsageAttempt=0;
-  const changed = () => { try { onChange(state); } catch {} };
+  const changed = () => { state.completionPending=notifying||workerQueue.size>0;try { onChange(state); } catch {} };
   const markActiveAssistantPartial=()=>{const pendingMessage=activeAssistantId?state.messages.find(m=>m.id===activeAssistantId):null;if(pendingMessage){pendingMessage.partial=true;delete pendingMessage.streaming;nativeStreams.clear();streamingNativeId=null;void saveCurrent().catch(()=>{});}activeAssistantId=null;};
   function settleNativeChildrenAfterHostClose() {
     let updated=false;

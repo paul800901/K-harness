@@ -50,11 +50,12 @@ function ProjectRow({onDropSession,project,expanded,containsCurrent,onToggle,onC
 
 function SessionRows({sessions,workspace,state,disabled,modelName,onOpen,onRename,onMetadata,onMove,onChooseWorkspace,manual,conversationActivity=[]}) {
   const activityById=new Map((conversationActivity??[]).map(item=>[item.threadId,item]));
+  const unread=new Set((state.completionAttention?.unread??[]).map(item=>item.threadId));
   return sessions.map((s,index)=>{const activity=activityById.get(s.threadId)??s,pending=Array.isArray(activity.pendingQuestions)?activity.pendingQuestions.length:activity.pendingQuestions??0,activityLabel=pending>0?'需要確認':activity.busy?'處理中':'';return <div key={s.threadId} draggable={!disabled&&!activity.busy&&!pending} onDragStart={event=>{if(disabled||activity.busy||pending){event.preventDefault();return;}event.dataTransfer.setData(conversationDragType,s.threadId);event.dataTransfer.effectAllowed='move';}} className={`session ${state.threadId===s.threadId?'selected':''}`}>
     <button className="session-open" aria-current={state.threadId===s.threadId?'page':undefined} title={`${s.title||'未命名對話'}\n${modelName(s.model)}`} onClick={()=>onOpen({model:s.model,threadId:s.threadId})} disabled={disabled}>
       <span className="session-title">{s.pinned&&<Pin size={11}/>}<span>{s.title||'未命名對話'}</span></span>
       {workspace&&<small className="session-workspace">{typeof workspace==='function'?workspace(s):workspace}</small>}{s.parentThreadId&&<small className="session-branch">分支自：{s.parentTitle||'原對話'}</small>}
-      {activityLabel?<small className={`session-activity ${pending>0?'needs-approval':'running'}`} aria-label={activityLabel} title={activityLabel}><i aria-hidden="true"/>{pending>0?'需要確認':null}</small>:<time>{s.lastOpenedAt?new Date(s.lastOpenedAt).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}):''}</time>}
+      {activityLabel?<small className={`session-activity ${pending>0?'needs-approval':'running'}`} aria-label={activityLabel} title={activityLabel}><i aria-hidden="true"/>{pending>0?'需要確認':null}</small>:unread.has(s.threadId)?<small className="session-activity completed-unread" aria-label="已完成，尚未查看" title="已完成，尚未查看"><i aria-hidden="true"/></small>:<time>{s.lastOpenedAt?new Date(s.lastOpenedAt).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}):''}</time>}
     </button>
     <RowMenu className="session-menu" label={`管理對話 ${s.title||'未命名對話'}`} title="對話選項">
       <p className="session-info">{modelName(s.model)}</p>

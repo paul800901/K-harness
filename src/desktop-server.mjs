@@ -12,7 +12,7 @@ import {createStateStream} from '../shared/state-stream.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 
 export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
- const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateStream=createStateStream();let scheduled;
+ const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateListeners=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
  let launchToken=null,launchExpires=0;
@@ -34,7 +34,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  let pickerAbort=null;
  const publicState=()=>{const state=controller.state;return geminiAccounts?.cachedUsage?{...state,usage:{...state.usage,gemini:geminiAccounts.cachedUsage}}:state;};
  const controller=controllerFactory({root,executable,onChange(){
-  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const event=stateStream.update(publicState());if(!event)return;const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);},60);
+  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const state=publicState();for(const listener of stateListeners)listener(state);const event=stateStream.update(state);if(!event)return;const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);},60);
  }});
  const closedResources=new Set();
  let resourceCloseAttempt=null;
@@ -188,6 +188,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     return json(200,project);
    }
    if(url.pathname==='/api/projects/metadata')return json(200,await updateProject(root,data,(await controller.sessions()).sessions));
+   if(url.pathname==='/api/attention/read')return json(200,controller.markViewed(data));
    const routes={'/api/fork':'fork','/api/queue':'queue','/api/open':'open','/api/send':'send','/api/steer':'steer','/api/goal':'goal','/api/compact':'compact','/api/stop':'stop','/api/answer':'answer','/api/workers':'workers','/api/upload':'upload','/api/metadata':'metadata','/api/archives/delete':'deleteArchived','/api/workspace':'selectWorkspace','/api/workspace/move':'moveWorkspace','/api/model':'selectModel','/api/native/review':'review','/api/native/files/search':'fuzzyFileSearch'};
    if(routes[url.pathname])return json(200,await controller[routes[url.pathname]](...(!controller.concurrentConversations&&['/api/workers','/api/stop','/api/compact'].includes(url.pathname)?[]:[data])));
    if(url.pathname==='/api/shutdown'){await closeResources();json(200,{closed:true});setTimeout(()=>{void closeServer().catch(()=>{});},100);return;}
@@ -199,7 +200,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  });
  server.once('close',()=>{if(!closedResources.has('本機語音辨識'))void closeLocalDictation().catch(()=>{});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>{origin=`http://127.0.0.1:${server.address().port}`;resolve();});});
- return {origin,controller,onClosed(listener){server.once('close',listener);},createLaunchUrl(){
+ return {origin,controller,onStateChange(listener){stateListeners.add(listener);listener(publicState());return()=>stateListeners.delete(listener);},onClosed(listener){server.once('close',listener);},createLaunchUrl(){
   launchToken=randomBytes(32).toString('hex');launchExpires=Date.now()+60000;
   return `${origin}/bootstrap?token=${launchToken}`;
  },async close(){await closeResources();await closeServer();}};

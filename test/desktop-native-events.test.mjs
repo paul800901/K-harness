@@ -26,6 +26,24 @@ async function fixture({readiness='ready'}={}){
  return {c,calls,connections,root,host};
 }
 
+test('main completion waits for the actual final native worker readback',async()=>{
+ const f=await fixture(),original=f.host.request;let release,hold=false;
+ try{
+  await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  const result={thread:{parentThreadId:'native-events-thread',status:{type:'idle'},turns:[{status:'completed'}]}};
+  f.host.request=async(method,p,...rest)=>method==='thread/read'&&p.threadId==='child'?(hold?new Promise(resolve=>{release=()=>resolve(result);}):result):original(method,p,...rest);
+  emit({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'parent-turn'}}});
+  emit({method:'item/completed',params:{threadId:'native-events-thread',item:{id:'spawn-child',type:'collabAgentToolCall',receiverThreadIds:['child']}}});
+  await new Promise(r=>setTimeout(r,20));hold=true;
+  emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'parent-turn',status:'completed'}}});
+  assert.equal(f.c.state.completionPending,true);
+  assert.equal(typeof release,'function');
+  hold=false;release();
+  const end=Date.now()+1500;while(f.c.state.completionPending&&Date.now()<end)await new Promise(r=>setTimeout(r,10));
+  assert.equal(f.c.state.completionPending,false);assert.equal(f.c.state.status,'completed');
+ }finally{hold=false;release?.();await f.c.close();}
+});
+
 test('native worker start and child completion refresh the count while the parent remains busy',async()=>{
  const f=await fixture(),original=f.host.request;let childStatus='inProgress';
  f.host.request=async(method,p,...rest)=>method==='thread/read'&&p.threadId==='child'

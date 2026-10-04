@@ -9,7 +9,7 @@ import {startDesktop} from '../src/desktop-server.mjs';
 
 const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const codexModel='gpt-6-astra',claudeModel='claude-opus-5-5';
-async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({available:true,mode:'ai',busy:false}),closeFailure=()=>false}={}){
+async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({available:true,mode:'ai',busy:false}),closeFailure=()=>false,onStateChange=()=>{}}={}){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'concurrent-conversations-'));
  let seq=0,notifications=0;const native=[],saved=new Map();
  const factory=provider=>({onChange})=>{
@@ -38,7 +38,7 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
   for(const method of ['compact','goal','steer','review','fuzzyFileSearch','directories'])c[method]=async data=>{calls.push([method,data]);return {};};
   native.push(c);return c;
  };
- const controller=createConversationController({root,codexFactory:factory('codex'),claudeFactory:factory('claude'),geminiFactory:factory('gemini'),inspect:async()=>({available:true}),browserRequest,onChange:()=>notifications++});
+ const controller=createConversationController({root,codexFactory:factory('codex'),claudeFactory:factory('claude'),geminiFactory:factory('gemini'),inspect:async()=>({available:true}),browserRequest,onChange:()=>{notifications++;onStateChange();}});
  return {root,controller,native,get notifications(){return notifications;},room:id=>native.find(c=>c.state.threadId===id)};
 }
 const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date.now()>end)throw Error('condition timed out');await new Promise(r=>setTimeout(r,20));}};
@@ -239,7 +239,7 @@ test('failed idle teardown remains registered and can be retried by a later clea
 });
 
 test('HTTP desktop routes preserve thread context for stop, approvals, files and switching',async()=>{
- const f=await fixture();const app=await startDesktop({root:f.root,executable:'fixture',port:0,controllerFactory:()=>f.controller});
+ let notify;const f=await fixture({onStateChange:()=>notify?.()});const app=await startDesktop({root:f.root,executable:'fixture',port:0,controllerFactory:options=>{notify=options.onChange;return f.controller;}});
  try{
   const home=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=home.headers.get('set-cookie').split(';')[0];await home.text();
   const post=async(route,data)=>{const response=await fetch(`${app.origin}/api/${route}`,{method:'POST',headers:{cookie,Origin:app.origin,'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify(data)});return {status:response.status,body:await response.json()};};
@@ -249,7 +249,34 @@ test('HTTP desktop routes preserve thread context for stop, approvals, files and
   assert.equal(f.room(a.threadId).state.busy,false);assert.equal(f.room(b.threadId).state.busy,true);
   const artifact=await fetch(`${app.origin}/api/artifact?path=result.txt&threadId=${a.threadId}`,{headers:{cookie}});assert.equal((await artifact.json()).text,a.threadId);
   const state=await fetch(`${app.origin}/api/state`,{headers:{cookie}}).then(r=>r.json());assert.equal(state.conversationActivity.length,2);
+  const snapshots=[];const unsubscribe=app.onStateChange(s=>snapshots.push(s.completionAttention));
+  assert.equal(snapshots.length,1);
+  await f.room(b.threadId).finish();
+  await eventually(()=>snapshots.some(s=>s.unread.length===1));
+  assert.equal((await post('attention/read',{threadId:b.threadId,sequence:99})).body.viewed,false);
+  assert.equal((await post('attention/read',{threadId:b.threadId,sequence:1})).body.viewed,true);
+  await eventually(()=>snapshots.at(-1).unread.length===0);
+  unsubscribe();const count=snapshots.length;notify();await new Promise(r=>setTimeout(r,100));assert.equal(snapshots.length,count);
  }finally{await app.close();}
+});
+
+test('all three providers track unread main rooms across selection and idle controller release',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const ids=[];
+  for(const model of [codexModel,claudeModel,'gemini-3.8-flash']){
+   const room=await c.open({model});ids.push(room.threadId);await c.send({...room,text:'bounded work'});await f.room(room.threadId).finish();
+  }
+  assert.equal(c.state.completionAttention.unread.length,3);
+  await c.open({threadId:ids[0],model:codexModel});
+  assert.equal(c.state.completionAttention.unread.length,3,'selection is not proof that the window is visible');
+  assert.equal(c.markViewed({threadId:ids[0],sequence:1}).viewed,true);
+  assert.equal(c.state.completionAttention.unread.length,2);
+  for(let i=0;i<4;i++)await c.open({model:codexModel});
+  await eventually(()=>f.room(ids[1]).closed>0);
+  assert.equal(c.state.completionAttention.unread.length,2,'released idle controllers retain unread markers');
+  await c.metadata({threadId:ids[1],archived:true});
+  assert.deepEqual(c.state.completionAttention.unread.map(r=>r.threadId),[ids[2]]);
+ }finally{await c.close();}
 });
 
 for(const model of [codexModel,claudeModel,'gemini-3.8-flash'])test(`${model} moves the same conversation while another room keeps working`,async()=>{

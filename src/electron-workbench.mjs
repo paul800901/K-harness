@@ -1,6 +1,7 @@
 import {fileURLToPath} from 'node:url';
 import {officialClaudeLoginUrl} from '../shared/claude-login-url.mjs';
 import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
+import {createTaskbarAttentionController,createWindowFocusNotifier} from './taskbar-attention.mjs';
 
 export function createSubscriptionLoginWindowHandler(openExternal){
  return ({url})=>{
@@ -74,7 +75,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
  if(process.platform==='win32')window.setAppDetails({appId,appIconPath:icon,...(relaunchExecutable?{relaunchCommand:`"${relaunchExecutable}"`,relaunchDisplayName:appName}:{})});
  window.setMenu(null);
  const owner=new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,partition:'k-trusted-owner',preload:fileURLToPath(new URL('./electron-owner-preload.cjs',import.meta.url))}});
- owner.webContents.on('dom-ready',()=>owner.webContents.setBackgroundThrottling(false));
+ owner.webContents.on('dom-ready',()=>{owner.webContents.setBackgroundThrottling(false);focusNotifier?.notify();});
  owner.webContents.on('context-menu',(_event,{isEditable,selectionText,editFlags})=>{
   const items=isEditable
    ? [['undo','復原','canUndo'],['redo','重做','canRedo'],['cut','剪下','canCut'],['copy','複製','canCopy'],['paste','貼上','canPaste'],['selectAll','全選','canSelectAll']]
@@ -82,7 +83,8 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   if(items.length)electron.Menu.buildFromTemplate(items.map(([action,label,flag])=>({label,enabled:editFlags[flag],click:()=>owner.webContents[action]()}))).popup({window});
  });
  window.contentView.addChildView(owner);
- let services,closed=false,closing=false,closePromise=null;
+ let services,closed=false,closing=false,closePromise=null,taskbarAttention=null;
+ const focusNotifier=createWindowFocusNotifier(window,owner.webContents);
  const refreshNativePresentation=()=>{if(closed||closing||!window.isVisible()||window.isMinimized())return;owner.webContents.send('k-native-browser-page',{refresh:true});};
  // Closing the workbench view is not permission to terminate background work.
  // The trusted supervisor's explicit stop command owns service shutdown.
@@ -90,7 +92,8 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
  const resize=()=>{const [width,height]=window.getContentSize();owner.setBounds({x:0,y:0,width,height});};
  window.on('resize',resize);window.on('restore',refreshNativePresentation);resize();
  try{
- services=await servicesFactory({gatewayFactory:browserGatewayFactory});
+  services=await servicesFactory({gatewayFactory:browserGatewayFactory});
+  taskbarAttention=createTaskbarAttentionController({window,electron,app:services.app});
   const ownerSession=electron.session.fromPartition('k-trusted-owner');
   const permissionHandlers=createOwnerSessionMediaPermissionHandlers({
    ownerWebContents:owner.webContents,
@@ -108,6 +111,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   return {window,owner,services,show(){if(closed||closing)throw Error('Workbench is closing.');window.show();window.focus();owner.webContents.send('k-native-browser-page',{refresh:true});},close(){
    if(closePromise)return closePromise;if(closed)return Promise.resolve();
    closing=true;
+   taskbarAttention?.dispose();focusNotifier.dispose();
    closePromise=(async()=>{
     // Services retain their own active-work policy at the caller boundary.
     await services.app.close();closed=true;
@@ -116,6 +120,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
    return closePromise;
   }};
  }catch(error){
+  taskbarAttention?.dispose();focusNotifier.dispose();
   await services?.app?.close().catch(()=>{});
   if(!owner.webContents.isDestroyed())owner.webContents.close();if(!window.isDestroyed())window.destroy();throw error;
  }

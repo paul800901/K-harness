@@ -45,7 +45,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(matches.length!==1)return {};
   const [oldId,metadata]=matches[0];transferTiming('messages',oldId,id);return metadata;
  };
- const changed=()=>onChange(state);
+ let settlingWorkers=0;
+ const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying;onChange(state);};
  const persistFlashNotifications=async()=>{
   if(!state.threadId)return;
   const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);
@@ -206,7 +207,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(final){final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
    turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
-   void workers().then(()=>deliverFlashResults()).catch(e=>{state.error='主回合已結束，但工人狀態查詢失敗：'+e.message;changed();});void usage();
+   settlingWorkers++;
+   void workers().then(()=>deliverFlashResults()).catch(e=>{state.error='主回合已結束，但工人狀態查詢失敗：'+e.message;}).finally(()=>{settlingWorkers--;changed();});void usage();
   }
   changed();
  }
