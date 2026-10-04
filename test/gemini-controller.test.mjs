@@ -6,6 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {createGeminiController,geminiModelsFrom} from '../src/gemini-controller.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import {GEMINI_MEDIA_GUIDANCE} from '../src/gemini-worker.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
 const names=['gemini-3.8-flash-low','gemini-3.8-flash-medium','gemini-3.8-flash-high','gemini-3.1-pro-high','gemini-3.1-pro-low','gemini-new-native'];
@@ -40,7 +41,7 @@ test('Gemini catalog preserves every native model and only supplied effort varia
  const catalog=geminiModelsFrom(names);assert.deepEqual(catalog.map(x=>x.model),['gemini-3.8-flash','gemini-3.1-pro','gemini-new-native']);
  assert.deepEqual(catalog[1].supportedReasoningEfforts.map(e=>e.reasoningEffort),['high','low']);assert.equal(catalog[1].nativeModels.medium,undefined);
  assert.equal(catalog[2].nativeModels.default,'gemini-new-native');assert.equal(catalog.some(x=>/4-pro/u.test(x.model)),false);
- assert.deepEqual(catalog[0].inputModalities,['text','image']);assert.deepEqual(catalog[1].inputModalities,['text']);assert.deepEqual(catalog[2].inputModalities,['text']);
+ assert.deepEqual(catalog[0].inputModalities,['text','image','pdf','audio','video']);assert.deepEqual(catalog[1].inputModalities,catalog[0].inputModalities);assert.deepEqual(catalog[2].inputModalities,['text']);
 });
 
 test('Gemini quota polling coalesces and preserves dated stale values after a failed refresh',async()=>{
@@ -61,7 +62,7 @@ test('Gemini sends only new input, reopens native history and retains provider m
   const last=f.calls.at(-1);assert.equal(last.args[last.args.indexOf('--conversation')+1],native);
   const prompt=last.args[last.args.indexOf('-p')+1];assert.equal(prompt,'second input');assert.doesNotMatch(prompt,/first private context/);
   const rules=path.join(last.params.env.HOME,'.gemini/config/rules/k-model-roles.md');
-  assert.equal(await readFile(rules,'utf8'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n`);
+  assert.equal(await readFile(rules,'utf8'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${GEMINI_MEDIA_GUIDANCE}\n`);
   assert.equal(c.state.messages.filter(m=>m.role==='user').at(-1).text,'second input');
   assert.equal(last.args[last.args.indexOf('--model')+1],'gemini-3.8-flash-medium');assert.equal(last.params.env.GEMINI_API_KEY,undefined);assert.equal(last.params.env.API_KEY,undefined);assert.equal(last.params.env.HOME,last.params.env.USERPROFILE);assert.ok(last.params.env.HOME.startsWith(path.join(f.root,'agent-home','gemini','main')));
   const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.provider,'gemini');assert.equal(saved.model,'gemini-3.8-flash');assert.equal(c.state.messages.length,4);
@@ -109,7 +110,7 @@ test('Gemini accepts image formats verified with native view_file and injects on
  const f=await fixture(),c=f.controller;
  try{
   const {threadId}=await c.open({model:'gemini-3.8-flash'});
-  assert.deepEqual(c.state.inputModalities,['text','image']);
+  assert.deepEqual(c.state.inputModalities,['text','image','pdf','audio','video']);
   const images=[];
   for(const name of ['test.png','test.jpg','test.webp'])images.push(await c.upload({threadId,name,base64:Buffer.from(`synthetic ${name} private image payload`).toString('base64')}));
   const doc=await c.upload({threadId,name:'example.txt',base64:Buffer.from('fake document').toString('base64')});
@@ -121,10 +122,11 @@ test('Gemini accepts image formats verified with native view_file and injects on
   assert.ok(!call.args.join(' ').includes('must-not-inherit'));
   assert.equal(call.params.env.GEMINI_API_KEY,undefined);assert.equal(call.params.env.API_KEY,undefined);
   assert.deepEqual(c.state.messages.find(m=>m.role==='user').attachments.map(x=>x.name),['test.png','test.jpg','test.webp','example.txt']);
-  await c.close();const next=await c.open({model:'gemini-3.1-pro',effort:'low'});assert.deepEqual(c.state.inputModalities,['text']);
+  await c.close();const next=await c.open({model:'gemini-new-native'});assert.deepEqual(c.state.inputModalities,['text']);
+  assert.ok(!(await readFile(path.join(f.root,'agent-home/gemini/main',next.threadId,'.gemini/config/rules/k-model-roles.md'),'utf8')).includes(GEMINI_MEDIA_GUIDANCE));
   await assert.rejects(c.send({text:'wrong thread',attachmentIds:[images[0].id]}),/其他對話/);assert.equal(f.calls.length,1);
   const unsupported=await c.upload({threadId:next.threadId,name:'test.webp',base64:Buffer.from('another synthetic image').toString('base64')});
-  await assert.rejects(c.send({text:'unsupported model',attachmentIds:[unsupported.id]}),/其他型號尚未驗證/);assert.equal(f.calls.length,1);
+  await assert.rejects(c.send({text:'unsupported model',attachmentIds:[unsupported.id]}),/尚未驗證這種附件/);assert.equal(f.calls.length,1);
  }finally{await c.close();}
 });
 
