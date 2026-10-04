@@ -754,6 +754,26 @@ test('native AgentOutput async and ambiguous results never claim synchronous com
  }finally{await f.controller.close();}
 });
 
+test('native background Agent starts before child text and settles from task notification',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'synthetic background agent'});
+  const emit=f.hostOptions.onMessage;
+  emit({type:'assistant',message:{content:[{type:'tool_use',id:'agent-bg',name:'Agent',input:{run_in_background:true}}]}});
+  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'native-bg',tool_use_id:'agent-bg',is_backgrounded:true});
+  assert.equal(f.controller.state.workers[0].status,'running');
+  assert.equal(f.controller.state.workers[0].kind,undefined,'agents are not background commands');
+  emit({type:'user',tool_use_result:{status:'async_launched'},message:{content:[{type:'tool_result',tool_use_id:'agent-bg',content:'launched'}]}});
+  assert.equal(f.controller.state.workers[0].status,'running');
+  emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg',message:{content:[{type:'text',text:'BG_DONE'}]}});
+  assert.equal(f.controller.state.workers.length,1);
+  emit({type:'system',subtype:'task_notification',task_id:'native-bg',status:'completed',summary:'BG_DONE'});
+  assert.equal(f.controller.state.workers[0].status,'completed');assert.equal(f.controller.state.workers[0].settled,true);
+  emit({type:'user',tool_use_result:{status:'async_launched'},message:{content:[{type:'tool_result',tool_use_id:'agent-bg',content:'late launch result'}]}});
+  emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg-late',message:{content:[{type:'text',text:'late child text'}]}});
+  assert.equal(f.controller.state.workers[0].status,'completed','late events cannot revive a completed child');
+ }finally{await f.controller.close();}
+});
+
 test('late native child events after stop cannot recreate or revive workers',async()=>{
  const f=await fixture();try{
   await f.controller.open({});const emit=f.hostOptions.onMessage;
@@ -916,6 +936,7 @@ test('native background Bash remains unsettled after the main reply until its ow
  try{
   await f.controller.open({});const emit=f.hostOptions.onMessage;
   emit({type:'system',subtype:'task_started',task_type:'local_bash',task_id:'bg-one',tool_use_id:'tool-one',description:'synthetic sleep'});
+  assert.equal((await f.controller.workers())[0].kind,'command','Background commands must not count as subagents');
   emit({type:'result',is_error:false});
   assert.equal(f.controller.state.busy,false);assert.equal((await f.controller.workers())[0].settled,false);
   emit({type:'system',subtype:'task_notification',task_id:'unrelated',status:'completed'});

@@ -65,3 +65,14 @@ test('Gemini login remains behind the same human session and origin checks as ex
   assert.equal((await fetch(route,{method:'POST',headers:{...headers,Cookie:cookie,Origin:app.origin},body:'{}'})).status,200);assert.equal(starts,1);
  }finally{await app.close();}
 });
+
+test('temporary usage failure is not a signed-out result, but an explicit login rejection remains signed out',async()=>{
+ const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-usage-transient-'));
+ let report;const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd},exists:async()=>{},run:async(_binary,args)=>args[0]==='--version'?{code:0,stdout:'1.2.16'}:report});
+ for(const failure of [{code:null,reason:'timeout',stdout:'',stderr:''},{code:1,stdout:'',stderr:'Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable. authentication required'}]){
+  report=failure;const result=await login.status();assert.equal(result.auth.status,'unknown');assert.equal(result.temporaryFailure,true);assert.doesNotMatch(result.reason,/請完成官方登入/u);
+ }
+ report={code:1,stdout:'',stderr:'authentication required'};assert.equal((await login.status()).auth.status,'signed-out');
+ report={code:1,stdout:'',stderr:'subscription unavailable; authentication required'};const unavailable=await login.status();assert.equal(unavailable.temporaryFailure,false);assert.equal(unavailable.auth.status,'signed-out');
+ report={code:null,reason:'timeout',cleanupError:'fixture cleanup unconfirmed',stdout:'',stderr:''};assert.equal((await login.status()).temporaryFailure,false);
+});

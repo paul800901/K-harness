@@ -338,3 +338,45 @@ test('uncertain work before first account enrollment can be cleared only after n
  f.idle=true;await f.accounts.refresh();assert.equal((await f.accounts.list()).uncertain,false);
  const next=await f.accounts.acquire();await next.release();
 });
+
+test('simultaneous same-account starts share the identity without false switching errors or serializing execution',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
+ const leases=await Promise.all([f.accounts.acquire(),f.accounts.acquire(),f.accounts.acquire()]);
+ assert.deepEqual(leases.map(l=>l.accountId),[A,A,A]);assert.equal((await f.accounts.list()).busy,true);
+ await leases[0].release();await leases[1].release();assert.equal((await f.accounts.list()).busy,true);
+ await leases[2].release();assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('temporary quota failure preserves only prior verified login and does not require login or switch accounts',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),temporary=false;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>temporary?{temporaryFailure:true,auth:{status:'unknown',checkedAt:new Date(now).toISOString()},reason:'Google 額度查詢暫時失敗或逾時；這不代表帳號已登出。'}:authStatus()});
+ await f.accounts.capture();const before=(await f.accounts.list()).accounts[0];temporary=true;now+=61000;
+ await f.accounts.refresh();const after=(await f.accounts.list()).accounts[0];
+ assert.deepEqual(after.auth,before.auth);assert.equal(after.quota.status,'stale');assert.deepEqual(after.quota.windows,before.quota.windows);
+ const statusCalls=f.calls.status;await f.accounts.usage();
+ const lease=await f.accounts.acquire();assert.equal(lease.accountId,A);await lease.release();assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
+ assert.equal(f.calls.status,statusCalls,'a failed recent quota query must not immediately run again');
+ assert.equal(after.lastQueryAt,undefined,'attempt timestamps are not a new public authentication result');
+ now+=61000;await f.accounts.usage();assert.equal(f.calls.status,statusCalls+1);
+ f.login.status=async()=>({auth:{status:'signed-out'},reason:'尚未登入 Gemini，請完成官方登入。'});await f.accounts.refresh();
+ await assert.rejects(f.accounts.acquire(),/需重新確認登入/u);assert.equal((await f.accounts.list()).busy,false);
+ f.login.status=async()=>({temporaryFailure:true,auth:{status:'unknown'},reason:'暫時無法查詢'});await f.accounts.refresh();
+ await assert.rejects(f.accounts.acquire(),/暫時無法查詢/u);assert.notEqual((await f.accounts.list()).accounts[0].auth.status,'authenticated');
+});
+
+test('failed startup releases its serialization lock, and a different account still cannot replace a running one',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
+ const results=await Promise.allSettled([f.accounts.acquire({accountId:'bad'}),f.accounts.acquire({accountId:B})]);
+ assert.equal(results[0].status,'rejected');assert.equal(results[1].status,'fulfilled');assert.equal(results[1].value.accountId,B);
+ await assert.rejects(f.accounts.acquire({accountId:A}),/尚未結束.*不能換帳號/u);assert.deepEqual(f.calls.activate,[]);
+ await results[1].value.release();await f.accounts.activate({accountId:A});assert.equal((await f.accounts.list()).activeAccountId,A);
+});
+
+test('quota query busy flag clears after a timeout-shaped response without discarding other saved accounts',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
+ let resolveStatus;f.login.status=()=>new Promise(resolve=>{resolveStatus=resolve;});const pending=f.accounts.refresh();
+ while(!resolveStatus)await new Promise(resolve=>setImmediate(resolve));
+ assert.equal((await f.accounts.list()).checking,true);assert.equal((await f.accounts.list()).busy,true);
+ resolveStatus({temporaryFailure:true,auth:{status:'unknown'},reason:'query timeout'});await pending;
+ const result=await f.accounts.list();assert.equal(result.checking,false);assert.equal(result.busy,false);assert.deepEqual(result.accounts.map(r=>r.id),[A,B]);
+});

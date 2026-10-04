@@ -11,6 +11,16 @@ test('hides engineering notices without mutating the native records',()=>{
  assert.deepEqual(notices,before);
 });
 
+test('routine worker handoff is not a user notice; failures and original records remain',()=>{
+ const notices=[
+  {id:'handoff',kind:'worker-completion',level:'info',message:'Flash 子代理結果已交給 Codex 主代理驗收。'},
+  {id:'failure',kind:'worker-completion',level:'error',message:'交付結果失敗'},
+ ];
+ const before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices),[notices[1]]);
+ assert.deepEqual(notices,before);
+});
+
 test('retains unknown warnings, guardian warnings, model routing, and native errors',()=>{
  const notices=[
   {id:'warning',kind:'warning',level:'warning'},

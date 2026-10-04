@@ -23,7 +23,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const MAX_REASONING_SUMMARY_CHARS=16000,REASONING_TRUNCATION_SUFFIX='\n\n[摘要已截斷；僅顯示部分內容]';
- let usagePending,quotaReadAt=0,uiTiming={version:1,messages:{},tools:{}},uiTimingWrite=Promise.resolve(),activeGroupId=null;
+ let usagePending,quotaReadAt=0,uiTiming={version:1,messages:{},tools:{}},uiTimingWrite=Promise.resolve(),activeGroupId=null,workerRead=0;
  const persistUiTiming=()=>{
   const threadId=state.threadId;if(!threadId)return;
   const snapshot=structuredClone(uiTiming);
@@ -130,7 +130,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    addNotice('warning',`Codex 原生模型重新路由：${p.fromModel} → ${p.toModel}（${p.reason}）。`,'modelRerouted',p.turnId);changed();return;
   }
   if(e.method==='serverRequest/resolved'){clearQuestions(q=>q.threadId===p.threadId&&q.requestId===p.requestId);changed();return;}
-  if(p.threadId!==state.threadId){if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}return;}
+  if(p.threadId!==state.threadId){
+   if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}
+   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method)&&collectNativeWorkerIds([...items.values()]).includes(p.threadId))void workers().catch(()=>{});
+   return;
+  }
   if(e.method==='item/reasoning/summaryPartAdded'||e.method==='item/reasoning/summaryTextDelta'){
    const id=`${p.itemId}:${p.summaryIndex}`,key=id;
    let part=reasoningParts.get(key);
@@ -194,7 +198,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(['mcpToolCall','collabAgentToolCall','subAgentActivity','fileChange','commandExecution'].includes(i.type))items.set(i.id,i);
    recordTool(i,e.method==='item/completed'?'completed':'running',{turnId:p.turnId??turnId,groupId:activeGroupId});
    if(i.type==='fileChange')syncArtifacts();
-   if(i.type==='subAgentActivity')void workers().catch(()=>{});
+   if(['subAgentActivity','collabAgentToolCall'].includes(i.type))void workers().catch(()=>{});
   }
   if(e.method==='turn/completed'){
    const completedAt=new Date().toISOString(),completedTurnId=p.turn?.id??turnId;
@@ -252,12 +256,16 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  }
  async function workers(stop=false){
   if(!host||!state.threadId)return [];
-  const threadId=state.threadId,epoch=viewEpoch;const observed=[...items.values()];
-  const result=await checkNativeWorkers(host,threadId,collectNativeWorkerIds(observed),{stop});
-  if(threadId!==state.threadId||epoch!==viewEpoch)return result;
+  const active=host,read=++workerRead,threadId=state.threadId,epoch=viewEpoch;const observed=[...items.values()];
+  const result=await checkNativeWorkers(active,threadId,collectNativeWorkerIds(observed),{stop});
+  if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
   const flash=flashBridge?await flashBridge.list():[];
-  if(threadId!==state.threadId||epoch!==viewEpoch)return result;
-  state.workers=[...result,...flash];syncArtifacts();changed();return state.workers;
+  if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
+  const rows=[...result,...flash];
+  // A delayed read must not replace a newer completion; callers still receive
+  // their full result, including Flash, for existing stop/idle checks.
+  if(read===workerRead){state.workers=rows;syncArtifacts();changed();}
+  return rows;
  }
  const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
  const recordFlash=record=>{

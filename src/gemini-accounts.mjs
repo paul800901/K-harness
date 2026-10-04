@@ -11,19 +11,21 @@ const validId=id=>typeof id==='string'&&/^[a-f0-9]{32}$/u.test(id);
 export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.now,onChange=()=>{}}){
  const file=path.join(root,'.runtime','gemini-accounts.json');
  let data={version:1,activeAccountId:null,accounts:[],loginPending:null,uncertain:false};
- let changing=false,running=0,refreshPending=null;
+ let changing=false,running=0,refreshPending=null,acquiring=null;
  let loading;
  const load=()=>loading??=(async()=>{try{data=JSON.parse(await readFile(file,'utf8'));if(data.version!==1||!Array.isArray(data.accounts)||data.accounts.some(row=>!validId(row.id)||typeof row.email!=='string'))throw Error('Gemini 帳號紀錄格式不符，未覆寫。');}catch(error){if(error.code!=='ENOENT')throw error;}})();
  const save=async()=>{await atomicWrite(file,JSON.stringify(data,null,2));onChange();};
  const find=id=>data.accounts.find(row=>row.id===id);
  const stamp=()=>new Date(clock()).toISOString();
+ const queryAge=row=>clock()-Math.max(Date.parse(row?.lastQueryAt??'')||0,Date.parse(row?.auth?.checkedAt??'')||0);
  const exhausted=row=>row?.quota?.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
  function publicRow(row){
   const quota=clone(row.quota??unknown());
   if(quota.windows?.length&&(row.id!==data.activeAccountId||clock()-Date.parse(quota.checkedAt??'')>=60000))quota.status='stale';
   return {id:row.id,email:row.email,auth:clone(row.auth??{status:'unknown'}),quota};
  }
- function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
+ function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,checking:!!refreshPending,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
+ const authFailure=row=>row.auth?.status==='signed-out'?'此 Gemini 帳號需重新確認登入，未開始工作。':`${row.auth?.reason??'目前無法確認 Gemini 帳號狀態；尚無證據需要重新登入。'} 未開始工作。`;
  function assertEnabled(){if(!enabled)throw Error('本候選尚未允許真實 Gemini 帳號管理。');}
  async function exclusive(fn){
   await load();if(changing||running)throw Error('Gemini 正在工作或處理登入，請等全部 Gemini 工作停止後再操作。');
@@ -42,7 +44,10 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   const result=await login.status();
   const after=await vault.current();
   if(after?.accountId!==row.id){data.activeAccountId=null;await save();throw Error('查詢期間 Antigravity 登入已改變，已丟棄此次額度。');}
-  row.auth={status:result.auth?.status??'unknown',checkedAt:result.auth?.checkedAt??stamp()};
+  row.lastQueryAt=stamp();
+  // A failed quota lookup does not revoke a previously verified identity. Native
+  // agy still authenticates each actual turn; keep the original verification time.
+  if(!(result.temporaryFailure&&row.auth?.status==='authenticated'))row.auth={status:result.auth?.status??'unknown',checkedAt:result.auth?.checkedAt??stamp(),...(result.auth?.status!=='authenticated'?{reason:result.reason}:{})};
   row.quota=result.quota??{...(row.quota??unknown()),status:row.quota?.windows?.length?'stale':'unavailable',note:result.reason??'此次官方額度查詢未成功。'};
   await save();return result;
  }
@@ -103,12 +108,17 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(!data.accounts.length)return null;
    if(!changing&&!running&&!data.loginPending&&!data.uncertain&&enabled){
     const row=find(data.activeAccountId);
-    if(refresh||!row||clock()-(Date.parse(row.auth?.checkedAt??'')||0)>=60000)try{await api.refresh();}catch{/* cached values remain explicitly stale */}
+    if(refresh||!row||queryAge(row)>=60000)try{await api.refresh();}catch{/* cached values remain explicitly stale */}
    }
    const rows=data.accounts.map(publicRow),active=rows.find(row=>row.id===data.activeAccountId);
    return {...(active?.quota??unknown()),accountId:active?.id??null,accountEmail:active?.email??null,accounts:rows};
   },
   async acquire({accountId,worker=false,unboundHistory=false}={}){
+   // Serialize only startup checks, not execution. Concurrent workers must not
+   // mistake another worker's credential check for a human account switch.
+   while(acquiring)await acquiring;
+   let unlock;acquiring=new Promise(resolve=>{unlock=resolve;});
+   try{
    await load();if(refreshPending)await refreshPending;requireIdleLogin();
    if(changing)throw Error('Gemini 正在切換帳號或登入，未開始工作。');
    changing=true;
@@ -129,12 +139,12 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
       await activate(target);chosen=find(target);
      }
      if(!chosen||chosen.id!==target)throw Error('Gemini 帳號選擇無效，未開始工作。');
-     const authStale=clock()-(Date.parse(chosen.auth.checkedAt??'')||0)>=60000;
+     const authStale=queryAge(chosen)>=60000;
      if(chosen.auth?.status!=='authenticated'){
-      if(running)throw Error('此 Gemini 帳號需重新確認登入，未開始工作。');
+      if(running)throw Error(authFailure(chosen));
       await query(chosen);
      }else if(authStale&&!running)await query(chosen);
-     if(chosen.auth.status!=='authenticated')throw Error('此 Gemini 帳號需重新確認登入，未開始工作。');
+     if(chosen.auth.status!=='authenticated')throw Error(authFailure(chosen));
      if(exhausted(chosen))throw Error('此 Gemini 帳號官方額度已用完，未開始工作。');
     }else if(accountId)throw Error('Gemini 帳號尚未加入 K。');
     running++;
@@ -144,6 +154,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
     if(released)return;released=true;running--;if(!settled){data.uncertain=true;await save();}
     onChange();if(refresh&&!running&&!data.uncertain&&chosen)try{await api.refresh();}catch{/* no replay; next status read shows cached quota */}
    }};
+   }finally{acquiring=null;unlock();}
   },
   async run(options,fn){const lease=await api.acquire(options);let outcome;try{outcome=await fn(lease);return {...outcome,accountId:lease.accountId,accountEmail:lease.accountEmail};}catch(error){if(error.settled===false)outcome={settled:false};throw error;}finally{await lease.release({settled:outcome?.settled!==false,refresh:true});}},
  };

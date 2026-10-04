@@ -15,6 +15,21 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const catalog=create();active=catalog;
  const activity=controller=>{const s=controller.state;return {threadId:s.threadId,workspace:s.workspace,busy:!!s.busy,status:s.status,pendingQuestions:s.questions?.length??0};};
+ // Project the existing live owners, never saved history or only the selected room.
+ const workerActivity=()=>{
+  let running=0,uncertain=false;
+  for(const controller of controllers){
+   const s=controller.state;if(!s.threadId)continue;
+   const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
+   uncertain||=disconnected;
+   for(const worker of s.workers??[]){
+    if(worker.kind==='command'||worker.settled===true||['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
+    if(worker.status==='running'){if(!disconnected)running++;}
+    else if(!['starting','pending'].includes(worker.status))uncertain=true;
+   }
+  }
+  return {running,uncertain};
+ };
  const target=data=>{
   if(closing)throw Error('K 正在關閉。');
   const controller=typeof data?.threadId==='string'?rooms.get(data.threadId):null;
@@ -76,7 +91,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity)};},
+  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity()};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),
   async usage(refresh=false){sharedUsage=await catalog.usage(refresh);onChange();return api.state.usage;},

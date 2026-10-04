@@ -177,7 +177,7 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
      </div>}
      {geminiLoginPending&&<div className="gemini-login-pending" role="status"><strong>正在新增 Gemini 帳號</strong><span>請本人在官方 Antigravity 登入程式完成 Google 登入；完成後先關閉官方視窗，再按「登入完成，保存帳號」。取消前也請先關閉官方視窗；K 不會強制關閉。若已有原帳號，取消會恢復原帳號；若原本未登入，取消不會撤銷你在官方程式完成的登入，該登入仍未加入 K。</span><div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('finish')}>登入完成，保存帳號</button><button type="button" disabled={geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('cancel')}>取消新增</button></div></div>}
      {geminiAccountRows.length>0&&<div className="provider-auth-actions">{!geminiLoginPending&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('login')}>新增 Gemini 帳號</button>}<button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh')}>刷新目前帳號額度</button></div>}
-     {geminiBusy&&!geminiUncertain&&<small role="status">Gemini 正在工作，請等目前工作結束後再切換或登入其他帳號。</small>}
+     {geminiBusy&&!geminiUncertain&&<small role="status">{geminiAccounts?.checking?'正在查詢 Gemini 額度，查詢結束後即可切換帳號。':'Gemini 正在工作或確認帳號，請等目前操作結束後再切換或登入其他帳號。'}</small>}
      {!geminiAccountsEnabled&&<small role="status">此版本尚未開放帳號保存、登入或切換；不會更動目前登入。</small>}
      {geminiAccounts?.reason&&<small>{geminiAccounts.reason}</small>}
     </>}

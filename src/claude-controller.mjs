@@ -262,10 +262,16 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     if(message?.type==='system'&&message?.subtype==='init') {
       state.nativeCapabilities=nativeCapabilitiesFrom(message);
       state.efforts=[...state.nativeCapabilities.efforts];
+    } else if(message?.type==='system'&&message?.subtype==='task_started'&&message.task_type==='local_agent') {
+      if(!message.isReplay&&!stopping&&!closing&&!['interrupted','offline','uncertain'].includes(state.status)){
+        let worker=state.workers.find(w=>w.provider==='claude-native'&&w.requestId===message.tool_use_id);
+        if(!worker){worker={provider:'claude-native',requestId:message.tool_use_id,task:message.description??'Claude Code 原生子代理',status:'running',settled:false,createdAt:new Date().toISOString()};state.workers.push(worker);}
+        worker.nativeTaskId=message.task_id;
+      }
     } else if(message?.type==='system'&&message?.subtype==='task_started'&&message.task_type==='local_bash') {
       // Native background commands outlive the main response. Use the existing
       // work list so workspace moves and idle-room release cannot close them.
-      if(!state.workers.some(w=>w.provider==='claude-native'&&w.nativeTaskId===message.task_id))state.workers.push({provider:'claude-native',requestId:message.tool_use_id,nativeTaskId:message.task_id,task:message.description??'Claude Code 背景命令',status:'running',settled:false,createdAt:new Date().toISOString()});
+      if(!state.workers.some(w=>w.provider==='claude-native'&&w.nativeTaskId===message.task_id))state.workers.push({provider:'claude-native',kind:'command',requestId:message.tool_use_id,nativeTaskId:message.task_id,task:message.description??'Claude Code 背景命令',status:'running',settled:false,createdAt:new Date().toISOString()});
     } else if(message?.type==='system'&&message?.subtype==='task_notification') {
       const worker=state.workers.find(w=>w.provider==='claude-native'&&w.nativeTaskId===message.task_id);
       if(worker&&['completed','failed','stopped'].includes(message.status))Object.assign(worker,{status:message.status,settled:true,output:message.summary??'',endedAt:new Date().toISOString()});
@@ -304,7 +310,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         // in tool_use_result (SDK spelling) or toolUseResult (CLI internal-key
         // spelling). Only a single matching Agent result with explicit
         // status=completed is authoritative; generic result text stays unknown.
-        if(/^(Agent|Task)$/i.test(tool.name??'')){const worker=state.workers.find(item=>item.provider==='claude-native'&&item.requestId===block.tool_use_id);if(worker){worker.status=block.is_error?'failed':completedAgentToolUseId===block.tool_use_id?'completed':'unresolved';if(worker.status==='completed'){worker.settled=true;worker.endedAt=new Date().toISOString();}}}
+        if(/^(Agent|Task)$/i.test(tool.name??'')){const worker=state.workers.find(item=>item.provider==='claude-native'&&item.requestId===block.tool_use_id);if(worker&&!worker.settled){worker.status=block.is_error?'failed':completedAgentToolUseId===block.tool_use_id?'completed':worker.nativeTaskId&&nativeAgentOutput?.status==='async_launched'?'running':'unresolved';if(worker.status==='completed'){worker.settled=true;worker.endedAt=new Date().toISOString();}}}
         if(!block.is_error&&/^(Write|Edit|NotebookEdit|MultiEdit)$/i.test(tool.name??'')){
           const candidate=tool.details?.file_path??tool.details?.path??tool.details?.notebook_path;
           if(typeof candidate==='string'){const absolute=path.resolve(state.workspace,candidate);if(inside(state.workspace,absolute))state.artifacts=[...new Set([...state.artifacts,path.relative(state.workspace,absolute).replaceAll('\\','/')])];}

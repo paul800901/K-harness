@@ -54,11 +54,20 @@ try{
  for(const notice of engineeringNotices)assert.equal(await page.getByText(notice.message,{exact:true}).count(),0,notice.kind);
  await page.screenshot({path:path.join(output,'engineering-notices-hidden.png'),fullPage:true});
 
+ const handoffs=[1,2].map(id=>({id:`handoff-${id}`,kind:'worker-completion',level:'info',message:'Flash 子代理結果已交給 Codex 主代理驗收。'}));
+ await page.evaluate(s=>window.testState(s),{...state,threadId:'worker-handoffs',provider:'codex',error:null,notices:handoffs});
+ assert.equal(await page.locator('.native-notices > *').count(),0);
+ assert.equal(await page.locator('.native-notices').boundingBox(),null);
+ assert.equal(await page.getByRole('button',{name:'關閉此通知'}).count(),0);
+ assert.equal(await page.getByText(handoffs[0].message,{exact:true}).count(),0);
+ await page.screenshot({path:path.join(output,'worker-handoffs-hidden.png'),fullPage:true});
+
  const retainedNotices=[
   {id:'unknown-warning',kind:'warning',level:'warning',message:'Important native warning'},
   {id:'guardian-warning',kind:'guardianWarning',level:'warning',message:'Guardian policy warning'},
   {id:'rerouted',kind:'modelRerouted',level:'warning',message:'Model rerouted for this turn'},
   {id:'native-error',kind:'nativeError',level:'error',message:'Native operation failed'},
+  {id:'worker-error',kind:'worker-completion',level:'error',message:'Worker handoff failed'},
  ];
  await page.evaluate(s=>window.testState(s),{...state,threadId:'retained-notices',provider:'codex',error:null,notices:retainedNotices});
  for(const notice of retainedNotices)await page.getByText(notice.message,{exact:true}).waitFor();

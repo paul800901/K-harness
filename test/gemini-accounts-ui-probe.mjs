@@ -11,10 +11,10 @@ const server=await preview({preview:{host:'127.0.0.1',port:5194,strictPort:true}
 const state={threadId:null,workspace:process.cwd(),status:'idle',busy:false,messages:[],tools:[],questions:[],artifacts:[],accessMode:'workspace-write',provider:'codex',capabilities:{},conversationActivity:[],usage:{codex:{status:'ready',windows:[{key:'seven_day',minutes:10080,remainingPercent:81}]},claude:{status:'ready',windows:[{key:'five_hour',remainingPercent:73}]},gemini:{accountId:'acct-b',accountEmail:'b@example.test',status:'ready',checkedAt:'2026-10-03T10:00:00Z',windows:[{key:'seven_day',minutes:10080,remainingPercent:43,resetsAt:1791555046},{key:'five_hour',minutes:300,remainingPercent:62,resetsAt:1791020000}],accounts:[]}}};
 const quota=(weekly,hourly,status='ready',checkedAt='2026-10-03T10:00:00Z')=>({status,checkedAt,windows:[{key:'seven_day',label:'每週',remainingPercent:weekly,resetsAt:1791555046},{key:'five_hour',label:'5 小時',remainingPercent:hourly,resetsAt:1791020000}]});
 const account=(id,email,authStatus,remaining,status='ready')=>({id,email,auth:{status:authStatus,checkedAt:'2026-10-03T10:00:00Z'},quota:quota(remaining,remaining-5,status)});
-let enabled=false,busy=false,uncertain=false,loginPending=false,activeAccountId=null,accounts=[],legacyLoggedIn=true,unknownAccountId=null,modelsReads=0,failFinish=false,loginHadPrevious=false,loginPreviousAccountId=null,officialLoginDuringPending=false;
+let enabled=false,busy=false,checking=false,uncertain=false,loginPending=false,activeAccountId=null,accounts=[],legacyLoggedIn=true,unknownAccountId=null,modelsReads=0,failFinish=false,loginHadPrevious=false,loginPreviousAccountId=null,officialLoginDuringPending=false;
 let browser,authInspectPending=false;
 const requests=[],errors=[];
-const snapshot=()=>({enabled,activeAccountId,busy:busy||uncertain||authInspectPending,uncertain,loginPending,accounts:accounts.map(row=>({...structuredClone(row),...(row.id===unknownAccountId?{auth:{status:'unknown',checkedAt:row.auth?.checkedAt}}:{})})),...((enabled&&!uncertain)?{}:{reason:uncertain?'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。':'目前為預覽版本，尚未開放帳號登入與切換。'})});
+const snapshot=()=>({enabled,activeAccountId,busy:busy||uncertain||authInspectPending,checking,uncertain,loginPending,accounts:accounts.map(row=>({...structuredClone(row),...(row.id===unknownAccountId?{auth:{status:'unknown',checkedAt:row.auth?.checkedAt}}:{})})),...((enabled&&!uncertain)?{}:{reason:uncertain?'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。':'目前為預覽版本，尚未開放帳號登入與切換。'})});
 const usageAccounts=()=>accounts.map(row=>({...structuredClone(row),quota:row.id==='acct-b'?quota(43,38,'stale','2026-10-02T08:00:00Z'):row.quota}));
 const refreshUiState=()=>{
  state.usage.gemini={accountId:activeAccountId,accountEmail:accounts.find(row=>row.id===activeAccountId)?.email??null,status:accounts.find(row=>row.id===activeAccountId)?.quota?.status??'unavailable',checkedAt:accounts.find(row=>row.id===activeAccountId)?.quota?.checkedAt??null,windows:accounts.find(row=>row.id===activeAccountId)?.quota?.windows??[],accounts:usageAccounts()};
@@ -110,14 +110,16 @@ try{
  await unknownCard.getByText('b@example.test').waitFor();assert.match(await unknownCard.innerText(),/尚未確認/u);assert.equal(await unknownCard.getByRole('button',{name:'切換使用',exact:true}).isEnabled(),true);
  await unknownCard.getByRole('button',{name:'切換使用',exact:true}).click();await page.waitForFunction(()=>document.querySelector('[data-account-id="acct-b"]')?.textContent.includes('目前使用 · 尚未確認'));
  unknownAccountId=null;await page.getByRole('dialog',{name:'設定',exact:true}).getByRole('button',{name:'完成',exact:true}).click();await page.addInitScript(initial=>{window.EventSource=class{constructor(){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'snapshot',state:initial})}),0);}close(){}};},state);await page.reload();await page.getByRole('button',{name:'設定',exact:true}).click();
- busy=true;await settings.getByRole('button',{name:'完成',exact:true}).click();await page.reload();
+ busy=true;checking=true;await settings.getByRole('button',{name:'完成',exact:true}).click();await page.reload();
  await page.getByRole('button',{name:'設定',exact:true}).click();
  const busySettings=page.getByRole('dialog',{name:'設定',exact:true}),busyCard=busySettings.locator('[data-account-id="acct-a"]');
  await busyCard.getByText('a@example.test').waitFor();
  assert.equal(await busyCard.getByRole('button',{name:'切換使用',exact:true}).isDisabled(),true);
+ assert.match(await busySettings.innerText(),/正在查詢 Gemini 額度/u);
+ assert.doesNotMatch(await busySettings.innerText(),/Gemini 正在工作/u);
  assert.equal(await busySettings.getByRole('button',{name:'新增 Gemini 帳號',exact:true}).isDisabled(),true);
  assert.equal(await busySettings.getByRole('button',{name:'刷新目前帳號額度',exact:true}).isDisabled(),true);
- busy=false;await page.waitForFunction(()=>{const button=Array.from(document.querySelectorAll('.gemini-account-row button')).find(item=>item.textContent==='新增 Gemini 帳號');return button&&!button.disabled;});
+ busy=false;checking=false;await page.waitForFunction(()=>{const button=Array.from(document.querySelectorAll('.gemini-account-row button')).find(item=>item.textContent==='新增 Gemini 帳號');return button&&!button.disabled;});
  await busySettings.getByRole('button',{name:'完成',exact:true}).click();await page.reload();await page.getByRole('button',{name:'設定',exact:true}).click();
  uncertain=true;await settings.getByRole('button',{name:'完成',exact:true}).click();await page.addInitScript(initial=>{window.EventSource=class{constructor(){setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'snapshot',state:initial})}),0);}close(){}};},state);await page.reload();await page.getByRole('button',{name:'設定',exact:true}).click();
  const uncertainSettings=page.getByRole('dialog',{name:'設定',exact:true}),uncertainCard=uncertainSettings.locator('[data-account-id="acct-a"]');

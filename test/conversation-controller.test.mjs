@@ -43,6 +43,42 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
 }
 const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date.now()>end)throw Error('condition timed out');await new Promise(r=>setTimeout(r,20));}};
 
+test('global worker count follows live rooms, not the selection, history, or background commands',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+  const a=await c.open({model:codexModel}),source=f.room(a.threadId);
+  source.state.workers=[{provider:'codex',status:'running'},{provider:'gemini',status:'running'},
+   ...['starting','pending','completed','failed','cancelled','stopped','interrupted'].map(status=>({status})),
+   {status:'running',settled:true},{kind:'command',status:'running'}];source.notify();
+  const b=await c.open({model:claudeModel}),other=f.room(b.threadId);
+  other.state.workers=[{provider:'claude-native',status:'running'}];other.notify();
+  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false});
+  assert.equal(c.state.workers.length,1,'Selected-room details stay separate');
+  await c.selectWorkspace({path:f.root});assert.equal(c.state.threadId,null);
+  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false});
+  source.state.workers[0].status='completed';source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:2,uncertain:false});
+  other.state.workers[0].status='failed';other.notify();
+  source.state.workers[1].status='cancelled';source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+  assert.equal(source.calls.some(([name])=>name==='workers'),false,'Projection does not add polling');
+ }finally{await c.close();}
+});
+
+test('unknown workers and disconnected hidden owners do not advertise a trustworthy zero or stale running count',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const a=await c.open({model:codexModel}),source=f.room(a.threadId);
+  source.state.workers=[{status:'running'},{status:'unresolved'}];
+  await c.open({model:claudeModel});
+  assert.deepEqual(c.state.workerActivity,{running:1,uncertain:true});
+  source.state.workers[1]={status:'unavailable'};source.notify();assert.equal(c.state.workerActivity.uncertain,true);
+  source.state.workers[1]={status:'completed',settled:true};source.state.status='offline';source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:true});
+  source.state.status='ready';source.state.workers[0].status='completed';source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+ }finally{await c.close();}
+});
+
 test('shared Gemini account quota stays visible while a GPT conversation is selected',async()=>{
  const f=await fixture();try{
   await f.controller.usage();const quota={status:'ready',windows:[{key:'seven_day',remainingPercent:97}]};f.native.find(c=>c.state.provider==='gemini').state.usage={gemini:quota};

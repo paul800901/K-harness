@@ -50,8 +50,10 @@ export function createGeminiLogin({cwd,env=process.env,executable,run=geminiProc
     const windows=geminiQuotaWindows(report.stdout);
     const confirmed=report.code===0&&!report.reason&&!report.cleanupError&&windows.length>0;
     if(confirmed)return {...base,auth:{status:'authenticated',loggedIn:true,checkedAt},quota:{status:'ready',checkedAt,windows},reason:'已登入 Antigravity 訂閱，官方帳號查詢成功。'};
-    const signedOut=/authentication required|not (?:logged|signed) in|unauthenticated|login required|please (?:log|sign) in/iu.test(`${report.stdout}\n${report.stderr}`);
-    return {...base,auth:{status:signedOut?'signed-out':'unknown',...(signedOut?{loggedIn:false}:{}),checkedAt},reason:signedOut?'尚未登入 Gemini，請完成官方登入。':'無法確認登入狀態，請稍後刷新或開啟官方程式確認。'};
+    const diagnostic=`${report.stdout}\n${report.stderr}`;
+    const temporaryFailure=!report.cleanupError&&(report.reason==='timeout'||/\bcode 503\b|\b503 Service Unavailable\b|\bnetwork timeout\b/iu.test(diagnostic));
+    const signedOut=!temporaryFailure&&!report.reason&&!report.cleanupError&&/authentication required|not (?:logged|signed) in|unauthenticated|login required|please (?:log|sign) in/iu.test(diagnostic);
+    return {...base,temporaryFailure,auth:{status:signedOut?'signed-out':'unknown',...(signedOut?{loggedIn:false}:{}),checkedAt},reason:temporaryFailure?'Google 額度查詢暫時失敗或逾時；這不代表帳號已登出。':signedOut?'尚未登入 Gemini，請完成官方登入。':'無法確認 Gemini 狀態，請稍後刷新；尚無證據需要重新登入。'};
    }catch(error){return {installed,available:false,models:[],...(/未登入/u.test(error.message)?{auth:{status:'signed-out',loggedIn:false}}:{}),reason:error.message};}
   },
   async start(){

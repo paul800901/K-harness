@@ -23,8 +23,48 @@ async function fixture({readiness='ready'}={}){
   return {};
  }};
  const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{connections.push(options);return host;}});
- return {c,calls,connections,root};
+ return {c,calls,connections,root,host};
 }
+
+test('native worker start and child completion refresh the count while the parent remains busy',async()=>{
+ const f=await fixture(),original=f.host.request;let childStatus='inProgress';
+ f.host.request=async(method,p,...rest)=>method==='thread/read'&&p.threadId==='child'
+  ?{thread:{id:'child',parentThreadId:'native-events-thread',status:{type:childStatus==='inProgress'?'active':'idle'},turns:[{id:'child-turn',status:childStatus}]}}
+  :original(method,p,...rest);
+ const settle=()=>new Promise(r=>setTimeout(r,20));
+ try{
+  await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  emit({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'parent-turn'}}});
+  emit({method:'item/completed',params:{threadId:'native-events-thread',item:{id:'spawn-child',type:'collabAgentToolCall',receiverThreadIds:['child']}}});
+  await settle();assert.equal(f.c.state.workers[0].status,'running');
+  childStatus='completed';emit({method:'turn/completed',params:{threadId:'child',turn:{id:'child-turn',status:'completed'}}});
+  await settle();assert.equal(f.c.state.workers[0].status,'completed');assert.equal(f.c.state.busy,true);
+  childStatus='inProgress';emit({method:'turn/started',params:{threadId:'child',turn:{id:'child-turn'}}});
+  await settle();assert.equal(f.c.state.workers[0].status,'running');
+  childStatus='failed';emit({method:'thread/status/changed',params:{threadId:'child',status:{type:'idle'}}});
+  await settle();assert.equal(f.c.state.workers[0].status,'failed');
+  const reads=f.calls.length;emit({method:'turn/started',params:{threadId:'foreign',turn:{id:'foreign-turn'}}});
+  await settle();assert.equal(f.calls.length,reads,'No reads of unrelated conversations');
+ }finally{await f.c.close();}
+});
+
+test('a slow worker read cannot resurrect a worker after a newer completed read',async()=>{
+ const f=await fixture(),original=f.host.request;let slow,started=false;
+ const child=status=>({thread:{id:'child',parentThreadId:'native-events-thread',status:{type:status==='inProgress'?'active':'idle'},turns:[{id:'child-turn',status}]}});
+ f.host.request=async(method,p,...rest)=>{
+  if(method==='thread/read'&&p.threadId==='child'){
+   if(!started){started=true;return new Promise(resolve=>{slow=resolve;});}
+   return child('completed');
+  }return original(method,p,...rest);
+ };
+ try{
+  await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  emit({method:'item/completed',params:{threadId:'native-events-thread',item:{id:'spawn-child',type:'collabAgentToolCall',receiverThreadIds:['child']}}});
+  await f.c.workers();assert.equal(f.c.state.workers[0].status,'completed');
+  slow(child('inProgress'));await new Promise(r=>setTimeout(r,20));
+  assert.equal(f.c.state.workers[0].status,'completed');
+ }finally{await f.c.close();}
+});
 
 test('native notifications are normalized, thread-scoped, and never change the selected model on reroute',async()=>{
  const f=await fixture();
