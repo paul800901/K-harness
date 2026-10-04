@@ -129,7 +129,17 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
      if(unboundHistory)throw Error('此舊 Gemini 對話沒有帳號綁定，請以新對話交接；未跨帳號讀取原生歷史。');
      if(!chosen&&!accountId)throw Error('目前 Antigravity 登入未加入 K，請先保存目前登入或選擇已加入帳號。');
      let target=accountId??chosen.id;
-     if(worker&&!accountId&&exhausted(chosen))target=data.accounts.find(row=>row.id!==chosen.id&&row.auth?.status!=='signed-out'&&!exhausted(row))?.id??target;
+     if(worker&&!accountId){
+      // Refresh before selecting: either official quota window may require a
+      // handoff, but an old/failed lookup must not rotate subscription logins.
+      if(!running&&(chosen.auth?.status!=='authenticated'||queryAge(chosen)>=60000))await query(chosen);
+      if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
+      if(chosen.quota?.status==='ready'&&exhausted(chosen)){
+       const index=data.accounts.findIndex(row=>row.id===chosen.id);
+       const next=[...data.accounts.slice(index+1),...data.accounts.slice(0,index)];
+       target=next.find(row=>row.auth?.status!=='signed-out'&&!exhausted(row))?.id??target;
+      }
+     }
      if(target!==chosen?.id){
       const targetRow=find(target);
       if(!targetRow)throw Error('Gemini 帳號選擇無效，未開始工作。');

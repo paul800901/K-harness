@@ -26,6 +26,10 @@ test('user model roles reach Codex instructions without changing manual defaults
  assert.match(MODEL_ROLE_GUIDANCE,/角色不代表已有跨供應商派工能力/);
  assert.match(MODEL_ROLE_GUIDANCE,/已保存的手動模型／推理設定優先/);
  assert.match(MODEL_ROLE_GUIDANCE,/不增加工具、資料、登入、部署或發布授權/);
+ assert.match(MODEL_ROLE_GUIDANCE,/持續使用目前帳號，不平均分散、不每項工作輪換/);
+ assert.match(MODEL_ROLE_GUIDANCE,/5 小時或每週額度已耗盡時，依已保存帳號順序/);
+ assert.match(MODEL_ROLE_GUIDANCE,/5 小時用完即可換，不必等週額度耗盡/);
+ assert.match(MODEL_ROLE_GUIDANCE,/不同帳號不並行/);
 });
 
 test('new worker policy defaults to AI auto while saved explicit preferences remain intact',()=>{

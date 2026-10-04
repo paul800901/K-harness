@@ -127,6 +127,10 @@ test('Codex Flash gateway exposes only Gemini tools and forwards account handoff
   const call=async(id,name,args)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}}));
   const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:1,method:'tools/list'}));
   assert.deepEqual(listed.result.tools.map(t=>t.name).sort(),['gemini_accounts','gemini_cancel','gemini_inspect','gemini_start','gemini_wait']);
+  const accountGuidance=listed.result.tools.find(t=>t.name==='gemini_accounts').description;
+  assert.match(accountGuidance,/five-hour or weekly quota is confirmed exhausted/);
+  assert.match(accountGuidance,/Five-hour exhaustion permits a handoff without waiting/);
+  assert.match(accountGuidance,/next available account in saved order/);
   const info=await call(2,'gemini_accounts',{});assert.match(info.result.content[0].text,/fake@example.test/);
   const args={requestId:'remaining',task:'only remaining',effort:'low',accountId:'b'.repeat(32),handoffFrom:'previous'};
   const result=await call(3,'gemini_start',args);assert.equal(result.result.structuredContent.accountId,args.accountId);

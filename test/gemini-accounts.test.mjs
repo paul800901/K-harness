@@ -134,12 +134,14 @@ test('ordinary activation of a captured account preserves the current identity',
  assert.deepEqual(f.calls.activateOptions.at(-1),{id:A,preserveCurrent:true});
 });
 
-test('exhausted current account auto-selects another worker account exactly once without replay',async()=>{
- const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?0:65,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
- await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
- await f.accounts.activate({accountId:A});f.calls.activate.length=0;
- let invoked=0;const result=await f.accounts.run({worker:true},async()=>{invoked++;return {settled:true,answer:'one result'};});
- assert.equal(invoked,1);assert.equal(result.answer,'one result');assert.equal(result.accountId,B);assert.deepEqual(f.calls.activate,[B]);
+test('either official quota window can select another worker account exactly once without replay',async t=>{
+ for(const exhaustedKey of ['five_hour','seven_day'])await t.test(exhaustedKey,async()=>{
+  const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'ready',windows:['five_hour','seven_day'].map(key=>({key,remainingPercent:current.accountId===A&&key===exhaustedKey?0:65,resetsAt:future})),checkedAt:'2026-10-03T11:59:30.000Z'})});
+  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
+  await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+  let invoked=0;const result=await f.accounts.run({worker:true},async()=>{invoked++;return {settled:true,answer:'one result'};});
+  assert.equal(invoked,1);assert.equal(result.answer,'one result');assert.equal(result.accountId,B);assert.deepEqual(f.calls.activate,[B]);
+ });
 });
 
 test('an explicit exhausted account never falls back to another account',async()=>{
@@ -148,6 +150,51 @@ test('an explicit exhausted account never falls back to another account',async()
  await f.accounts.activate({accountId:A});f.calls.activate.length=0;
  let invoked=0;await assert.rejects(f.accounts.run({accountId:A,worker:true},async()=>{invoked++;}),/額度已用完/u);
  assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('worker stays on one account and never rotates for unknown or failed quota reports',async t=>{
+ for(const scenario of ['remaining','unknown','timeout'])await t.test(scenario,async()=>{
+  let failed=false;
+  const f=await fixture({identity:{accountId:A,email},statusFor:current=>{
+   if(failed&&current.accountId===A)return {temporaryFailure:true,auth:{status:'unknown'},reason:'network timeout'};
+   if(current.accountId===A&&scenario==='unknown')return authStatus({status:'unavailable',windows:[]});
+   return authStatus({status:'ready',checkedAt:'2026-10-03T11:59:30.000Z',windows:current.accountId!==A
+    ?[{key:'seven_day',remainingPercent:100,resetsAt:future}]
+    :[{key:'five_hour',remainingPercent:scenario==='remaining'?20:0,resetsAt:future}]});
+  }});
+  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();
+  await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+  if(scenario==='timeout'){failed=true;await f.accounts.refresh();}
+  if(scenario!=='timeout'){
+   for(let i=0;i<2;i++){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();}
+  }else await assert.rejects(f.accounts.acquire({worker:true}),/額度已用完/u);
+  assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).busy,false);
+ });
+});
+
+test('quota handoff follows saved order, not the first account or the largest quota',async()=>{
+ const f=await fixture({identity:{accountId:A,email},statusFor:current=>authStatus({status:'ready',windows:[{key:'seven_day',remainingPercent:current.accountId===B?0:current.accountId===A?100:40,resetsAt:future}]})});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:C,email};await f.accounts.capture();
+ await f.accounts.activate({accountId:B});f.calls.activate.length=0;
+ const first=await f.accounts.acquire({worker:true});assert.equal(first.accountId,C);await first.release();
+ const second=await f.accounts.acquire({worker:true});assert.equal(second.accountId,C);await second.release();
+ assert.deepEqual(f.calls.activate,[C]);
+});
+
+test('new official exhaustion is checked before selecting a worker account',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),remaining=50;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',windows:[{key:'seven_day',remainingPercent:current.accountId===A?remaining:80,resetsAt:future}]})});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+ remaining=0;now+=61000;
+ const first=await f.accounts.acquire({worker:true});assert.equal(first.accountId,B);await first.release();assert.deepEqual(f.calls.activate,[B]);
+ assert.equal((await f.accounts.list()).busy,false);
+});
+
+test('an expired weekly zero is not a reason to change the account',async()=>{
+ const now=Date.parse('2026-10-03T12:00:00Z');
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000-1}]})});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+ const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);
 });
 
 test('direct add from an empty registry preserves the existing native account before opening login',async()=>{
