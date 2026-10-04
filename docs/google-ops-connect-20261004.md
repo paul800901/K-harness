@@ -41,7 +41,7 @@
 - 最終來源 Node 完整測試 **674/674**，0 失敗、0 跳過（前次 670／672／673 是中途版本，非最終數字）。
 - Python adapter 測試 6/6：固定 URL、資源識別、分頁、授權過期、服務未開通／拒絕／額度／網路錯誤與秘密不回傳。
 - 真 Gemini 3.8 Flash low 工人與 Gemini 主代理各完成帳號→據點→評論→貼文→評論第二頁，共 **10 次真 MCP 成功**，零工具錯誤，未寫業務檔、換帳號或切計費。驗證的是原生 `call_mcp_tool` 的 DONE，不只讀到工具定義。原生自行讀取 MCP 定義與原生結果檔是工具使用流程，不是讀取其他業務檔案。
-- 真 Opus 最後收尾已完成；乾淨 Git 候選建置、正式部署與新版 push 尚待以下收尾紀錄；不要將候選驗證當成正式版已更新。
+- 真 Opus 最後收尾已完成；最終 Git `4a97b97` 乾淨封裝重新建置並完整測試 **674/674** 通過；Python adapter **6/6**。本輪沒有安裝套件或升級原生核心。
 - GPT／Claude 目前取得設定層測試，尚未宣稱兩者各自真模型呼叫已驗收。
 - Search Console、GA4、YouTube、Google Ads 與商家寫入尚未在本批加入；不是「有 OAuth 就全部接好」。
 
@@ -52,6 +52,25 @@
 接線位置在 K 私有 state root 的 `.runtime/google-ops.json`，僅 `directory` 欄位指向本台既有 AdsControl。東區若日後使用，須在當地確認 client、Python 與本人授權，不能從 Git 取得南區登入。選配工具缺檔時不掛載，不另裝套件或改全域設定。
 
 程式退版不撤銷 Google Cloud 已啟用的服務，也不還原對話；本批不自動停用 Google 服務。
+
+## 南區正式部署
+
+- 2026-10-04 10:26（臺灣）套用 `4a97b97a325bef141fb9fbc06fc16fefbc4543a5`。套用前程序讀回為空、正式 47831 未開啟，沒有強制結束或重送工作。
+- 新版 457 個 Git 檔案逐一核對，前版 `b8bd031` 程式、啟動器與設定保留在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791080802072`；語音、Node 路徑及 Codex 設定不變。程式退版不還原對話。
+- 在正式私有 state 建立只有路徑的 `google-ops.json`，以正式 runtime 模組／正式綁定再查四項 API，**4/4 成功**：帳號 1、據點 3、評論首批 50（有下一頁）、貼文 4。無關 K 工程工作區確認不掛載；AdsControl `.env` 不變。
+- 最後版 `.native` 路徑解析再做父層／junction 假資料測試，4 次拒寫通過，證據 `guard-parent-1791080708366/result.json`。正式兩個目錄的 ShortPath 都等於完整路徑，未見另一套 8.3 短名；沒有更改檔案系統設定。
+- 正式 state／新版 runtime 用隱藏 Electron 讀回：畫面載入、健康狀態、3 項實際供應資產雜湊、子代理排序、三家額度排列、四帳號／目前帳號與三更新按鈕均通過；未授權 API 仍 403，全程沒有送出工作或帳號異動 POST。這是實際正式資料讀回，不是示意 UI；沒有新增人用控制項。
+- 前後 **183 個既有受保護檔案一致**（對話、供應商程式、設定、瀏覽器設定），四個帳號及目前帳號不變。語音設定、登入與計費不動。
+- 使用者正在看診，因此未彈出一般 K 視窗、不搶前景；隱藏驗收結束後，讀回 K 程序與 47831 監聽皆為 0。**程式已更新，下次照常開 K 即使用新版**；本批沒有另做一般桌面入口開窗實測。
+- `4a97b97` 已推私人 `origin/main`，遠端讀回完整 SHA 相同；後續文件收尾不需重部署。未移動版本 tag，東區沒有更新。Git 只有程式與文件，不含本機商家綁定、憑證、帳號清單、評論內容或測試原始回應。
+
+部署證據保留在 `D:\K-harness\.runtime\google-ops-deploy-20261004`：`pre-activate-processes.json`、`activation.json`、`formal-mcp-readback.json`、`live-ui-readback.json`、`protection-after.json`、`post-readback-stop.json`、`code-push-readback.json` 與乾淨封裝 `full-tests.log`。工程 checkout 的其他預存改動未納入（`browser-extension/extension-protocol.cjs` 保持原狀）。
+
+## 異動檔案
+
+- 新增 `src/google-ops-mcp.mjs`、`src/google-ops-reader.py`；最小接線改動限 `src/claude-controller.mjs`、`src/desktop-controller.mjs`、`src/gemini-controller.mjs`、`src/gemini-worker.mjs`。
+- 驗證：新增 `test/google-ops.test.mjs`、`test/google_ops_reader_test.py`，追加 `test/claude-controller.test.mjs`、`test/desktop.test.mjs`。
+- 文件：`AGENTS.md`、`README.md`、本紀錄、`docs/google-ops-audit-20261004.md` 的歷史連結及 `docs/development-log.md` 索引。AdsControl 的程式、`.env`、DB 都沒有修改。
 
 ## 官方介面依據
 
