@@ -100,3 +100,9 @@ Windows 10 實機、真正登入及新電腦麥克風仍待當地驗收。工程
 本入口已套用南區正式 K，其他電腦的版本／驗證界線見[黑窗與手動更新紀錄](console-flash-investigation-20261004.md)。在設定中按「更新 Claude Code／Codex／Antigravity」才查詢官方正式版本；有新版才下載到 K 專用目錄。準備完成後，先完成工作，再「離開並停止 K」並重新開啟。只關視窗不會換核心。
 
 平常不自動查新版或更新，不影響目前工作、不改登入或計費。舊核心保留，可請 AI 協助退回。上述 `Update-K.ps1 -Rollback` 只退 K 程式；核心另以 `trusted-providers/selected-cores.json` 的上一版位置還原，不還原對話。
+
+## Gemini 核心的本機位置
+
+Gemini 的官方 `agy.exe` 應由 AI 驗證簽署／版本後，放入該台 K 自有的 `trusted-providers` 程式目錄，沿用既有 `selected-cores.json` 指向它；不複製登入資料，也不將執行檔或本機選用紀錄上 GitHub。這份副本是必要核心，不可當暫存清理；缺少已選定核心會阻止 K 啟動。已選用的核心在一般 K 程式更新時保持不變，後續按「更新 Antigravity」仍使用既有官方更新流程。
+
+不能只因 Codex 工具可執行 `%LOCALAPPDATA%\agy\bin\agy.exe` 就判定日常 K 能用：封裝 App 可能把該路徑重新導向自己的私有資料區。驗收必須包含一般桌面啟動的 K，確認 Gemini 額度、更新檢查及聊天室均可使用。若遇 ENOENT，先核對失敗程序看到的實體位置，不要求使用者重新登入、不新增自動搜尋備援。實際案例與最小修正見 [agy 再次失聯根因](agy-recurrence-settings-20261004.md)。東區使用自己的官方安裝及登入，不搬南區帳號。
