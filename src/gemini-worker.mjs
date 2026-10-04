@@ -3,6 +3,8 @@ import {promisify} from 'node:util';
 import {createHash, randomUUID} from 'node:crypto';
 import {StringDecoder} from 'node:string_decoder';
 import path from 'node:path';
+import {realpathSync} from 'node:fs';
+import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {GEMINI_WORKER_MODELS, GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 
@@ -20,7 +22,7 @@ export function geminiProfile(workspace, accessMode) {
   if(process.platform==='win32')canonical=canonical.toLowerCase();
   return createHash('sha256').update(`${accessMode}\n${canonical}`).digest('hex').slice(0,16);
 }
-export function geminiSettings(workspace, accessMode, tempDirs=[], browserServer=null) {
+export function geminiSettings(workspace, accessMode, tempDirs=[], browserServer=null, googleOpsServer=null) {
   geminiProfile(workspace,accessMode);
   const deny=['command(*)','unsandboxed(*)','mcp(*)'],root=path.resolve(workspace);
   // agy 1.0.6 live, workspace outside %TEMP%: the default mode asks (headless: denies)
@@ -35,15 +37,24 @@ export function geminiSettings(workspace, accessMode, tempDirs=[], browserServer
     deny:accessMode==='read-only'?['write_file(*)',...deny]:accessMode==='danger-full-access'?['mcp(*)']:[...deny,...temps.map(dir=>`write_file(${dir})`)],
     ask:[],
   }};
-  if(browserServer){
+  if(browserServer||googleOpsServer){
     // Native deny takes precedence over allow. Only the configured K owner
     // endpoint is preapproved; other MCP tools retain native Ask/denial.
     settings.permissions.deny=settings.permissions.deny.filter(rule=>rule!=='mcp(*)');
-    settings.permissions.allow.push('mcp(k_browser/*)');
+    if(browserServer)settings.permissions.allow.push('mcp(k_browser/*)');
+    if(googleOpsServer){
+      settings.permissions.allow.push('mcp(k_google_ops/*)');
+      if(accessMode!=='danger-full-access'){
+        const ops=googleOpsServer.args[2];
+        // agy compares lexical paths: a selected junction also needs its alias.
+        const roots=new Set([ops,path.join(root,path.relative(realpathSync(root),ops))]);
+        for(const base of roots)for(const folder of ['google_ops_worker','.venv'])settings.permissions.deny.push(`write_file(${path.join(base,folder)})`);
+      }
+    }
   }
   return settings;
 }
-export const geminiMcpConfig=server=>({mcpServers:server?{k_browser:{serverUrl:server.url,headers:server.http_headers??server.headers}}:{}});
+export const geminiMcpConfig=(server,googleOpsServer=null)=>({mcpServers:{...(server?{k_browser:{serverUrl:server.url,headers:server.http_headers??server.headers}}:{}),...(googleOpsServer?{k_google_ops:googleOpsServer}:{})}});
 export function geminiEnvironment(source, home) {
   // A whitelist also excludes all provider keys, K homes, MCP, hooks and Node
   // injection variables. Never read/copy credentials or inherit provider config.
@@ -184,8 +195,9 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   let catalog;
   async function prepare(targetHome=home,browserServer=null) {
     if(!binary)throw Error('找不到 agy，請安裝 Antigravity CLI 並登入（LOCALAPPDATA 未設定）。');
-    await atomicWrite(path.join(targetHome,'.gemini','antigravity-cli','settings.json'),JSON.stringify(geminiSettings(workspace,accessMode,temps,browserServer),null,2));
-    await atomicWrite(path.join(targetHome,'.gemini','config','mcp_config.json'),JSON.stringify(geminiMcpConfig(browserServer),null,2));
+    const googleOps=await googleOpsMcp(workspace,{root});
+    await atomicWrite(path.join(targetHome,'.gemini','antigravity-cli','settings.json'),JSON.stringify(geminiSettings(workspace,accessMode,temps,browserServer,googleOps),null,2));
+    await atomicWrite(path.join(targetHome,'.gemini','config','mcp_config.json'),JSON.stringify(geminiMcpConfig(browserServer,googleOps),null,2));
   }
   async function models() {
     if(!catalog)catalog=(async()=>{

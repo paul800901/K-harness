@@ -1,3 +1,4 @@
+import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
 import {saveMainSession,listMainSessions} from './main-sessions.mjs';
@@ -565,7 +566,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
      const geminiServer=workerGateway?.mcpConfig?.mcpServers?.k_gemini;
      if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('Flash MCP gateway 未提供有效的專案限定連線設定。');
-     const mcpServers=withBrowserMcp({k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
+     const googleOps=await googleOpsMcp(workspace,{root});
+     const mcpServers=withBrowserMcp({...(googleOps?{k_google_ops:googleOps}:{}),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
      const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions,config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;

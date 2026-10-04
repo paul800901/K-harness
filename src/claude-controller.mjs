@@ -1,5 +1,6 @@
 import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {randomUUID} from 'node:crypto';
 import {openClaudeHost, claudeQuota, claudeModelsFrom, CLAUDE_MODEL, CLAUDE_ACCESS_MODES, normalizeClaudeAccessMode, claudePermissionMode, nativeCapabilitiesFrom} from './claude-host.mjs';
@@ -374,7 +375,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
 
   async function nativeMcpConfig(conversationId,accessMode=state.accessMode) {
     const browserServer=toClaudeBrowserMcpServer(await browserConfig({appRoot:root,conversationId,accessMode,provider:'claude'}));
-    return browserServer?{...gateway.mcpConfig,mcpServers:withBrowserMcp(gateway.mcpConfig?.mcpServers,browserServer)}:gateway.mcpConfig;
+    const googleOps=await googleOpsMcp(state.workspace,{root});
+    return {...gateway.mcpConfig,mcpServers:withBrowserMcp({...gateway.mcpConfig?.mcpServers,...(googleOps?{k_google_ops:{type:'stdio',...googleOps}}:{})},browserServer)};
   }
 
   let openAbort,openDone,finishOpen;

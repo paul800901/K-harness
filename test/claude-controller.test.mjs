@@ -872,3 +872,17 @@ test('Claude lazy gateway exposes the same read-only Gemini account list without
   assert.equal(f.bridge.records,undefined);assert.equal(f.controller.state.workers.length,0);
  }finally{await f.controller.close();}
 });
+
+
+test('Claude receives read-only Google Ops MCP without replacing worker gateway or native mode',async()=>{
+ const f=await fixture();
+ try{
+  await mkdir(path.join(f.root,'google_ops_worker'),{recursive:true});await mkdir(path.join(f.root,'.venv/Scripts'),{recursive:true});
+  await writeFile(path.join(f.root,'google_ops_worker/google_ops_client.py'),'# fixture');await writeFile(path.join(f.root,'.venv/Scripts/python.exe'),'fixture');
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});await writeFile(path.join(f.root,'.runtime/google-ops.json'),JSON.stringify({directory:f.root}));
+  await f.controller.open({});
+  const config=f.hostOptions.mcpConfig.mcpServers;
+  assert.equal(config.k_google_ops.type,'stdio');assert.ok(config.k_google_ops.args.includes(f.root));assert.deepEqual(config.k_luna,f.gateway.mcpConfig.mcpServers.k_luna);
+  assert.equal(f.hostOptions.accessMode,f.controller.state.accessMode);
+ }finally{await f.controller.close();}
+});

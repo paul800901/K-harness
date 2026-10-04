@@ -552,3 +552,17 @@ test('Codex persists and restores the selected worker model/effort in native age
   assert.equal(resume.config.agents.default_subagent_model,policy.model);assert.equal(resume.config.agents.default_subagent_reasoning_effort,policy.effort);
  }finally{await f.c.close();}
 });
+
+
+test('Codex receives Google Ops connector without replacing Flash MCP or native permissions',async()=>{
+ const f=await fixture();
+ try{
+  await mkdir(path.join(f.root,'google_ops_worker'),{recursive:true});await mkdir(path.join(f.root,'.venv/Scripts'),{recursive:true});
+  await writeFile(path.join(f.root,'google_ops_worker/google_ops_client.py'),'# fixture');await writeFile(path.join(f.root,'.venv/Scripts/python.exe'),'fixture');
+  await mkdir(path.join(f.root,'.runtime'),{recursive:true});await writeFile(path.join(f.root,'.runtime/google-ops.json'),JSON.stringify({directory:f.root}));
+  await f.c.open({model:'gpt-6-astra',accessMode:'read-only'});
+  const call=f.calls.find(c=>c.method==='thread/start').p;
+  assert.ok(call.config.mcp_servers.k_google_ops.args.includes(f.root));assert.ok(call.config.mcp_servers.k_gemini.url);
+  assert.equal(call.sandbox,'read-only');
+ }finally{await f.c.close();}
+});

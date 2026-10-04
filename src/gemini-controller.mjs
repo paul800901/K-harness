@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
+import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
 import {geminiExecutable,geminiEnvironment,geminiSettings,geminiMcpConfig,geminiStream,geminiProcess,geminiOutcome,killGeminiTree,GEMINI_BROWSER_GUIDANCE} from './gemini-worker.mjs';
@@ -67,8 +68,9 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    browserMode=state.accessMode;
   }
   const temps=Object.entries(env).filter(([key])=>/^(TEMP|TMP)$/iu.test(key)).map(([,value])=>value);
-  const settings=geminiSettings(state.workspace,state.accessMode,temps,browserServer);
-  await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify(geminiMcpConfig(browserServer),null,2));
+  const googleOps=await googleOpsMcp(state.workspace,{root});
+  const settings=geminiSettings(state.workspace,state.accessMode,temps,browserServer,googleOps);
+  await atomicWrite(path.join(home(),'.gemini/config/mcp_config.json'),JSON.stringify(geminiMcpConfig(browserServer,googleOps),null,2));
   await atomicWrite(path.join(home(),'.gemini/antigravity-cli/settings.json'),JSON.stringify(settings,null,2));
   await atomicWrite(path.join(home(),'.gemini/config/rules/k-model-roles.md'),`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${browserServer?`${GEMINI_BROWSER_GUIDANCE}\n`:''}`);
   state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};
