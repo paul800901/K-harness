@@ -4,7 +4,7 @@
 
 **先選已驗收的 Git 版本，再安裝或更新，不直接追最新版分支。** `origin/main` 用來取得已發布的來源；實際 `-Ref` 指定工程紀錄中的完整 commit SHA，或已核對對應 SHA 的版本標記。AI 先查 [最新工程索引](development-log.md)，區分正式程式版本與後續純文件版本，再執行。
 
-截至 2026-10-04 本次定案，南區已驗收程式為 `4a97b97a325bef141fb9fbc06fc16fefbc4543a5`，見 [Google 商家接入紀錄](google-ops-connect-20261004.md)；這是當時的基準，不是永遠固定使用此版。東區尚未更新。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動。
+截至 2026-10-04 20:02，南區已驗收程式為 **`k-gemini-media-20261004`**，遠端標記對應 `4b8029624549175f1df3c12422aafe1bf9407e34`，見 [Gemini 多模態與部署紀錄](gemini-capabilities-20261004.md)；這是目前基準，不是永遠固定使用此版。東區尚未更新。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動。
 
 ## K 開發與發布 SOP
 
