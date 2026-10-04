@@ -89,3 +89,16 @@ test('Gemini protects both canonical Google client and selected junction paths',
  const settings=geminiSettings(alias,'workspace-write',[],null,server);
  for(const base of [project,path.join(alias,'AdsControl')])for(const folder of ['google_ops_worker','.venv'])assert.ok(settings.permissions.deny.includes(`write_file(${path.join(base,folder)})`));
 });
+
+test('moving Gemini out of and back to a bound workspace removes and restores Google MCP and permission',async()=>{
+ const root=await workspace(),project=await workspace(),other=await workspace();await install(project);await bind(root,project);
+ const c=createGeminiController({root,geminiExecutable:path.resolve('fake-agy.exe'),loginFactory:()=>({status:async()=>({available:true,models:['gemini-3.8-flash-low']})})});
+ try{
+  await c.selectWorkspace({path:project});const {threadId}=await c.open({model:'gemini-3.8-flash',accessMode:'read-only'}),home=path.join(root,'agent-home/gemini/main',threadId,'.gemini');
+  await c.open({threadId,model:'gemini-3.8-flash'},{relocation:{workspace:other,previousWorkspaces:[project],previousArtifacts:[]}});
+  assert.deepEqual(JSON.parse(await readFile(path.join(home,'config/mcp_config.json'),'utf8')).mcpServers,{});
+  assert.ok(!JSON.parse(await readFile(path.join(home,'antigravity-cli/settings.json'),'utf8')).permissions.allow.includes('mcp(k_google_ops/*)'));
+  await c.open({threadId,model:'gemini-3.8-flash'},{relocation:{workspace:project,previousWorkspaces:[project,other],previousArtifacts:[]}});
+  assert.deepEqual(Object.keys(JSON.parse(await readFile(path.join(home,'config/mcp_config.json'),'utf8')).mcpServers),['k_google_ops']);assert.equal(c.state.threadId,threadId);
+ }finally{await c.close();}
+});

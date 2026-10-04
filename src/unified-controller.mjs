@@ -11,6 +11,8 @@ import {permissionMode} from './desktop-permissions.mjs';
 import {groupConversationMessages} from '../shared/conversation-groups.mjs';
 import {writeConversationHandoff} from './conversation-handoff.mjs';
 import {deleteArchived as deleteArchivedRecords} from './archive-delete.mjs';
+import {validateWorkspace} from './workspaces.mjs';
+import {movedWorkspace} from './session-workspace.mjs';
 import {assertNativeActionAvailable,normalizeFileSearchQuery,normalizeNativeFileSearchResults,validateNativeReviewRequest} from './native-actions.mjs';
 
 export function createUnifiedController(options){
@@ -107,6 +109,22 @@ export function createUnifiedController(options){
    }finally{changing=false;}
   },
   async selectModel(data){if(modelProvider(data.model)!==api.state.provider)throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');return active.selectModel(data);},
+  async moveWorkspace({threadId,workspace}){
+   if(changing||queue.sending||queue.state.queuedMessages.length||active.state.busy||active.state.questions?.length)throw Error('請先結束目前工作、核准與待送訊息，再移動聊天室。');
+   if(threadId!==active.state.threadId||!['ready','completed','interrupted','failed'].includes(active.state.status))throw Error('請先正常開啟這個聊天室，再移動工作區。');
+   changing=true;
+   try{
+    const next=await validateWorkspace(workspace);
+    const saved=(await listMainSessions(root,{threadId})).sessions[0];
+    if(!saved)throw Error('找不到聊天室紀錄。');
+    if(next.toLowerCase()===saved.workspace.toLowerCase())return {threadId,workspace:next};
+    const result=await active.workers(),workers=Array.isArray(result)?result:result?.workers??[];
+    if(workers.some(w=>w.settled===false||['running','starting','pending','unresolved'].includes(w.status)))throw Error('子代理尚未結束，不能移動聊天室。');
+    const relocation=movedWorkspace(saved,active.state.artifacts??[],next);
+    await active.open({threadId,model:saved.model},{relocation});
+    onChange();return {threadId,workspace:active.state.workspace};
+   }finally{changing=false;changed();}
+  },
   async fork({messageId,model,effort,accessMode,permissionConfirmed,nextInstruction=''}={}){
     if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw Error('請先結束目前工作與核准。');
     if(['uncertain','error','offline'].includes(active.state.status))throw Error('原對話狀態尚未確認，請先重開查明後再分支。');
@@ -161,7 +179,7 @@ export function createUnifiedController(options){
   async close(){await queue.close();await Promise.all([codex.close(),claude?.close(),gemini?.close()]);},
  };
  for(const name of ['workers','directories','upload','attachmentFile','artifact','steer','goal','compact','answer'])api[name]=(...args)=>{
-  if(changing&&['send','selectWorkspace','answer'].includes(name))throw new Error('正在切換對話，請稍候。');
+  if(changing&&['upload','steer','goal','compact','answer'].includes(name))throw new Error('正在切換對話，請稍候。');
   return active[name](...args);
  };
  api.send=async data=>{if(changing)throw Error('正在切換對話。');if(active.state.busy||queue.state.queuedMessages.length)return queue.enqueue(data);return active.send(data);};

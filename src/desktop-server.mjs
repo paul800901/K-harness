@@ -188,7 +188,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     return json(200,project);
    }
    if(url.pathname==='/api/projects/metadata')return json(200,await updateProject(root,data,(await controller.sessions()).sessions));
-   const routes={'/api/fork':'fork','/api/queue':'queue','/api/open':'open','/api/send':'send','/api/steer':'steer','/api/goal':'goal','/api/compact':'compact','/api/stop':'stop','/api/answer':'answer','/api/workers':'workers','/api/upload':'upload','/api/metadata':'metadata','/api/archives/delete':'deleteArchived','/api/workspace':'selectWorkspace','/api/model':'selectModel','/api/native/review':'review','/api/native/files/search':'fuzzyFileSearch'};
+   const routes={'/api/fork':'fork','/api/queue':'queue','/api/open':'open','/api/send':'send','/api/steer':'steer','/api/goal':'goal','/api/compact':'compact','/api/stop':'stop','/api/answer':'answer','/api/workers':'workers','/api/upload':'upload','/api/metadata':'metadata','/api/archives/delete':'deleteArchived','/api/workspace':'selectWorkspace','/api/workspace/move':'moveWorkspace','/api/model':'selectModel','/api/native/review':'review','/api/native/files/search':'fuzzyFileSearch'};
    if(routes[url.pathname])return json(200,await controller[routes[url.pathname]](...(!controller.concurrentConversations&&['/api/workers','/api/stop','/api/compact'].includes(url.pathname)?[]:[data])));
    if(url.pathname==='/api/shutdown'){await closeResources();json(200,{closed:true});setTimeout(()=>{void closeServer().catch(()=>{});},100);return;}
    json(404,{error:'Not found'});

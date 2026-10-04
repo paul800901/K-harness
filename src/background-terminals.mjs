@@ -1,6 +1,6 @@
 import {setTimeout as delay} from 'node:timers/promises';
 
-async function listTerminals(host,threadId){
+export async function listTerminals(host,threadId){
  const result=[],seen=new Set();let cursor;
  do{
   const page=await host.request('thread/backgroundTerminals/list',{threadId,limit:100,...cursor?{cursor}:{}});

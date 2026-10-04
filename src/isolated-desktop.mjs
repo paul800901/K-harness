@@ -53,6 +53,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
       const canonical=await validateRegisteredWorkspace(data?.path);
       return change({path:canonical});
     };
+    if(controller.moveWorkspace){const move=controller.moveWorkspace.bind(controller);controller.moveWorkspace=async data=>move({...data,workspace:await validateRegisteredWorkspace(data?.workspace)});}
     return controller;
   }
   const controllerFactory=options=>restrictWorkspace(createConversationController({...options,browserRequest:browsers.request,

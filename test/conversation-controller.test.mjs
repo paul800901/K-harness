@@ -20,7 +20,7 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
    async models(){return {models:[{model:codexModel,supportedReasoningEfforts:[{reasoningEffort:'high'}]}]};},
    async usage(){return state.usage;},
    async selectWorkspace({path}){calls.push(['workspace',path]);assert.equal(state.busy,false);state.workspace=path;return {workspace:path};},
-   async open(data){await beforeOpen(data);calls.push(['open',data]);if(data.threadId==='will-fail')throw Error('fixture connection failure');assert.equal(state.busy,false);const threadId=data.threadId??`${provider}-${++seq}`;Object.assign(state,saved.get(threadId)??{messages:[],title:''},{model:data.model,threadId,status:'ready',busy:false,questions:[]});await persist();notify();return {threadId};},
+   async open(data,{relocation}={}){await beforeOpen(data,relocation);calls.push(['open',data]);if(data.threadId==='will-fail')throw Error('fixture connection failure');assert.equal(state.busy,false);const threadId=data.threadId??`${provider}-${++seq}`;Object.assign(state,saved.get(threadId)??{messages:[],title:''},{model:data.model,threadId,status:'ready',busy:false,questions:[]},relocation??{});await persist();notify();return {threadId};},
    async send(data){calls.push(['send',data]);assert.equal(state.busy,false);state.busy=true;state.status='working';state.messages.push({id:`user-${seq}-${state.messages.length}`,role:'user',text:data.text});await persist();notify();return {sent:true};},
    async finish(text='finished'){state.messages.push({id:`assistant-${seq}-${state.messages.length}`,role:'assistant',text});state.busy=false;state.status='completed';await persist();notify();},
    async stop(){calls.push(['stop']);state.busy=false;state.status='interrupted';state.questions=[];notify();return {stopped:true};},
@@ -214,4 +214,54 @@ test('HTTP desktop routes preserve thread context for stop, approvals, files and
   const artifact=await fetch(`${app.origin}/api/artifact?path=result.txt&threadId=${a.threadId}`,{headers:{cookie}});assert.equal((await artifact.json()).text,a.threadId);
   const state=await fetch(`${app.origin}/api/state`,{headers:{cookie}}).then(r=>r.json());assert.equal(state.conversationActivity.length,2);
  }finally{await app.close();}
+});
+
+for(const model of [codexModel,claudeModel,'gemini-3.8-flash'])test(`${model} moves the same conversation while another room keeps working`,async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const destination=path.join(f.root,'destination');await mkdir(destination);
+  const a=await c.open({model});await c.send({...a,text:'keep this context'});await f.room(a.threadId).finish('remembered');
+  const b=await c.open({model:codexModel});await c.send({...b,text:'still working'});const other=f.room(b.threadId),closes=other.closed;
+  await c.moveWorkspace({...a,workspace:destination});assert.equal(c.state.threadId,a.threadId);assert.equal(c.state.workspace,destination);assert.deepEqual(c.state.messages.map(m=>m.text),['keep this context','remembered']);
+  assert.equal(other.state.busy,true);assert.equal(other.closed,closes);assert.equal((await listMainSessions(f.root,{threadId:a.threadId})).sessions[0].workspace,destination);
+  await c.moveWorkspace({...a,workspace:f.root});assert.equal(c.state.workspace,f.root);assert.equal(c.state.threadId,a.threadId);
+ }finally{await c.close();}
+});
+test('workspace movement refuses running work, pending approvals, queue and native browser handoff without closing them',async()=>{
+ let browser={available:true,mode:'ai',busy:false};const f=await fixture({browserRequest:async()=>browser}),c=f.controller;
+ try{
+  const dest=path.join(f.root,'destination');await mkdir(dest);const a=await c.open({model:codexModel}),room=f.room(a.threadId),closes=room.closed;
+  await c.send({...a,text:'busy'});await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/工作/);assert.equal(room.closed,closes);await room.finish();
+  await c.send({...a,text:'next work'});await c.send({...a,text:'queued work'});await c.stop(a);await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/工作/);assert.equal(c.state.queuedMessages.length,1);await c.queue({...a,id:c.state.queuedMessages[0].id,action:'remove'});
+  room.state.questions=[{id:'pending'}];await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/工作/);room.state.questions=[];
+  room.state.workers=[{status:'running',settled:false}];await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/工作/);room.state.workers=[];
+  room.state.browserAccess={enabled:true};browser.mode='human';await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/接手/);browser.mode='ai';
+  assert.equal(room.state.workspace,f.root);assert.equal(room.closed,closes);
+  await assert.rejects(c.moveWorkspace({...a,workspace:path.join(dest,'missing')}),/./);assert.equal(room.state.workspace,f.root);
+ }finally{await c.close();}
+});
+
+test('failed native relocation does not change saved ownership or replay messages',async()=>{
+ let fail=false;const f=await fixture({beforeOpen:async(data,relocation)=>{if(fail&&relocation)throw Error('native resume unavailable');}}),c=f.controller;
+ try{const dest=path.join(f.root,'dest');await mkdir(dest);const a=await c.open({model:codexModel});await c.send({...a,text:'remember'});await f.room(a.threadId).finish();fail=true;
+  await assert.rejects(c.moveWorkspace({...a,workspace:dest}),/resume unavailable/);const saved=(await listMainSessions(f.root,{threadId:a.threadId})).sessions[0];assert.equal(saved.workspace,f.root);assert.equal(f.room(a.threadId).calls.filter(([name])=>name==='send').length,1);
+ }finally{await c.close();}
+});
+
+test('failed but settled conversation can move without retrying its failed turn',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const dest=path.join(f.root,'dest');await mkdir(dest);const a=await c.open({model:'gemini-3.8-flash'}),room=f.room(a.threadId);room.state.status='failed';room.notify();
+  await c.moveWorkspace({...a,workspace:dest});assert.equal(c.state.workspace,dest);assert.equal(room.calls.some(([name])=>name==='send'),false);
+ }finally{await c.close();}
+});
+
+test('a real external browser gateway before first use does not block workspace movement',async()=>{
+ const {createExternalBrowserGateway}=await import('../src/external-browser-gateway.mjs');
+ let gateway;const f=await fixture({browserRequest:async()=>await (await gateway.humanRequest('/state')).json()}),c=f.controller;
+ try{
+  const profile=path.join(f.root,'profile'),directory=path.join(f.root,'out'),dest=path.join(f.root,'B');for(const p of [profile,directory,dest])await mkdir(p);
+  gateway=await createExternalBrowserGateway({profile,directory,childFactory:async()=>{throw Error('unused browser must not start');}});
+  const room=await c.open({model:codexModel});f.room(room.threadId).state.browserAccess={enabled:true};
+  const browser=await (await gateway.humanRequest('/state')).json();assert.equal(browser.available,false);assert.equal(browser.browserMode,null);
+  await c.moveWorkspace({...room,workspace:dest});assert.equal(c.state.workspace,dest);
+ }finally{await c.close();await gateway?.close();}
 });

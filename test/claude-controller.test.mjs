@@ -886,3 +886,43 @@ test('Claude receives read-only Google Ops MCP without replacing worker gateway 
   assert.equal(f.hostOptions.accessMode,f.controller.state.accessMode);
  }finally{await f.controller.close();}
 });
+
+test('Claude relocation keeps native identity and old attachments and artifacts without copying files',async()=>{
+ const f=await fixture();try{
+  const c=f.controller,{threadId}=await c.open({});const native=f.hostOptions.sessionId;
+  const upload=await c.upload({threadId,name:'before.txt',base64:Buffer.from('old upload').toString('base64')});
+  const dest=path.join(f.root,'destination');await mkdir(dest);
+  await c.open({threadId},{relocation:{workspace:dest,previousWorkspaces:[f.root],previousArtifacts:[path.join(f.root,'result.txt')]}});
+  assert.equal(f.hostOptions.sessionId,native);assert.equal(f.hostOptions.cwd,dest);assert.match(f.hostOptions.workspaceInstructions,/目前工作區/);
+  assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');assert.equal((await c.artifact(path.join(f.root,'result.txt'))).bytes.toString(),'fixture write target');
+  await assert.rejects(c.artifact(path.join(f.root,'README.md')),/只開啟/);
+  await c.close();await c.open({threadId});assert.equal(c.state.workspace,dest);assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');
+ }finally{await f.controller.close();}
+});
+
+test('forking moved Claude conversation retains original artifact roots after reopen',async()=>{
+ const f=await fixture();try{
+  const c=f.controller,{threadId}=await c.open({});await c.send({text:'original'});
+  f.hostOptions.onMessage({type:'assistant',uuid:'move-answer',message:{content:[{type:'text',text:'done'}]}});f.hostOptions.onMessage({type:'result',is_error:false});
+  const dest=path.join(f.root,'destination');await mkdir(dest);const artifact=path.join(f.root,'result.txt');
+  await c.open({threadId},{relocation:{workspace:dest,previousWorkspaces:[f.root],previousArtifacts:[artifact]}});
+  const fork=await c.fork({messageId:'move-answer',accessMode:'claude-manual'});
+  assert.equal((await c.artifact(artifact)).bytes.toString(),'fixture write target');await c.close();await c.open({threadId:fork.threadId});assert.equal((await c.artifact(artifact)).bytes.toString(),'fixture write target');
+ }finally{await f.controller.close();}
+});
+
+test('native background Bash remains unsettled after the main reply until its own completion',async()=>{
+ const f=await fixture();
+ try{
+  await f.controller.open({});const emit=f.hostOptions.onMessage;
+  emit({type:'system',subtype:'task_started',task_type:'local_bash',task_id:'bg-one',tool_use_id:'tool-one',description:'synthetic sleep'});
+  emit({type:'result',is_error:false});
+  assert.equal(f.controller.state.busy,false);assert.equal((await f.controller.workers())[0].settled,false);
+  emit({type:'system',subtype:'task_notification',task_id:'unrelated',status:'completed'});
+  assert.equal((await f.controller.workers())[0].settled,false);
+  emit({type:'system',subtype:'task_notification',task_id:'bg-one',status:'completed',summary:'exit 0'});
+  assert.equal((await f.controller.workers())[0].settled,true);
+  emit({type:'system',subtype:'status',status:'requesting'});assert.equal(f.controller.state.busy,true);
+  emit({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
+ }finally{await f.controller.close();}
+});

@@ -139,3 +139,37 @@ test('Gemini absence does not remove GPT/Claude models or route a Gemini request
  const c=createUnifiedController({root:f.root,codexFactory:()=>peer('codex'),claudeFactory:()=>peer('claude'),geminiFactory:options=>createGeminiController({...options,loginFactory:()=>({status:async()=>({available:false,models:[],reason:'找不到 agy，請安裝 Antigravity CLI 並登入。'})})})});
  try{const catalog=await c.models();assert.deepEqual(catalog.models.map(m=>m.provider),['codex','claude']);assert.match(catalog.warnings[0],/找不到 agy/);await assert.rejects(c.open({model:'gemini-3.8-flash'}),/找不到 agy/);assert.equal(c.state.provider,'codex');assert.deepEqual(calls,[]);}finally{await c.close();}
 });
+
+test('Gemini relocation keeps native identity and old attachments, and rebuilds workspace rules',async()=>{
+ const f=await fixture();try{
+  const c=f.controller,{threadId}=await c.open({model:'gemini-3.8-flash',effort:'low'});
+  const upload=await c.upload({threadId,name:'before.txt',base64:Buffer.from('old upload').toString('base64')});
+  await c.send({text:'remember'});await finish(c);
+  const file=path.join(f.root,'.runtime/gemini-sessions',threadId+'.json'),before=JSON.parse(await readFile(file,'utf8'));
+  const destination=path.join(f.root,'destination');await mkdir(destination);
+  await c.open({threadId,model:'gemini-3.8-flash'},{relocation:{workspace:destination,previousWorkspaces:[f.root],previousArtifacts:[]}});
+  assert.equal(c.state.threadId,threadId);assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');
+  const rules=await readFile(path.join(f.root,'agent-home/gemini/main',threadId,'.gemini/config/rules/k-model-roles.md'),'utf8');assert.ok(rules.includes(JSON.stringify(destination)));
+  await c.send({text:'continue',attachmentIds:[upload.id]});await finish(c);
+  const last=f.calls.at(-1);assert.equal(last.params.cwd,destination);assert.equal(last.args[last.args.indexOf('--conversation')+1],before.nativeSessionId);
+  const after=JSON.parse(await readFile(file,'utf8'));assert.equal(after.nativeSessionId,before.nativeSessionId);assert.equal(after.accountId,before.accountId);assert.equal(after.messages.length,4);
+  await c.close();await c.open({threadId,model:'gemini-3.8-flash'});assert.equal(c.state.workspace,destination);assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');
+ }finally{await f.controller.close();}
+});
+
+test('failed Gemini workspace preparation cannot send at the uncommitted destination',async()=>{
+ let fail=false;const f=await fixture({browserConfig:async()=>{if(fail)throw Error('fixture browser configuration failed');return null;}}),c=f.controller;
+ try{
+  const {threadId}=await c.open({model:'gemini-3.8-flash'}),dest=path.join(f.root,'B');await mkdir(dest);
+  fail=true;await assert.rejects(c.open({threadId,model:'gemini-3.8-flash'},{relocation:{workspace:dest,previousWorkspaces:[f.root],previousArtifacts:[]}}),/fixture browser/);
+  assert.equal(c.state.status,'error');await assert.rejects(c.send({text:'do not run at B'}),/先開啟/);assert.equal(f.calls.length,0);
+  await c.metadata({threadId,title:'renamed after failed move',pinned:true});
+  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/main-sessions',threadId+'-current.json'),'utf8'));
+  assert.equal(saved.workspace,f.root);assert.deepEqual(saved.previousWorkspaces,[]);assert.deepEqual(saved.previousArtifacts,[]);
+  assert.equal(c.state.workspace,f.root);assert.deepEqual(c.state.artifacts,[]);
+  await c.selectModel({threadId,model:'gemini-3.8-flash',effort:'low'});
+  const upload=await c.upload({threadId,name:'after-failed-move.txt',base64:Buffer.from('still A').toString('base64')});
+  assert.equal((await readFile(path.join(f.root,upload.path),'utf8')),'still A');
+  fail=false;await c.open({threadId,model:'gemini-3.8-flash'});assert.equal(c.state.workspace,f.root);
+ }finally{await c.close();}
+});

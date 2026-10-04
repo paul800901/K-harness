@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import {mkdir,mkdtemp,writeFile,readFile} from 'node:fs/promises';
+import {movedWorkspace,sessionAttachment,sessionArtifact} from '../src/session-workspace.mjs';
+import {saveAttachment} from '../src/desktop-files.mjs';
+import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+test('moving retains exact original artifacts and draft attachments; no other-chat attachment or path escape',async()=>{
+ const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'workspace-resources-')),a=path.join(root,'A'),b=path.join(root,'B');for(const p of [a,b])await mkdir(p);
+ await writeFile(path.join(a,'result.txt'),'original A');await writeFile(path.join(b,'result.txt'),'different B');
+ const upload=await saveAttachment(a,'chat-a',{name:'draft.txt',base64:Buffer.from('draft before move').toString('base64')});
+ const moved=movedWorkspace({workspace:a},['result.txt'],b);assert.deepEqual(moved.previousArtifacts,[path.join(a,'result.txt')]);
+ assert.equal((await sessionArtifact(b,moved.previousWorkspaces,moved.previousArtifacts[0])).bytes.toString(),'original A');assert.equal((await sessionArtifact(b,moved.previousWorkspaces,'result.txt')).bytes.toString(),'different B');
+ const attachment=await sessionAttachment(b,moved.previousWorkspaces,'chat-a',upload.id);assert.equal(attachment.workspace,a);assert.equal(await readFile(path.join(a,attachment.path),'utf8'),'draft before move');
+ await assert.rejects(sessionAttachment(b,moved.previousWorkspaces,'chat-b',upload.id));await assert.rejects(sessionAttachment(b,moved.previousWorkspaces,'chat-a','../result'));
+ await assert.rejects(sessionArtifact(b,moved.previousWorkspaces,path.join(root,'outside.txt')));await assert.rejects(sessionArtifact(b,moved.previousWorkspaces,'../A/result.txt'));
+ const back=movedWorkspace(moved,moved.previousArtifacts,a);assert.equal(back.previousArtifacts.length,1);
+ await saveMainSession(root,{threadId:'chat-a',model:'gpt-6-astra',...moved});await saveMainSession(root,{threadId:'chat-a',model:'gpt-6-astra',workspace:b,title:'renamed'});
+ const saved=(await listMainSessions(root,{threadId:'chat-a'})).sessions[0];assert.deepEqual(saved.previousArtifacts,moved.previousArtifacts);assert.deepEqual(saved.previousWorkspaces,[a]);
+});

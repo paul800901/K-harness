@@ -16,7 +16,7 @@ const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'
 const history=text=>({turns:[{items:[{type:'userMessage',id:`u-${text}`,content:[{type:'text',text:`要求 ${text}`}]},{type:'agentMessage',id:`a-${text}`,text:`回答 ${text}`}]}]});
 const flush=()=>new Promise(resolve=>setImmediate(resolve));
 
-async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[],beforeRequest,geminiReady=true,controllerOptions={}}={}){
+async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'read-only'},{threadId:'thread-b',title:'B',accessMode:'workspace-write'}],turnListUnsupportedFor=[],archivedResumeFor=[],beforeRequest,backgroundTerminals=()=>[],geminiReady=true,controllerOptions={}}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-switch-'));
  const workspaceB=path.join(root,'workspace-b');await mkdir(workspaceB);
@@ -57,7 +57,7 @@ async function fixture({sessions=[{threadId:'thread-a',title:'A',accessMode:'rea
      const id=`thread-new-${++newThread}`;unsupportedTurnReads.add(id);emptySummaries.add(id);
      return {thread:{id}};
     }
-    if(method==='thread/backgroundTerminals/list')return {data:[],nextCursor:null};
+    if(method==='thread/backgroundTerminals/list')return {data:backgroundTerminals(),nextCursor:null};
     if(method==='mcpServer/tool/call')return {structuredContent:{status:'completed',outputFiles:[]}};
     if(method==='turn/start'){
      const turn={id:`turn-${p.threadId}`};
@@ -131,7 +131,7 @@ test('normal GPT conversations wait for only the Flash gateway and keep native A
   assert.deepEqual(f.activeHost.waiters.map(waiter=>waiter.name),['k_gemini']);
   const resume=f.activeHost.calls.find(call=>call.method==='thread/resume').p;
   const disabled={enabled:false,command:process.execPath,args:['--version']};
-  assert.deepEqual(resume.config.mcp_servers,{k_flash:disabled,k_gemini:{url:'http://127.0.0.1:43123/mcp',http_headers:{Authorization:'Bearer fixture'}},k_browser:disabled});
+  assert.deepEqual(resume.config.mcp_servers,{k_google_ops:disabled,k_flash:disabled,k_gemini:{url:'http://127.0.0.1:43123/mcp',http_headers:{Authorization:'Bearer fixture'}},k_browser:disabled});
   assert.deepEqual(resume.config.agents,{enabled:true});
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
   await f.c.send({text:'直接工作，不啟動 Flash'});
@@ -283,4 +283,29 @@ for(const replaceHost of [true,false])test(`cancelled Codex reconnect becomes of
   await f.c.send({text:'new explicit request'});
   assert.equal(f.allCalls.filter(call=>call.method==='turn/start').length,1);
  }finally{release();await f.c.close();}
+});
+
+test('Codex relocation resumes same native thread at new cwd with fresh MCP configuration',async()=>{
+ const f=await fixture();try{
+  await f.openSaved('thread-a');const old=f.activeHost;
+  await f.c.open({model:MODEL,threadId:'thread-a'},{relocation:{workspace:f.workspaceB,previousWorkspaces:[f.root],previousArtifacts:[]}});
+  assert.equal(f.c.state.threadId,'thread-a');assert.equal(f.c.state.workspace,f.workspaceB);assert.equal(old.closeCount,1);
+  const resume=f.activeHost.calls.find(c=>c.method==='thread/resume');assert.equal(resume.p.cwd,f.workspaceB);assert.equal(resume.p.threadId,'thread-a');assert.match(resume.p.developerInstructions,/目前工作區/);assert.equal(resume.p.config.mcp_servers.k_google_ops.enabled,false);
+  assert.equal(f.allCalls.filter(c=>c.method==='turn/start').length,0);
+ }finally{await f.c.close();}
+});
+test('Codex unsaved empty thread cannot be moved by destroying its only native host',async()=>{
+ const f=await fixture({sessions:[]});try{
+  const {threadId}=await f.c.open({model:MODEL}),old=f.activeHost;
+  await assert.rejects(f.c.open({model:MODEL,threadId},{relocation:{workspace:f.workspaceB,previousWorkspaces:[f.root],previousArtifacts:[]}}),/空白/);
+  assert.equal(old.closeCount,0);assert.equal(f.c.state.threadId,threadId);assert.equal(f.c.state.workspace,f.root);
+ }finally{await f.c.close();}
+});
+
+test('Codex relocation refuses active background terminals without cleaning or closing them',async()=>{
+ let terminals=[];const f=await fixture({backgroundTerminals:()=>terminals});try{
+  await f.openSaved('thread-a');const old=f.activeHost;terminals=[{id:'bg-1'}];
+  await assert.rejects(f.c.open({model:MODEL,threadId:'thread-a'},{relocation:{workspace:f.workspaceB,previousWorkspaces:[f.root],previousArtifacts:[]}}),/背景命令/);
+  assert.equal(old.closeCount,0);assert.equal(f.allCalls.some(c=>c.method==='thread/backgroundTerminals/clean'),false);assert.equal(f.c.state.workspace,f.root);
+ }finally{terminals=[];await f.c.close();}
 });

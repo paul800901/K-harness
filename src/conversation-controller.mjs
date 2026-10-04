@@ -31,11 +31,12 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const workerRows=async controller=>{
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
- const safelyIdle=async controller=>{
+ const safelyIdle=async (controller,allowFailed=false)=>{
+  const idleStatuses=allowFailed?['ready','completed','interrupted','failed']:['ready','completed','interrupted'];
   const s=controller.state;
   if(!s.threadId||s.busy||s.questions?.length||s.queuedMessages?.length||
-     !['ready','completed','interrupted'].includes(s.status)||s.workerConnection==='failed'||
-     ['offline','error','uncertain','connecting','working','failed'].includes(s.status))return false;
+     !idleStatuses.includes(s.status)||s.workerConnection==='failed'||
+     ['offline','error','uncertain','connecting','working'].includes(s.status))return false;
   // A saved K session is required so closing the live controller cannot lose
   // the only handle to a newly-created, not-yet-recoverable conversation.
   if(!(await listMainSessions(root)).sessions.some(row=>row.threadId===s.threadId))return false;
@@ -43,13 +44,15 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   if(workers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||
     (row.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(row.status))))return false;
   if(s.browserAccess?.enabled){
-   // Unknown/unavailable browser state is not proof that human handoff ended.
+   // A registered external gateway with no selected mode has never started a
+   // browser. Do not confuse that idle state with lost/unavailable control.
    const browser=await browserRequest(root,s,s.threadId,'/state');
-   if(browser?.mode!=='ai'||browser?.busy!==false||browser?.available!==true||browser?.recoveryRequired===true)return false;
+   const notStarted=browser?.external===true&&browser.browserMode===null;
+   if(browser?.mode!=='ai'||browser?.busy!==false||(!notStarted&&browser?.available!==true)||browser?.recoveryRequired===true)return false;
   }
   const finalWorkers=await workerRows(controller),latest=controller.state;
   return !latest.busy&&!latest.questions?.length&&!latest.queuedMessages?.length&&
-   ['ready','completed','interrupted'].includes(latest.status)&&latest.workerConnection!=='failed'&&
+   idleStatuses.includes(latest.status)&&latest.workerConnection!=='failed'&&
    !finalWorkers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||
     (row.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(row.status)));
  };
@@ -131,6 +134,19 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   },
   async metadata(data){
    focusLock();try{return await (rooms.get(data.threadId)??active).metadata(data);}finally{focusDone();}
+  },
+  async moveWorkspace(data){
+   focusLock();let controller;
+   try{
+    const saved=(await listMainSessions(root,{threadId:data.threadId})).sessions.find(s=>s.threadId===data.threadId&&!s.archived);
+    if(!saved)throw Error('請指定清單中未封存的聊天室。');
+    controller=rooms.get(data.threadId);
+    if(controller&&locked.has(controller))throw Error('此聊天室正在更新，請稍候。');
+    if(!controller){controller=create();try{await controller.selectWorkspace({path:saved.workspace});await controller.open({threadId:saved.threadId,model:saved.model});reindex(controller);}catch(error){try{await controller.close();controllers.delete(controller);}catch{/* Keep failed teardown registered for explicit shutdown. */}throw error;}}
+    locked.add(controller);
+    if(!await safelyIdle(controller,true))throw Error('聊天室仍有工作、待送訊息或瀏覽器接手，請先結束再移動。');
+    const result=await controller.moveWorkspace(data);active=controller;openedOrder.set(controller,++openSequence);return result;
+   }finally{if(controller)locked.delete(controller);focusDone();}
   },
   async deleteArchived(data={}){
    focusLock();const held=[];
