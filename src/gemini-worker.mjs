@@ -47,7 +47,7 @@ export function geminiSettings(workspace, accessMode, tempDirs=[], browserServer
       if(accessMode!=='danger-full-access'){
         const ops=googleOpsServer.args[2];
         // agy compares lexical paths: a selected junction also needs its alias.
-        const roots=new Set([ops,path.join(root,path.relative(realpathSync(root),ops))]);
+        const roots=new Set([ops,path.join(root,path.relative(realpathSync.native(root),ops))]);
         for(const base of roots)for(const folder of ['google_ops_worker','.venv'])settings.permissions.deny.push(`write_file(${path.join(base,folder)})`);
       }
     }
