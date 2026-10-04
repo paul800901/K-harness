@@ -20,8 +20,11 @@
 - 來源定向 94/94、完整 717/717 通過（失敗／取消／跳過均 0），`git diff --check` 通過。既有接線測試確認共用指引仍送至 Codex developerInstructions、Claude append-system-prompt、Gemini always_on 規則；gateway 真工具清單測試確認帳號說明已更新。不改介面，未重跑無關 UI 驗收。
 - 真正 Opus 5.5 經既有 Claude.ai 訂閱只讀複查，回傳 `claude-opus-5-5`、success，session `dcb71bed-108c-471d-af32-783bb3328495`；判定無阻擋、無必修、無過度工程化。它未執行測試，測試由 Astra 執行。候選帳號快取過期時，啟用重查若發現耗盡仍回報，不另加輪流試帳號／重送迴圈；沿用現有行為，不把取得下一個帳號說成保證可執行。
 - 第一次複查誤沿用舊登入修正的提示，session `121eea5a-28f9-40db-b093-55d6e44abc10` 與本批政策無關，**不採計**；已修正提示並核對內容後重新獨立審查，以前項 session 為準。兩次原始提示及回覆保留，不冒稱第一份已審本批。
-- 本批在維護工作樹固定 Git 版本；正式 K 啟動器／介面仍在執行，未強制停止、未熱換程式，因此**尚未部署、未推 GitHub，正式程式仍為 `6fbdcfd`**。待 K 正常停止後依既有 SOP 準備固定版本候選、驗證、部署與發布；四帳號、登入、對話、東區保持不動。
+- 本人回覆「離開並停止 K」後，重新核對 K 啟動器／背景程序及服務埠均已停止，未強制結束或熱換程式。固定程式版本 `1bf9be484f62073c09ca1f40c5a1356833a46899` 以 Git 匯出建立乾淨候選，沿用相同鎖定檔的現有相依，不下載／安裝套件；介面、擴充與啟動器建置成功，候選完整 **717/717** 通過。
+- **2026-10-04 22:40（臺灣）已部署正式 `1bf9be4`**：473 個 Git 檔案與固定版本內容相符（比較時處理既有 CRLF），部署後逐檔及建置產物雜湊讀回一致。190 個受保護檔案部署前後一致，包含對話、帳號登記、已選核心及必要設定；四帳號身分與目前帳號不變。沿用既有安裝交易保留 `releases/before-1791124823382`，可退前版 `6fbdcfd`；程式退版不還原對話資料。
+- 22:41 由代理呼叫既有 `D:\K-harness\Start-K-Desktop.ps1` 重開，**不是宣稱本人從 Explorer 再次驗收**。正式 native 服務／工作資料位置／設定版本、3 個實際送出的介面資產讀回成功；無授權讀取 `/api/state` 仍回 403。四帳號與目前帳號保持原樣，沒有待完成登入或程序未確認狀態；本輪只讀回已存登入／額度資料，未重做四帳號輪切或新的真額度耗盡驗收。
+- 程式版本已推至私人 GitHub `origin/main`，遠端 SHA 讀回為 `1bf9be484f62073c09ca1f40c5a1356833a46899`；本次收尾紀錄另作文件提交，不改正式程式 SHA，不移動既有標記、不更新東區。
 - 曾有一版未部署的修改誤限「只有週額度耗盡才能換」；本人更正後已撤掉，測試須覆蓋 5 小時耗盡但週額度尚有剩餘時可接手。
 - 不為本批刻意消耗真實訂閱至額度為零；帳號分配測試使用官方查詢形狀的假資料，與真實額度耗盡驗收分開。
 
-證據位於維護工作樹 `.runtime/account-policy-targeted.log`、`.runtime/account-policy-full.log` 及 `.runtime/account-policy-20261004/opus-policy-review/`。最初週額度誤解版的定向測試另存 `weekly-account-targeted.log`，不作本版驗收。
+證據位於維護工作樹 `.runtime/account-policy-targeted.log`、`.runtime/account-policy-full.log` 及 `.runtime/account-policy-20261004/opus-policy-review/`；正式候選建置、717 項測試、停止檢查、套用、保護檔案及啟動讀回位於 `D:\K-harness\.runtime\account-policy-deploy-20261004/`。最初週額度誤解版的定向測試另存 `weekly-account-targeted.log`，不作本版驗收。
