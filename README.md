@@ -43,9 +43,9 @@ Gemini 需要另外安裝 Antigravity CLI（agy），首次開啟需完成官方
 
 ### 安裝與更新
 
-目前更新來源使用 **`origin/main`**，包含訂閱登入、官方登入頁開啟、工作列品牌及可選的 Windows 聽寫。舊標記 `k-r3-git-20261001c` 保留供版本追溯。GPT／Claude 派 Flash、多帳號介面與上一批模型分工已於 2026-10-04 推上 GitHub；東區仍待下次到當地更新。最新分工補充的驗證／發布狀態見[本次紀錄](docs/sol-technical-lead-20261004.md)。
+**以已驗收的 Git 版本更新，不直接追最新開發分支。** 每批完成測試、主代理與 Opus 5.5 複查並處理問題後，才部署、正式讀回及推上 GitHub。AI 會從[工程索引](docs/development-log.md)確認固定程式版本；東區等下次到當地，更新到同一個已驗收版本，不搬南區的帳號或對話。
 
-首次安裝用 `Setup-K.ps1 -Ref 'origin/main'`，並指定本機官方核心路徑；既有安裝先取得 Git 更新，再用 `Update-K.ps1 -Ref 'origin/main'`。`git pull` 只更新來源，執行更新器才會替換實際使用的 K 程式。更新前先在 K 選「離開並停止 K」，不要只關閉視窗。更新會先準備、建置與測試新版，成功後才替換程式，不強制停止執行中的工作，也不搬對話或登入資料。
+首次安裝用 `Setup-K.ps1 -Ref '<已驗收版本>'`，並指定本機官方核心路徑；既有安裝取得 Git 來源後，再用 `Update-K.ps1 -Ref '<已驗收版本>'`。取得 Git 來源不等於更新正式 K，執行更新器才替換實際程式。更新前先在 K 選「離開並停止 K」，不要只關閉視窗。更新先準備、建置與測試新版，成功後才替換，不強制停止工作，並保留上一版可退回。
 
 三家原生核心另外在「設定」按 **更新 Claude Code／更新 Codex／更新 Antigravity**；平常不自動查新版或更新。按下後才查詢，有新版才下載，完成工作並「離開並停止 K」、重開後生效。這不是更新 K 本身；舊核心保留、不動登入。此入口已套用南區並推上 GitHub，東區仍待下次更新；詳見[手動核心更新](docs/git-install-update.md#三家原生核心的手動更新)。
 
@@ -83,7 +83,7 @@ K 可以同時連接 GPT、Claude、Gemini 三家訂閱。GPT／Claude 目前仍
 
 ### 語音與新電腦
 
-- 東區 Windows 10 使用 `Setup-K.ps1 -Ref 'origin/main' -DictationProvider windows` 設定 Windows 內建繁體中文（臺灣）辨識，不需 Python、Whisper 或 NVIDIA。安裝與驗證狀態見 [東區紀錄](docs/dongqu-install-20261002.md)。
+- 東區 Windows 10 使用 `Setup-K.ps1 -Ref '<已驗收版本>' -DictationProvider windows` 設定 Windows 內建繁體中文（臺灣）辨識，不需 Python、Whisper 或 NVIDIA。安裝與驗證狀態見 [東區紀錄](docs/dongqu-install-20261002.md)。
 - 現行本機 Whisper 需要 **NVIDIA 顯卡**、相容的 CUDA 環境、Python 與模型檔，不是可直接搬到任意電腦使用的套件。
 - 聽寫來源由各台電腦獨立選擇，存在本機設定；未設定時預設 Whisper，更新會保留既有設定，南區不會因取得程式更新而自動切換。
 - 沒有準備語音環境，仍可使用文字聊天室。Git 版本不包含語音模型或本機登入資料。

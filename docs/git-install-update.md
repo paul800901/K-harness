@@ -2,7 +2,26 @@
 
 ## 使用方式
 
-目前安裝與更新來源使用 **`origin/main`**。截至 2026-10-04，已包含 Gemini 四帳號操作、GPT／Claude 派 Flash、額度頁整理及個人模型分工／子代理排序；發布版本與驗收界線見 [模型分工部署紀錄](model-role-guidance-20261003.md)。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動；先前東區整合歷史見 [東區合入 main 紀錄](dongqu-main-publish-20261003.md)。
+**先選已驗收的 Git 版本，再安裝或更新，不直接追最新版分支。** `origin/main` 用來取得已發布的來源；實際 `-Ref` 指定工程紀錄中的完整 commit SHA，或已核對對應 SHA 的版本標記。AI 先查 [最新工程索引](development-log.md)，區分正式程式版本與後續純文件版本，再執行。
+
+截至 2026-10-04 本次定案，南區已驗收程式為 `4a97b97a325bef141fb9fbc06fc16fefbc4543a5`，見 [Google 商家接入紀錄](google-ops-connect-20261004.md)；這是當時的基準，不是永遠固定使用此版。東區尚未更新。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動。
+
+## K 開發與發布 SOP
+
+2026-10-04 使用者定案，後續每批程式開發按同一流程處理，不另建發布平台或管理介面：
+
+1. **完成一批再驗收**：依已交代範圍實作，先做相關功能實測與完整程式測試；不可測的部分記清楚，不用測試數取代實際行為。
+2. **主代理與 Opus 複查、討論**：真正 Opus 5.5 檢查正確性、錯誤處理與過度工程化；主代理核對意見、補修後重驗，記錄採納與未採納理由。不是只看一眼就算通過，也不是 Opus 說什麼都照做。未解決重大問題或 Opus 尚未完成，不發布成已驗收版。
+3. **固定程式版本**：將本批程式提交 Git，以完整 SHA 準備乾淨候選並建置／測試；不部署混有未提交修改的資料夾。補修若改變程式，須重新確認候選與驗證對應的新版本。
+4. **安全部署、正式讀回**：確認正式 K 無執行中工作，再保留上一版程式／啟動器，套用固定版本；核對功能及既有帳號、對話、設定。失敗先停止並依證據處理，不重送未知工作、不把失敗版標為可供東區更新。
+5. **推 GitHub、核對版本**：上述通過後，接續推到既有私人儲存庫並讀回遠端 SHA。記下已部署程式 SHA、退版位置與 GitHub 發布狀態；若只有 docs 收尾比程式多一個 commit，分開寫清楚。push 失敗時仍明確區分「本機已部署／尚未發布」。既有 tag 不挪用；有新 tag 時核對它指向的固定程式版本。
+6. **東區日後跟同一版**：到東區才更新；取工程紀錄中的已驗收版本，而非當時最新 `main`。更新後做當地讀回，南區成功不能代替東區驗收。
+
+在已授權的 K 開發範圍內，流程通過即可部署與 push，不必每個小修再請使用者批准。只讀／不部署等當輪限制優先；無法確認工作停止，或涉及登入、計費、權限、不可相容資料格式等範圍改變時，先停在相應步驟。**純文件更新只核對文件，不因此重啟 K 或重跑與之無關的全套程式測試。**
+
+每批沿用 docs 工程紀錄與 `development-log.md` 索引，保留實際 Opus 意見、處理方式、測試數、未驗證事項、南區／東區各自狀態，不增加另一套追蹤系統。
+
+## 首次安裝
 
 K 程式由私人儲存庫 `https://github.com/paul800901/K-harness` 取得；新電腦需先以本人 GitHub 帳號取得存取權。使用乾淨 clone，不把目前開發機整個資料夾複製過去。
 
@@ -16,7 +35,8 @@ cd K-harness
 由 AI 確認本機官方執行檔實際路徑後執行：
 
 ```powershell
-.\Setup-K.ps1 -Ref 'origin/main' -CodexExecutable '<官方 codex.exe 完整路徑>' -ClaudeExecutable '<官方 claude.exe 完整路徑>'
+$release = '<工程紀錄中的已驗收完整 SHA 或版本標記>'
+.\Setup-K.ps1 -Ref $release -CodexExecutable '<官方 codex.exe 完整路徑>' -ClaudeExecutable '<官方 claude.exe 完整路徑>'
 .\Start-K-Desktop.ps1
 ```
 
@@ -25,11 +45,13 @@ cd K-harness
 ## 更新
 
 ```powershell
-git pull --ff-only origin main
-.\Update-K.ps1 -Ref 'origin/main'
+git fetch origin --tags
+$release = '<工程紀錄中的已驗收完整 SHA 或版本標記>'
+git rev-parse "$release^{commit}"
+.\Update-K.ps1 -Ref $release
 ```
 
-上方 Git 更新適用於已在 `main` 且無待保留本機修改的工作樹；有分支差異時先檢查，不 reset 或覆寫。`git pull` 只取得來源，第二步才套用正式 K。更新器會 fetch 現有 origin，再以指定 commit 建立候選，不 merge/reset 現有工作樹，不包含未提交的修改。依 lockfile 執行 npm ci、建置介面／擴充／啟動器及完整測試；失敗不動現用程式。更新器不更新兩家的 CLI，核心升級另外驗證。
+執行前由 AI 檢查工作樹與更新器版本，有待保留修改時不 reset 或覆寫。`git fetch` 只取得來源，不更換工作樹或正式 K；核對 `rev-parse` 結果與已驗收 SHA 相同後，更新器才套用指定版本。更新器會 fetch 現有 origin，再以指定 commit 建立候選，不 merge/reset 現有工作樹，不包含未提交的修改。依 lockfile 執行 npm ci、建置介面／擴充／啟動器及完整測試；失敗不動現用程式。更新器不更新三家的原生核心，核心升級另外驗證。
 
 可先加 `-PrepareOnly` 完成候選建置而不套用。正式套用前請「離開並停止 K」，不要只關閉視窗；更新器不強制停止工作。成功後自行啟動 K。更新後若擴充有變更，執行瀏覽器設定腳本並在 Chrome 擴充頁重新載入；不能用程式已更新宣稱 Chrome 已載入新版。
 
@@ -66,7 +88,7 @@ git pull --ff-only origin main
 
 已有 K 核心時不必重複提供 Codex／Claude exe。語音位置存入 `.local/runtime.json`，後續更新沿用；也可用相對於安裝根目錄的位置。現有 helper 仍採 CUDA/float16，**不是 CPU 通用包**；新電腦的顯卡、CUDA 相依與實際辨識尚須驗證，不能把 Python venv 直接拷貝當成跨機可用。語音環境未備妥不影響文字對話。
 
-東區使用已安裝的 Windows zh-TW 辨識引擎，可選 `Setup-K.ps1 -Ref 'origin/main' -DictationProvider windows`；首次安裝同時提供前述官方核心路徑。此方案不需 Python、Whisper 或 NVIDIA。設定只存該機 `.local/runtime.json`，不隨 Git 搬到南區。
+東區使用已安裝的 Windows zh-TW 辨識引擎，可選 `Setup-K.ps1 -Ref $release -DictationProvider windows`，其中 `$release` 是前述已驗收版本；首次安裝同時提供官方核心路徑。此方案不需 Python、Whisper 或 NVIDIA。設定只存該機 `.local/runtime.json`，不隨 Git 搬到南區。
 
 ## 驗收邊界
 
