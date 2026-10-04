@@ -88,7 +88,7 @@ test('Flash rows coexist with native GPT rows; permission changes confirm stop a
   await f.c.send({text:'以唯讀模式接續',accessMode:'read-only'});
   assert.equal(f.gatewayCloseCount,0);assert.equal(f.bridgeCloseCount,1);assert.equal(f.workerRecords.get('permission-switch-flash').settled,true);
   assert.equal(f.c.state.accessMode,'read-only');
-  const config=f.calls.findLast(call=>call.method==='thread/resume').params;
+  const config=f.calls.findLast(call=>call.method==='thread/start').params;
   assert.equal(config.sandbox,'read-only');
  }finally{await f.c.close();}
 });

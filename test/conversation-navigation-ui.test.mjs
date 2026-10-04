@@ -5,6 +5,7 @@ import {readFile} from 'node:fs/promises';
 const main=await readFile(new URL('../frontend/main.jsx',import.meta.url),'utf8');
 const sidebar=await readFile(new URL('../frontend/project-sidebar.jsx',import.meta.url),'utf8');
 const style=await readFile(new URL('../frontend/style.css',import.meta.url),'utf8');
+const queued=await readFile(new URL('../frontend/queued-messages.jsx',import.meta.url),'utf8');
 
 test('chat grid children and message scroll area cannot intrude outside the main track',()=>{
   assert.match(style,/\.app>main\{grid-column:2;min-width:0;width:100%\}/);
@@ -19,7 +20,9 @@ test('late send completion clears only the submitted draft and keeps failed hidd
 
 test('chat actions are scoped to the rendered thread',()=>{
   assert.match(main,/const threadId=state\.threadId;\s*const threadApi=\(route,data=\{\}\)=>api\(route,\{\.\.\.data,threadId\}\);/);
-  for(const route of ['send','stop','queue'])assert.ok(main.includes(`threadApi('${route}'`),`${route} should use the captured thread API`);
+  for(const route of ['send','stop'])assert.ok(main.includes(`threadApi('${route}'`),`${route} should use the captured thread API`);
+  assert.match(main,/<QueuedMessages state=\{state\} action=\{action\} request=\{threadApi\}/);
+  assert.match(queued,/request\('queue',\{id:item.id,action:operation/);
   assert.match(main,/request\('answer',\{id:q\.id/);
   assert.match(main,/request=\{threadApi\}/);
   assert.match(main,/setModal\(\{type:'branch',threadId:state\.threadId/);

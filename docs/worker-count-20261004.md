@@ -70,3 +70,10 @@
 - 22:00 由代理呼叫既有 `D:\K-harness\Start-K-Desktop.ps1` 重開：正式 health 正常、三個實際供應介面資產 hash 一致、未授權 state 仍 403。啟動後目前 Gemini 帳號原生額度查詢成功，四帳號皆保留 authenticated，無 loginPending。這是既有入口的代理啟動讀回，不冒稱本人從 Explorer 啟動或本輪再次人工介面驗收；UI 行為驗證與真派工證據分列於上。
 - 程式已推私人 `paul800901/K-harness` 的 `main`；新標記 `k-worker-count-accounts-20261004` 解參照為上述固定程式 SHA，遠端讀回一致。收尾文件另提交，不改標記或正式程式版本；東區未更新。
 - 部署證據在 `D:\K-harness\.runtime\worker-count-deploy-20261004`：`preparation.json`、`full-tests.log`、`activation.json`、`protection-before.json`、`protection-after.json`、`served-readback.json`、`startup-readback.json`。
+
+## 2026-10-05 執行數與 Luna 中途回應只讀追查
+
+- 使用者觀察「六個 Gemini 工單但執行數為 0／1」。正式工單的程序起訖顯示：第一批三個在 01:12:11–14 啟動、01:15:27–51 結束；第二批三個在 01:20:16–18 啟動、01:20:57–01:21:45 結束（臺灣時間）。最高重疊 **3**，不是同時 6；01:22 截圖顯示 0 與當時六工單均已完成一致。第二批耗時約 42、89、41 秒。沒有取得先前同時三個時的 UI 畫面，不宣稱已目視該段計數。
+- 原生紀錄在 01:17:16.797 已將使用者的子代理數量提問加入執行中回合，Luna 至 01:22:49.830 才直接回答；這次不能歸因為 K 未接 steer 或只允許工作結束後送入。K 待送佇列讀回為空。
+- 程式核對：Gemini 工單以各 requestId 的獨立執行 Promise 與程序運作，沒有 1 個上限；帳號 acquire 只序列化啟動身分檢查，不序列化整項工作。上方仍只統計真正 running 且未 settled 的工人，不把累積完成工單計為執行中。
+- 這次只讀相關 K 工單狀態、原生訊息時間與程式，不改翻譯、停止主代理、重派工單或更改模型／帳號。沒有必要因此次截圖另造調度或輪詢。數十個並行未做實測，仍受記憶體、原生核心及服務速率限制；不同帳號並行仍未啟用。

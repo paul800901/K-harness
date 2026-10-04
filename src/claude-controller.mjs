@@ -471,8 +471,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(title!==undefined&&(typeof title!=='string'||!title.trim()||title.length>120))throw new Error('標題須為 1–120 字元。');
       if(archived!==undefined&&typeof archived!=='boolean')throw new Error('封存狀態無效。');
       if(pinned!==undefined&&typeof pinned!=='boolean')throw new Error('釘選狀態無效。');
-      const policy=clone(state.workerPolicy);let updated;
-      await enqueuePersist(async()=>{const record=(await persisted(threadId)).find(item=>item.threadId===threadId);if(!record)throw new Error('K Claude 對話不存在。');updated={...record,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};await saveRecord(root,updated);await saveMainSession(root,{threadId,model:updated.model,title:updated.title,archived:updated.archived,pinned:updated.pinned,workspace:updated.workspace,workerPolicy:policy,accessMode:updated.accessMode});});if(threadId===state.threadId){state.title=updated.title;changed();}return updated;
+      let updated;
+      await enqueuePersist(async()=>{const record=(await persisted(threadId)).find(item=>item.threadId===threadId);if(!record)throw new Error('K Claude 對話不存在。');updated={...record,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};await saveRecord(root,updated);await saveMainSession(root,{threadId,model:updated.model,title:updated.title,archived:updated.archived,pinned:updated.pinned,workspace:updated.workspace,workerPolicy:updated.workerPolicy,accessMode:updated.accessMode,effort:updated.effort});});if(threadId===state.threadId){state.title=updated.title;changed();}return updated;
     },
     async open({model=CLAUDE_MODEL,threadId,accessMode='claude-manual',effort,forkFrom,workerPolicy}={}, {signal:outerSignal,relocation}={}){
       if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');

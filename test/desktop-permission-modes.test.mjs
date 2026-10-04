@@ -106,7 +106,7 @@ test('saved high permission restores without another confirmation and modes can 
   assert.equal((await f.c.sessions()).sessions[0].accessMode,'auto-review');
   await f.c.selectWorkspace({path:f.root});
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
-  assert.equal(f.c.state.accessMode,'auto-review');assert.equal(f.calls.findLast(call=>call.method==='thread/resume').p.approvalsReviewer,'auto_review');
+  assert.equal(f.c.state.accessMode,'auto-review');assert.equal(f.calls.findLast(call=>call.method==='thread/start').p.approvalsReviewer,'auto_review');
   await f.c.send({text:'lower permission',accessMode:'workspace-write'});
   assert.equal(f.c.state.accessMode,'workspace-write');assert.equal(f.calls.findLast(call=>call.method==='turn/start').p.approvalsReviewer,'user');
   assert.equal((await f.c.sessions()).sessions[0].accessMode,'workspace-write');
@@ -121,7 +121,7 @@ test('confirmed saved-session permission change takes effect without altering na
    assert.deepEqual({threadId:f.c.state.threadId,status:f.c.state.status,accessMode:f.c.state.accessMode},before);
   }
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread',accessMode:'danger-full-access',permissionConfirmed:true});
-  const resume=f.calls.findLast(call=>call.method==='thread/resume').p;
+  const resume=f.calls.findLast(call=>call.method==='thread/start').p;
   assert.equal(resume.approvalPolicy,'never');assert.equal(resume.sandbox,'danger-full-access');
  }finally{await f.c.close();}
 });

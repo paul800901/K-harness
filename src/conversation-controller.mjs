@@ -55,8 +55,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   if(!s.threadId||s.busy||s.questions?.length||s.queuedMessages?.length||
      !idleStatuses.includes(s.status)||s.workerConnection==='failed'||
      ['offline','error','uncertain','connecting','working'].includes(s.status))return false;
-  // A saved K session is required so closing the live controller cannot lose
-  // the only handle to a newly-created, not-yet-recoverable conversation.
+  // Release runtime resources, never the saved room. Adapters persist prepared
+  // rooms independently of native history before the first submission.
   if(!(await listMainSessions(root)).sessions.some(row=>row.threadId===s.threadId))return false;
   const workers=await workerRows(controller);
   if(workers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||

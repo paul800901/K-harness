@@ -120,7 +120,7 @@ test('child approval is routed only after checking its parent and live turn',asy
 test('completed main file changes join artifacts, survive worker refresh and reopen, exclude declined/outside files',async()=>{
  const f=await fixture();const changes=[{id:'good',type:'fileChange',status:'completed',changes:[{path:path.join(f.root,'result.txt'),kind:{type:'add'},diff:'+hello'}]},{id:'denied',type:'fileChange',status:'declined',changes:[{path:'denied.txt',kind:{type:'add'}}]},{id:'outside',type:'fileChange',status:'completed',changes:[{path:'../outside.txt',kind:{type:'add'}}]}];
  try{
-  await f.c.open({model:'gpt-6-astra'});await writeFile(path.join(f.root,'result.txt'),'hello');
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'fixture file work'});await f.c.stop();await writeFile(path.join(f.root,'result.txt'),'hello');
   for(const item of changes)f.hooks.onEvent({method:'item/completed',params:{threadId:'test-thread',item}});
   await f.c.workers();assert.deepEqual(f.c.state.artifacts,['result.txt']);assert.equal((await f.c.artifact('result.txt')).bytes.toString(),'hello');
   const original=f.host.request;f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{items:changes}]}}:original(method,p);
@@ -252,7 +252,7 @@ test('stop keeps the desktop busy until its background command is confirmed term
 test('desktop resumes only saved K conversations and displays original history',async()=>{
  const {c,root}=await fixture();try{
   await assert.rejects(c.open({model:'gpt-6-astra',threadId:'foreign'}));
-  await c.open({model:'gpt-6-astra'});await c.selectWorkspace({path:root});await c.open({model:'gpt-6-astra',threadId:'test-thread'});
+  await c.open({model:'gpt-6-astra'});await c.send({text:'fixture history'});await c.stop();await c.selectWorkspace({path:root});await c.open({model:'gpt-6-astra',threadId:'test-thread'});
   assert.deepEqual(c.state.messages.map(m=>m.text),['原始要求','原回答']);
  }finally{await c.close();}
 });
@@ -291,6 +291,7 @@ test('Codex browser config follows effective access mode and refreshes native th
  try{
   await f.c.open({model:'gpt-6-astra',accessMode:'workspace-write'});
   assert.equal(f.c.state.browserAccess.enabled,true);
+  await f.c.send({text:'fixture prior turn'});await f.c.stop();
   assert.ok(f.calls.find(x=>x.method==='thread/start').p.config.mcp_servers.k_browser);
   await f.c.send({text:'以唯讀模式接續',accessMode:'read-only'});
   const resumes=f.calls.filter(x=>x.method==='thread/resume');
@@ -299,7 +300,7 @@ test('Codex browser config follows effective access mode and refreshes native th
   assert.equal(f.c.state.browserAccess.enabled,false);
   assert.equal(f.calls.filter(x=>x.method==='thread/read').length,1,'native history is read, not replayed');
   assert.equal(f.calls.filter(x=>x.method==='thread/start').length,1);
-  assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);
+  assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);
  }finally{await f.c.close();}
 });
 
@@ -307,14 +308,14 @@ test('browser fail-closed state explicitly replaces the Codex host before resumi
  const f=await fixture({browser:true,browserState:{available:false,busy:false,recoveryRequired:true,error:'瀏覽器連線已中止。'}});
  try{
   await f.c.open({model:'gpt-6-astra'});
-  f.c.state.status='completed';
+  await f.c.send({text:'fixture prior turn'});await f.c.stop();f.c.state.status='completed';
   const baselineHosts=f.hostFactoryCalls,baselineCloses=f.hostCloseCalls;
   const beforeResume=f.calls.filter(call=>call.method==='thread/resume').length;
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread',effort:f.c.state.effort,accessMode:f.c.state.accessMode,workerPolicy:f.c.state.workerPolicy});
   assert.equal(f.hostFactoryCalls,baselineHosts+1,'the old app-server is replaced only after the fail-closed signal');
   assert.equal(f.hostCloseCalls,baselineCloses+1);
   assert.equal(f.calls.filter(call=>call.method==='thread/resume').length,beforeResume+1);
-  assert.equal(f.calls.some(call=>call.method==='turn/start'),false,'recovery never replays a turn');
+  assert.equal(f.calls.filter(call=>call.method==='turn/start').length,1,'recovery never replays a turn');
   assert.equal(f.c.state.threadId,'test-thread');
  }finally{await f.c.close();}
 });
@@ -494,13 +495,14 @@ test('native review requires confirmation, uses one inline review request, and g
 });
 
 test('native review reserves the turn before awaiting and does not overwrite an early terminal event',async()=>{
- const f=await fixture();let release;const original=f.host.request;
- f.host.request=(method,p)=>method==='review/start'?new Promise(resolve=>{release=()=>resolve({reviewThreadId:p.threadId,turn:{id:'fast-review'}});}):original(method,p);
+ const f=await fixture();let release,entered;const started=new Promise(r=>{entered=r;});const original=f.host.request;
+ f.host.request=(method,p)=>method==='review/start'?new Promise(resolve=>{release=()=>resolve({reviewThreadId:p.threadId,turn:{id:'fast-review'}});entered();}):original(method,p);
  try{
   await f.c.open({model:'gpt-6-astra'});
   const pending=f.c.review({confirmed:true});
   assert.equal(f.c.state.busy,true);
   await assert.rejects(f.c.review({confirmed:true}),/仍有工作/);
+  await started;
   f.hooks.onEvent({method:'turn/started',params:{threadId:'test-thread',turn:{id:'fast-review'}}});
   f.hooks.onEvent({method:'turn/completed',params:{threadId:'test-thread',turn:{id:'fast-review',status:'completed'}}});
   release();
@@ -546,7 +548,7 @@ test('Codex persists and restores the selected worker model/effort in native age
   await f.c.open({model:'gpt-6-astra',workerPolicy:policy});
   const start=f.calls.find(c=>c.method==='thread/start').p;
   assert.equal(start.config.agents.default_subagent_model,policy.model);assert.equal(start.config.agents.default_subagent_reasoning_effort,policy.effort);
-  await f.c.stop();await f.c.open({threadId:'test-thread',model:'gpt-6-astra',effort:'high'});
+  await f.c.send({text:'fixture prior turn'});await f.c.stop();await f.c.open({threadId:'test-thread',model:'gpt-6-astra',effort:'high'});
   assert.deepEqual(f.c.state.workerPolicy,policy);assert.deepEqual((await f.c.sessions()).sessions[0].workerPolicy,policy);
   const resume=f.calls.findLast(c=>c.method==='thread/resume').p;
   assert.equal(resume.config.agents.default_subagent_model,policy.model);assert.equal(resume.config.agents.default_subagent_reasoning_effort,policy.effort);

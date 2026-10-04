@@ -69,6 +69,27 @@ test('Gemini sends only new input, reopens native history and retains provider m
  }finally{await c.close();}
 });
 
+test('an unsent Gemini room survives close and a new controller, with or without a rename',async()=>{
+ for(const title of ['', 'named before first message']){
+  const f=await fixture(),workspace=path.join(f.root,'chosen-workspace');await mkdir(workspace);let c=f.controller;
+  try{
+   await c.selectWorkspace({path:workspace});
+   const {threadId}=await c.open({model:'gemini-3.8-flash',effort:'high',accessMode:'read-only'});
+   if(title)await c.metadata({threadId,title});
+   assert.equal(c.state.messages.length,0);assert.equal(f.calls.length,0);
+   const before=JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-sessions',threadId+'.json'),'utf8'));
+   assert.equal(before.nativeSessionId,null);assert.equal(before.nativeStarted,false);
+   await c.close();c=createGeminiController(f.opts);
+   await c.open({threadId,model:'gemini-3.8-flash'});
+   assert.equal(c.state.title,title);assert.equal(c.state.model,'gemini-3.8-flash');assert.equal(c.state.effort,'high');assert.equal(c.state.accessMode,'read-only');
+   assert.equal(c.state.workspace,workspace);assert.deepEqual((await listMainSessions(f.root)).sessions[0].workerPolicy,{model:'auto',effort:'auto'});
+   await c.send({text:'first turn after reopen'});await finish(c);
+   assert.equal(f.calls.length,1);assert.equal(f.calls[0].args.includes('--conversation'),false);
+   assert.equal(f.calls[0].args[f.calls[0].args.indexOf('-p')+1],'first turn after reopen');
+  }finally{await c.close();}
+ }
+});
+
 test('Gemini full access requires confirmation, never maps auto-review and uses isolated native settings',async()=>{
  const f=await fixture(),c=f.controller;
  try{

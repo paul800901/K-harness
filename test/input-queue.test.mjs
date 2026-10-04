@@ -4,6 +4,8 @@ import {mkdtemp,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createInputQueue} from '../src/input-queue.mjs';
+import fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 
 async function root(){
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'input-queue-'));
@@ -94,4 +96,94 @@ test('queue exposes Luna as the reason pending messages cannot drain',async()=>{
     await until(()=>active.calls.length===1);
     assert.equal(queue.state.queueWaitingReason,null);
   }finally{await queue.close();}
+});
+
+test('editing holds a queued message and keeps FIFO, identity and attachments on save',async()=>{
+ const base=await root(),sent=[],active=controller({busy:true,send:async input=>{sent.push(input);return {sent:true};}}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  const first=await queue.enqueue({text:'original',attachmentIds:['file-a']}),second=await queue.enqueue({text:'later'});
+  await queue.action({id:first.id,action:'edit-start'});
+  active.state.busy=false;active.state.status='completed';queue.schedule();
+  await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+  await assert.rejects(queue.action({id:first.id,action:'send-now'}),/完成.*編輯/);
+  await queue.action({id:first.id,action:'edit-save',text:'corrected'});
+  assert.deepEqual(queue.state.queuedMessages.map(row=>row.id),[first.id,second.id]);
+  assert.deepEqual(queue.state.queuedMessages[0].attachmentIds,['file-a']);
+  await until(()=>sent.length===2);
+  assert.deepEqual(sent,[{text:'corrected',attachmentIds:['file-a']},{text:'later',attachmentIds:[]}]);
+  await assert.rejects(queue.action({id:first.id,action:'edit-start'}),/可能已經送出/);
+ }finally{await queue.close();}
+});
+
+test('cancel editing keeps original message, attachments and existing pause',async()=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  const row=await queue.enqueue({text:'original',attachmentIds:['file-b']});await queue.action({id:row.id,action:'edit-start'});await queue.pause();
+  active.state.busy=false;active.state.status='completed';
+  await queue.action({id:row.id,action:'edit-cancel'});
+  assert.equal(queue.state.queuePaused,true);assert.equal(queue.state.queuedMessages[0].text,'original');assert.deepEqual(queue.state.queuedMessages[0].attachmentIds,['file-b']);
+  await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+ }finally{await queue.close();}
+});
+
+test('editing survives queue restart without sending until explicitly saved or cancelled',async()=>{
+ const base=await root(),active=controller({busy:true}),first=queueFor(base,active);await first.load('queue-session');
+ const row=await first.enqueue({text:'original'});await first.action({id:row.id,action:'edit-start'});await first.close();
+ active.state.busy=false;active.state.status='completed';const reopened=queueFor(base,active);await reopened.load('queue-session');
+ try{
+  assert.equal(reopened.state.queuedMessages[0].status,'editing');await reopened.action({action:'resume'});
+  await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+  await reopened.action({id:row.id,action:'edit-save',text:'after restart'});await until(()=>active.calls.length===1);
+  assert.deepEqual(active.calls,[['send','after restart']]);
+ }finally{await reopened.close();}
+});
+
+test('sending and uncertain inputs cannot be edited or replayed',async()=>{
+ const base=await root();let rejectSend;const active=controller({busy:true,steer:()=>new Promise((_,reject)=>{rejectSend=reject;})}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  const row=await queue.enqueue({text:'once'}),delivery=queue.action({id:row.id,action:'send-now'});await until(()=>!!rejectSend);
+  await assert.rejects(queue.action({id:row.id,action:'edit-start'}),/只能編輯/);
+  const rejected=assert.rejects(delivery,/unknown/);rejectSend(Error('unknown'));await rejected;
+  for(const action of ['edit-start','edit-save','edit-cancel'])await assert.rejects(queue.action({id:row.id,action,text:'replacement'}),/只能編輯/);
+  assert.equal(queue.state.queuedMessages[0].text,'once');assert.equal(queue.state.queuedMessages[0].status,'uncertain');assert.deepEqual(active.calls,[['steer','once']]);
+ }finally{await queue.close();}
+});
+
+test('edit validation does not lose the original or bypass the editing step',async()=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  const row=await queue.enqueue({text:'original'});await assert.rejects(queue.action({id:row.id,action:'edit-save',text:'bypass'}),/只能編輯/);
+  await queue.action({id:row.id,action:'edit-start'});
+  for(const text of ['',null,'  ','x'.repeat(32001)])await assert.rejects(queue.action({id:row.id,action:'edit-save',text}),/1–32000/);
+  assert.equal(queue.state.queuedMessages[0].text,'original');assert.equal(queue.state.queuedMessages[0].status,'editing');assert.deepEqual(active.calls,[]);
+ }finally{await queue.close();}
+});
+
+test('an edit must finish persisting before automatic or immediate delivery',async t=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
+ const row=await queue.enqueue({text:'original'});await queue.action({id:row.id,action:'edit-start'});
+ const target=path.join(base,'.runtime/input-queues/queue-session.json'),rename=fs.rename;let release,entered;
+ const held=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+ const mock=t.mock.method(fs,'rename',async(from,to)=>{if(to===target){entered();await held;}return rename(from,to);});syncBuiltinESMExports();
+ try{
+  const save=queue.action({id:row.id,action:'edit-save',text:'durable'});await started;
+  assert.equal(queue.state.queuedMessages[0].status,'editing');assert.equal(queue.state.queuedMessages[0].text,'original','Uncommitted state must not clear a UI draft through an unrelated stream event');
+  active.state.busy=false;active.state.status='completed';queue.schedule();
+  await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+  await assert.rejects(queue.action({id:row.id,action:'send-now'}),/正在儲存/);
+  const next=queue.enqueue({text:'later'});release();await Promise.all([save,next]);await until(()=>active.calls.length===2);
+  assert.deepEqual(active.calls,[['send','durable'],['send','later']]);
+ }finally{release();mock.mock.restore();syncBuiltinESMExports();await queue.close();}
+});
+
+test('failed edit persistence restores the held original and never dispatches it',async t=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
+ const row=await queue.enqueue({text:'original'});await queue.action({id:row.id,action:'edit-start'});
+ const target=path.join(base,'.runtime/input-queues/queue-session.json'),rename=fs.rename;
+ const mock=t.mock.method(fs,'rename',async(from,to)=>{if(to===target)throw Object.assign(Error('edit write failed'),{code:'EIO'});return rename(from,to);});syncBuiltinESMExports();
+ try{
+  await assert.rejects(queue.action({id:row.id,action:'edit-save',text:'not saved'}),/edit write failed/);
+  assert.equal(queue.state.queuedMessages[0].text,'original');assert.equal(queue.state.queuedMessages[0].status,'editing');
+  active.state.busy=false;active.state.status='completed';queue.schedule();await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+ }finally{mock.mock.restore();syncBuiltinESMExports();await queue.close();}
 });

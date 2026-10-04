@@ -23,11 +23,12 @@ async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   const makeHost=()=>{let resolveClosed;return {startCalls:[],closed:new Promise(resolve=>{resolveClosed=resolve;}),async start(content){this.startCalls.push(content);},async interrupt(){this.interrupted=true;},async close(){resolveClosed();}};};let host;
   const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return args;},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
   const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
-  const controller=createClaudeController({...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
+  const controllerOptions={...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
     hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
     bridgeFactory:async options=>{bridgeOptions=options;return bridgeFactory?bridgeFactory(options):bridge;},
-    gatewayFactory:async options=>{gatewayOptions=options;return gateway;}});
-  return {root,uuid,controller,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
+    gatewayFactory:async options=>{gatewayOptions=options;return gateway;}};
+  const createController=()=>createClaudeController(controllerOptions),controller=createController();
+  return {root,uuid,controller,createController,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
 }
 
 test('saving one Claude conversation does not read other conversation projections',async()=>{
@@ -771,6 +772,39 @@ test('native background Agent starts before child text and settles from task not
   emit({type:'user',tool_use_result:{status:'async_launched'},message:{content:[{type:'tool_result',tool_use_id:'agent-bg',content:'late launch result'}]}});
   emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg-late',message:{content:[{type:'text',text:'late child text'}]}});
   assert.equal(f.controller.state.workers[0].status,'completed','late events cannot revive a completed child');
+ }finally{await f.controller.close();}
+});
+
+test('an unsent Claude room survives close and a new controller, with or without a rename',async()=>{
+ for(const title of ['', 'named before first message']){
+  const f=await fixture(),policy={model:'gpt-6.1-sol',effort:'xhigh'};let controller=f.controller;
+  try{
+   const {threadId}=await controller.open({model:'claude-opus-5-5',effort:'high',accessMode:'claude-plan',workerPolicy:policy});
+   if(title)await controller.metadata({threadId,title});
+   assert.equal(controller.state.messages.length,0);assert.deepEqual(f.host.startCalls,[]);
+   await controller.close();controller=f.createController();
+   await controller.open({threadId,model:'claude-opus-5-5'});
+   assert.equal(controller.state.title,title);assert.equal(controller.state.model,'claude-opus-5-5');assert.equal(controller.state.effort,'high');
+   assert.equal(controller.state.accessMode,'claude-plan');assert.deepEqual(controller.state.workerPolicy,policy);
+   assert.equal(controller.state.workspace,f.root);assert.equal(f.hostOptions.resume,false);
+   await controller.send({text:'first turn after reopen'});
+   assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'first turn after reopen');
+   assert.equal(f.hostOptions.resume,false);
+  }finally{await controller.close();}
+ }
+});
+
+test('renaming an inactive unsent Claude room preserves its own effort and worker policy',async()=>{
+ const f=await fixture(),firstPolicy={model:'gpt-6.1-sol',effort:'xhigh'},secondPolicy={model:'gpt-6-luna',effort:'low'};
+ try{
+  const first=await f.controller.open({effort:'low',workerPolicy:firstPolicy}),second=await f.controller.open({effort:'high',workerPolicy:secondPolicy});
+  await f.controller.metadata({threadId:first.threadId,title:'renamed while inactive'});
+  const listed=(await listMainSessions(f.root)).sessions;
+  const firstSummary=listed.find(row=>row.threadId===first.threadId),secondSummary=listed.find(row=>row.threadId===second.threadId);
+  assert.equal(firstSummary.title,'renamed while inactive');assert.equal(firstSummary.effort,'low');assert.deepEqual(firstSummary.workerPolicy,firstPolicy);
+  assert.equal(secondSummary.effort,'high');assert.deepEqual(secondSummary.workerPolicy,secondPolicy);
+  await f.controller.open({threadId:first.threadId});
+  assert.equal(f.controller.state.effort,'low');assert.deepEqual(f.controller.state.workerPolicy,firstPolicy);
  }finally{await f.controller.close();}
 });
 

@@ -236,7 +236,7 @@ test('an unsent new conversation can leave and return on the same host without r
   assert.equal(f.c.state.status,'ready');
   assert.deepEqual(f.c.state.messages,[]);
   const blankReads=f.activeHost.calls.filter(call=>call.method==='thread/read'&&call.p.threadId===blankId);
-  assert.deepEqual(blankReads.map(call=>call.p.includeTurns),[true,false]);
+  assert.deepEqual(blankReads,[],'explicit never-submitted marker needs no nonexistent history read');
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/resume'&&call.p.threadId===blankId).length,0);
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/start').length,1);
 
@@ -294,11 +294,12 @@ test('Codex relocation resumes same native thread at new cwd with fresh MCP conf
   assert.equal(f.allCalls.filter(c=>c.method==='turn/start').length,0);
  }finally{await f.c.close();}
 });
-test('Codex unsaved empty thread cannot be moved by destroying its only native host',async()=>{
+test('Codex prepared empty thread moves without losing its K room identity',async()=>{
  const f=await fixture({sessions:[]});try{
   const {threadId}=await f.c.open({model:MODEL}),old=f.activeHost;
-  await assert.rejects(f.c.open({model:MODEL,threadId},{relocation:{workspace:f.workspaceB,previousWorkspaces:[f.root],previousArtifacts:[]}}),/空白/);
-  assert.equal(old.closeCount,0);assert.equal(f.c.state.threadId,threadId);assert.equal(f.c.state.workspace,f.root);
+  await f.c.open({model:MODEL,threadId},{relocation:{workspace:f.workspaceB,previousWorkspaces:[f.root],previousArtifacts:[]}});
+  assert.equal(old.closeCount,1);assert.equal(f.c.state.threadId,threadId);assert.equal(f.c.state.workspace,f.workspaceB);
+  assert.equal(f.allCalls.filter(c=>c.method==='thread/start').length,2);assert.equal(f.allCalls.filter(c=>c.method==='turn/start').length,0);
  }finally{await f.c.close();}
 });
 
