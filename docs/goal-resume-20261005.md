@@ -38,4 +38,4 @@
 - 由既有 `Start-K-Desktop.ps1` 正常入口重開，正式服務回報 native，Electron 視窗回應正常且來源為新 trusted-runtime；所有 UI 資產 HTTP 200／hash 一致，未授權首頁／state 仍 403。五帳號均 authenticated、沒有登入中／不明狀態；正常啟動後保護檔仍全部不變。
 - 正式讀回限程式／服務／資產／帳號與設定保留；沒有替使用者操作真實目標或重送翻譯任務。恢復到原生下一回合的行為驗收使用上述候選假資料，不能宣稱已替真翻譯目標恢復。
 - 本機部署證據：`D:\K-harness\.runtime\goal-resume-deploy-20261005\activation.json`、`formal-readback.json`、前後保護清單與程式檔清單。
-- 私人 GitHub 推送／遠端 SHA 讀回待下步完成；不移動既有 tag，東區未部署。
+- 已正常 fast-forward 推至私人 `paul800901/K-harness` 的 main；遠端讀回 `7fb1216aaaf6ea3545024abd1a7b734463004751`，包含正式程式 `2042076c07a3526690a91dd9b95207d04275e2b5` 及部署紀錄。後續純文件收尾不代表重新部署；不移動既有 tag，東區未部署。
