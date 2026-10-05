@@ -20,8 +20,23 @@ export function NativeReasoning({state,group}){
  const rows=(state.reasoning??[]).filter(r=>r.groupId===group.id||group.messages.some(m=>m.turnId&&m.turnId===r.turnId));
  return rows.map(r=><section key={r.id}><strong>原生推理摘要</strong><pre>{r.text}</pre></section>);
 }
+function patchStatusLabel(status){
+ switch(status){
+  case 'inProgress':case 'running':return '進行中';
+  case 'completed':return '已完成';
+  case 'failed':return '失敗';
+  case 'declined':return '已拒絕';
+  default:return '狀態未知';
+ }
+}
 export function NativeDiffs({state}){
- return <section className="native-diffs"><h3>回合檔案差異</h3>{state.capabilities?.turnDiffs===false?<p>此供應商尚無已接入的原生差異來源。</p>:!(state.turnDiffs??[]).length?<p>尚未收到原生檔案差異；不代表檔案沒有改動。</p>:(state.turnDiffs??[]).map(d=><details key={d.turnId}><summary>回合 {d.turnId}</summary><pre>{d.diff}</pre></details>)}{(state.tools??[]).filter(t=>t.patchChanges?.length).map(t=><details key={t.id}><summary>檔案變更 {t.name}</summary>{t.patchChanges.map((c,i)=><section key={i}><strong>{c.path}</strong><pre>{c.diff}</pre></section>)}</details>)}<small>唯讀檢視，不會還原檔案或回溯對話。</small></section>;
+ const turns=state.turnDiffs??[],patches=(state.tools??[]).filter(tool=>tool.patchChanges?.length);
+ return <section className="native-diffs"><h3>檔案差異</h3>
+  {!turns.length&&!patches.length&&<p>{state.capabilities?.turnDiffs===false?'此供應商尚無已接入的原生差異來源。':'尚未收到原生檔案差異；不代表檔案沒有改動。'}</p>}
+  {turns.map(diff=><details key={diff.turnId}><summary>回合 {diff.turnId}</summary><pre>{diff.diff}</pre></details>)}
+  {patches.map(tool=><details key={tool.id}><summary>檔案變更 · {patchStatusLabel(tool.status)}</summary>{tool.patchChanges.map((change,index)=><section key={index}><strong>{change.path}</strong><pre>{change.diff}</pre></section>)}</details>)}
+  <small>狀態依原生紀錄顯示，不代表目前檔案內容；唯讀檢視，不會還原檔案或回溯對話。</small>
+ </section>;
 }
 
 export function NativeFilePicker({state,draft,onSelect,request}){

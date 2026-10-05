@@ -142,3 +142,43 @@ test('two Codex conversations route native events and interrupt only the selecte
   assert.equal(f.pool.state.conversationActivity.find(row=>row.threadId===b).status,'interrupted');
  }finally{await f.pool.close();}
 });
+
+for(const provider of ['codex','claude'])test(`${provider} finishes A while B is selected without stealing focus, duplicating replies or resending`,async()=>{
+ const f=await fixture(),model=provider==='codex'?'gpt-6-astra':claudeModel;
+ try{
+  const a=(await f.pool.open({model})).threadId;
+  await f.pool.send({threadId:a,text:'A request'});
+  const hostA=provider==='codex'?f.codexHosts.at(-1):f.claudeHosts.at(-1);
+  const b=(await f.pool.open({model})).threadId;
+  await f.pool.send({threadId:b,text:'B request'});
+  const originalB=structuredClone(f.pool.state.messages),answer='A finished in the background';
+  const complete=()=>{
+   if(provider==='codex')hostA.options.onEvent({method:'turn/completed',params:{threadId:a,turn:{id:`turn-${a}`,status:'completed'}}});
+   else hostA.options.onMessage({type:'result',is_error:false});
+  };
+  const finish=()=>{
+   if(provider==='codex'){
+    hostA.options.onEvent({method:'item/completed',params:{threadId:a,turnId:`turn-${a}`,item:{type:'agentMessage',id:'answer-a',text:answer}}});
+   }else{
+    hostA.options.onMessage({type:'assistant',uuid:'answer-a',message:{id:'answer-a',content:[{type:'text',text:answer}]}});
+   }
+   complete();
+  };
+  finish();
+  // Codex publishes completion only after its asynchronous final worker readback.
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(f.pool.state.threadId,b);
+  assert.deepEqual(f.pool.state.messages,originalB,'A events must not contaminate visible B');
+  assert.equal(f.pool.state.conversationActivity.find(room=>room.threadId===a).status,'completed');
+  const attention=structuredClone(f.pool.state.completionAttention);
+  assert.ok(attention.unread.some(room=>room.threadId===a),'background A completion remains unread');
+  complete();
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.deepEqual(f.pool.state.completionAttention,attention,'duplicate completion must not produce another notification');
+  await f.pool.open({threadId:a,model});
+  assert.equal(f.pool.state.messages.filter(message=>message.text===answer).length,1);
+  assert.equal(provider==='codex'?hostA.calls.filter(call=>call.method==='turn/start').length:hostA.startCalls.length,1,'returning to A must not resend');
+  await f.pool.open({threadId:b,model});
+  assert.deepEqual(f.pool.state.messages,originalB);
+ }finally{await f.pool.close();}
+});

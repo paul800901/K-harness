@@ -177,6 +177,25 @@ test('native summaries, turn diff, and patch updates are retained without accept
  }finally{await f.c.close();}
 });
 
+test('reopening native file-change history restores patch status without a turn diff or new work',async()=>{
+ const f=await fixture(),original=f.host.request;
+ // Required fileChange fields and statuses from the installed Codex ThreadReadResponse schema.
+ const changes=['completed','inProgress','declined','failed'].map(status=>({id:`patch-${status}`,type:'fileChange',status,changes:[{path:`${status}.txt`,kind:{type:'update',move_path:null},diff:`-old ${status}\n+new ${status}`}]}));
+ const history=[{id:'history-turn',status:'completed',error:null,items:[{id:'history-answer',type:'agentMessage',text:'Recorded answer'},...changes]}];
+ f.host.request=async(method,p,...rest)=>method==='thread/read'?{thread:{turns:structuredClone(history)}}:original(method,p,...rest);
+ try{
+  await saveMainSession(f.root,{threadId:'native-events-thread',model:'gpt-6-astra',workspace:f.root});
+  for(let attempt=0;attempt<2;attempt++){
+   await f.c.open({model:'gpt-6-astra',threadId:'native-events-thread'});
+   assert.deepEqual(f.c.state.turnDiffs,[]);
+   assert.deepEqual(f.c.state.tools.map(tool=>({id:tool.id,status:tool.status,patchChanges:tool.patchChanges})),changes.map(item=>({id:item.id,status:item.status,patchChanges:item.changes})));
+   assert.equal(f.c.state.messages.filter(message=>message.text==='Recorded answer').length,1);
+   assert.equal(f.calls.some(call=>call.method==='turn/start'||call.method==='turn/steer'),false);
+   await f.c.close();
+  }
+ }finally{await f.c.close();}
+});
+
 test('sandbox readiness notices are read-only and native view data resets when opening another conversation',async()=>{
  const f=await fixture({readiness:'updateRequired'});
  try{
