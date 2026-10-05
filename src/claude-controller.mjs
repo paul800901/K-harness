@@ -1,3 +1,4 @@
+import {createWorkActivity,claudeWorkActivity} from './work-activity.mjs';
 import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
@@ -83,6 +84,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   state.usage={claude:{status:'unavailable',auth:null,checkedAt:null,rateLimitStatus:null,extraUsageDisabled:null},codex:{status:'not-checked'}};
   let host=null, hostEffort=null, bridge=null, bridgeInstance=null, bridgeInitPromise=null, gateway=null, opening=false, closing=false, stopping=false, restartingHost=false, activeGeneration=0, persistChain=Promise.resolve(), persistError=null;
   const pending = new Map();
+  const activity=createWorkActivity(state);
   let compactionIds=new Set(),goalRefreshNeeded=false,goalSettled=Promise.resolve();
   const compactionSnapshot=()=>({ids:[...compactionIds],complete:state.progress.compactionsComplete,inFlight:state.busy});
   let currentGroupId=null,activeAssistantId=null,currentTurnId=null;const nativePending=new Set();const nativeStreams=new Map();let streamingNativeId=null;
@@ -161,7 +163,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   const clearQuestions = () => { for(const [id,item] of pending){item.resolve(item.cancelValue);pending.delete(id);} state.questions=[]; };
   async function deliverWorkers(){
     if(notifying||!host||state.busy||state.goalPending||opening||closing||stopping||state.status!=='completed'||!workerQueue.size)return;
-    notifying=true;state.busy=true;state.status='working';
+    notifying=true;state.busy=true;activity.begin();state.status='working';
     const active=host,parent=state.threadId;
     const batch=[...workerQueue.values()];workerQueue.clear();
     for(const record of batch)workerArmed.delete(record.requestId);
@@ -301,7 +303,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(message.session_id!==nativeId(state.threadId))return;
       if(typeof message.uuid==='string'&&message.uuid){compactionIds.add(message.uuid);state.progress.compactions=compactionIds.size;}
       else state.progress.compactionsComplete=false;
-      state.progress.compaction='completed';
+      state.progress.compaction='completed';if(state.busy)claudeWorkActivity(activity,message);
       void saveCurrent().catch(()=>{});changed();return;
     }
     if(message?.type==='stream_event'&&(message.isReplay||stopping||closing||['interrupted','offline','uncertain','idle','error'].includes(state.status)))return;
@@ -312,7 +314,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const nativeTurnActivity=!message?.isReplay&&!stopping&&!closing&&
       !['interrupted','offline','uncertain','idle','error'].includes(state.status)&&
       (message?.type==='assistant'||(message?.type==='stream_event'&&(message.event?.type==='message_start'||(['content_block_start','content_block_delta'].includes(message.event?.type)&&nativeStreams.has(streamingNativeId)&&!nativeStreams.get(streamingNativeId).final)))||(message?.type==='user'&&Array.isArray(content)&&content.some(block=>block?.type==='tool_result')));
-    if(nativeTurnActivity&&!state.busy){state.busy=true;state.status='working';state.error=null;void saveCurrent().catch(()=>{});}
+    if(nativeTurnActivity&&!state.busy){activity.begin();state.busy=true;state.status='working';state.error=null;void saveCurrent().catch(()=>{});}
+    if(state.busy&&!stopping&&!closing)claudeWorkActivity(activity,message);
     if(message?.type==='system'&&message?.subtype==='init') {
       state.nativeCapabilities=nativeCapabilitiesFrom(message);
       state.efforts=[...state.nativeCapabilities.efforts];
@@ -331,7 +334,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(worker&&['completed','failed','stopped'].includes(message.status))Object.assign(worker,{status:message.status,settled:true,output:message.summary??'',endedAt:new Date().toISOString()});
     } else if(message?.type==='system'&&message?.subtype==='status') {
       // A native background completion can start a follow-up model turn.
-      if(message.status==='requesting'&&!stopping&&!closing){const wasBusy=state.busy;state.busy=true;state.status='working';if(!wasBusy)void saveCurrent().catch(()=>{});}
+      if(message.status==='requesting'&&!stopping&&!closing){const wasBusy=state.busy;state.busy=true;state.status='working';if(!wasBusy){activity.begin();void saveCurrent().catch(()=>{});}}
     } else if(message?.type==='rate_limit_event') {
       const rate=claudeRateStatus({status:state.usage.claude.rateLimitStatus,extraUsageDisabled:state.usage.claude.extraUsageDisabled},message);
       if(rate.status){state.usage.claude.rateLimitStatus=rate.status;state.usage.claude.extraUsageDisabled=rate.extraUsageDisabled;}
@@ -542,7 +545,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
 
       openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
-      openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=clone(state),previousCompactionIds=new Set(compactionIds);
+      openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=clone(state),previousCompactionIds=new Set(compactionIds);activity.clear();
       opening=true;state.status='connecting';state.error=null;changed();
       const old=host;let previousClosed=false;
       try {
@@ -614,7 +617,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const nextEffort=effort===undefined?state.effort:effort;
       if(nextEffort!==null&&!state.efforts.includes(nextEffort))throw new Error('指定推理程度目前不可用。');
       if(!Array.isArray(attachmentIds)||attachmentIds.some(id=>typeof id!=='string'))throw new Error('附件格式無效。');
-      let hostAtSend=host;state.busy=true;state.status='working';state.error=null;currentGroupId=randomUUID();const sentMessage=appendMessage('user',text);currentTurnId=sentMessage.id;sentMessage.delivery='queued';changed();
+      let hostAtSend=host;state.busy=true;activity.begin();state.status='working';state.error=null;currentGroupId=randomUUID();const sentMessage=appendMessage('user',text);currentTurnId=sentMessage.id;sentMessage.delivery='queued';changed();
       try {
         const {content,attachmentRecords}=await claudeInput(text,attachmentIds,state);
         if(host!==hostAtSend||stopping||closing||opening)throw new Error('對話已停止或切換；附件檢查期間未啟動新回合。');
@@ -692,7 +695,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(typeof objective!=='string'||!objective.trim()||objective.length>4000)throw Error('目標須為 1–4000 字元。');
       if(/^(clear|stop|off|reset|none|cancel)$/i.test(objective.trim()))throw Error('這是 Claude 清除目標的保留指令，請描述完整目標。');
       const active=host,parent=state.threadId;
-      state.busy=true;state.status='working';state.error=null;currentGroupId=randomUUID();changed();
+      state.busy=true;activity.begin();state.status='working';state.error=null;currentGroupId=randomUUID();changed();
       try{
         await enqueuePersist(async()=>{const record=(await persisted(parent)).find(r=>r.threadId===parent);record.nativeStarted=true;record.compactions=compactionSnapshot();await saveRecord(root,record);});
         if(host!==active||state.threadId!==parent||!state.busy||state.status!=='working'||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
@@ -701,7 +704,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     },
     async compact(){
       if(!host||state.busy||opening||closing||stopping||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟 Claude 對話，並等待目前工作結束。');
-      state.busy=true;state.status='working';state.progress.compaction='compacting';state.error=null;changed();
+      state.busy=true;activity.begin();state.status='working';state.progress.compaction='compacting';state.error=null;changed();
       try{await enqueuePersist(async()=>{const record=await currentRecord();if(record){record.nativeStarted=true;record.compactions=compactionSnapshot();await saveRecord(root,record);}});await host.start('/compact');return {started:true};}
       catch(error){state.busy=false;state.status='failed';state.progress.compaction='failed';state.error=`Claude Code 原生 /compact 未送出：${error.message}`;changed();throw error;}
     },

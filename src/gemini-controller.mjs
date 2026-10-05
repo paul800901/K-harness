@@ -1,3 +1,4 @@
+import {createWorkActivity,geminiWorkActivity} from './work-activity.mjs';
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
@@ -40,6 +41,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
  const login=loginFactory({cwd:root,executable,env}),binary=geminiExecutable(env,executable);
  let usagePending=null,usageAttemptAt=0;
  const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:true,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:null,compactionsComplete:false,tokenUsage:null},usage:{gemini:quota}};
+ const activity=createWorkActivity(state);
  let record=null,selected=null,opening=false,turn=null,persist=Promise.resolve(),unresolvedPid=null;
  let browserMode=null,browserServer=null;
  async function resetBrowser(){
@@ -99,7 +101,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async directories(parent=state.workspace){return listWorkspaceDirectories(parent);},
   async selectWorkspace({path:requested}){idle();const workspace=await validateWorkspace(requested);await persist;await resetBrowser();state.workspace=workspace;state.threadId=null;state.title='';state.messages=[];state.tools=[];state.artifacts=[];state.workers=[];state.status='idle';state.error=null;record=null;changed();return {workspace};},
   async open({threadId,model,effort,accessMode='workspace-write',permissionConfirmed=false}={}, {signal,relocation}={}){
-   idle();opening=true;let previousBrowserClosed=false;
+   idle();activity.clear();opening=true;let previousBrowserClosed=false;
    const originalWorkspace=relocation?{workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,artifacts:state.artifacts}:null;
    try{
     await persist;signal?.throwIfAborted();
@@ -139,7 +141,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    const mode=access(accessMode??state.accessMode),level=effort||state.effort;
    if(!selected.nativeModels[level??'default'])throw Error('指定 Gemini 推理程度目前不可用。');
    if(mode==='danger-full-access'&&state.accessMode!==mode&&!permissionConfirmed)throw Error('請明確確認 Gemini 完整存取權。');
-   let finish;const current={abort:new AbortController(),pid:null,done:null,settled:new Promise(resolve=>{finish=resolve;})};turn=current;state.busy=true;state.status='working';state.error=null;changed();
+   let finish;const current={abort:new AbortController(),pid:null,done:null,settled:new Promise(resolve=>{finish=resolve;})};turn=current;state.busy=true;activity.begin();state.status='working';state.error=null;changed();
    let launched=false,accountLease;
    try{
     accountLease=await accounts?.acquire({accountId:record.accountId,unboundHistory:record.nativeStarted&&!record.accountId});
@@ -161,6 +163,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     let assistant=null,goalConfirmed=false;const responses=new Map();
     const ensureAssistant=()=>assistant??=(state.messages.push({id:randomUUID(),role:'assistant',text:'',attachments:[],createdAt:now(),groupId,streaming:true}),state.messages.at(-1));
     const parser=geminiStream(event=>{
+     if(turn===current&&!current.abort.signal.aborted)geminiWorkActivity(activity,event);
      if(goalObjective&&event.event==='init'&&event.init?.expanded_commands?.some(c=>c.name==='goal'&&c.type==='system')){goalConfirmed=true;state.goal.status='active';}
      const id=event.conversation_id??event.init?.conversation_id??event.result?.conversation_id;
      if(nativeId(id)&&!record.nativeSessionId){record.nativeSessionId=id;void save().catch(error=>{state.error=`原生對話 ID 保存失敗：${error.message}`;});}

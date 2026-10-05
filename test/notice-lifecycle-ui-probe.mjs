@@ -43,7 +43,7 @@ try{
   await page.getByText('查看詳細內容',{exact:true}).click();assert.equal(await page.locator('.native-notices pre').textContent(),message);
   assert.equal(await page.locator('.native-notices').evaluate(el=>el.scrollWidth>el.clientWidth+1),false);
   const started=Date.now()-(531*60+44)*1000,user={id:'u',role:'user',groupId:'g',turnId:'t',text:'假工作',createdAt:new Date(started).toISOString()},answer={id:'a',role:'assistant',groupId:'g',turnId:'t',text:'假工作進度',createdAt:new Date(started+1000).toISOString(),partial:true};
-  await update({...state,notices:[fresh],messages:[user,answer]});await page.locator('.turn-process summary').filter({hasText:/處理中 8 小時 51 分/}).waitFor();
+  await update({...state,notices:[fresh],messages:[user,answer]});await page.locator('.turn-process summary').filter({hasText:/已耗時 8 小時 51 分/}).waitFor();
   await page.screenshot({path:path.join(out,`${width}-${scale}-retry-duration.png`)});
   await update({...state,status:'completed',busy:false,notices:[],messages:[user,{...answer,partial:false,completedAt:new Date(started+(86400+2*3600+3*60+4)*1000).toISOString()}]});
   await page.locator('.turn-process summary').filter({hasText:'處理了 1 天 2 小時 3 分 4 秒'}).waitFor();

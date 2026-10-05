@@ -1,3 +1,4 @@
+import {createWorkActivity,codexWorkActivity} from './work-activity.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
@@ -28,6 +29,7 @@ function codexInput(text,attachments=[]){
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
+ const activity=createWorkActivity(state);
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
@@ -179,6 +181,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(['turn/started','turn/completed','thread/status/changed'].includes(e.method)&&collectNativeWorkerIds([...items.values()]).includes(p.threadId))void workers().catch(()=>{});
    return;
   }
+  if(!opening&&!closing&&!stopping&&(e.method==='turn/started'||state.busy&&(!p.turnId||!turnId||p.turnId===turnId)))codexWorkActivity(activity,e);
   // Model output confirms this turn's stream resumed; background tool output does not.
   if(['item/agentMessage/delta','item/reasoning/summaryTextDelta','item/reasoning/textDelta'].includes(e.method)&&p.delta)resolveRetryNotices(p.turnId??turnId);
   if(['item/started','item/completed'].includes(e.method)&&['agentMessage','reasoning'].includes(p.item?.type))resolveRetryNotices(p.turnId??turnId);
@@ -385,7 +388,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  }
  async function deliverFlashResults(){
   if(flashNotifying||!host||state.busy||opening||closing||stopping||state.status!=='completed'||!flashQueue.size)return;
-  flashNotifying=true;state.busy=true;state.status='working';
+  flashNotifying=true;state.busy=true;state.status='working';activity.begin();
   const active=host,parent=state.threadId,batch=[...flashQueue.values()];flashQueue.clear();for(const record of batch)flashArmed.delete(record.requestId);
   let attempted=false,completed=false;
   try{
@@ -493,7 +496,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!host||!state.threadId||opening||stopping||closing||submission||state.busy||turnId||state.questions.length||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('目前 Codex 對話尚未就緒或仍有工作，不能開始審查。');
    const active=host,threadId=state.threadId,epoch=requestEpoch;
    activeGroupId=randomUUID();
-   state.busy=true;state.status='working';state.error=null;changed();
+   state.busy=true;activity.begin();state.status='working';state.error=null;changed();
    let task,wasPrepared=false;
    let result;
    try{
@@ -628,7 +631,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(relocation&&host&&(await listTerminals(host,threadId)).length)throw Error('背景命令仍在執行，請先結束再移動聊天室。');
     if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，請先查詢原工作。');await closeFlashBridge();}
     else if(flashBridge||flashBridgeInit)await closeFlashBridge();
-    requestEpoch++;state.status='connecting';state.error=null;state.workerConnection=null;state.workerError=null;const epoch=++viewEpoch;changed();
+    activity.clear();requestEpoch++;state.status='connecting';state.error=null;state.workerConnection=null;state.workerError=null;const epoch=++viewEpoch;changed();
     try{
     const workspace=await validateWorkspace(relocation?.workspace??saved?.workspace??state.workspace);
      if(host&&threadId&&(relocation||browserRecoveryThreadId===threadId)){
@@ -756,7 +759,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // removes browser tools; thread history stays native and is never replayed.
    if(access!==state.accessMode){const expectedThreadId=state.threadId;await this.open({threadId:expectedThreadId,model:state.model,effort:turnEffort,workerPolicy:state.workerPolicy,accessMode:access,permissionConfirmed});if(!host||opening||closing||stopping||state.busy||state.threadId!==expectedThreadId||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('權限切換後對話狀態已改變；未送出訊息。');}
    // Reserve before async attachment validation, so concurrent requests cannot double-send.
-   state.busy=true;stopRequested=false;const attachments=[];let finishSubmission;
+   state.busy=true;activity.begin();stopRequested=false;const attachments=[];let finishSubmission;
    submission=new Promise(resolve=>{finishSubmission=resolve;});
    try{
     try{

@@ -31,6 +31,21 @@ async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   return {root,uuid,controller,createController,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
 }
 
+test('Claude work telemetry ignores replay, child output and elapsed tool heartbeats',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'fake work'});
+  const emit=f.hostOptions.onMessage;assert.equal(f.controller.state.activity.lastEventAt,null);
+  emit({type:'stream_event',event:{type:'message_start',message:{id:'live'}}});
+  const before=structuredClone(f.controller.state.activity);assert.ok(before.lastEventAt);
+  emit({type:'tool_progress',tool_use_id:'a',elapsed_time_seconds:900});
+  emit({type:'assistant',isReplay:true,message:{content:[]}});
+  emit({type:'stream_event',parent_tool_use_id:'child',event:{type:'content_block_delta',delta:{type:'text_delta',text:'child'}}});
+  assert.deepEqual(f.controller.state.activity,before);
+  emit({type:'assistant',uuid:'tool',message:{id:'model-output',content:[{type:'tool_use',id:'a',name:'Read',input:{file_path:'fake'}}]}});assert.equal(f.controller.state.activity.phase,'tool');
+  emit({type:'user',message:{content:[{type:'tool_result',tool_use_id:'a',content:'fake output'}]}});assert.equal(f.controller.state.activity.phase,'active');
+ }finally{await f.controller.close();}
+});
+
 test('Claude sends and steers more than eight scoped attachments without expanding the user bubble',async()=>{
  const f=await fixture();try{
   const {threadId}=await f.controller.open({});const attachments=[];

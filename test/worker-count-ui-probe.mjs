@@ -33,7 +33,7 @@ try{
   assert.equal(await page.locator('.app.inspector-hidden').count(),1,'Workers never auto-open an otherwise empty inspector');
   await update({workerActivity:{running:2,uncertain:false}});await text('子代理執行中：2');
   await update({workerActivity:{running:0,uncertain:false}});await text('子代理執行中：0');
-  await update({workerActivity:{running:2,uncertain:true}});await text('子代理：狀態待確認');
+  await update({workerActivity:{running:2,uncertain:true,unconfirmed:1}});await text('子代理已確認執行中：2 · 待確認：1');
   await update({workerActivity:{running:3,uncertain:false}});await text('子代理執行中：3');
   await page.evaluate(()=>window.testStream.onerror());await text('子代理：狀態待確認');
   await update({workerActivity:{running:1,uncertain:false}});await text('子代理執行中：1');

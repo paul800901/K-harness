@@ -20,18 +20,18 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const activity=controller=>{const s=controller.state;return {threadId:s.threadId,workspace:s.workspace,busy:!!s.busy,status:s.status,pendingQuestions:s.questions?.length??0};};
  // Project the existing live owners, never saved history or only the selected room.
  const workerActivity=()=>{
-  let running=0,uncertain=false;
+  let running=0,uncertain=false,unconfirmed=0;
   for(const controller of controllers){
    const s=controller.state;if(!s.threadId)continue;
    const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
    uncertain||=disconnected;
    for(const worker of s.workers??[]){
     if(worker.kind==='command'||worker.settled===true||['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
-    if(worker.status==='running'){if(!disconnected)running++;}
-    else if(!['starting','pending'].includes(worker.status))uncertain=true;
+    if(disconnected||!['running','starting','pending'].includes(worker.status)){unconfirmed++;uncertain=true;}
+    else if(worker.status==='running')running++;
    }
   }
-  return {running,uncertain};
+  return {running,uncertain,unconfirmed};
  };
  const target=data=>{
   if(closing)throw Error('K 正在關閉。');

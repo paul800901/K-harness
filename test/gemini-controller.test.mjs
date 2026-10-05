@@ -24,6 +24,18 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('Gemini work telemetry follows actual stream steps rather than process start or quota reads',async()=>{
+ let emit,done;const f=await fixture({run:async(binary,args,params)=>{params.onStart(12345);emit=e=>params.onChunk(Buffer.from(JSON.stringify(e)+'\n'));return new Promise(resolve=>{done=()=>{emit({event:'result',result:{conversation_id:'123e4567-e89b-42d3-a456-426614174000',status:'SUCCESS',response:'fake'}});resolve({code:0,stderr:''});};});}});
+ try{
+  await f.controller.open({model:'gemini-3.8-flash',effort:'low'});await f.controller.send({text:'fake'});
+  assert.equal(f.controller.state.activity.lastEventAt,null);
+  emit({event:'step_update',step_update:{step_index:1,tool_info:{name:'read_file'},state:'RUNNING'}});assert.equal(f.controller.state.activity.phase,'tool');
+  const before=structuredClone(f.controller.state.activity);await f.controller.usage();assert.deepEqual(f.controller.state.activity,before);
+  emit({event:'step_update',step_update:{step_index:1,tool_info:{name:'read_file'},state:'DONE'}});assert.equal(f.controller.state.activity.phase,'active');
+  done();await finish(f.controller);
+ }finally{done?.();await f.controller.close();}
+});
+
 test('Gemini does not invent a zero compaction count when native telemetry is unavailable',async()=>{
  const f=await fixture();try{
   await f.controller.open({model:'gemini-3.8-flash',effort:'low'});

@@ -27,6 +27,20 @@ async function fixture({readiness='ready',gatewayFactory}={}){
  return {c,calls,connections,root,host};
 }
 
+test('Codex work telemetry follows current native turn events, not other rooms, usage, or reads',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});assert.equal(f.c.state.activity,null);
+  const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  emit({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'live'}}});
+  assert.ok(f.c.state.activity.lastEventAt);
+  const before=structuredClone(f.c.state.activity);
+  for(const [threadId,turnId] of [['child','live'],['native-events-thread','old']])emit({method:'item/agentMessage/delta',params:{threadId,turnId,itemId:'ignored',delta:'not current work'}});
+  await f.c.usage();assert.deepEqual(f.c.state.activity,before);
+  emit({method:'item/started',params:{threadId:'native-events-thread',turnId:'live',item:{id:'wait',type:'mcpToolCall',tool:'gemini_wait'}}});assert.equal(f.c.state.activity.phase,'worker');
+  emit({method:'item/completed',params:{threadId:'native-events-thread',turnId:'live',item:{id:'wait',type:'mcpToolCall',tool:'gemini_wait'}}});assert.equal(f.c.state.activity.phase,'active');
+ }finally{await f.c.close();}
+});
+
 test('Codex counts unique main-thread completed compactions, not starts or legacy echoes',async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});assert.equal(f.c.state.progress.compactions,0);assert.equal(f.c.state.progress.compactionsComplete,true);

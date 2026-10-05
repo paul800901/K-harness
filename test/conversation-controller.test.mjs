@@ -45,22 +45,22 @@ const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date
 
 test('global worker count follows live rooms, not the selection, history, or background commands',async()=>{
  const f=await fixture(),c=f.controller;try{
-  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0});
   const a=await c.open({model:codexModel}),source=f.room(a.threadId);
   source.state.workers=[{provider:'codex',status:'running'},{provider:'gemini',status:'running'},
    ...['starting','pending','completed','failed','cancelled','stopped','interrupted'].map(status=>({status})),
    {status:'running',settled:true},{kind:'command',status:'running'}];source.notify();
   const b=await c.open({model:claudeModel}),other=f.room(b.threadId);
   other.state.workers=[{provider:'claude-native',status:'running'}];other.notify();
-  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false,unconfirmed:0});
   assert.equal(c.state.workers.length,1,'Selected-room details stay separate');
   await c.selectWorkspace({path:f.root});assert.equal(c.state.threadId,null);
-  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:3,uncertain:false,unconfirmed:0});
   source.state.workers[0].status='completed';source.notify();
-  assert.deepEqual(c.state.workerActivity,{running:2,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:2,uncertain:false,unconfirmed:0});
   other.state.workers[0].status='failed';other.notify();
   source.state.workers[1].status='cancelled';source.notify();
-  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0});
   assert.equal(source.calls.some(([name])=>name==='workers'),false,'Projection does not add polling');
  }finally{await c.close();}
 });
@@ -70,12 +70,24 @@ test('unknown workers and disconnected hidden owners do not advertise a trustwor
   const a=await c.open({model:codexModel}),source=f.room(a.threadId);
   source.state.workers=[{status:'running'},{status:'unresolved'}];
   await c.open({model:claudeModel});
-  assert.deepEqual(c.state.workerActivity,{running:1,uncertain:true});
+  assert.deepEqual(c.state.workerActivity,{running:1,uncertain:true,unconfirmed:1});
   source.state.workers[1]={status:'unavailable'};source.notify();assert.equal(c.state.workerActivity.uncertain,true);
   source.state.workers[1]={status:'completed',settled:true};source.state.status='offline';source.notify();
-  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:true});
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:true,unconfirmed:1});
   source.state.status='ready';source.state.workers[0].status='completed';source.notify();
-  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false});
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0});
+ }finally{await c.close();}
+});
+
+test('seven live workers remain counted even when another room has unconfirmed work',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const a=await c.open({model:codexModel}),source=f.room(a.threadId);
+  source.state.workers=Array.from({length:7},(_,n)=>({requestId:`live-${n}`,provider:'gemini',status:'running',settled:false}));
+  const b=await c.open({model:claudeModel}),other=f.room(b.threadId);
+  other.state.workers=[{status:'unresolved'},{status:'running'},{status:'completed',settled:true}];other.state.status='offline';
+  assert.deepEqual(c.state.workerActivity,{running:7,uncertain:true,unconfirmed:2});
+  const before=source.calls.length;await c.open({threadId:a.threadId,model:codexModel});
+  assert.deepEqual(c.state.workerActivity,{running:7,uncertain:true,unconfirmed:2});assert.equal(source.calls.length,before,'view switch does not rerun jobs');
  }finally{await c.close();}
 });
 
