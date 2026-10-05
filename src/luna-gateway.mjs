@@ -12,7 +12,7 @@ const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-
 const geminiTaskSchema = z.strictObject({requestId,model:z.literal('gemini-3.8-flash').default('gemini-3.8-flash'),effort:z.enum(['low','medium','high']),accountId:z.string().regex(/^[a-f0-9]{32}$/u).optional(),handoffFrom:requestId.optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
 const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).max(60000).default(30000)});
 
-function createMcpServer(bridge,{geminiOnly=false,editGoal}={}) {
+function createMcpServer(bridge,{geminiOnly=false,editGoal,resumeGoal}={}) {
   const prefix=geminiOnly?'gemini':'luna';
   const server = new McpServer({name:geminiOnly?'k-gemini-gateway':'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
   if(editGoal)server.registerTool('goal_edit',{
@@ -22,6 +22,16 @@ function createMcpServer(bridge,{geminiOnly=false,editGoal}={}) {
   },async(args,context)=>{
     try{
       const value=await editGoal(args,context.mcpReq._meta);
+      return {content:[{type:'text',text:JSON.stringify(value)}]};
+    }catch(error){return {isError:true,content:[{type:'text',text:String(error?.message??error)+' Do not retry automatically; inspect the current native goal.'}]};}
+  });
+  if(resumeGoal)server.registerTool('goal_resume',{
+    description:'Resume this main Codex conversation\'s existing paused native goal ONLY after the user explicitly asks to continue/resume it. No second confirmation or browser is needed. Editing goal text alone is NOT a resume request. Preserve the same goal objective, budget and usage; do not create a goal, restart/replay a task or bypass usage/budget limits. Safe during the current main turn: the native core manages continuation after that turn. Subagents cannot resume the parent goal. Use native get_goal to inspect. This is K conversation control, not a Gemini worker task.',
+    inputSchema:z.strictObject({}),
+    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+  },async(args,context)=>{
+    try{
+      const value=await resumeGoal(args,context.mcpReq._meta);
       return {content:[{type:'text',text:JSON.stringify(value)}]};
     }catch(error){return {isError:true,content:[{type:'text',text:String(error?.message??error)+' Do not retry automatically; inspect the current native goal.'}]};}
   });
@@ -67,10 +77,10 @@ function bearerMatches(header, token) {
 }
 
 /** Start a token-authenticated, loopback-only MCP HTTP gateway for one Luna bridge. */
-export async function createLunaGateway({bridge,geminiOnly=false,editGoal}) {
+export async function createLunaGateway({bridge,geminiOnly=false,editGoal,resumeGoal}) {
   if(!bridge||!['start','wait','inspect','cancel'].every(name=>typeof bridge[name]==='function'))throw new TypeError('A complete Luna bridge is required.');
   const token=randomBytes(32).toString('base64url');
-  const mcp=createMcpServer(bridge,{geminiOnly,editGoal});
+  const mcp=createMcpServer(bridge,{geminiOnly,editGoal,resumeGoal});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined});
   await mcp.connect(transport);
   let closed=false, closing=false, closePromise, expectedHost, expectedOrigin;

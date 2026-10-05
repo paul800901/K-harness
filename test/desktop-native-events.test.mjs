@@ -312,3 +312,68 @@ test('stopping during a goal edit read does not apply the pending objective',asy
   assert(!f.calls.some(c=>c.method==='thread/goal/set'));assert.equal(f.c.state.goalPending,false);
  }finally{await f.c.close();}
 });
+
+test('Codex main AI resumes the existing paused goal during its turn without replay, budget changes or cross-thread access',async()=>{
+ let gateway;const f=await fixture({gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/mcp',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}};}}),original=f.host.request;
+ let nativeGoal=null;
+ f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set'))nativeGoal={...nativeGoal,...params};return {goal:structuredClone(nativeGoal)};}return original(method,params);};
+ try{
+  const {threadId}=await f.c.open({model:'gpt-6-astra'});await f.c.goal({objective:'discussed goal',status:'paused',tokenBudget:500});Object.assign(nativeGoal,{tokensUsed:42,timeUsedSeconds:60,createdAt:123});
+  const emit=f.connections.at(-1).onEvent;emit({method:'turn/started',params:{threadId,turn:{id:'resume-turn'}}});
+  const meta={'x-codex-turn-metadata':{thread_id:threadId,turn_id:'resume-turn'}};
+  for(const bad of [undefined,{}, {'x-codex-turn-metadata':'bad'},{'x-codex-turn-metadata':{thread_id:'child',turn_id:'resume-turn'}},{'x-codex-turn-metadata':{thread_id:threadId,turn_id:'old'}}])await assert.rejects(gateway.resumeGoal({},bad),/目前主對話/);
+  const before=structuredClone(nativeGoal),result=await gateway.resumeGoal({},meta);assert.deepEqual(result.goal,{...before,status:'active'});assert.equal(f.c.state.busy,true);assert.equal(f.c.state.questions.length,0);
+  const count=f.calls.filter(c=>c.method==='thread/goal/set').length;
+  assert.deepEqual((await gateway.resumeGoal({},meta)).goal,result.goal);assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count,'already active is a readback, not another set');
+  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,status:'active'}]);
+  for(const status of ['complete','blocked','usageLimited','budgetLimited','unknown']){nativeGoal.status=status;await assert.rejects(gateway.resumeGoal({},meta),/並非已暫停/);assert.equal(nativeGoal.status,status);}
+  for(const extra of [{objective:'changed'},{tokenBudget:999},{editOnly:true},{refresh:true},{clear:true},{status:'paused'}])await assert.rejects(f.c.goal({status:'active',resumeOnly:true,...extra}));
+  assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count);
+  nativeGoal=null;await assert.rejects(gateway.resumeGoal({},meta),/沒有可繼續/);
+  emit({method:'turn/completed',params:{threadId,turn:{id:'resume-turn',status:'completed'}}});await assert.rejects(gateway.resumeGoal({},meta),/目前主對話/);
+  assert(!f.calls.some(c=>['turn/start','turn/steer','turn/interrupt'].includes(c.method)));
+ }finally{await f.c.close();}
+});
+
+test('human resume is allowed during a turn; stop wins over a pending resume read or write',async()=>{
+ for(const phase of ['get','set']){
+  const f=await fixture(),original=f.host.request;let nativeGoal={objective:'same',status:'paused'},release,reading;const started=new Promise(r=>reading=r);
+  try{
+   const {threadId}=await f.c.open({model:'gpt-6-astra'});const emit=f.connections.at(-1).onEvent;emit({method:'turn/started',params:{threadId,turn:{id:'human-turn'}}});
+   f.host.request=async(method,p)=>{
+    if(method.startsWith('thread/goal/')){
+     f.calls.push({method,params:p});
+     if(method===`thread/goal/${phase}`&&!release){reading();await new Promise(r=>release=r);}
+     if(method==='thread/goal/set')nativeGoal={...nativeGoal,...p};return {goal:structuredClone(nativeGoal)};
+    }return original(method,p);
+   };
+   const resume=f.c.goal({status:'active',resumeOnly:true});
+   const checked=phase==='get'?assert.rejects(resume,/停止或切換/):resume;
+   await started;const stop=f.c.stop();if(phase==='get')await stop;release();await checked;await stop;
+   assert.notEqual(nativeGoal.status,'active');assert.equal(f.c.state.goalPending,false);
+   const writes=f.calls.filter(c=>c.method==='thread/goal/set').map(c=>c.params.status);assert.deepEqual(writes,phase==='get'?[]:['active','paused']);
+   assert(!f.calls.some(c=>c.method==='turn/start'||c.method==='turn/steer'));
+  }finally{await f.c.close();}
+ }
+});
+
+test('a cancelled goal read cannot poison stop while native interruption is still pending',async()=>{
+ for(const change of [{status:'active',resumeOnly:true},{objective:'not applied',editOnly:true}]){
+  const f=await fixture(),original=f.host.request;let releaseRead,releaseInterrupt,readStarted,interruptStarted;
+  const reading=new Promise(r=>readStarted=r),interrupting=new Promise(r=>interruptStarted=r);
+  try{
+   const {threadId}=await f.c.open({model:'gpt-6-astra'});const emit=f.connections.at(-1).onEvent;
+   emit({method:'thread/goal/updated',params:{threadId,goal:{objective:'same',status:'paused'}}});emit({method:'turn/started',params:{threadId,turn:{id:'stopping-turn'}}});
+   f.host.request=async(method,p)=>{
+    if(method==='thread/goal/get'&&!releaseRead){readStarted();await new Promise(r=>releaseRead=r);return {goal:{objective:'same',status:'paused'}};}
+    if(method==='turn/interrupt'&&!releaseInterrupt){interruptStarted();await new Promise(r=>releaseInterrupt=r);}
+    return original(method,p);
+   };
+   const rejected=assert.rejects(f.c.goal(change),/停止或切換/);await reading;
+   const stopped=f.c.stop().then(value=>({value}),error=>({error}));await interrupting;
+   releaseRead();await rejected;releaseInterrupt();const result=await stopped;
+   assert.equal(result.error,undefined);assert.equal(f.c.state.goalError,null);assert.equal(f.c.state.status,'interrupted');assert.equal(f.c.state.goal.status,'paused');
+   assert(!f.calls.some(c=>c.method==='thread/goal/set'));
+  }finally{releaseRead?.();releaseInterrupt?.();await f.c.close();}
+ }
+});

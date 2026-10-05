@@ -344,15 +344,21 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   list:args=>ensureFlashBridge().then(value=>value.list(args)),
   async close(){const value=flashBridge??(flashBridgeInit?await flashBridgeInit.catch(()=>null):null);if(value){await value.close();if(flashBridge===value)flashBridge=null;}}
  };
+ function assertMainGoalCaller(meta){
+  let caller=meta?.['x-codex-turn-metadata'];
+  if(typeof caller==='string'){try{caller=JSON.parse(caller);}catch{caller=null;}}
+  if(!host||opening||closing||stopping||!state.busy||!turnId||caller?.thread_id!==nativeId(state.threadId)||caller?.turn_id!==turnId)throw Error('只能由目前主對話操作自己的目標；未套用。');
+ }
  async function configureFlashGateway(){
   if(flashGateway)return flashGateway;
   lazyFlashBridge.workerPolicy=state.workerPolicy;
   const factory=gatewayFactory??(await import('./luna-gateway.mjs')).createLunaGateway;
   flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,editGoal:async(args,meta)=>{
-   let caller=meta?.['x-codex-turn-metadata'];
-   if(typeof caller==='string'){try{caller=JSON.parse(caller);}catch{caller=null;}}
-   if(!host||opening||closing||stopping||!state.busy||!turnId||caller?.thread_id!==nativeId(state.threadId)||caller?.turn_id!==turnId)throw Error('只能由目前主對話修改自己的目標；未套用。');
+   assertMainGoalCaller(meta);
    return goal({objective:args.objective,editOnly:true});
+  },resumeGoal:async(args,meta)=>{
+   assertMainGoalCaller(meta);
+   return goal({status:'active',resumeOnly:true});
   }});return flashGateway;
  }
  async function closeFlashBridge(){
@@ -449,19 +455,25 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }catch(e){markAssistantPartial(turnId);state.status='uncertain';state.busy=false;state.error='回合已要求中止，但背景工作未確認停止：'+e.message;throw e;}
   finally{stopping=false;changed();}
  }
- async function goal({objective,status,clear=false,refresh=false,tokenBudget,editOnly=false,expectedObjective}={}){
+ async function goal({objective,status,clear=false,refresh=false,tokenBudget,editOnly=false,resumeOnly=false,expectedObjective}={}){
    if(!host||!state.threadId||opening||closing||stopping||state.goalPending||submission)throw new Error('請先開啟對話，或等待目前操作完成。');
    if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('目標須為 1–4000 字元。');
    if(editOnly&&(objective===undefined||status!==undefined||tokenBudget!==undefined||clear||refresh))throw Error('儲存目標只修改文字，不變更執行狀態或預算。');
+   if(resumeOnly&&(status!=='active'||objective!==undefined||tokenBudget!==undefined||clear||refresh||editOnly))throw Error('繼續目標只恢復既有暫停目標，不修改文字或預算。');
    const allowed=['active','paused','blocked','complete'];if(status!==undefined&&!allowed.includes(status))throw new Error('目標狀態無效。');
    if(tokenBudget!==undefined&&tokenBudget!==null&&(!Number.isSafeInteger(tokenBudget)||tokenBudget<=0))throw Error('目標預算須為正整數。');
    const active=host,threadId=state.threadId,epoch=requestEpoch;state.goalPending=true;state.goalError=null;changed();
    let task;
    try{
-    if(editOnly){
+    if(editOnly||resumeOnly){
      const result=await active.request('thread/goal/get',{threadId});
-     if(!result.goal)throw Error('目前沒有可修改的目標，請先設定目標。');
+     if(!result.goal)throw Error(resumeOnly?'目前沒有可繼續的目標，未建立新目標。':'目前沒有可修改的目標，請先設定目標。');
      if(expectedObjective!==undefined&&result.goal.objective!==expectedObjective)throw Error('目標已由另一方更新；請重新開啟目標查看後再編輯，未覆寫。');
+     if(resumeOnly){
+      if(host!==active||state.threadId!==threadId||epoch!==requestEpoch||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
+      if(result.goal.status==='active'){state.goal=result.goal;return {goal:state.goal};}
+      if(result.goal.status!=='paused')throw Error('目標並非已暫停；未恢復、重建或變更額度／預算限制，請先查看原生狀態。');
+     }
     }
     // A goal can start native turns without a normal user send. Preserve this
     // thread as native history, never recreate it as an unsent empty room.
@@ -471,7 +483,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const result=await task;
     if(host!==active||state.threadId!==threadId)throw Error('原對話已變更；目標操作未重送。');
     state.goal=clear?null:result.goal??null;return {goal:state.goal};
-   }catch(error){if(host===active&&state.threadId===threadId)state.goalError=error.message;throw error;}
+   }catch(error){if(host===active&&state.threadId===threadId&&(task||epoch===requestEpoch))state.goalError=error.message;throw error;}
    finally{if(submission===task)submission=null;if(host===active&&state.threadId===threadId){state.goalPending=false;changed();}}
   }
  return {
@@ -681,7 +693,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('Flash MCP gateway 未提供有效的專案限定連線設定。');
      const googleOps=await googleOpsMcp(workspace,{root});
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
-     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行；不要改權限、預算或重播工作。子代理不得修改主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
+     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId&&!prepared){

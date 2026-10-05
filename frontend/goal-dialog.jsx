@@ -27,7 +27,7 @@ export function GoalDialog({state,Modal,request,onClose}){
     {provider!=='gemini'&&<button disabled={locked||state.busy} onClick={()=>run('goal',{refresh:true})}>刷新狀態</button>}
     {state.goal&&<button disabled={locked||state.busy} onClick={()=>run('goal',{clear:true})}>{provider==='gemini'?'清除目標紀錄':'清除目標'}</button>}
     {working&&<button disabled={locked} onClick={()=>run('stop',{})}>{provider==='codex'?'停止並暫停目標':'停止目標工作'}</button>}
-    {provider==='codex'&&state.goal&&['paused','blocked','usageLimited','budgetLimited'].includes(state.goal.status)&&<button disabled={locked||state.busy} onClick={()=>run('goal',{status:'active'})}>繼續目標</button>}
+    {provider==='codex'&&state.goal&&['paused','blocked','usageLimited','budgetLimited'].includes(state.goal.status)&&<button disabled={locked||(state.busy&&state.goal.status!=='paused')} onClick={()=>run('goal',{status:'active',...(state.goal.status==='paused'?{resumeOnly:true}:{})})}>繼續目標</button>}
     {canEdit&&<button className="primary" disabled={locked||!objective.trim()||objective.trim()===baseObjective} onClick={()=>run('goal',{objective,editOnly:true,expectedObjective:baseObjective})}>儲存目標</button>}
     <button className={canEdit?undefined:'primary'} disabled={locked||state.busy||!objective.trim()} onClick={()=>run('goal',{objective,status:'active'})}>{state.goal?'更新並執行':'設定並執行'}</button>
    </div>
