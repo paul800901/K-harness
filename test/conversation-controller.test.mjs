@@ -328,3 +328,13 @@ test('a real external browser gateway before first use does not block workspace 
   await c.moveWorkspace({...room,workspace:dest});assert.equal(c.state.workspace,dest);
  }finally{await c.close();await gateway?.close();}
 });
+
+test('active or unknown native goals and pending goal controls protect hidden rooms from idle release',async()=>{
+ const f=await fixture(),c=f.controller,protectedRooms=[];
+ try{for(let i=0;i<8;i++){const room=await c.open({model:codexModel}),native=f.room(room.threadId);if(i<4){native.state.capabilities={goalContinuesWhileIdle:true};if(i===0)native.state.goal={status:'active'};if(i===1)native.state.goal={status:'unknown'};if(i===2)native.state.goalPending=true;if(i===3)native.state.goalError='unavailable';protectedRooms.push(native);native.notify();}}await new Promise(r=>setTimeout(r,150));assert(protectedRooms.every(n=>n.closed===0));}finally{await c.close();}
+});
+
+test('idle Claude goals and saved Gemini unknown outcomes do not keep inactive hosts alive',async()=>{
+ const f=await fixture(),c=f.controller;let first;
+ try{for(let i=0;i<7;i++){const room=await c.open({model:codexModel}),native=f.room(room.threadId);if(i===0){first=native;native.state.goal={status:'unknown'};native.state.goalError='saved native outcome unknown';native.notify();}}await new Promise(r=>setTimeout(r,150));assert.equal(first.closed,1);}finally{await c.close();}
+});

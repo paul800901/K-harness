@@ -14,7 +14,7 @@ export function createCompletionAttention(){
    if(!run?.armed)return;
    if(['failed','interrupted','stopping','offline','error','uncertain'].includes(state.status)){run.armed=false;return;}
    if(state.status!=='completed'||state.busy)return;
-   if(state.completionPending)return;
+   if(state.completionPending||state.goalError||['starting','active','unknown'].includes(state.goal?.status))return;
    const waiting=(state.workers??[]).some(w=>w.settled===false||
     (w.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(w.status)));
    if(waiting){run.waitingForMain=true;return;}

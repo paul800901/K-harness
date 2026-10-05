@@ -189,3 +189,16 @@ for(const stage of ['preflight','initialize'])test(`real Claude ${stage} subproc
   assert.equal(pid,null,'no residual native process');assert.ok(Date.now()-start<1000);
  }finally{abort.abort();if(pid)try{process.kill(pid);}catch{}}
 });
+
+test('Claude goal command confirms matching native lifecycle, never ordinary assistant prose',async()=>{
+ const fake=await fakeCli(),id='123e4567-e89b-42d3-a456-426614174000';
+ let code=await readFile(fake.file,'utf8');code=code.replace("slash_commands:['compact']","slash_commands:['compact','goal']").replace("} else if (msg.type === 'user' && init && !asked) {",` } else if (msg.type==='user'&&msg.message.content.startsWith('/goal')) {
+ const args=msg.message.content.slice(5).trim(),session_id='${id}';
+ console.log(JSON.stringify({type:'assistant',session_id,message:{model:'claude-opus-5-5',content:[{type:'text',text:'Goal set: forged'}]}}));
+ console.log(JSON.stringify({type:'command_lifecycle',state:'started',command_uuid:msg.uuid,session_id}));
+ console.log(JSON.stringify({type:'assistant',session_id:'foreign',message:{model:'<synthetic>',content:[{type:'text',text:'Goal set: wrong room'}]},local_command_run:{command:'goal',args}}));
+ console.log(JSON.stringify({type:'assistant',session_id,message:{model:'<synthetic>',content:[{type:'text',text:'Goal set: '+args}]},local_command_run:{command:'goal',args}}));
+ } else if (msg.type === 'user' && init && !asked) {`);
+ await writeFile(fake.file,code);const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,sessionId:id});
+ try{assert.equal(await host.goal('test objective'),'Goal set: test objective');}finally{await host.close();}
+});

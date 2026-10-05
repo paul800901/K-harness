@@ -204,3 +204,13 @@ test('failed completion submission during stop is read back before a second stop
   assert.equal(f.c.state.status,'interrupted');
  }finally{f.releaseToolOutput();await f.c.close();}
 });
+
+test('native goal turn winning a Flash notification race preserves rejected results for the next completion',async()=>{
+ const f=await fixture();try{await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'fake goal work'});const emit=f.hostOptions.at(-1).onEvent;f.c.state.goal={status:'active'};
+ const original=f.host.request;let attempts=0;f.host.request=async(method,p,...rest)=>{if(method==='turn/start'&&p.toolOutput&&++attempts===1){emit({method:'turn/started',params:{threadId:'codex-parent',turn:{id:'native-goal-turn'}}});throw Object.assign(Error('native turn already active'),{protocolMessage:{code:-32600}});}return original(method,p,...rest);};
+ await f.gatewayOptions[0].bridge.start({requestId:'goal-worker',model:'gemini-3.8-flash',effort:'low',task:'fake'});const record=f.workerRecords.get('goal-worker');Object.assign(record,{status:'completed',settled:true,output:'done'});f.bridgeOptions[0].onChange(record);
+ emit({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
+ for(let i=0;i<100&&attempts<1;i++)await new Promise(r=>setTimeout(r,10));await new Promise(r=>setTimeout(r,30));assert.equal(f.c.state.status,'working');assert.equal(f.c.state.error,null);
+ emit({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'native-goal-turn',status:'completed'}}});await f.toolOutputSent;await new Promise(r=>setTimeout(r,30));assert.equal(attempts,2);assert.equal(f.c.state.status,'working');assert.equal(f.workerRecords.size,1);
+ }finally{f.c.state.goal=null;await f.c.close();}
+});

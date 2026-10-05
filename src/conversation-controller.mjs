@@ -52,7 +52,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const safelyIdle=async (controller,allowFailed=false)=>{
   const idleStatuses=allowFailed?['ready','completed','interrupted','failed']:['ready','completed','interrupted'];
   const s=controller.state;
-  if(!s.threadId||s.busy||s.questions?.length||s.queuedMessages?.length||
+  if(!s.threadId||s.busy||s.goalPending||(s.capabilities?.goalContinuesWhileIdle&&(s.goalError||['active','unknown'].includes(s.goal?.status)))||s.questions?.length||s.queuedMessages?.length||
      !idleStatuses.includes(s.status)||s.workerConnection==='failed'||
      ['offline','error','uncertain','connecting','working'].includes(s.status))return false;
   // Release runtime resources, never the saved room. Adapters persist prepared
@@ -69,7 +69,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    if(browser?.mode!=='ai'||browser?.busy!==false||(!notStarted&&browser?.available!==true)||browser?.recoveryRequired===true)return false;
   }
   const finalWorkers=await workerRows(controller),latest=controller.state;
-  return !latest.busy&&!latest.questions?.length&&!latest.queuedMessages?.length&&
+  return !latest.busy&&!latest.goalPending&&!(latest.capabilities?.goalContinuesWhileIdle&&(latest.goalError||['active','unknown'].includes(latest.goal?.status)))&&!latest.questions?.length&&!latest.queuedMessages?.length&&
    idleStatuses.includes(latest.status)&&latest.workerConnection!=='failed'&&
    !finalWorkers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||
     (row.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(row.status)));

@@ -204,3 +204,13 @@ test('failed edit persistence restores the held original and never dispatches it
   active.state.busy=false;active.state.status='completed';queue.schedule();await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
  }finally{mock.mock.restore();syncBuiltinESMExports();await queue.close();}
 });
+
+test('queue waits for native goal continuation and pending goal commands',async()=>{
+ const base=await root(),active=controller(),queue=queueFor(base,active);await queue.load('queue-session');
+ try{active.state.capabilities={goalContinuesWhileIdle:true};active.state.goal={status:'active'};await queue.enqueue({text:'after goal'});await new Promise(r=>setTimeout(r,150));assert.equal(active.calls.length,0);active.state.goal=null;active.state.goalPending=true;queue.schedule();await new Promise(r=>setTimeout(r,150));assert.equal(active.calls.length,0);active.state.goalPending=false;queue.schedule();await until(()=>active.calls.length===1);}finally{await queue.close();}
+});
+
+test('idle native Claude goal allows the next explicit queued input to continue',async()=>{
+ const base=await root(),active=controller(),queue=queueFor(base,active);await queue.load('queue-session');
+ try{active.state.goal={status:'active'};await queue.enqueue({text:'continue native goal'});await until(()=>active.calls.length===1);}finally{await queue.close();}
+});

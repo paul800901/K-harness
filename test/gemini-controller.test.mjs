@@ -213,3 +213,14 @@ test('failed Gemini workspace preparation cannot send at the uncommitted destina
   fail=false;await c.open({threadId,model:'gemini-3.8-flash'});assert.equal(c.state.workspace,f.root);
  }finally{await c.close();}
 });
+
+for(const confirmed of [true,false])test(`Gemini goal completion requires native expansion (${confirmed}) and keeps normal chat literal`,async()=>{
+ const calls=[];let finishTurn;
+ const f=await fixture({run:async(binary,args,params)=>{calls.push({args,params});params.onStart(321);for(const e of [{event:'init',conversation_id:'11111111-1111-1111-1111-111111111111',init:{expanded_commands:confirmed?[{name:'goal',type:'system'}]:[]}},{event:'result',result:{status:'SUCCESS',response:'FAKE_DONE\n<!-- GOAL_COMPLETE -->'}}])params.onChunk(Buffer.from(JSON.stringify(e)+'\n'));return {code:0};}});
+ try{
+  const {threadId}=await f.controller.open({model:'gemini-3.8-flash'});await f.controller.goal({objective:'fake objective'});await finish(f.controller);
+  assert.equal(f.controller.state.goal.status,confirmed?'complete':'ended');assert.equal(calls[0].args[1],'/goal fake objective');assert(!calls[0].args.includes('--disable-slash-commands'));assert.equal(calls[0].params.timeoutMs,0);assert.equal(calls[0].params.captureOutput,false);
+  await f.controller.close();await f.controller.open({model:'gemini-3.8-flash',threadId});assert.equal(calls.length,1);assert.equal(f.controller.state.goal.status,confirmed?'complete':'ended');
+  await f.controller.goal({clear:true});assert.equal(f.controller.state.goal,null);await f.controller.send({text:'/goal not a control'});await finish(f.controller);assert(calls[1].args.includes('--disable-slash-commands'));assert.equal(f.controller.state.goal,null);
+ }finally{await f.controller.close();}
+});

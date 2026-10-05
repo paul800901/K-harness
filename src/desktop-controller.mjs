@@ -28,6 +28,7 @@ function codexInput(text,attachments=[]){
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
+ state.capabilities={goal:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
  const nativeThreads=new Map();
@@ -84,7 +85,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const [oldId,metadata]=matches[0];transferTiming('messages',oldId,id);return metadata;
  };
  let settlingWorkers=0;
- const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying;onChange(state);};
+ const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying||state.goalPending===true;onChange(state);};
  const persistFlashNotifications=async()=>{
   if(!state.threadId)return;
   const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);
@@ -210,8 +211,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    else state.tools.push({id:p.itemId,name:'檔案變更',status:'running',details:structuredClone(changes),output:'',patchChanges:changes,turnId:p.turnId,groupId:turnGroupId(p.turnId)});
    changed();return;
   }
-  if(e.method==='thread/goal/updated'){state.goal=p.goal;changed();return;}
-  if(e.method==='thread/goal/cleared'){state.goal=null;changed();return;}
+  if(e.method==='thread/goal/updated'){state.goal=p.goal;state.goalError=null;changed();return;}
+  if(e.method==='thread/goal/cleared'){state.goal=null;state.goalError=null;changed();return;}
   if(e.method==='turn/plan/updated'){state.progress.plan=p.plan??[];state.progress.explanation=p.explanation??null;changed();return;}
   if(e.method==='thread/tokenUsage/updated'){state.progress.tokenUsage=p.tokenUsage??null;changed();return;}
   // Deprecated compatibility notification can accompany item/completed. Never count both.
@@ -396,6 +397,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(submission===delivery)submission=null;
   }catch(error){
    submission=null;
+   // A protocol rejection confirms the notification was not accepted. Native
+   // goal continuation may have won the turn race; wait for its completion.
+   // Transport loss/timeouts remain uncertain and are never retried.
+   if(attempted&&!completed&&error.protocolMessage!==undefined&&state.goal?.status==='active'&&host===active&&parent===state.threadId&&!stopping&&!closing){
+    for(const record of batch){delete flashNotifications[record.requestId];flashQueue.set(record.requestId,record);}
+    state.busy=!!turnId;state.status=turnId?'working':'completed';
+    await persistFlashNotifications();return;
+   }
    if(attempted&&!completed)flashDeliveryUncertain=parent;
    if(host===active&&parent===state.threadId&&!stopping&&!closing){
     state.busy=false;
@@ -413,15 +422,24 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(result?.thread?.status?.type==='active'&&!turnId)throw new Error('原生回合仍在執行但無法確認識別碼；未假定停止。');
   flashDeliveryUncertain=null;
  }
+ async function pauseNativeGoal(){
+  if(!host||!state.threadId||!(state.goal?.status==='active'||state.goalError))return;
+  try{
+   if(state.goalError)state.goal=(await host.request('thread/goal/get',{threadId:state.threadId})).goal??null;
+   if(state.goal?.status==='active')state.goal=(await host.request('thread/goal/set',{threadId:state.threadId,status:'paused'})).goal;
+   state.goalError=null;
+  }catch(error){state.goalError='目標暫停未確認：'+error.message;}
+ }
  let openAbort,openDone,finishOpen;
  async function stop(){
   if(opening&&openAbort){openAbort.abort(new DOMException('已取消連線。','AbortError'));await openDone;return {cancelled:true};}
   if(opening||stopping)throw new Error('正在連線或停止，請稍候。');
   stopping=true;stopRequested=true;requestEpoch++;
-  try{clearQuestions();if(!turnId&&submission)await submission;if(!turnId)await reconcileUncertainFlashTurn();if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});
+  try{clearQuestions();if(submission)await submission;await pauseNativeGoal();if(!turnId)await reconcileUncertainFlashTurn();if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});
    if(host&&state.threadId){const terminals=await stopThreadTerminals(host,state.threadId);for(const terminal of terminals){const t=state.tools.find(t=>t.id===terminal.itemId);if(t)t.status='interrupted';}}
    const children=await workers(true);if(children.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止。');
    await closeFlashBridge();
+   if(state.goalError)throw Error(state.goalError);
    markAssistantPartial(turnId);state.status='interrupted';state.busy=false;state.error=null;return {stopRequested:true};
   }catch(e){markAssistantPartial(turnId);state.status='uncertain';state.busy=false;state.error='回合已要求中止，但背景工作未確認停止：'+e.message;throw e;}
   finally{stopping=false;changed();}
@@ -667,7 +685,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       }
       state.title=saved?.title??'';
       if(!threadId||prepared)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
-      try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch{state.goal=null;}
+      state.goal=null;state.goalError=null;state.goalPending=false;
+      try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch(error){state.goalError=`原生目標暫時無法讀回：${error.message}`;}
       await saveMainSession(root,{...saved,...relocation,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!threadId&&!prepared}});
      state.workerConnection='ready';
      signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
@@ -735,12 +754,24 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     return {steered:true,turnId:expected};
    }finally{if(pendingSteer===attempt)pendingSteer=null;}
   },
-  async goal({objective,status,clear=false}={}){
-   if(!host||!state.threadId||opening||closing||stopping)throw new Error('請先開啟對話。');
-   if(clear){await host.request('thread/goal/clear',{threadId:state.threadId});state.goal=null;changed();return {goal:null};}
+  async goal({objective,status,clear=false,refresh=false,tokenBudget}={}){
+   if(!host||!state.threadId||opening||closing||stopping||state.goalPending||submission)throw new Error('請先開啟對話，或等待目前操作完成。');
    if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('目標須為 1–4000 字元。');
    const allowed=['active','paused','blocked','complete'];if(status!==undefined&&!allowed.includes(status))throw new Error('目標狀態無效。');
-   const result=await host.request('thread/goal/set',{threadId:state.threadId,...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status})});state.goal=result.goal;changed();return result;
+   if(tokenBudget!==undefined&&tokenBudget!==null&&(!Number.isSafeInteger(tokenBudget)||tokenBudget<=0))throw Error('目標預算須為正整數。');
+   const active=host,threadId=state.threadId,epoch=requestEpoch;state.goalPending=true;state.goalError=null;changed();
+   let task;
+   try{
+    // A goal can start native turns without a normal user send. Preserve this
+    // thread as native history, never recreate it as an unsent empty room.
+    if(!refresh&&!clear)await markSubmitted();
+    if(host!==active||state.threadId!==threadId||epoch!==requestEpoch||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
+    task=active.request(refresh?'thread/goal/get':clear?'thread/goal/clear':'thread/goal/set',{threadId,...(!refresh&&!clear?{...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status}),...(tokenBudget===undefined?{}:{tokenBudget})}:{})});submission=task;
+    const result=await task;
+    if(host!==active||state.threadId!==threadId)throw Error('原對話已變更；目標操作未重送。');
+    state.goal=clear?null:result.goal??null;return {goal:state.goal};
+   }catch(error){if(host===active&&state.threadId===threadId)state.goalError=error.message;throw error;}
+   finally{if(submission===task)submission=null;if(host===active&&state.threadId===threadId){state.goalPending=false;changed();}}
   },
   async compact(){
    if(!host||!state.threadId||opening||closing||stopping||state.busy)throw new Error('請在回合結束後再開始壓縮。');
@@ -757,6 +788,6 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    }
    pending.delete(id);state.questions=state.questions.filter(q=>q.id!==id);p.resolve(result);changed();return {answered:true};
   },
-  async close(){closing=true;requestEpoch++;clearQuestions();try{if(!turnId&&submission)await submission;if(host){if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，後端保持開啟，請先查詢原工作。');await closeFlashGateway();const previous=host;host=null;hostEpoch++;await previous.close();}else await closeFlashGateway();await closeBrowser();state.status='offline';state.busy=false;changed();}finally{closing=false;}}
+  async close(){closing=true;requestEpoch++;clearQuestions();try{if(!turnId&&submission)await submission;if(host){await pauseNativeGoal();if(turnId)await host.request('turn/interrupt',{threadId:state.threadId,turnId});if(state.threadId)await stopThreadTerminals(host,state.threadId);const stopped=await workers(true);if(stopped.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止，後端保持開啟，請先查詢原工作。');await closeFlashGateway();const previous=host;host=null;hostEpoch++;await previous.close();}else await closeFlashGateway();await closeBrowser();state.status='offline';state.busy=false;changed();}finally{closing=false;}}
  };
 }

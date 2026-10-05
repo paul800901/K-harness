@@ -238,3 +238,27 @@ test('retry notices update one episode, recover on model progress, and retain ra
   assert.equal(f.calls.some(c=>['turn/start','turn/steer','turn/interrupt'].includes(c.method)),false);
  }finally{await f.c.close();}
 });
+
+test('Codex goals preserve empty native history and stopping pauses continuation before interrupt',async()=>{
+ const f=await fixture(),original=f.host.request;let goal=null;
+ f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set'))goal={...goal,...params};if(method.endsWith('/clear'))goal=null;return {goal};}return original(method,params);};
+ try{
+  const {threadId}=await f.c.open({model:'gpt-6-astra'});await f.c.goal({objective:'test goal',status:'active'});
+  const {listMainSessions}=await import('../src/main-sessions.mjs');assert.equal((await listMainSessions(f.root)).sessions[0].codexSession.hasSubmitted,true);
+  const emit=f.connections.findLast(x=>x.onEvent).onEvent;emit({method:'turn/started',params:{threadId,turn:{id:'goal-turn'}}});await f.c.stop();assert.equal(f.c.state.goal.status,'paused');
+  const pause=f.calls.findIndex(c=>c.method==='thread/goal/set'&&c.params.status==='paused'),stop=f.calls.findIndex(c=>c.method==='turn/interrupt');assert(pause>=0&&stop>pause);
+  await f.c.goal({clear:true});assert.equal(f.c.state.goal,null);
+  f.host.request=async(method,params)=>method==='thread/goal/get'?Promise.reject(Error('cannot read goal')):original(method,params);await assert.rejects(f.c.goal({refresh:true}),/cannot read/);assert.match(f.c.state.goalError,/cannot read/);
+ }finally{await f.c.close();}
+});
+
+test('Codex pause failure does not skip turn interruption or closing the host',async()=>{
+ const f=await fixture(),original=f.host.request;let closed=false;f.host.close=async()=>{closed=true;};
+ f.host.request=async(method,p,...rest)=>{if(method==='thread/goal/set')throw Error('pause unavailable');return original(method,p,...rest);};
+ try{await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+ emit({method:'thread/goal/updated',params:{threadId:f.c.state.threadId,goal:{objective:'fake',status:'active'}}});emit({method:'turn/started',params:{threadId:f.c.state.threadId,turn:{id:'goal-turn'}}});
+ await assert.rejects(f.c.stop(),/暫停未確認/);assert.equal(f.c.state.status,'uncertain');assert(f.calls.some(x=>x.method==='turn/interrupt'&&x.params.turnId==='goal-turn'));
+ f.host.request=async(method,p,...rest)=>{if(method==='thread/goal/get')throw Error('read unavailable');return original(method,p,...rest);};
+ await f.c.close();assert(closed);assert.match(f.c.state.goalError,/暫停未確認/);
+ }finally{await f.c.close();}
+});

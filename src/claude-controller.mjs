@@ -48,6 +48,15 @@ function plainText(message) {
   return content.filter(part => part?.type === 'text').map(part => part.text ?? '').join('');
 }
 
+export function claudeGoalFromCommand(text,previous=null){
+  if(text.startsWith('Goal set: '))return {objective:text.slice(10),status:'active'};
+  if(text.startsWith('Goal cleared: ')||text==='No goal set')return null;
+  if(text==='No goal set. Usage: `/goal <condition>`')return previous?{...previous,status:'ended'}:null;
+  const active=/^Goal active: ([\s\S]*) \((not yet evaluated|\d+ turns?)\)(?:\nLast check: ([\s\S]*))?$/.exec(text);
+  if(active)return {objective:active[1],status:'active',reason:active[3]??null};
+  throw new Error('Claude 原生目標回報無法辨識；未推定完成或重送。');
+}
+
 
 async function claudeInput(text,attachmentIds,{workspace,previousWorkspaces,threadId}){
   const content=[],attachmentRecords=[];
@@ -74,12 +83,23 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   state.usage={claude:{status:'unavailable',auth:null,checkedAt:null,rateLimitStatus:null,extraUsageDisabled:null},codex:{status:'not-checked'}};
   let host=null, hostEffort=null, bridge=null, bridgeInstance=null, bridgeInitPromise=null, gateway=null, opening=false, closing=false, stopping=false, restartingHost=false, activeGeneration=0, persistChain=Promise.resolve(), persistError=null;
   const pending = new Map();
-  let compactionIds=new Set();
+  let compactionIds=new Set(),goalRefreshNeeded=false,goalSettled=Promise.resolve();
   const compactionSnapshot=()=>({ids:[...compactionIds],complete:state.progress.compactionsComplete,inFlight:state.busy});
   let currentGroupId=null,activeAssistantId=null,currentTurnId=null;const nativePending=new Set();const nativeStreams=new Map();let streamingNativeId=null;
   const workerArmed=new Set(), workerQueue=new Map(),nativeChildEventIds=new Set();
   let workerNotifications={},notifying=false,usageRequest=null,lastUsageAttempt=0;
-  const changed = () => { state.completionPending=notifying||workerQueue.size>0;try { onChange(state); } catch {} };
+  const changed = () => { state.completionPending=notifying||workerQueue.size>0||state.goalPending===true;try { onChange(state); } catch {} };
+  async function goalCommand(args=''){
+    const active=host,parent=state.threadId;
+    if(!active?.goal||state.goalPending)throw Error('原生目標操作未就緒或仍在處理。');
+    let finishGoal;goalSettled=new Promise(resolve=>{finishGoal=resolve;});state.goalPending=true;state.goalError=null;changed();
+    try{
+      const text=await active.goal(args);
+      if(host!==active||state.threadId!==parent)throw Error('原對話已變更；目標操作未重送。');
+      state.goal=claudeGoalFromCommand(text,state.goal);await saveCurrent();return {goal:clone(state.goal)};
+    }catch(error){if(host===active&&state.threadId===parent){state.goalError=error.message;if(state.goal)state.goal.status='unknown';}throw error;}
+    finally{finishGoal();if(host===active&&state.threadId===parent){state.goalPending=false;if(goalRefreshNeeded&&!stopping&&!closing){goalRefreshNeeded=false;void goalCommand().catch(()=>{});}else if(state.status==='completed'&&!stopping&&!closing)scheduleWorkers();changed();}}
+  }
   const markActiveAssistantPartial=()=>{const pendingMessage=activeAssistantId?state.messages.find(m=>m.id===activeAssistantId):null;if(pendingMessage){pendingMessage.partial=true;delete pendingMessage.streaming;nativeStreams.clear();streamingNativeId=null;void saveCurrent().catch(()=>{});}activeAssistantId=null;};
   function settleNativeChildrenAfterHostClose() {
     let updated=false;
@@ -103,7 +123,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     return next.then(value=>{persistError=null;return value;},error=>{persistError=error;state.error=`對話投影保存失敗：${error.message}`;changed();throw error;});
   };
   const saveCurrent = async () => {
-    const snapshot={model:state.model,threadId:state.threadId,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,messages:clone(state.messages),tools:clone(state.tools),artifacts:[...state.artifacts],workerNotifications:clone(workerNotifications),compactions:compactionSnapshot(),lastOpenedAt:new Date().toISOString()};
+    const snapshot={model:state.model,threadId:state.threadId,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,messages:clone(state.messages),tools:clone(state.tools),artifacts:[...state.artifacts],workerNotifications:clone(workerNotifications),goal:clone(state.goal),compactions:compactionSnapshot(),lastOpenedAt:new Date().toISOString()};
     const policy=clone(state.workerPolicy);
     return enqueuePersist(async()=>{const record=(await persisted(snapshot.threadId)).find(item=>item.threadId===snapshot.threadId);if(!record)return;const projection={...record,...snapshot,effort:state.effort,workerPolicy:policy};await saveRecord(root,projection);await saveMainSession(root,{threadId:snapshot.threadId,model:projection.model,title:projection.title,archived:projection.archived,pinned:projection.pinned,workspace:projection.workspace,previousWorkspaces:projection.previousWorkspaces,previousArtifacts:projection.previousArtifacts,workerPolicy:policy,accessMode:projection.accessMode,effort:state.effort});});
   };
@@ -140,7 +160,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   };
   const clearQuestions = () => { for(const [id,item] of pending){item.resolve(item.cancelValue);pending.delete(id);} state.questions=[]; };
   async function deliverWorkers(){
-    if(notifying||!host||state.busy||opening||closing||stopping||state.status!=='completed'||!workerQueue.size)return;
+    if(notifying||!host||state.busy||state.goalPending||opening||closing||stopping||state.status!=='completed'||!workerQueue.size)return;
     notifying=true;state.busy=true;state.status='working';
     const active=host,parent=state.threadId;
     const batch=[...workerQueue.values()];workerQueue.clear();
@@ -272,6 +292,11 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   function onClaudeMessage(message) {
     if(!state.threadId) return;
     if(message?.parent_tool_use_id){recordNativeChild(message);return;} // Child events stay with their native worker, never the main conclusion.
+    if(message.type==='assistant'&&message.message?.model==='<synthetic>'&&message.local_command_run?.command==='goal'&&message.session_id===nativeId(state.threadId)){
+      // Goal commands are controls, not a new assistant response or model turn.
+      try{state.goal=claudeGoalFromCommand(plainText(message),state.goal);state.goalError=null;}catch(error){state.goalError=error.message;}
+      void saveCurrent().catch(()=>{});changed();return;
+    }
     if(message?.type==='system'&&message.subtype==='compact_boundary'){
       if(message.session_id!==nativeId(state.threadId))return;
       if(typeof message.uuid==='string'&&message.uuid){compactionIds.add(message.uuid);state.progress.compactions=compactionIds.size;}
@@ -347,6 +372,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       }
     } else if(message?.type==='result') {
       if(stopping||state.status==='interrupted') { changed(); return; }
+      const wasBusy=state.busy;
       if(message.user_message_uuid)currentTurnId=message.user_message_uuid;
       updateNativeContextWindow(message);
       const last=activeAssistantId?state.messages.find(m=>m.id===activeAssistantId):null;if(last){delete last.streaming;last.completedAt=new Date().toISOString();if(message.is_error===true)last.partial=true;else delete last.partial;}activeAssistantId=null;nativeStreams.clear();streamingNativeId=null;
@@ -354,7 +380,10 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(state.progress.compaction==='compacting'){state.progress.compaction=message.is_error?'failed':'idle';if(!message.is_error)state.progress.compactionsComplete=false;}
       if(message.is_error) state.error=message.result??'Claude Code 工具回合失敗；未自動重送。';
       void saveCurrent().catch(()=>{});
-      if(!message.is_error)scheduleWorkers();
+      const needsGoalRead=wasBusy&&(state.goalError||['active','unknown'].includes(state.goal?.status));
+      if(needsGoalRead&&state.goalPending)goalRefreshNeeded=true;
+      if(needsGoalRead&&host?.goal&&!state.goalPending){void goalCommand().catch(()=>{}).finally(()=>{if(!message.is_error)scheduleWorkers();});}
+      else if(!message.is_error)scheduleWorkers();
     }
     changed();
   }
@@ -434,7 +463,13 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       clearQuestions();
       if(state.busy&&host) await host.interrupt();
       await closeWorkers();
+      // Interrupt ends the current turn; clear the native Stop hook too, so
+      // reopening or a later message cannot silently restart the old objective.
+      await goalSettled;goalRefreshNeeded=false;
+      let goalStopError;
+      if(host?.goal&&(state.goalError||['active','unknown'].includes(state.goal?.status))){try{await goalCommand('clear');}catch(error){goalStopError=error;}}
       if(host){const active=host;await active.close();if(host===active)host=null;settleNativeChildrenAfterHostClose();}
+      if(goalStopError)throw goalStopError;
       markActiveAssistantPartial();state.busy=false;state.status='interrupted';state.error=null;
       await saveCurrent(); return {stopRequested:true};
     } catch(error) { markActiveAssistantPartial();state.status='uncertain';state.busy=false;state.error=`已要求停止，但狀態未確認：${error.message}`;throw error; }
@@ -525,6 +560,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         const id=threadId?nativeId(threadId):randomUUID();if(!id)throw new Error('Claude 對話 ID 格式無效。');
         const workspace=await validateWorkspace(relocation?.workspace??commonSaved?.workspace??saved?.workspace??state.workspace);
         state.threadId=uiId(id);state.workspace=workspace;state.accessMode=chosenAccess;state.browserAccess={enabled:false,networkAccess:false};state.effort=chosenEffort;state.title=saved?.title??'';state.parentThreadId=commonSaved?.parentThreadId??null;state.parentTitle=commonSaved?.parentTitle??null;
+        state.goal=clone(saved?.goal??null);state.goalError=null;state.goalPending=false;
         state.messages=clone(saved?.messages??source?.messages??[]);state.tools=clone(saved?.tools??source?.tools??[]);currentGroupId=state.messages.at(-1)?.groupId??null;activeAssistantId=null;currentTurnId=state.messages.findLast(m=>m.role==='user')?.id??null;state.notices=[];state.reasoning=[];state.progress.plan=[];state.progress.tokenUsage=null;nativePending.clear();nativeStreams.clear();nativeChildEventIds.clear();streamingNativeId=null;state.artifacts=[...(saved?.artifacts??source?.artifacts??[])];state.workers=[];state.questions=[];state.busy=false;
         const compactions=(saved??source)?.compactions;
         compactionIds=new Set((compactions?.ids??[]).filter(id=>typeof id==='string'&&id));
@@ -544,11 +580,13 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         state.model=model;state.modelDisplayName=selected.displayName;
         state.browserAccess={enabled:!!mcpConfig?.mcpServers?.k_browser,networkAccess:!!mcpConfig?.mcpServers?.k_browser,sessionKey:browserSessionKey(mcpConfig?.mcpServers?.k_browser)};
         hostEffort=state.effort;state.nativeCapabilities=clone(host.nativeCapabilities??state.nativeCapabilities);
+        state.capabilities.goal=typeof host.goal==='function'&&state.nativeCapabilities.commands.includes('goal');
         state.efforts=selected.supportedReasoningEfforts.map(row=>row.reasoningEffort);
         if(chosenEffort!==null&&!state.efforts.includes(chosenEffort))throw Error('指定推理程度目前不可用。');
         watchHost(host);
         if(!saved){const now=new Date().toISOString();await saveRecord(root,{threadId:state.threadId,nativeSessionId:id,nativeStarted:false,model:state.model,workerPolicy:state.workerPolicy,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,effort:state.effort,title:'',archived:false,pinned:false,compactions:compactionSnapshot(),messages:clone(state.messages),tools:clone(state.tools),artifacts:[...state.artifacts],createdAt:now,lastOpenedAt:now});await saveMainSession(root,{threadId:state.threadId,model:state.model,title:'',workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,workerPolicy:state.workerPolicy,accessMode:state.accessMode,effort:state.effort});}
         else await saveCurrent();
+        if(saved?.nativeStarted&&state.capabilities.goal&&['active','unknown'].includes(state.goal?.status))await goalCommand().catch(()=>{});
         signal.throwIfAborted();state.status='ready';changed();return {threadId:state.threadId};
       } catch(error) {
         state.browserAccess={enabled:false,networkAccess:false};
@@ -571,7 +609,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(!host&&state.status==='interrupted'&&state.threadId&&!opening&&!closing&&!stopping&&!state.busy){
         await this.open({threadId:state.threadId,model:state.model});
       }
-      if(!host||opening||closing||stopping||state.busy||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟 Claude 對話，或等待目前工作結束。');
+      if(!host||opening||closing||stopping||state.busy||state.goalPending||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟 Claude 對話，或等待目前工作結束。');
       const nextAccessMode=accessMode===undefined?state.accessMode:normalizeClaudeAccessMode(accessMode);
       const nextEffort=effort===undefined?state.effort:effort;
       if(nextEffort!==null&&!state.efforts.includes(nextEffort))throw new Error('指定推理程度目前不可用。');
@@ -645,7 +683,21 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(normalizeClaudeAccessMode(accessMode)==='claude-bypassPermissions'&&state.accessMode!=='claude-bypassPermissions'&&permissionConfirmed!==true)throw Error('切換到 Claude 完整存取權前，必須明確確認 permissionConfirmed:true；分支未建立。');
       return this.open({model,effort,accessMode,forkFrom:state.threadId});
     },
-    async goal(){throw new Error('Claude Code 串流主代理目前不支援 goal。');},
+    async goal({objective,clear=false,refresh=false}={}){
+      if(!host&&state.status==='interrupted')await this.open({threadId:state.threadId,model:state.model});
+      if(!state.capabilities.goal||!host||opening||closing||stopping||state.busy||state.goalPending)throw Error('請先停止目前工作，再設定或清除目標。');
+      if(refresh)return goalCommand();
+      if(clear)return goalCommand('clear');
+      if(typeof objective!=='string'||!objective.trim()||objective.length>4000)throw Error('目標須為 1–4000 字元。');
+      if(/^(clear|stop|off|reset|none|cancel)$/i.test(objective.trim()))throw Error('這是 Claude 清除目標的保留指令，請描述完整目標。');
+      const active=host,parent=state.threadId;
+      state.busy=true;state.status='working';state.error=null;currentGroupId=randomUUID();changed();
+      try{
+        await enqueuePersist(async()=>{const record=(await persisted(parent)).find(r=>r.threadId===parent);record.nativeStarted=true;record.compactions=compactionSnapshot();await saveRecord(root,record);});
+        if(host!==active||state.threadId!==parent||!state.busy||state.status!=='working'||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
+        return await goalCommand(objective.trim());
+      }catch(error){if(host===active&&state.threadId===parent&&!stopping&&!closing){state.status='uncertain';state.error=error.message;state.busy=false;changed();}throw error;}
+    },
     async compact(){
       if(!host||state.busy||opening||closing||stopping||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟 Claude 對話，並等待目前工作結束。');
       state.busy=true;state.status='working';state.progress.compaction='compacting';state.error=null;changed();

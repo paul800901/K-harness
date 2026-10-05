@@ -1105,3 +1105,34 @@ test('native background Bash remains unsettled after the main reply until its ow
   emit({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
  }finally{await f.controller.close();}
 });
+
+test('native Claude goals set, read back, clear on stop and persist without fake messages',async()=>{
+ let nativeGoal=null;const operations=[];
+ const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:['high']};host.goal=async args=>{operations.push(args);if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake objective';}if(args){nativeGoal=args;return 'Goal set: '+args;}return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});
+ try{
+  const {threadId}=await f.controller.open({});assert.equal(f.controller.state.capabilities.goal,true);
+  await f.controller.goal({objective:'fake objective'});assert.equal(f.controller.state.goal.status,'active');assert.equal(f.controller.state.messages.length,0);
+  const file=path.join(f.root,'.runtime/claude-sessions',threadId+'.json');assert.equal(JSON.parse(await readFile(file)).nativeStarted,true);
+  nativeGoal=null;f.hostOptions.onMessage({type:'result',is_error:false});
+  await new Promise(r=>setImmediate(r));await f.controller.close();
+  await f.controller.open({threadId});assert.equal(f.controller.state.goal.status,'ended');assert.equal(f.controller.state.goal.objective,'fake objective');
+  await f.controller.goal({objective:'stop objective'});await f.controller.stop();assert.equal(f.controller.state.goal,null);assert.equal(f.controller.state.status,'interrupted');assert.equal(operations.at(-1),'clear');
+  await f.controller.open({threadId});assert.equal(f.controller.state.goal,null);assert.equal(f.controller.state.busy,false);
+  await assert.rejects(f.controller.goal({objective:'clear'}),/保留指令/);
+ }finally{await f.controller.close();}
+});
+
+test('Claude native goal read failure remains unknown rather than completed',async()=>{
+ const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>args?'Goal set: '+args:Promise.reject(Error('native unavailable'));}});
+ try{await f.controller.open({});await f.controller.goal({objective:'fake'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(f.controller.state.goal.status,'unknown');assert.match(f.controller.state.goalError,/unavailable/);}finally{await f.controller.close();}
+});
+
+test('Claude goal query result cannot recursively refresh and ended records do not refresh every ordinary turn',async()=>{
+ let reads=0;const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args)return 'Goal set: '+args;reads++;options.onMessage({type:'result',is_error:false});return 'No goal set. Usage: '+String.fromCharCode(96)+'/goal <condition>'+String.fromCharCode(96);};}});
+ try{await f.controller.open({});await f.controller.goal({objective:'fake'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(reads,1);assert.equal(f.controller.state.goal.status,'ended');await f.controller.send({text:'ordinary'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(reads,1);}finally{await f.controller.close();}
+});
+
+test('Claude stop closes the host even when clearing the native goal is unconfirmed',async()=>{
+ const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear')throw Error('clear unavailable');return 'Goal set: '+args;};}});
+ try{await f.controller.open({});await f.controller.goal({objective:'fake'});let closed=false;const close=f.host.close.bind(f.host);f.host.close=async()=>{closed=true;await close();};await assert.rejects(f.controller.stop(),/clear unavailable/);assert.equal(f.controller.state.status,'uncertain');assert.match(f.controller.state.goalError,/clear unavailable/);assert.equal(closed,true);}finally{await f.controller.close();}
+});

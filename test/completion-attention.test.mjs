@@ -44,3 +44,11 @@ test('failure, interruption and stopping disarm a run instead of creating a comp
   const a=createCompletionAttention();a.observe(working());a.observe({threadId:'a',status,busy:false});a.observe(completed());assert.equal(a.state.sequence,0,status);
  }
 });
+
+test('native goal continuation and unknown outcomes do not publish completion between turns',()=>{
+ for(const status of ['active','starting','unknown']){const a=createCompletionAttention();a.observe(working());a.observe(completed('a',{goal:{status}}));assert.equal(a.state.sequence,0,status);a.observe(completed('a',{goal:{status:'complete'}}));assert.equal(a.state.sequence,1);}
+});
+
+test('retained ended and paused goal records do not suppress later ordinary completion',()=>{
+ for(const status of ['paused','blocked','ended','failed','interrupted','budgetLimited','usageLimited']){const a=createCompletionAttention();a.observe(working());a.observe(completed('a',{goal:{status}}));assert.equal(a.state.sequence,1,status);}
+});

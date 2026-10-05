@@ -336,7 +336,10 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     else entry.resolve(response);
     return true;
   };
+  let goalCommand=null;
+  const finishGoal=(error,value)=>{const current=goalCommand;if(!current)return;goalCommand=null;clearTimeout(current.timer);error?current.reject(error):current.resolve(value);};
   const failPending = () => {
+    finishGoal(new Error('Claude Code 目標操作未確認；未重送。'));
     for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error('Claude Code host stopped.')); }
     pending.clear();
   };
@@ -353,6 +356,12 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
   lines.on('line', line => {
     let message;
     try { message = JSON.parse(line); } catch { return; }
+    if(goalCommand&&message.session_id===sessionId){
+      if(message.type==='command_lifecycle'&&message.command_uuid===goalCommand.uuid&&message.state==='started')goalCommand.started=true;
+      if(goalCommand.started&&message.type==='assistant'&&message.message?.model==='<synthetic>'&&message.local_command_run?.command==='goal'&&message.local_command_run.args===goalCommand.args){
+        finishGoal(null,(message.message.content??[]).filter(c=>c.type==='text').map(c=>c.text).join(''));
+      }
+    }
     if (message?.type === 'control_response') {
       const response = message.response;
       if (response?.subtype === 'success' && response.request_id === 'k-initialize') {
@@ -424,6 +433,18 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     await control('interrupt');
   }
 
+  // Official local slash command, confirmed by its lifecycle and synthetic
+  // command output, never by model prose. Only one goal command is outstanding.
+  async function goal(args='') {
+    if(!nativeCapabilities?.commands.includes('goal'))throw new Error('目前 Claude Code 未回報原生 /goal。');
+    if(goalCommand)throw new Error('目標操作尚未確認，請稍候。');
+    const uuid=randomUUID();
+    return new Promise((resolve,reject)=>{
+      goalCommand={uuid,args,resolve,reject,started:false,timer:setTimeout(()=>finishGoal(new Error('Claude Code 目標操作逾時；結果未確認，未重送。')),15000)};
+      void start('/goal'+(args?' '+args:''),{uuid}).catch(error=>finishGoal(error));
+    });
+  }
+
   async function close() {
     if (!processClosed) {
       try { child.stdin.end(); } catch { /* already closed */ }
@@ -445,5 +466,5 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
     const response = await control('get_usage', {skip_behaviors:true});
     return response.response;
   }
-  return { closed, start, interrupt, close, usage, get models(){return structuredClone(modelCatalog);}, get nativeCapabilities() { return nativeCapabilities && structuredClone(nativeCapabilities); } };
+  return { closed, start, interrupt, close, usage, goal, get models(){return structuredClone(modelCatalog);}, get nativeCapabilities() { return nativeCapabilities && structuredClone(nativeCapabilities); } };
 }

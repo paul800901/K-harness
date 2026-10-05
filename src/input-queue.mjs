@@ -10,7 +10,7 @@ export function createInputQueue({root,getController,onChange=()=>{}}){
  const save=()=>{const id=threadId,data=JSON.stringify({rows,paused});if(!id)return Promise.resolve();const next=chain.catch(()=>{}).then(async()=>{await atomicWrite(file(id),data);});chain=next;return next;};
  const notify=()=>onChange();
  const hasWorkers=s=>(s.workers??[]).some(w=>w.settled===false||['running','starting','pending','unresolved'].includes(w.status));
- const ready=()=>{const s=getController().state;return !closed&&!draining&&!paused&&s.threadId===threadId&&!s.busy&&!(s.questions??[]).length&&!hasWorkers(s)&&['ready','completed','failed','interrupted'].includes(s.status)&&rows[0]?.status==='queued'&&!editingWrites.has(rows[0]);};
+ const ready=()=>{const s=getController().state;return !closed&&!draining&&!paused&&s.threadId===threadId&&!s.busy&&!s.goalPending&&!(s.capabilities?.goalContinuesWhileIdle&&s.goal?.status==='active')&&!(s.questions??[]).length&&!hasWorkers(s)&&['ready','completed','failed','interrupted'].includes(s.status)&&rows[0]?.status==='queued'&&!editingWrites.has(rows[0]);};
  async function deliver(row,immediate=false){
   const c=getController(),id=threadId,epoch=stopEpoch;if(c.state.threadId!==id)throw Error('對話已切換。');
   if(draining)throw Error('已有訊息正在送出。');

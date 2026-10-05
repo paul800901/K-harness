@@ -39,7 +39,7 @@ export function geminiModelsFrom(names){
 export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,accounts,onChange=()=>{},timeoutMs=600000,browserConfig=async()=>null,closeBrowser=async()=>{}}={}){
  const login=loginFactory({cwd:root,executable,env}),binary=geminiExecutable(env,executable);
  let usagePending=null,usageAttemptAt=0;
- const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:false,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:null,compactionsComplete:false,tokenUsage:null},usage:{gemini:quota}};
+ const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:true,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:null,compactionsComplete:false,tokenUsage:null},usage:{gemini:quota}};
  let record=null,selected=null,opening=false,turn=null,persist=Promise.resolve(),unresolvedPid=null;
  let browserMode=null,browserServer=null;
  async function resetBrowser(){
@@ -51,7 +51,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
  const home=()=>path.join(root,'agent-home','gemini','main',state.threadId);
  const save=()=>{
   if(!record)return Promise.resolve();
-  const snapshot=structuredClone({...record,model:state.model,effort:state.effort,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,messages:state.messages,tools:state.tools,artifacts:state.artifacts,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,lastOpenedAt:now()});
+  const snapshot=structuredClone({...record,model:state.model,effort:state.effort,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,goal:state.goal,messages:state.messages,tools:state.tools,artifacts:state.artifacts,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,lastOpenedAt:now()});
   record=snapshot;
   const next=persist.catch(()=>{}).then(async()=>{await atomicWrite(file(snapshot.threadId),JSON.stringify(snapshot,null,2));await saveMainSession(root,snapshot);});persist=next;return next;
  };
@@ -116,6 +116,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     Object.assign(state,{threadId:record.threadId,workspace,model,modelDisplayName:choice.displayName,inputModalities:[...choice.inputModalities],effort:level,efforts:choice.supportedReasoningEfforts.map(e=>e.reasoningEffort),accessMode:mode,title:record.title??'',messages:record.messages??[],tools:record.tools??[],artifacts:record.artifacts??[],lastUsedModel:record.lastUsedModel??null,modelChanges:record.modelChanges??[],status:'ready',error:null,busy:false,workers:[]});
     state.previousWorkspaces=relocation?.previousWorkspaces??common?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??common?.previousArtifacts??[];
     state.artifacts=relocation?[...state.previousArtifacts]:[...new Set([...state.previousArtifacts,...state.artifacts])];
+    state.goal=record.goal?{...record.goal,...(['active','starting'].includes(record.goal.status)?{status:'unknown'}:{})}:null;
     await prepare();signal?.throwIfAborted();await save();changed();return {threadId:state.threadId};
    }catch(error){if(originalWorkspace)Object.assign(state,originalWorkspace);if(previousBrowserClosed){state.status=relocation?'error':'failed';state.error=error.message;await resetBrowser();}throw error;
    }finally{opening=false;}
@@ -130,7 +131,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async upload(data){if(!record||data.threadId!==state.threadId)throw Error('對話已切換，請重新加入附件。');return saveAttachment(state.workspace,state.threadId,data,{inputModalities:state.inputModalities});},
   async attachmentFile(id){const item=await sessionAttachment(state.workspace,state.previousWorkspaces,state.threadId,id);return {...await readPresentedFile(item.workspace,item.path),name:item.name};},
   async artifact(name){if(!state.artifacts.includes(name))throw Error('只開啟本對話已記錄的成果。');return sessionArtifact(state.workspace,state.previousWorkspaces,name);},
-  async send({text,attachmentIds=[],accessMode,effort,permissionConfirmed=false}={}){
+  async send({text,attachmentIds=[],accessMode,effort,permissionConfirmed=false}={},goalObjective=null){
    idle();if(!record||!['ready','completed','failed','interrupted'].includes(state.status))throw Error('請先開啟 Gemini 對話。');
    if(record.nativeStarted&&!nativeId(record.nativeSessionId))throw Error('前次送出後沒有原生對話 ID；請先查明，不會重送或另開原生對話。');
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('請輸入 1–32000 字元的訊息。');
@@ -143,7 +144,8 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    try{
     accountLease=await accounts?.acquire({accountId:record.accountId,unboundHistory:record.nativeStarted&&!record.accountId});
     if(accountLease?.accountId)record.accountId=accountLease.accountId;
-    const attachments=[];let prompt=text;
+    if(goalObjective)state.goal={objective:goalObjective,status:'starting'};
+    const attachments=[];let prompt=goalObjective?'/goal '+goalObjective:text;
     for(const id of attachmentIds){
      const item=await sessionAttachment(state.workspace,state.previousWorkspaces,state.threadId,id),pdf=path.extname(item.path).toLowerCase()==='.pdf';
      if(['image','audio','video'].includes(item.kind)&&!state.inputModalities.includes(item.kind)||pdf&&!item.textPath&&!state.inputModalities.includes('pdf'))throw Error('目前模型尚未驗證這種附件；未送出或換模。');
@@ -152,13 +154,14 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     current.abort.signal.throwIfAborted();state.accessMode=mode;state.effort=level;await prepare();
     const groupId=randomUUID(),user={id:randomUUID(),role:'user',text,attachments,createdAt:now(),groupId};state.messages.push(user);state.title||=text.trim().slice(0,40);
     if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges.push({turnId:user.id,fromModel:state.lastUsedModel,toModel:state.model,at:now()});state.lastUsedModel=state.model;
-    const args=['-p',prompt,'--model',selected.nativeModels[level??'default'],'--output-format','stream-json','--print-timeout',`${Math.ceil(timeoutMs/1000)}s`,'--log-file',path.join(home(),`${user.id}.log`),'--disable-slash-commands'];
+    const args=['-p',prompt,'--model',selected.nativeModels[level??'default'],'--output-format','stream-json','--print-timeout',goalObjective?'0s':`${Math.ceil(timeoutMs/1000)}s`,'--log-file',path.join(home(),`${user.id}.log`),...(goalObjective?[]:['--disable-slash-commands'])];
     if(record.nativeSessionId)args.push('--conversation',record.nativeSessionId);
     if(mode==='danger-full-access')args.push('--dangerously-skip-permissions');
     await save();current.abort.signal.throwIfAborted();
-    let assistant=null;const responses=new Map();
+    let assistant=null,goalConfirmed=false;const responses=new Map();
     const ensureAssistant=()=>assistant??=(state.messages.push({id:randomUUID(),role:'assistant',text:'',attachments:[],createdAt:now(),groupId,streaming:true}),state.messages.at(-1));
     const parser=geminiStream(event=>{
+     if(goalObjective&&event.event==='init'&&event.init?.expanded_commands?.some(c=>c.name==='goal'&&c.type==='system')){goalConfirmed=true;state.goal.status='active';}
      const id=event.conversation_id??event.init?.conversation_id??event.result?.conversation_id;
      if(nativeId(id)&&!record.nativeSessionId){record.nativeSessionId=id;void save().catch(error=>{state.error=`原生對話 ID 保存失敗：${error.message}`;});}
      const step=event.step_update;
@@ -176,12 +179,13 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     record.nativeStarted=true;await save();current.abort.signal.throwIfAborted();launched=true;
     current.done=(async()=>{
      try{
-      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
-      if(outcome.output)ensureAssistant().text=outcome.output;
+      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:!goalObjective,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
+      if(outcome.output)ensureAssistant().text=goalConfirmed?outcome.output.replace(/<!-- GOAL_COMPLETE -->/g,'').trim():outcome.output;
+      if(goalObjective)state.goal={...state.goal,status:outcome.settled===false?'unknown':outcome.status==='cancelled'?'interrupted':outcome.status!=='completed'?'failed':goalConfirmed&&outcome.output.includes('<!-- GOAL_COMPLETE -->')?'complete':'ended'};
       if(outcome.settled===false){unresolvedPid=current.pid;state.status='uncertain';}else state.status=outcome.status==='cancelled'?'interrupted':outcome.status;
       state.error=outcome.status==='cancelled'?null:outcome.error??null;
       if(!record.nativeSessionId&&result.code===0){state.status='uncertain';state.error='agy 沒有回傳原生對話 ID；不能自動重送。';}
-     }catch(error){if(!current.pid&&!record.nativeSessionId)record.nativeStarted=false;state.status='failed';state.error=error.message;}
+     }catch(error){if(!current.pid&&!record.nativeSessionId)record.nativeStarted=false;state.status='failed';state.error=error.message;if(goalObjective)state.goal.status='unknown';}
      finally{
       if(assistant){delete assistant.streaming;if(state.status!=='completed')assistant.partial=true;}
       for(const tool of state.tools)if(tool.status==='running')tool.status='interrupted';
@@ -191,13 +195,19 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
      }
     })();
     return {sent:true};
-   }catch(error){if(!launched){await accountLease?.release();if(!record.nativeSessionId){record.nativeStarted=false;await save().catch(()=>{});}state.busy=false;state.status=current.abort.signal.aborted?'interrupted':'failed';state.error=error.message;turn=null;finish();changed();}throw error;}
+   }catch(error){if(!launched){if(goalObjective&&state.goal?.objective===goalObjective)state.goal.status='failed';await accountLease?.release();if(!record.nativeSessionId){record.nativeStarted=false;await save().catch(()=>{});}state.busy=false;state.status=current.abort.signal.aborted?'interrupted':'failed';state.error=error.message;turn=null;finish();changed();}throw error;}
   },
   async stop(){const current=turn;current?.abort.abort();if(current)await current.settled;if(unresolvedPid){await killTree(unresolvedPid);unresolvedPid=null;state.status='interrupted';state.error=null;}await resetBrowser();if(current&&state.status!=='uncertain')state.status='interrupted';changed();return {stopped:true};},
   async close(){await api.stop();await persist;state.status='offline';changed();},
   async steer(){throw Error('Gemini 執行中請使用待送佇列；此接法不支援立即送入。');},
   async compact(){throw Error('Gemini 由原生核心管理上下文；目前沒有手動壓縮介面。');},
-  async goal(){throw Error('Gemini 目前未提供目標介面。');},
+  async goal({objective,clear=false,refresh=false}={}){
+   idle();if(!record)throw Error('請先開啟 Gemini 對話。');
+   if(refresh)return {goal:structuredClone(state.goal)};
+   if(clear){state.goal=null;await save();changed();return {goal:null};}
+   if(typeof objective!=='string'||!objective.trim()||objective.length>32000)throw Error('請輸入完整目標（最多 32000 字元）。');
+   return api.send({text:objective.trim()},objective.trim());
+  },
   async answer(){throw Error('Gemini 此接法不提供互動核准；需要核准的操作由 agy 拒絕。');},
   async fork(){throw Error('Gemini 尚未接入原生分支；可明確交接到其他供應商的新對話。');},
  };

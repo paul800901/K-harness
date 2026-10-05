@@ -135,7 +135,7 @@ export async function killGeminiTree(pid,{execImpl=exec,platform=process.platfor
 }
 
 /** Bounded subprocess; cancellation waits for the tree kill and pipe closure. */
-export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,maxStdout=8*1024*1024,maxStderr=128*1024,spawnImpl=spawn,killTree=killGeminiTree,onStart=()=>{},onChunk=()=>{}}) {
+export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,maxStdout=8*1024*1024,maxStderr=128*1024,captureOutput=true,spawnImpl=spawn,killTree=killGeminiTree,onStart=()=>{},onChunk=()=>{}}) {
   if(signal?.aborted)return Promise.resolve({code:null,stdout:'',stderr:'',reason:'cancelled'});
   return new Promise((resolve,reject)=>{
     let child;try{child=spawnImpl(executable,args,{cwd,env,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe'],...(process.platform==='win32'?{}:{detached:true})});}catch(error){reject(error);return;}
@@ -155,9 +155,9 @@ export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,m
       },15000);
     };
     const abort=()=>stop('cancelled');
-    const timer=setTimeout(()=>stop('timeout'),timeoutMs);
+    const timer=timeoutMs>0?setTimeout(()=>stop('timeout'),timeoutMs):null;
     signal?.addEventListener('abort',abort,{once:true});
-    child.stdout.on('data',b=>{outBytes+=b.length;if(outBytes>maxStdout){stop('stdout limit exceeded');return;}stdout+=b.toString();onChunk(b);});
+    child.stdout.on('data',b=>{outBytes+=b.length;if(captureOutput&&outBytes>maxStdout){stop('stdout limit exceeded');return;}if(captureOutput)stdout+=b.toString();onChunk(b);});
     child.stderr.on('data',b=>{errBytes+=b.length;if(errBytes>maxStderr){stop('stderr limit exceeded');return;}stderr+=b.toString();});
     child.once('error',error=>{ended=true;clearTimeout(timer);clearTimeout(cleanupTimer);signal?.removeEventListener('abort',abort);reject(error.code==='ENOENT'?Error('找不到 agy，請安裝 Antigravity CLI 並登入。',{cause:error}):error);});
     child.once('close',code=>{void finish(code);});
