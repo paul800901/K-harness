@@ -201,7 +201,8 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async close(){await api.stop();await persist;state.status='offline';changed();},
   async steer(){throw Error('Gemini 執行中請使用待送佇列；此接法不支援立即送入。');},
   async compact(){throw Error('Gemini 由原生核心管理上下文；目前沒有手動壓縮介面。');},
-  async goal({objective,clear=false,refresh=false}={}){
+  async goal({objective,clear=false,refresh=false,editOnly=false}={}){
+   if(editOnly)throw Error('目前 Gemini 原生介面不支援只修改目標文字；未重新啟動工作。');
    idle();if(!record)throw Error('請先開啟 Gemini 對話。');
    if(refresh)return {goal:structuredClone(state.goal)};
    if(clear){state.goal=null;await save();changed();return {goal:null};}

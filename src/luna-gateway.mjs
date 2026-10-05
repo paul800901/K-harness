@@ -12,9 +12,19 @@ const taskSchema = z.strictObject({requestId,model:z.enum(['gpt-6.1-sol','gpt-6-
 const geminiTaskSchema = z.strictObject({requestId,model:z.literal('gemini-3.8-flash').default('gemini-3.8-flash'),effort:z.enum(['low','medium','high']),accountId:z.string().regex(/^[a-f0-9]{32}$/u).optional(),handoffFrom:requestId.optional(),task:z.string().min(1).max(32000).refine(value=>value.trim().length>0)});
 const waitSchema = z.strictObject({requestId,timeoutMs:z.number().int().min(0).max(60000).default(30000)});
 
-function createMcpServer(bridge,{geminiOnly=false}={}) {
+function createMcpServer(bridge,{geminiOnly=false,editGoal}={}) {
   const prefix=geminiOnly?'gemini':'luna';
   const server = new McpServer({name:geminiOnly?'k-gemini-gateway':'k-luna-gateway',version:'0.1.0'}, {capabilities:{tools:{}}});
+  if(editGoal)server.registerTool('goal_edit',{
+    description:'Edit this main Codex conversation\'s existing native goal objective after discussion with the user. No second confirmation or browser is needed. Only the objective changes: preserve status, budget and usage; never resume, create a goal, restart or replay work. Subagents cannot edit the parent goal. Use native get_goal to inspect and create_goal only for a genuinely new goal. This is K conversation control, not a Gemini worker task.',
+    inputSchema:z.strictObject({objective:z.string().trim().min(1).max(4000)}),
+    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+  },async(args,context)=>{
+    try{
+      const value=await editGoal(args,context.mcpReq._meta);
+      return {content:[{type:'text',text:JSON.stringify(value)}]};
+    }catch(error){return {isError:true,content:[{type:'text',text:String(error?.message??error)+' Do not retry automatically; inspect the current native goal.'}]};}
+  });
   const policy=bridge.workerPolicy;
   const selectionGuidance=geminiOnly?'此入口只派 Gemini Flash；必須明確指定 low/medium/high。GPT 子代理使用原生派工，不從本入口轉派。':policy.model==='auto'
     ? `AI 自動選擇目前啟用：每次派工都必須明確提供 model 與 effort；一般工人優先 Flash，Sol 為日常技術主腦，可交付規劃、架構、除錯與複查，但此入口派出的 Sol 子代理不能再派工；Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
@@ -57,10 +67,10 @@ function bearerMatches(header, token) {
 }
 
 /** Start a token-authenticated, loopback-only MCP HTTP gateway for one Luna bridge. */
-export async function createLunaGateway({bridge,geminiOnly=false}) {
+export async function createLunaGateway({bridge,geminiOnly=false,editGoal}) {
   if(!bridge||!['start','wait','inspect','cancel'].every(name=>typeof bridge[name]==='function'))throw new TypeError('A complete Luna bridge is required.');
   const token=randomBytes(32).toString('base64url');
-  const mcp=createMcpServer(bridge,{geminiOnly});
+  const mcp=createMcpServer(bridge,{geminiOnly,editGoal});
   const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined});
   await mcp.connect(transport);
   let closed=false, closing=false, closePromise, expectedHost, expectedOrigin;

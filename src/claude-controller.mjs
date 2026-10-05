@@ -683,7 +683,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(normalizeClaudeAccessMode(accessMode)==='claude-bypassPermissions'&&state.accessMode!=='claude-bypassPermissions'&&permissionConfirmed!==true)throw Error('切換到 Claude 完整存取權前，必須明確確認 permissionConfirmed:true；分支未建立。');
       return this.open({model,effort,accessMode,forkFrom:state.threadId});
     },
-    async goal({objective,clear=false,refresh=false}={}){
+    async goal({objective,clear=false,refresh=false,editOnly=false}={}){
+      if(editOnly)throw Error('目前 Claude 原生介面不支援只修改目標文字；未重新啟動工作。');
       if(!host&&state.status==='interrupted')await this.open({threadId:state.threadId,model:state.model});
       if(!state.capabilities.goal||!host||opening||closing||stopping||state.busy||state.goalPending)throw Error('請先停止目前工作，再設定或清除目標。');
       if(refresh)return goalCommand();

@@ -7,7 +7,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 
-async function fixture({readiness='ready'}={}){
+async function fixture({readiness='ready',gatewayFactory}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'desktop-native-events-')),calls=[],connections=[];
  const host={closed:new Promise(()=>{}),notify(){},waitForMcp:async()=>{},close:async()=>{},request:async(method,params,timeoutMs)=>{
@@ -23,7 +23,7 @@ async function fixture({readiness='ready'}={}){
   if(method==='account/rateLimits/read')return {};
   return {};
  }};
- const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{connections.push(options);return host;}});
+ const c=createDesktopController({root,executable:'fixture',gatewayFactory,hostFactory:options=>{connections.push(options);return host;}});
  return {c,calls,connections,root,host};
 }
 
@@ -279,5 +279,36 @@ test('Codex pause failure does not skip turn interruption or closing the host',a
  await assert.rejects(f.c.stop(),/暫停未確認/);assert.equal(f.c.state.status,'uncertain');assert(f.calls.some(x=>x.method==='turn/interrupt'&&x.params.turnId==='goal-turn'));
  f.host.request=async(method,p,...rest)=>{if(method==='thread/goal/get')throw Error('read unavailable');return original(method,p,...rest);};
  await f.c.close();assert(closed);assert.match(f.c.state.goalError,/暫停未確認/);
+ }finally{await f.c.close();}
+});
+
+test('Codex AI and human edit the same native goal without resume, replay or cross-thread access',async()=>{
+ let gateway;const f=await fixture({gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/mcp',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}};}}),original=f.host.request;
+ let nativeGoal=null;
+ f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set'))nativeGoal={...nativeGoal,...params};if(method.endsWith('/clear'))nativeGoal=null;return{goal:structuredClone(nativeGoal)};}return original(method,params);};
+ try{
+  const {threadId}=await f.c.open({model:'gpt-6-astra'});await f.c.goal({objective:'original',status:'paused',tokenBudget:500});nativeGoal.tokensUsed=42;nativeGoal.timeUsedSeconds=60;
+  const emit=f.connections.at(-1).onEvent;emit({method:'turn/started',params:{threadId,turn:{id:'edit-turn'}}});
+  const meta={'x-codex-turn-metadata':{thread_id:threadId,turn_id:'edit-turn'}};
+  const result=await gateway.editGoal({objective:'AI edited'},meta);assert.equal(result.goal.status,'paused');assert.equal(result.goal.tokenBudget,500);assert.equal(result.goal.tokensUsed,42);assert.equal(result.goal.timeUsedSeconds,60);assert.equal(f.c.state.questions.length,0);
+  await f.c.goal({objective:'human edited',editOnly:true,expectedObjective:'AI edited'});assert.equal(nativeGoal.objective,'human edited');assert.equal(f.c.state.busy,true);
+  await assert.rejects(f.c.goal({objective:'stale human',editOnly:true,expectedObjective:'original'}),/另一方更新/);assert.equal(nativeGoal.objective,'human edited');
+  const count=f.calls.filter(c=>c.method==='thread/goal/set').length;
+  for(const bad of [undefined,{}, {'x-codex-turn-metadata':'bad'},{'x-codex-turn-metadata':{thread_id:'child',turn_id:'edit-turn'}},{'x-codex-turn-metadata':{thread_id:threadId,turn_id:'old'}}])await assert.rejects(gateway.editGoal({objective:'not applied'},bad),/目前主對話/);
+  await assert.rejects(f.c.goal({objective:'bad',editOnly:true,status:'active'}),/只修改文字/);
+  assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count);
+  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,objective:'AI edited'},{threadId,objective:'human edited'}]);
+  assert(!f.calls.some(c=>c.method==='turn/start'||c.method==='turn/steer'));
+  nativeGoal=null;await assert.rejects(gateway.editGoal({objective:'not new'},meta),/沒有可修改/);
+  emit({method:'turn/completed',params:{threadId,turn:{id:'edit-turn',status:'completed'}}});await assert.rejects(gateway.editGoal({objective:'late'},meta),/目前主對話/);
+ }finally{await f.c.close();}
+});
+
+test('stopping during a goal edit read does not apply the pending objective',async()=>{
+ const f=await fixture(),original=f.host.request;let release,reading;const started=new Promise(r=>reading=r);
+ try{
+  await f.c.open({model:'gpt-6-astra'});f.host.request=async(method,p)=>{if(method==='thread/goal/get'&&!release){reading();return new Promise(r=>release=r);}return original(method,p);};
+  const edit=f.c.goal({objective:'not applied',editOnly:true});const rejected=assert.rejects(edit,/停止或切換/);await started;await f.c.stop();release({goal:{objective:'old',status:'paused'}});await rejected;
+  assert(!f.calls.some(c=>c.method==='thread/goal/set'));assert.equal(f.c.state.goalPending,false);
  }finally{await f.c.close();}
 });

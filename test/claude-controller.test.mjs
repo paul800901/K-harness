@@ -1136,3 +1136,7 @@ test('Claude stop closes the host even when clearing the native goal is unconfir
  const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear')throw Error('clear unavailable');return 'Goal set: '+args;};}});
  try{await f.controller.open({});await f.controller.goal({objective:'fake'});let closed=false;const close=f.host.close.bind(f.host);f.host.close=async()=>{closed=true;await close();};await assert.rejects(f.controller.stop(),/clear unavailable/);assert.equal(f.controller.state.status,'uncertain');assert.match(f.controller.state.goalError,/clear unavailable/);assert.equal(closed,true);}finally{await f.controller.close();}
 });
+
+test('Claude cannot silently turn an edit-only request into new work',async()=>{
+ const f=await fixture();try{await f.controller.open({});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.host.startCalls.length,0);}finally{await f.controller.close();}
+});

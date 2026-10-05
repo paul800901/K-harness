@@ -224,3 +224,7 @@ for(const confirmed of [true,false])test(`Gemini goal completion requires native
   await f.controller.goal({clear:true});assert.equal(f.controller.state.goal,null);await f.controller.send({text:'/goal not a control'});await finish(f.controller);assert(calls[1].args.includes('--disable-slash-commands'));assert.equal(f.controller.state.goal,null);
  }finally{await f.controller.close();}
 });
+
+test('Gemini cannot silently turn an edit-only request into new work',async()=>{
+ const f=await fixture();try{await f.controller.open({model:'gemini-3.8-flash'});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.calls.length,0);}finally{await f.controller.close();}
+});

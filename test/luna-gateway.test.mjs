@@ -142,3 +142,18 @@ test('Codex Flash gateway exposes only Gemini tools and forwards account handoff
   assert.equal(calls.length,1);
  }finally{await gateway.close();}
 });
+
+test('goal edit MCP receives native metadata, exposes objective only and never asks for confirmation',async()=>{
+ const f=fixture(),calls=[];const gateway=await createLunaGateway({bridge:f.bridge,geminiOnly:true,editGoal:async(args,meta)=>{calls.push({args,meta});return {goal:{objective:args.objective,status:'paused'}};}});
+ try{
+  const config=gateway.mcpConfig.mcpServers.k_gemini,token=config.headers.Authorization.slice(7);
+  const rpc=async(id,method,params)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method,params}));
+  await rpc(1,'initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}});
+  const listed=await rpc(2,'tools/list',{}),tool=listed.result.tools.find(t=>t.name==='goal_edit');assert(tool);assert.deepEqual(Object.keys(tool.inputSchema.properties),['objective']);assert.equal(tool.inputSchema.additionalProperties,false);
+  const meta={'x-codex-turn-metadata':{thread_id:'parent',turn_id:'turn'}};
+  const result=await rpc(3,'tools/call',{name:'goal_edit',arguments:{objective:' edited '},_meta:meta});
+  assert.equal(result.result.isError,undefined);assert.deepEqual(calls,[{args:{objective:'edited'},meta}]);
+  for(const args of [{objective:'x',status:'active'},{objective:'x',threadId:'other'},{objective:'x',tokenBudget:999},{objective:' '},{objective:'x'.repeat(4001)}]){const bad=await rpc(4,'tools/call',{name:'goal_edit',arguments:args});assert(bad.error||bad.result?.isError);}
+  assert.equal(calls.length,1);
+ }finally{await gateway.close();}
+});
