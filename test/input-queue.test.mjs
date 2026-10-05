@@ -15,6 +15,23 @@ function controller({busy=false,status=busy?'working':'ready',send,steer}={}){
   return {state,calls,send:async input=>{calls.push(['send',input.text]);return send?send(input):{sent:true};},steer:async input=>{calls.push(['steer',input.text]);return steer?steer(input):{steered:true};}};
 }
 const queueFor=(root,active,onChange=()=>{})=>createInputQueue({root,getController:()=>active,onChange});
+
+for(const busy of [true,false])test(`send-now preserves more than eight attachments while ${busy?'busy':'idle'}`,async()=>{
+ const base=await root(),sent=[],active=controller({busy,steer:async input=>{sent.push(input);return {steered:true};},send:async input=>{sent.push(input);return {sent:true};}}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  await queue.pause();const attachmentIds=Array.from({length:12},(_,i)=>`file-${i}`),row=await queue.enqueue({text:'files',attachmentIds});
+  await queue.action({id:row.id,action:'send-now'});
+  assert.deepEqual(sent,[{text:'files',attachmentIds}]);assert.deepEqual(active.calls,[[busy?'steer':'send','files']]);assert.deepEqual(queue.state.queuedMessages,[]);
+ }finally{await queue.close();}
+});
+
+test('unsupported native steering leaves attachments queued and never dispatches or replays',async()=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);active.state.capabilities={steer:false};await queue.load('queue-session');
+ try{
+  const row=await queue.enqueue({text:'preserve',attachmentIds:['fake-a']});await assert.rejects(queue.action({id:row.id,action:'send-now'}),/不支援/);
+  assert.equal(queue.state.queuedMessages[0].status,'queued');assert.deepEqual(queue.state.queuedMessages[0].attachmentIds,['fake-a']);assert.deepEqual(active.calls,[]);
+ }finally{await queue.close();}
+});
 async function until(predicate,timeout=2000){
   const start=Date.now();while(Date.now()-start<timeout){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('timed out waiting for queue behavior');
 }

@@ -181,3 +181,31 @@ test('a streamed native reasoning summary is bounded and visibly marked when tru
   assert.equal(f.c.state.reasoning[0].text,summary);
  }finally{await f.c.close();}
 });
+
+test('retry notices update one episode, recover on model progress, and retain raw diagnostics without replay',async()=>{
+ const f=await fixture();
+ try{
+  await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  const threadId='native-events-thread',turnId='retry-turn';
+  emit({method:'turn/started',params:{threadId,turn:{id:turnId}}});
+  const retry=message=>emit({method:'error',params:{threadId,turnId,willRetry:true,error:{message}}});
+  retry('Reconnecting... 1/5');retry('Reconnecting... 2/5');retry('Reconnecting... waiting for network');
+  const records=structuredClone(f.c.state.notices);
+  assert.equal(records.length,3);assert.ok(records.every(n=>n.willRetry===true));
+  assert.equal(new Set(records.map(n=>n.retryKey)).size,1);assert.ok(records[0].retryKey);
+  assert.equal(visibleNativeNotices(f.c.state.notices).length,1);
+  assert.equal(visibleNativeNotices(f.c.state.notices)[0].message,'Reconnecting... waiting for network');
+  emit({method:'item/agentMessage/delta',params:{threadId:'other',turnId,itemId:'wrong',delta:'unrelated'}});
+  emit({method:'item/commandExecution/outputDelta',params:{threadId,turnId,itemId:'tool',delta:'background output'}});
+  assert.equal(visibleNativeNotices(f.c.state.notices).length,1,'unrelated/background output is not a recovered model stream');
+  emit({method:'item/agentMessage/delta',params:{threadId,turnId,itemId:'reply',delta:'recovered'}});
+  assert.equal(visibleNativeNotices(f.c.state.notices).length,0);
+  assert.deepEqual(f.c.state.notices.map(n=>n.message),records.map(n=>n.message));
+  retry('Reconnecting... 1/5');assert.notEqual(f.c.state.notices.at(-1).retryKey,records[0].retryKey,'new incident must not inherit dismissal');
+  emit({method:'error',params:{threadId,turnId,willRetry:false,error:{message:'Native connection failed'}}});
+  assert.deepEqual(visibleNativeNotices(f.c.state.notices).map(n=>n.message),['Native connection failed']);
+  emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'failed',error:{message:'Native connection failed'}}}});
+  assert.equal(visibleNativeNotices(f.c.state.notices,f.c.state.error).length,0,'terminal error stays in main alert, not duplicated');
+  assert.equal(f.calls.some(c=>['turn/start','turn/steer','turn/interrupt'].includes(c.method)),false);
+ }finally{await f.c.close();}
+});

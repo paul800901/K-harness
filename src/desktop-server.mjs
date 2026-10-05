@@ -134,7 +134,11 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     return json(200,{name:file.name,isText:file.isText,text:file.isText?file.bytes.subarray(0,262144).toString('utf8'):null,truncated:file.bytes.length>262144,size:file.bytes.length});
    }
    if(req.method!=='POST'||req.headers['x-k-request']!=='1'||!req.headers['content-type']?.startsWith('application/json'))return json(403,{error:'Explicit local request required'});
-   let raw='';const maxBody=url.pathname==='/api/upload'?12*1024*1024:url.pathname==='/api/dictation/transcribe'?MAX_JSON_BYTES:65536;for await(const chunk of req){raw+=chunk;if(Buffer.byteLength(raw)>maxBody){if(url.pathname==='/api/dictation/transcribe')throw new LocalDictationError('請求過大。',{code:'REQUEST_TOO_LARGE',statusCode:413});throw new Error('請求過大。');}}const data=JSON.parse(raw||'{}');
+   // Attachments have no K-specific byte cap. Keep the limits on other commands,
+   // and decode once so large uploads do not repeatedly copy/scan the whole body.
+   const chunks=[],maxBody=url.pathname==='/api/upload'?Infinity:url.pathname==='/api/dictation/transcribe'?MAX_JSON_BYTES:65536;let bodyBytes=0;
+   for await(const chunk of req){bodyBytes+=chunk.length;if(bodyBytes>maxBody){if(url.pathname==='/api/dictation/transcribe')throw new LocalDictationError('請求過大。',{code:'REQUEST_TOO_LARGE',statusCode:413});throw new Error('請求過大。');}chunks.push(chunk);}
+   const data=JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
    if(url.pathname==='/api/core-update'){
     if(!coreUpdates)throw Error('請從正式桌面入口更新核心。');
     return json(200,await coreUpdates.update(data.provider));

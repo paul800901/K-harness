@@ -31,6 +31,33 @@ async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   return {root,uuid,controller,createController,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
 }
 
+test('Claude sends and steers more than eight scoped attachments without expanding the user bubble',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});const attachments=[];
+  for(let n=0;n<12;n++)attachments.push(await f.controller.upload({threadId,name:`fake-${n}.txt`,base64:Buffer.from(`fake body ${n}`).toString('base64')}));
+  const image=await f.controller.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
+  const attachmentIds=[...attachments.map(a=>a.id),image.id];
+  await f.controller.send({text:'initial files',attachmentIds});await f.controller.steer({text:'follow-up files',attachmentIds});
+  assert.equal(f.host.startCalls.length,2);
+  for(const input of f.host.startCalls){assert.equal(input.length,14);assert.match(input[1].text,/fake body 0/);assert.equal(input.at(-1).type,'image');}
+  assert.deepEqual(f.controller.state.messages.map(m=>m.text),['initial files','follow-up files']);
+  assert(f.controller.state.messages.every(m=>m.attachments.length===13));
+  const steered=f.controller.state.messages[1];f.hostOptions.onMessage({type:'user',uuid:steered.id,isReplay:true,message:{content:f.host.startCalls[1]}});
+  assert.equal(steered.text,'follow-up files');assert.equal(steered.delivery,'received');
+  await f.controller.close();await f.controller.open({threadId});
+  assert.equal(f.controller.state.messages[1].text,'follow-up files');assert.equal(f.controller.state.messages[1].attachments.length,13);
+ }finally{await f.controller.close();}
+});
+
+test('Claude attachment steering rejects a foreign conversation before native delivery',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'active'});
+  const foreign=await saveAttachment(f.root,'foreign-thread',{name:'fake.txt',base64:'YQ=='});
+  await assert.rejects(f.controller.steer({text:'must not deliver',attachmentIds:[foreign.id]}),/其他對話/);
+  assert.equal(f.host.startCalls.length,1);assert.equal(f.controller.state.messages.length,1);
+ }finally{await f.controller.close();}
+});
+
 test('saving one Claude conversation does not read other conversation projections',async()=>{
  const f=await fixture();const original=fs.readFile;let otherReads=0;
  try{

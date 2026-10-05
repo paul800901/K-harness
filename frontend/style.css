@@ -100,3 +100,9 @@ dialog{border:0;border-radius:var(--k-radius-lg);background:var(--k-raised);colo
 main>header{height:auto;min-height:52px;padding-block:12px;flex-wrap:wrap}.header-title{min-width:0;flex:1}.header-actions{flex:none;flex-wrap:wrap;justify-content:flex-end;row-gap:4px;max-width:100%}.worker-activity{font-variant-numeric:tabular-nums}
 
 .queued-message-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;grid-column:1/-1}.queued-message-editing textarea{grid-column:1/-1;width:100%;min-height:80px;max-height:240px;resize:vertical;box-sizing:border-box;padding:8px;border:1px solid var(--k-line);border-radius:7px;background:var(--k-raised);color:inherit;font:inherit}.queued-message-editing small{grid-column:1/-1}
+
+/* Native notices form rows, never a shrinking horizontal card strip. */
+.native-notices{flex-direction:column;align-items:stretch;justify-content:flex-start;flex-shrink:0;gap:6px;margin:10px 20px 0;padding:0;background:transparent;max-height:min(160px,25vh);overflow-x:hidden;overflow-y:auto}
+.native-notices>.alert,.native-notices>.notice{flex-shrink:0;min-width:0;margin:0;padding:8px 12px;align-items:flex-start;gap:10px}
+.native-notice-content{flex:1;min-width:0;overflow-wrap:anywhere}.native-notice-content details{margin-top:3px}.native-notice-content summary{cursor:pointer;color:var(--k-ink-3)}.native-notice-content pre{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font:inherit}
+.native-notice-dismiss{flex:none;display:flex;align-items:center;justify-content:center;width:28px;height:28px;padding:0;border:0;background:transparent;white-space:nowrap}

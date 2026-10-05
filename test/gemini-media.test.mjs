@@ -14,18 +14,19 @@ function pdfBytes(count=1){
  let pdf='%PDF-1.4\n',offsets=[0];for(const [i,obj] of objects.entries()){offsets.push(Buffer.byteLength(pdf));pdf+=`${i+1} 0 obj\n${obj}\nendobj\n`;}
  const size=objects.length+1,start=Buffer.byteLength(pdf);return Buffer.from(pdf+`xref\n0 ${size}\n0000000000 65535 f \n`+offsets.slice(1).map(n=>`${String(n).padStart(10,'0')} 00000 n \n`).join('')+`trailer\n<< /Size ${size} /Root 1 0 R >>\nstartxref\n${start}\n%%EOF`);
 }
-test('native PDF preserves original visuals; ordinary PDF extraction and size/page limits stay unchanged',async()=>{
+test('native PDF preserves original visuals beyond the former 60-page cap; ordinary extraction remains explicit',async()=>{
  const root=await fixture(),bytes=pdfBytes(),data={name:'scan.pdf',base64:bytes.toString('base64')};
  await assert.rejects(saveAttachment(root,'a',data),/掃描檔/);
  const item=await saveAttachment(root,'a',data,{inputModalities:modalities});
  assert.equal(item.textPath,undefined);assert.equal(item.warning,null);assert.deepEqual(await readFile(path.join(root,item.path)),bytes);
  assert.equal((await readPresentedFile(root,item.path)).contentType,'application/pdf');
- await assert.rejects(saveAttachment(root,'a',{...data,base64:pdfBytes(61).toString('base64')},{inputModalities:modalities}),/60 頁/);
- await assert.rejects(saveAttachment(root,'a',{...data,base64:Buffer.alloc(8*1024*1024+1).toString('base64')},{inputModalities:modalities}),/8 MB/);
+ const many=pdfBytes(61),manyItem=await saveAttachment(root,'a',{...data,base64:many.toString('base64')},{inputModalities:modalities});
+ assert.deepEqual((await readPresentedFile(root,manyItem.path)).bytes,many);
+ await assert.rejects(saveAttachment(root,'a',{...data,base64:Buffer.from('not a PDF').toString('base64')},{inputModalities:modalities}));
 });
 test('only opted-in models accept audio/video, retain bytes and enforce conversation ownership',async()=>{
  const root=await fixture();for(const [ext,kind] of [['wav','audio'],['mp3','audio'],['m4a','audio'],['mp4','video']]){
-  const bytes=Buffer.from('unit fixture: transport only, not media acceptance'),data={name:`file.${ext}`,base64:bytes.toString('base64')};
+  const bytes=ext==='wav'?Buffer.alloc(10*1024*1024,65):Buffer.from('unit fixture: transport only, not media acceptance'),data={name:`file.${ext}`,base64:bytes.toString('base64')};
   await assert.rejects(saveAttachment(root,'a',data),/未上傳或換模/);
   const item=await saveAttachment(root,'a',data,{inputModalities:modalities});assert.equal(item.kind,kind);assert.equal(item.textPath,undefined);
   assert.deepEqual((await readPresentedFile(root,item.path)).bytes,bytes);assert.equal((await loadAttachment(root,'a',item.id)).name,data.name);

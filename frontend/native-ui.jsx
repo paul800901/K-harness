@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {Copy,Check} from 'lucide-react';
-import {visibleNativeNotices} from './native-notices.mjs';
+import {Copy,Check,X} from 'lucide-react';
+import {visibleNativeNotices,nativeNoticeText} from './native-notices.mjs';
 export function CopyFeedback({text}){
  const [status,setStatus]=useState('idle');const timer=useRef(null),mounted=useRef(true);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;clearTimeout(timer.current);};},[]);
@@ -9,8 +9,11 @@ export function CopyFeedback({text}){
  return <button type="button" title={label} aria-label={label} disabled={status==='pending'} onClick={copy}>{status==='copied'?<Check size={15}/>:<Copy size={15}/>} <span aria-live="polite">{label}</span></button>;
 }
 export function NativeNotices({state,error=state.error}){
- const [dismissed,setDismissed]=useState([]);useEffect(()=>setDismissed([]),[state.threadId]);
- return <div className="native-notices">{visibleNativeNotices(state.notices,error).filter(n=>!dismissed.includes(n.id)).map(n=><div key={n.id} className={n.level==='error'?'alert':'notice'} role={n.level==='error'?'alert':'status'}><span>{n.message}</span><button aria-label="關閉此通知" onClick={()=>setDismissed(d=>[...d,n.id])}>知道了</button></div>)}</div>;
+ const [dismissed,setDismissed]=useState({}),scope=JSON.stringify([state.provider,state.workspace,state.threadId]);
+ return <div className="native-notices">{visibleNativeNotices(state.notices,error).filter(n=>!(dismissed[scope]??[]).includes(n.retryKey??n.id)).map(n=>{
+  const key=n.retryKey??n.id,text=nativeNoticeText(n),isError=n.level==='error'&&!n.willRetry;
+  return <div key={key} className={isError?'alert':'notice'} role={isError?'alert':'status'}><div className="native-notice-content"><span>{text}</span>{text!==n.message&&<details><summary>查看詳細內容</summary><pre>{n.message}</pre></details>}</div><button type="button" className="native-notice-dismiss" title="關閉此通知" aria-label="關閉此通知" onClick={()=>setDismissed(d=>({...d,[scope]:[...(d[scope]??[]),key]}))}><X size={15}/></button></div>;
+ })}</div>;
 }
 export function NativeReasoning({state,group}){
  if(state.capabilities?.reasoningSummary===false)return <small>此供應商尚未接入可顯示的原生推理摘要。</small>;

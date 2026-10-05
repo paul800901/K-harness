@@ -134,7 +134,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
    idle();if(!record||!['ready','completed','failed','interrupted'].includes(state.status))throw Error('請先開啟 Gemini 對話。');
    if(record.nativeStarted&&!nativeId(record.nativeSessionId))throw Error('前次送出後沒有原生對話 ID；請先查明，不會重送或另開原生對話。');
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('請輸入 1–32000 字元的訊息。');
-   if(!Array.isArray(attachmentIds)||attachmentIds.length>8)throw Error('每則訊息最多 8 份附件。');
+   if(!Array.isArray(attachmentIds)||attachmentIds.some(id=>typeof id!=='string'))throw Error('附件格式無效。');
    const mode=access(accessMode??state.accessMode),level=effort||state.effort;
    if(!selected.nativeModels[level??'default'])throw Error('指定 Gemini 推理程度目前不可用。');
    if(mode==='danger-full-access'&&state.accessMode!==mode&&!permissionConfirmed)throw Error('請明確確認 Gemini 完整存取權。');

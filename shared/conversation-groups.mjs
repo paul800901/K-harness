@@ -41,6 +41,18 @@ export function elapsedConversationMs(group, now = Date.now()) {
   return Number.isFinite(start) && end >= start ? end - start : null;
 }
 
+export function formatElapsed(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor(totalSeconds / 3600) % 24;
+  const minutes = Math.floor(totalSeconds / 60) % 60;
+  const seconds = totalSeconds % 60;
+  if (days) return `${days} 天 ${hours} 小時 ${minutes} 分 ${seconds} 秒`;
+  if (hours) return `${hours} 小時 ${minutes} 分 ${seconds} 秒`;
+  if (minutes) return `${minutes} 分 ${seconds} 秒`;
+  return `${seconds} 秒`;
+}
+
 /** Returns only user/conclusion text from groups strictly before messageId's group. */
 export function conversationGroupsBefore(messages = [], messageId) {
   const groups = groupConversationMessages(messages);

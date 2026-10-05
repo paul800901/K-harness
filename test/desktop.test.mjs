@@ -209,12 +209,75 @@ test('desktop attachment scope and restored display survive reopen without expos
   await f.c.send({text:'請整理附件',attachmentIds:[a.id]});
   const input=f.calls.find(x=>x.method==='turn/start').p.input;
   assert.match(input[0].text,/K_ATTACHMENT_CONTEXT/);assert.equal(f.c.state.messages[0].attachments[0].id,a.id);
+  const item={type:'userMessage',id:'native-attachment',content:input};
+  for(const method of ['item/started','item/completed']){
+   f.hooks.onEvent({method,params:{threadId:'test-thread',turnId:'turn-1',item}});
+   assert.equal(f.c.state.messages.length,1);assert.equal(f.c.state.messages[0].text,'請整理附件');
+   assert.equal(f.c.state.messages[0].attachments[0].id,a.id);
+  }
   await f.c.stop();const original=f.host.request;
   f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{items:[{type:'userMessage',id:'restored',content:input}]}]}}:original(method,p);
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread',effort:f.c.state.effort,accessMode:f.c.state.accessMode,workerPolicy:f.c.state.workerPolicy});
   assert.equal(f.c.state.messages[0].text,'請整理附件');assert.equal(f.c.state.messages[0].attachments[0].name,'測試.txt');
   assert.equal((await f.c.attachmentFile(a.id)).bytes.toString(),'合計 19');
   await assert.rejects(f.c.artifact('README.md'));
+ }finally{await f.c.close();}
+});
+
+for(const early of [true,false])test(`attachment input stays compact across native echoes ${early?'before':'after'} acknowledgement`,async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});
+  const attachments=[];for(let n=0;n<12;n++)attachments.push(await f.c.upload({threadId:'test-thread',name:`fixture-${n}.txt`,base64:Buffer.from(`fake ${n}`).toString('base64')}));
+  const original=f.host.request;let nativeInput;
+  const echo=()=>{for(const method of ['item/started','item/completed'])f.hooks.onEvent({method,params:{threadId:'test-thread',turnId:'turn-1',item:{type:'userMessage',id:'native-12',content:nativeInput}}});};
+  f.host.request=async(method,p)=>{const result=await original(method,p);if(method==='turn/start'){nativeInput=p.input;if(early)echo();}return result;};
+  await f.c.send({text:'十二份假附件',attachmentIds:attachments.map(a=>a.id)});if(!early)echo();
+  assert.equal(f.c.state.messages.length,1);assert.equal(f.c.state.messages[0].text,'十二份假附件');assert.equal(f.c.state.messages[0].attachments.length,12);
+  assert.equal(JSON.parse(nativeInput[0].text.match(/<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>/)[1]).files.length,12);
+  await f.c.stop();f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{id:'turn-1',items:[{type:'userMessage',id:'native-12',content:nativeInput}]}]}}:original(method,p);
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});assert.equal(f.c.state.messages[0].text,'十二份假附件');assert.equal(f.c.state.messages[0].attachments.length,12);
+ }finally{await f.c.close();}
+});
+
+for(const early of [true,false])test(`steering carries scoped files and images with compact echoes ${early?'before':'after'} acknowledgement`,async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'original task'});
+  const a=await f.c.upload({threadId:'test-thread',name:'extra.txt',base64:Buffer.from('fake steer file').toString('base64')});
+  const image=await f.c.upload({threadId:'test-thread',name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
+  const original=f.host.request;let input;
+  const echo=()=>{for(const method of ['item/started','item/completed'])f.hooks.onEvent({method,params:{threadId:'test-thread',turnId:'turn-1',item:{type:'userMessage',id:'native-steered-files',content:input}}});};
+  f.host.request=async(method,p)=>{if(method==='turn/steer'){input=p.input;if(early)echo();return {turnId:p.expectedTurnId};}return original(method,p);};
+  await f.c.steer({text:'補上附件',attachmentIds:[a.id,image.id]});if(!early)echo();
+  assert.match(input[0].text,/extra.txt/);assert.equal(input[1].type,'localImage');
+  assert.equal(f.c.state.messages.length,2);assert.equal(f.c.state.messages[1].text,'補上附件');assert.deepEqual(f.c.state.messages[1].attachments.map(a=>a.id),[a.id,image.id]);
+  assert.equal(f.c.state.messages[1].id,'native-steered-files');
+ }finally{await f.c.close();}
+});
+
+test('restored attachment display keeps available cards and warns on missing files without exposing internal context',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});
+  const a=await f.c.upload({threadId:'test-thread',name:'kept.txt',base64:'YQ=='});await f.c.send({text:'keep my text',attachmentIds:[a.id]});
+  const input=structuredClone(f.calls.find(x=>x.method==='turn/start').p.input);
+  const match=input[0].text.match(/<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>/),context=JSON.parse(match[1]);
+  context.files.unshift({id:'not-an-existing-upload',name:'missing.txt',readPath:'not-a-real-path'});input[0].text=input[0].text.replace(match[1],JSON.stringify(context));const originalInput=JSON.stringify(input);
+  await f.c.stop();const original=f.host.request;
+  f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{id:'turn-1',items:[{type:'userMessage',id:'restored',content:input}]}]}}:original(method,p);
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
+  assert.equal(f.c.state.messages[0].text,'keep my text');assert.deepEqual(f.c.state.messages[0].attachments.map(a=>a.id),[a.id]);assert.match(f.c.state.error,/部分附件無法重新載入/);assert.equal(JSON.stringify(input),originalInput);
+ }finally{await f.c.close();}
+});
+
+test('user-authored attachment-like text is not stripped and foreign attachments cannot be steered',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});const literal='explain this syntax\n\n<K_ATTACHMENT_CONTEXT>\n{"files":[]}\n</K_ATTACHMENT_CONTEXT>';
+  await f.c.send({text:literal});const input=f.calls.find(x=>x.method==='turn/start').p.input;
+  for(const method of ['item/started','item/completed'])f.hooks.onEvent({method,params:{threadId:'test-thread',turnId:'turn-1',item:{id:'literal',type:'userMessage',content:input}}});
+  assert.equal(f.c.state.messages[0].text,literal);
+  const {saveAttachment}=await import('../src/desktop-files.mjs'),foreign=await saveAttachment(f.root,'other-thread',{name:'foreign.txt',base64:'YQ=='});
+  await assert.rejects(f.c.steer({text:'must not send',attachmentIds:[foreign.id]}),/其他對話/);assert.equal(f.calls.filter(x=>x.method==='turn/steer').length,0);
+  await f.c.stop();const original=f.host.request;f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{id:'turn-1',items:[{id:'literal',type:'userMessage',content:input}]}]}}:original(method,p);
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});assert.equal(f.c.state.messages[0].text,literal);
  }finally{await f.c.close();}
 });
 

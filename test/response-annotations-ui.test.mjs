@@ -7,7 +7,9 @@ const component=readFileSync(new URL('../frontend/response-annotations.jsx',impo
 
 test('selection toolbar reuses assistant-ui Root and does not wrap or hide messages',()=>{
   assert.match(main,/import \{[^}]*SelectionToolbarPrimitive[^}]*\} from '@assistant-ui\/react'/);
-  const button=main.slice(main.indexOf('function SelectionToolbarAction'),main.indexOf('function formatElapsed'));
+  const start=main.indexOf('function SelectionToolbarAction'),end=main.indexOf('function WorkProgress');
+  assert.ok(start>=0&&end>start);
+  const button=main.slice(start,end);
   assert.match(button,/<SelectionToolbarPrimitive\.Root/);
   assert.match(button,/aria-label="加入聊天"/);
   assert.doesNotMatch(button,/ThreadPrimitive\.Messages/);

@@ -24,6 +24,16 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('Gemini accepts more than eight attachments while keeping unsupported mid-turn steering explicit',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({model:'gemini-3.8-flash',effort:'low'}),attachments=[];
+  for(let n=0;n<12;n++)attachments.push(await f.controller.upload({threadId,name:`fake-${n}.txt`,base64:Buffer.from(`fake body ${n}`).toString('base64')}));
+  await f.controller.send({text:'twelve files',attachmentIds:attachments.map(a=>a.id)});await finish(f.controller);
+  assert.equal(f.calls.length,1);assert.equal(f.controller.state.messages[0].text,'twelve files');assert.equal(f.controller.state.messages[0].attachments.length,12);
+  assert.equal(f.controller.state.capabilities.steer,false);await assert.rejects(f.controller.steer({text:'do not replay',attachmentIds:attachments.map(a=>a.id)}),/不支援/);assert.equal(f.calls.length,1);
+ }finally{await f.controller.close();}
+});
+
 test('Gemini native conversation persists its account binding and releases the lease after actual completion',async()=>{
  const acquired=[],released=[],accountId='a'.repeat(32);
  const accounts={inspect:fn=>fn(),acquire:async data=>{acquired.push(data);return {accountId,release:async result=>released.push(result)};}};

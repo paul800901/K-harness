@@ -3,6 +3,26 @@ import assert from 'node:assert/strict';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import * as nativeNotices from '../frontend/native-notices.mjs';
 
+test('retry projection keeps the latest incident update, terminal errors, and raw records',()=>{
+ const notices=[
+  {id:'a',kind:'nativeError',level:'error',turnId:'t',willRetry:true,retryKey:'incident',message:'Reconnecting... 1/5'},
+  {id:'b',kind:'nativeError',level:'error',turnId:'t',willRetry:true,retryKey:'incident',message:'Reconnecting... 2/5'},
+  {id:'old',kind:'nativeError',willRetry:true,resolved:true,retryKey:'old',message:'resolved'},
+  {id:'fatal',kind:'nativeError',willRetry:false,message:'Native request failed'},
+  {id:'transport',kind:'warning',message:'Falling back from WebSockets to HTTPS transport. stream disconnected before completion'},
+  {id:'different',kind:'guardianWarning',message:'WebSockets permission denied'},
+ ];
+ const before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices).map(n=>n.id),['b','fatal','different']);
+ assert.deepEqual(notices,before);
+ assert.equal(nativeNotices.nativeNoticeText(notices[1]),'正在重新連線（2/5）');
+ assert.equal(nativeNotices.nativeNoticeText({...notices[1],message:'Reconnecting... waiting for network'}),'等待網路恢復…');
+ assert.equal(nativeNotices.nativeNoticeText({...notices[1],message:'Unknown retry reason'}),'原生核心正在重試…');
+ const long={message:'原生錯誤'.repeat(100)};
+ assert.equal(nativeNotices.nativeNoticeText(long),long.message.slice(0,160)+'…');
+ assert.equal(long.message.length,400);
+});
+
 test('hides engineering notices without mutating the native records',()=>{
  const notices=['status','deprecationNotice','configWarning','windowsWorldWritableWarning','windowsSandboxReadiness','windowsSandboxSetupCompleted']
   .map((kind,index)=>({id:`hidden-${index}`,kind,level:'warning',message:`${kind} detail`}));
