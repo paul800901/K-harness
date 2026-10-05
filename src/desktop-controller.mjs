@@ -26,11 +26,16 @@ function codexInput(text,attachments=[]){
 
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
- const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
+ const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
  const nativeThreads=new Map();
+ let compactionIds=new Set();
+ const recordCompaction=id=>{
+  if(typeof id!=='string'||!id){state.progress.compactionsComplete=false;return;}
+  compactionIds.add(id);state.progress.compactions=compactionIds.size;
+ };
  const nativeId=id=>nativeThreads.get(id)??id;
  const localId=id=>[...nativeThreads].find(([,native])=>native===id)?.[0]??id;
  const localRefs=value=>{
@@ -209,7 +214,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(e.method==='thread/goal/cleared'){state.goal=null;changed();return;}
   if(e.method==='turn/plan/updated'){state.progress.plan=p.plan??[];state.progress.explanation=p.explanation??null;changed();return;}
   if(e.method==='thread/tokenUsage/updated'){state.progress.tokenUsage=p.tokenUsage??null;changed();return;}
-  if(e.method==='thread/compacted'){state.progress.compaction='completed';state.progress.compactions++;changed();return;}
+  // Deprecated compatibility notification can accompany item/completed. Never count both.
+  if(e.method==='thread/compacted')return;
   if(e.method==='item/autoApprovalReview/started'||e.method==='item/autoApprovalReview/completed'){
    if(!turnId||p.turnId!==turnId)return;
    const id='auto-approval-review:'+p.reviewId;
@@ -226,7 +232,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(['item/started','item/completed'].includes(e.method)){
    const i=p.item;
-   if(i.type==='contextCompaction')state.progress.compaction=e.method==='item/completed'?'completed':'compacting';
+   if(i.type==='contextCompaction'){state.progress.compaction=e.method==='item/completed'?'completed':'compacting';if(e.method==='item/completed')recordCompaction(i.id);}
    if(i.type==='agentMessage')message(i.id,'assistant',i.text??'',[],p.turnId??turnId,undefined,{partial:true});
    if(i.type==='userMessage'){
     const text=userItemText(i),itemTurnId=p.turnId??turnId;
@@ -464,7 +470,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const previous=host;host=null;hostEpoch++;await previous.close();}
     viewEpoch++;requestEpoch++;clearQuestions();items.clear();unsentSessions.clear();reasoningParts.clear();turnId=null;
     await closeBrowser();
-    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null},status:'idle',error:null,workerConnection:null,workerError:null,browserAccess:{enabled:false,networkAccess:false}});
+    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},status:'idle',error:null,workerConnection:null,workerError:null,browserAccess:{enabled:false,networkAccess:false}});
     state.usage.flash={totalTokens:0,responses:0,unconfirmed:0,pending:0};return {workspace};
    }finally{opening=false;changed();}
   },
@@ -537,7 +543,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // must leave the current conversation untouched, while concurrent send
    // or open calls must still be rejected.
    opening=true;openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
-   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state);let createdHost;
+   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds);let createdHost;
    const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
     signal.throwIfAborted();
@@ -574,7 +580,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const connectionEpoch=++hostEpoch;
      signal.throwIfAborted();const transport=hostFactory({executable,cwd:root,signal,onEvent:e=>event({...e,params:localRefs(e.params)},connectionEpoch),onRequest:m=>request({...m,params:localRefs(m.params)})});
      const active={...transport,close:()=>transport.close(),notify:message=>transport.notify(message),request:async(method,params,...args)=>localRefs(await transport.request(method,params?.threadId?{...params,threadId:nativeId(params.threadId)}:params,...args)),...(transport.waitForMcp?{waitForMcp:(id,...args)=>transport.waitForMcp(nativeId(id),...args)}:{})};host=active;createdHost=active;
-      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.error='主控已斷線；先重開原對話查明工作，不要直接重送。';changed();}}});
+      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;state.error='主控已斷線；先重開原對話查明工作，不要直接重送。';changed();}}});
      await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});
      }
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
@@ -587,14 +593,17 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      // Only a K record saved before any submission may be prepared again.
      // Legacy/attempted conversations always read their original native history.
      const prior=threadId&&!prepared?await call('thread/read',{threadId,includeTurns:true}):null;
+     const compactionsComplete=!threadId||prepared||Array.isArray(prior?.thread?.turns)&&prior.thread.turns.every(turn=>Array.isArray(turn.items));
      const nextUiTiming=threadId?await loadUiMessageTiming(root,threadId):{version:1,messages:{},tools:{}};
      state.previousWorkspaces=relocation?.previousWorkspaces??saved?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??saved?.previousArtifacts??[];
-     clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:0,tokenUsage:null};state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
+     compactionIds=new Set();clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      uiTiming=nextUiTiming;activeGroupId=null;reasoningParts.clear();fileChangePatches.clear();state.notices=[];state.reasoning=[];state.turnDiffs=[];state.sandboxReadiness=null;state.parentThreadId=saved?.parentThreadId??null;state.parentTitle=saved?.parentTitle??null;
      state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
      for(const turn of prior?.thread.turns??[])for(const i of turn.items??[]){
+      // Native history materializes completed compactions, not item/started.
+      if(i.type==='contextCompaction')recordCompaction(i.id);
       if(i.type==='userMessage'){
        let text=(i.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');const attachments=[];
        const match=text.match(/\n\n<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>$/);
@@ -663,7 +672,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      state.workerConnection='ready';
      signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
    }catch(e){if(signal.aborted){
-     Object.assign(state,previousState);
+     Object.assign(state,previousState);compactionIds=previousCompactionIds;
      // Resume may already have reset the projection, even when reusing the host.
      if(state.threadId){state.status='offline';state.browserAccess={enabled:false,networkAccess:false};}
      if(createdHost){await closeFlashGateway();await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;

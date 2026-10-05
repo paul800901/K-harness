@@ -368,6 +368,8 @@ test('compact uses Claude Code native slash command in the same session',async()
   assert.equal(f.controller.state.progress.compactions,0);
   const saved=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`),'utf8'));
   assert.equal(saved.nativeStarted,true);
+  const boundary={type:'system',subtype:'compact_boundary',session_id:f.controller.state.threadId.slice(7),uuid:'manual-complete'};
+  f.hostOptions.onMessage(boundary);f.hostOptions.onMessage(boundary);
   f.hostOptions.onMessage({type:'result',is_error:false});
   assert.equal(f.controller.state.progress.compactions,1);
  }finally{await f.controller.close();}
@@ -800,6 +802,101 @@ test('native background Agent starts before child text and settles from task not
   emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg-late',message:{content:[{type:'text',text:'late child text'}]}});
   assert.equal(f.controller.state.workers[0].status,'completed','late events cannot revive a completed child');
  }finally{await f.controller.close();}
+});
+
+test('Claude persists unique automatic and manual boundaries across a fresh controller and separate rooms',async()=>{
+ const f=await fixture();let reopened;
+ try{
+  const {threadId}=await f.controller.open({});
+  const boundary={type:'system',subtype:'compact_boundary',uuid:'auto-complete',session_id:threadId.slice(7),compact_metadata:{trigger:'auto'}};
+  f.hostOptions.onMessage({...boundary,parent_tool_use_id:'child'});f.hostOptions.onMessage({...boundary,session_id:'foreign'});assert.equal(f.controller.state.progress.compactions,0);
+  f.hostOptions.onMessage(boundary);f.hostOptions.onMessage({...boundary,isReplay:true});assert.equal(f.controller.state.progress.compactions,1);
+  // Flush through an ordinary UI operation, not close: the completed boundary saves immediately.
+  await f.controller.metadata({threadId,title:'saved boundary'});
+  let record=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`),'utf8'));
+  assert.deepEqual(record.compactions,{ids:['auto-complete'],complete:true,inFlight:false});
+  await f.controller.open({});assert.equal(f.controller.state.progress.compactions,0);
+  await f.controller.close();reopened=f.createController();await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,true);
+  f.hostOptions.onMessage({...boundary,isReplay:true});assert.equal(reopened.state.progress.compactions,1);
+  await reopened.open({forkFrom:threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,true);
+ }finally{await f.controller.close();await reopened?.close();}
+});
+
+test('Claude old or interrupted projections stay unknown, and result success alone never counts',async()=>{
+ const f=await fixture();let reopened;
+ try{
+  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
+  await f.controller.compact();f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.progress.compactions,0);assert.equal(f.controller.state.progress.compactionsComplete,false);
+  await f.controller.close();const record=JSON.parse(await readFile(file,'utf8'));delete record.compactions;await writeFile(file,JSON.stringify(record));
+  reopened=f.createController();await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,null);assert.equal(reopened.state.progress.compactionsComplete,false);
+  const boundary={type:'system',subtype:'compact_boundary',uuid:'new-confirmed',session_id:threadId.slice(7)};
+  f.hostOptions.onMessage(boundary);assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,false);
+  await reopened.close();const known=JSON.parse(await readFile(file,'utf8'));known.compactions={ids:['new-confirmed'],complete:true,inFlight:true};await writeFile(file,JSON.stringify(known));
+  await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,false);
+ }finally{await f.controller.close();await reopened?.close();}
+});
+
+test('Claude failed manual compression does not count; late confirmed boundary does not restart work',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});await f.controller.compact();f.hostOptions.onMessage({type:'result',is_error:true});assert.equal(f.controller.state.progress.compactions,0);
+  f.controller.state.status='interrupted';f.controller.state.busy=false;
+  f.hostOptions.onMessage({type:'system',subtype:'compact_boundary',uuid:'late-confirmed',session_id:threadId.slice(7)});
+  assert.equal(f.controller.state.progress.compactions,1);assert.equal(f.controller.state.status,'interrupted');assert.equal(f.controller.state.busy,false);
+ }finally{await f.controller.close();}
+});
+
+test('Claude marks native submission and autonomous continuation in flight before a crash',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
+  const read=async()=>JSON.parse(await readFile(file,'utf8'));
+  f.host.start=async()=>assert.equal((await read()).compactions.inFlight,true,'saved before native start');
+  await f.controller.send({text:'fake work'});f.hostOptions.onMessage({type:'result',is_error:false});
+  await f.controller.metadata({threadId,title:'completed'});assert.equal((await read()).compactions.inFlight,false);
+  f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting'});
+  await f.controller.metadata({threadId,title:'autonomous turn'});assert.equal((await read()).compactions.inFlight,true);
+  await f.host.close();await new Promise(resolve=>setImmediate(resolve));await f.controller.metadata({threadId,title:'disconnected'});
+  assert.equal(f.controller.state.progress.compactionsComplete,false);assert.equal((await read()).compactions.complete,false);
+ }finally{await f.controller.close();}
+});
+
+test('closing an already closed Claude controller cannot overwrite newer persisted counts',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});await f.controller.close();
+  const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`),record=JSON.parse(await readFile(file,'utf8'));
+  record.compactions={ids:['newer'],complete:true,inFlight:false};await writeFile(file,JSON.stringify(record));
+  await f.controller.close();assert.deepEqual(JSON.parse(await readFile(file,'utf8')).compactions,record.compactions);
+ }finally{await f.controller.close();}
+});
+
+test('Claude failed target workspace validation and close never mix the old room into the target record',async()=>{
+ const f=await fixture();try{
+  const {threadId:target}=await f.controller.open({});await f.controller.metadata({threadId:target,title:'target untouched'});
+  const file=path.join(f.root,'.runtime','claude-sessions',`${target}.json`),before=JSON.parse(await readFile(file,'utf8'));
+  const {threadId:source}=await f.controller.open({});await f.controller.metadata({threadId:source,title:'different source'});
+  f.hostOptions.onMessage({type:'system',subtype:'compact_boundary',uuid:'source-only',session_id:source.slice(7)});
+  await assert.rejects(f.controller.open({threadId:target},{relocation:{workspace:path.join(f.root,'does-not-exist')}}));
+  assert.equal(f.controller.state.threadId,source);assert.equal(f.controller.state.progress.compactions,1);
+  await f.controller.close();assert.deepEqual(JSON.parse(await readFile(file,'utf8')),before);
+ }finally{await f.controller.close();}
+});
+
+for(const operation of ['send','compact'])test(`Claude ${operation} serializes its in-flight marker after an older result snapshot`,async t=>{
+ const f=await fixture();let release;
+ try{
+  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
+  let enter,nativeStart;const entered=new Promise(resolve=>{enter=resolve;}),gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{nativeStart=resolve;});
+  const original=fs.rename;let held=false;
+  const mock=t.mock.method(fs,'rename',async(from,to)=>{
+   if(!held&&to===file&&JSON.parse(await fs.readFile(from,'utf8')).compactions?.inFlight===false){held=true;enter();await gate;}
+   return original(from,to);
+  });syncBuiltinESMExports();t.after(()=>{mock.mock.restore();syncBuiltinESMExports();});
+  f.host.start=async()=>{nativeStart();assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true);};
+  f.hostOptions.onMessage({type:'result',is_error:false});await entered;
+  const pending=f.controller[operation]({text:'fake next turn'});
+  assert.equal(await Promise.race([started.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),100))]),false,'old snapshot must settle before sending native work');
+  release();await pending;await f.controller.metadata({threadId,title:'queue flushed'});
+  assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true);
+ }finally{release?.();await f.controller.close();}
 });
 
 test('an unsent Claude room survives close and a new controller, with or without a rename',async()=>{

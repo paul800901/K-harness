@@ -24,6 +24,13 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('Gemini does not invent a zero compaction count when native telemetry is unavailable',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({model:'gemini-3.8-flash',effort:'low'});
+  assert.equal(f.controller.state.progress.compactions,null);assert.equal(f.controller.state.progress.compactionsComplete,false);
+ }finally{await f.controller.close();}
+});
+
 test('Gemini accepts more than eight attachments while keeping unsupported mid-turn steering explicit',async()=>{
  const f=await fixture();try{
   const {threadId}=await f.controller.open({model:'gemini-3.8-flash',effort:'low'}),attachments=[];

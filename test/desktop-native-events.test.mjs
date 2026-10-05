@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
+import {saveMainSession} from '../src/main-sessions.mjs';
 
 async function fixture({readiness='ready'}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
@@ -25,6 +26,34 @@ async function fixture({readiness='ready'}={}){
  const c=createDesktopController({root,executable:'fixture',hostFactory:options=>{connections.push(options);return host;}});
  return {c,calls,connections,root,host};
 }
+
+test('Codex counts unique main-thread completed compactions, not starts or legacy echoes',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});assert.equal(f.c.state.progress.compactions,0);assert.equal(f.c.state.progress.compactionsComplete,true);
+  const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+  const event=(method,id,threadId='native-events-thread')=>emit({method,params:{threadId,turnId:'t',item:{id,type:'contextCompaction'}}});
+  event('item/started','first');assert.equal(f.c.state.progress.compactions,0);
+  event('item/completed','child','child-thread');assert.equal(f.c.state.progress.compactions,0);
+  event('item/completed','first');event('thread/compacted','first');event('item/completed','first');
+  assert.equal(f.c.state.progress.compactions,1);
+  event('item/started','failed');emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'t',status:'failed'}}});assert.equal(f.c.state.progress.compactions,1);
+  event('item/completed','second');assert.equal(f.c.state.progress.compactions,2);
+ }finally{await f.c.close();}
+});
+
+test('Codex reconstructs counts from native history on reopen and isolates chats',async()=>{
+ const f=await fixture(),original=f.host.request;let history=[{id:'t',status:'failed',items:[{type:'contextCompaction',id:'history-1'},{type:'contextCompaction',id:'history-1'},{type:'contextCompaction',id:'history-2'}]}];
+ f.host.request=async(method,p,...rest)=>method==='thread/read'?{thread:{turns:history}}:original(method,p,...rest);
+ try{
+  await saveMainSession(f.root,{threadId:'native-events-thread',model:'gpt-6-astra',workspace:f.root});
+  await f.c.open({model:'gpt-6-astra',threadId:'native-events-thread'});
+  assert.equal(f.c.state.progress.compactions,2);assert.equal(f.c.state.progress.compactionsComplete,true);
+  f.connections.findLast(x=>x.onEvent).onEvent({method:'item/completed',params:{threadId:'native-events-thread',item:{type:'contextCompaction',id:'history-2'}}});assert.equal(f.c.state.progress.compactions,2);
+  await f.c.close();await f.c.open({model:'gpt-6-astra',threadId:'native-events-thread'});assert.equal(f.c.state.progress.compactions,2);
+  await saveMainSession(f.root,{threadId:'other-room',model:'gpt-6-astra',workspace:f.root});history=undefined;
+  await f.c.open({model:'gpt-6-astra',threadId:'other-room'});assert.equal(f.c.state.progress.compactions,null);assert.equal(f.c.state.progress.compactionsComplete,false);
+ }finally{await f.c.close();}
+});
 
 test('main completion waits for the actual final native worker readback',async()=>{
  const f=await fixture(),original=f.host.request;let release,hold=false;
