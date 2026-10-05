@@ -4,7 +4,7 @@
 
 使用者要求和真正 Opus 5.5 討論，將 Claude／Gemini 原生目標及人用操作補齊。K 仍是薄接殼；不新增自有持續執行迴圈、計時派工、預設預算、失敗重播、暗換模型／帳號或 API 計費。
 
-本批在開發版接通，尚未部署或 push。前一批壓縮次數修正一併保留；正式 K 是否可更新須在收尾讀回，不中斷執行中工作。
+本批及前一批壓縮次數修正已於 2026-10-05 14:30–14:31 套用南區正式 K、正常重開並完成讀回，固定程式為 35de2b5d7a106bbde9a0859bcd75e3380305e2a1；程式已推私人 GitHub 並核對遠端。未中斷任何執行中工作；東區未更新。
 
 ## 可見行為與原生差異
 
@@ -63,7 +63,17 @@ Claude 完成與無法完成在官方 stream-json 皆可能只讀回 No goal set
 
 ## 固定版本與部署
 
-最終複查及驗證已通過，本地程式固定為 **35de2b5d7a106bbde9a0859bcd75e3380305e2a1**（codex/modal-focus-fix），包含前批壓縮次數程式 276114989338c00564f7dcdf0aeffc0e9ef58c88。之後的本次文件收尾 commit 只記錄版本，不代表另一次程式變更或部署。正式 K 仍是 4ead4bf24ed609a01b4d6acfb4f5bdf48d574248；2026-10-05 收尾讀回 127.0.0.1:47831 仍由 PID 18548 監聽。未取得完整停止，因此不部署、不重啟、不推 GitHub、不建立或移動發布標記。已請本人工作告一段落後離開並停止 K。前批壓縮次數一併保留，待停止後以本批固定 SHA 準備候選、保留程式退版、部署及正式讀回，再按 SOP push；東區不動。
+最終複查及驗證已通過，程式固定為 **35de2b5d7a106bbde9a0859bcd75e3380305e2a1**（codex/modal-focus-fix），包含前批壓縮次數程式 276114989338c00564f7dcdf0aeffc0e9ef58c88。初次收尾時正式 K 仍為 4ead4bf、PID 18548 監聽，故當時沒有部署或 push；本人後續明確要求「部署／推 GitHub」，本次核對正式程序及 47831 均已停止，才繼續以下操作。
+
+### 南區部署與 GitHub 讀回（2026-10-05 14:30–14:31，臺灣時間）
+
+- 從上述固定 SHA 封存建立乾淨候選；package-lock 與前版一致，沿用現有專案套件，未安裝新套件或更新原生核心。UI／擴充／啟動器建置成功，乾淨候選完整 **797/797** 再次通過；既有大型 UI chunk 提醒仍保留，不為發布擴做切包。
+- 核對 496 個 Git 檔（488 個僅因既有 CRLF 封存換行不同，正規化後均與 Git blob 相符），516 個程式／建置檔正式落地雜湊一致。替換期間 **330 個保護檔案未變**，四帳號與目前帳號、本機 Node／語音設定保留，未操作憑證管理員。
+- 可退前版 `4ead4bf24ed609a01b4d6acfb4f5bdf48d574248`，程式與啟動器保存於 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791181855928`，退版檔已核對；這不是對話資料快照。
+- 由既有 `D:\K-harness\Start-K-Desktop.ps1` 正常重開，正式 native health 成功、K 視窗 PID 24624 Responding、3 個正式服務資產均 200 且與固定版本建置雜湊一致。未授權首頁及 `/api/state` 仍為 403，未擷取 cookie／啟動 token 或放寬控制。
+- 重開讀回四帳號身分及目前帳號未變，沒有 loginPending／uncertain；330 個保護檔案仍一致。未為發布驗收送出、重播或修改真實聊天室工作。目標及壓縮行為沿用先前三家原生／真瀏覽器實測；本次正式讀回驗證同一程式／資產與正常啟動，不冒稱在使用者真實聊天室另跑過目標，也不冒稱由本人從 Explorer 啟動。
+- 已確認 origin 是既有私人儲存庫，正常快轉推送程式至 `origin/main`，遠端完整 SHA 讀回一致。文件收尾另提交／發布，不改正式程式版本，不新建或移動 tag；東區未更新。
+- 證據保留於 `D:\K-harness\.runtime\native-goals-deploy-20261005`：preparation、三項 build、full-tests、reviewed-source-readback、activation、保護檔前後比對、formal-readback 及 GitHub 讀回。一次性驗收腳本留開發 worktree `.runtime/goals-20261005/`，不提交帳號或執行 transcript。
 
 ## 留存限制（不擴成本批新機制）
 
