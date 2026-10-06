@@ -2,9 +2,9 @@
 
 ## 結論與範圍
 
-**候選已實作並整合另一批新版 K；865/865、手機介面及 Gemini 真原生接續通過。** Samsung Chrome 已登入、送出假資料並看到串流及完成畫面；離家連線／主畫面獨立啟動等完整實機驗收仍未完成。本人已手動啟動私人代理，電腦經真 Tailscale HTTPS 的 K 登入／安全讀回通過；未開 Funnel。直接操作手機的工具呼叫被 policy 拒絕，Samsung UI 由本人配合實測。額度恢復後的真正 Opus 整合複查發現手機子代理入口退化，已補修並通過補查；本程式 commit 固定時尚未部署。最新現況見第 10 節；前段紀錄保留各自階段邊界。
+**已套用南區正式 K，程式版本 `c8127f92822161661439606232822a74c4b8cc46`；正常重開、私人 HTTPS 登入、既有17間聊天室及 SSE 讀回通過，程式已推 GitHub 並精確核對。** 來源／乾淨候選各865/865，手機整合真正 Opus 複查問題已補修並通過補查。原私人網址及個人金鑰沿用，未開 Funnel。先前 Samsung Chrome 假資料登入、送出、串流與完成已驗；本次正式部署後 Samsung 再登入、主畫面獨立啟動及完整離家實機驗收仍待本人操作。直接操作手機的工具呼叫先前被 policy 拒絕，不再重試或改入口繞過。最新部署見第 11 節；前段紀錄保留各自階段邊界。
 
-候選：`C:\Users\Paulus\.codex\worktrees\k-mobile-remote\K-harness`，初始基底 `d88d1481dba2b834191473f4bf86942ff67eff39`；本輪恢復後已整合新版正式程式 `4201a285d48ee32a57313e4d73afafa4a3d74191` 及其文件收尾 `07f057661bc688437fa1a171af75301ed9a4987e`。驗證產物保留於候選 `.runtime/mobile-remote/`（Git 排除）。舊候選已固定，最新整合仍在工作樹／暫存區，待最後複查後再固定發布版本；正式部署版本另記，不以候選提交冒充部署。
+工程工作樹：`C:\Users\Paulus\.codex\worktrees\k-mobile-remote\K-harness`，初始基底 `d88d1481dba2b834191473f4bf86942ff67eff39`；本輪已整合新版正式程式 `4201a285d48ee32a57313e4d73afafa4a3d74191` 及其文件收尾 `07f057661bc688437fa1a171af75301ed9a4987e`。驗證產物保留於 `.runtime/mobile-remote/`、`.runtime/mobile-connect/`（Git 排除）；固定程式 c8127f9 與本次文件收尾 commit 分開，不因文件較新宣稱已重新部署。
 
 ## 1. 先確認 current，不把 cwd 或歷史文件當正式真值
 
@@ -247,3 +247,16 @@ node scripts/configure-remote.mjs --root '<相同 state root>' --revoke
 - 非阻擋限制保留：子代理小彈窗不攔 Android 返回鍵（可用關閉鈕或外點）；原生加速勾選框受手機觸控高度影響；Fast 待套用長標籤、極窄／放大顯示的裁切風險未完整實機驗證。沒有為此新增 overlay 狀態傳遞架構；正式原生核准與未知工作不重播不變。
 - 複查證據 `.runtime/mobile-connect/opus-merged-after-reset/`、`opus-merged-followup/`、`opus-mobile-layout-final/`。第一次最終 CSS 複查腳本字串替換造成 JavaScript syntax error，未啟動原生程序，修正工程腳本後才執行；非產品失敗或模型重播。
 - 下一步由本 commit 建立新乾淨候選，建置／完整測試後，核對正式仍為 4201a28 且全停，保留上一版程式／啟動器，才套用與讀回；不部署舊準備包、不修改既有對話／目標／模型登入。
+
+## 11. 正式套用與私人入口讀回
+
+- 正式程式固定 **`c8127f92822161661439606232822a74c4b8cc46`**。以 Git ZIP／Expand-Archive 建立新的 `prepare-mobile-final-c8127f9`；package-lock 與原正式一致，實體複製既有 node_modules，未安裝或升級相依。UI／擴充／Windows 啟動器建置通過，281 個程式／測試来源與固定 Git object 正規化後零差異。
+- 乾淨候選第一次完整測試：codex-flash 假資料 test 子程序持續不結束，254 秒後核對父子 PID／命令只停止該 test 子程序，結果864通過／1個檔案失敗；不停止正式 K 或其他工程程序。該檔單独12/12（0.55秒），全套限制4個測試程序並行／單測60秒上限後 **865/865**（46.92秒）；不跳過測試、不改產品或相關 test。首次不結束的精確根因尚未定位，保留 `prepared-tests-final.log`、`clean-codex-flash-rerun.txt`、`clean-tests-bounded-rerun.txt`，不聲稱已修掉測試時序問題。
+- 套用前再次核對正式仍4201a28、47831未監聽、K自有程序已停止。`activateRuntime` 只交換程式／啟動器；**34096個保護檔案在交換前後雜湊完全相同，五個Gemini帳號身分及目前帳號不變**。還原位置 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791284533674`，內含4201a28程式與原啟動器；不是對話資料還原。
+- 在既有 state root `vault/private-state/.local/remote-access.json` 建立正式個人入口設定，只存原個人金鑰雜湊，不搬取供應商憑證、不換金鑰。初次因 `.local` 尚不存在而 ENOENT、未寫入；建立這個必要目錄後以 `wx` 建立並讀回。原 Tailscale Serve 沒有更改，仍是私人HTTPS8443 → loopback54832，無Funnel／公開路由。
+- 由正常 `D:\K-harness\Start-K-Desktop.ps1` 啟動。正式 Electron PID43992／視窗 Responding=true；47831與54832皆僅監聽127.0.0.1。77個正式程式／產物雜湊一致，三個UI資產HTTP200且內容相同，health=native；原本未授權本機首頁／state仍403。
+- 2026-10-06T11:04:28Z，使用正常公信TLS、不略過驗證，經真Serve完成 **13項**讀回：未登入／錯金鑰拒絕、正確登入／正式工作台／state／sessions成功、跨來源／電腦目錄route拒絕、偽造identity被Serve取代、遠端cookie不能當本機authority、SSE snapshot一致、登出及撤銷成功。正式17間聊天室包含三家，沒有fake-room；**零工作送出、零目標操作、零換帳號**。
+- 電腦Chrome經同一真私人網址實際登入成功，讀到既有工作區／聊天室；未開啟或重送真實翻譯／CaseAgent工作。畫面 `formal-private-browser.png` 顯示「電腦 K 已連線」。這是電腦瀏覽器讀回，不冒稱本次Samsung實機已重新登入；手機需重新整理原網址、以原金鑰再登入。
+- 正常啟動後原生額度查詢使Gemini帳號紀錄／CLI log／SQLite暫存及一個既有crash紀錄出現變動或消失；五帳號身分與目前帳號雜湊仍相同，其餘既有保護檔無變更。未手動刪除原生檔案。啟動後保護檔首次讀回遇瞬時消失的db-shm，僅在啟動後核對中明列這類SQLite暫存消失，不放寬交換前後的精確比對。HTTP驗證腳本首次將未收完整的SSE片段當JSON，修正只解析完整事件後13項通過；產品SSE沒有改動。
+- 程式已推到既有 `origin/main`，遠端精確讀回同c8127f9；沒有force push／搬動既有tag，原D槽未提交工作樹不動。發佈前核對本個人金鑰未出現在diff、未提交.local／.runtime／憑證檔。本頁與README的純文件收尾另外提交，不重啟正式K；東區未更新。
+- 部署證據共用位置 `D:\K-harness\.runtime\mobile-remote-deploy-20261006`；完整複查／畫面／測試保留本工程工作樹 `.runtime/mobile-connect/`。上節非阻擋限制與尚未完成的實機項目仍有效，不把本機正式可讀回擴稱所有手機操作都已驗收。
