@@ -1,0 +1,42 @@
+# Gemini 工人反覆開黑窗：診斷與派工行為規則候選（2026-10-07）
+
+## 現況與邊界
+
+- 診斷時正式 K 為 `e0d552c`，有執行中的使用者工作。本次不停止工人、不重啟、不部署、不 push、不改 Windows 設定或其他工作區。
+- 僅候選 `geminiInstruction` 補上共同派工規則；這是模型指引，不是 OS 子程序攔截，也不會熱更新已在執行的工人。尚不能宣稱正式黑窗問題已解決。
+
+## 本人本輪決定
+
+- 先試每次派 Gemini 子代理自動附規則；只訂不可越過的行為界線，不指定必須使用某個工具、命令或作法。方法由工人在原任務與既定權限內選擇，沒有擴張原生權限。
+- 不得擅自開黑窗或搶焦點，不得掩蓋錯誤或假稱成功，不得在沒有新證據或修正下反覆做相同失敗操作，也不得重送結果未知的工作。受阻保留成果並向主代理回報，不終止其他工作、不改系統設定或繞過核准。
+- 先觀察新規則下的實際工作；本人表示，若仍做不好同類程序工作或不遵守規則，後續同類任務不再交 Gemini，轉以影片／圖片辨識、翻譯等經實測適合的工作為主。這是依後續證據作派工取捨的條件，不是現在將用途鎖死或宣稱這些能力已全部驗收；本批不先禁用 Gemini、不建立自動任務分類、品質門檻、失敗換模或新派工系統。
+
+## 精確來源
+
+- 使用者截圖的 Python `print('piped to pwsh')`，與正式 K 的 Gemini 工單 `social-materials-20261007-three-dji-v1`、原生對話 `ca6f0847-915b-4bd3-8d49-a28e37db7c2e`、step 108 的 `run_command` 完全一致，時間為臺灣 04:18:14。
+- 該工單屬「討論下周社群包」，不是當時畫面所選的小說對話。原生記錄位於正式 private-state 的 Gemini run `66d16808-d9f8-48e2-8ca4-dc02df3f7b76`，`.gemini/antigravity-cli/brain/<native-id>/.system_generated/logs/transcript.jsonl`。只讀命令診斷，不讀素材內容、不複製完整逐字紀錄到 Git。
+- 04:18:19 至 04:24:51 有 16 次 `Start-Process` 工具呼叫，均未指定 `-WindowStyle Hidden` 或 `-NoNewWindow`；含 Python／FFmpeg 的輸出探測與媒體工作。此為多次開窗的直接風險路徑；未逐一以視窗事件綁定全部 16 次，不宣稱 16 次皆實際開窗。
+- K 的 `geminiProcess` 已採 `shell:false`、`windowsHide:true` 與管線 stdio；這只控制 K 直接啟動的 agy，不會替其原生 `run_command` 內每個後代的 `Start-Process` 加隱藏參數。既有 Flash 指引缺少這項要求。
+- 04:51:04 再次精確讀到同工人的 PowerShell → Python 批次及新的 WindowsTerminal；終端標題是該 Python 路徑，對應 step 310 未加隱藏的 `Start-Process`。批次日誌正在跑 `job_0066_ASR.json`，不是舊終端殘留，也不是本次只讀查詢啟動的視窗。
+- 此次不是已於 10/4 處理的 agy 自更新開窗案例。`0x800700e8` 是 pipe closed 類錯誤，本身不是記憶體不足證據；不將負載變化與恢復順暢的時間相關當作卡頓根因已證實。
+
+## 最小變更
+
+- `src/gemini-worker.mjs`：只補現有工人提示；依本輪決定，移除先前候選指定 `Start-Process -WindowStyle Hidden` 與輸出分檔的寫法，改為方法自選、行為底線固定。保留使用者明確要求的互動視窗與原權限。
+- GPT 的 `k_gemini` 與 Claude 的 `k_luna` 派 Flash 均經既有 `luna-bridge` 呼叫同一個 `createGeminiWorker`；共同規則與任務由 `geminiInstruction` 傳入 agy `-p`，不依賴主代理每次自行補寫。
+- `test/gemini-worker.test.mjs`：三種權限模式均帶入行為規則，非完整存取仍禁止終端命令，保留 delegated task；既有 fake spawn 測試另確認三種模式實際送往原生入口的 prompt，不把特定命令當驗收契約。
+- 沒有新增 shell wrapper、常駐視窗關閉器、強制終止、權限繞過或全域設定。
+
+## 驗證與待完成
+
+- 本輪結果型規則與實際入口斷言修改後，執行 `node --test --test-concurrency=1 test/gemini-worker.test.mjs test/gemini-controller.test.mjs test/codex-flash.test.mjs test/luna-gateway.test.mjs`，92/92 通過，含三種權限模式、原生 prompt 參數及 GPT／Claude 派工路徑。只跑假依賴的本機測試，不啟動正式模型／影片／ASR 工作；不代表真模型已遵守。
+- 獨立 Luna 只讀複查核對共用派工接線、結果型規則及實際 argv 測試，源碼無範圍／權限阻擋；主代理另讀回 diff、bridge 接線與本機 92/92 結果。文件測試狀態已同步，並澄清未來用途取捨僅在新規則實測失敗後適用，不是本批寫死路由。
+- 未啟動真模型或重跑造成黑窗的測試，避免繼續搶焦點；未驗證新指引下的真實 Windows 工人視窗行為。正式套用需等使用者停止 K 後依既有流程；不能把提示單元測試當作黑窗實機驗收。
+- 真正 Opus 複查、正式套用及正式讀回尚未執行，不將候選指引說成已完成正式修復。
+- 更新後才可用真 Gemini 小型假資料工作驗證是否不開窗、失敗是否如實回報及是否保留可讀結果；通過一次不代表永遠遵守。不得重播這次使用者的影音工作來驗證，也不以新提示已送入 argv 冒稱模型行為已通過。
+
+## 與舊工單修正一併驗收
+
+- 本人後續已停止 K，要求一併修好；本規則納入 [舊工單查詢修正](worker-record-recovery-20261007.md) 同一候選。
+- 真正官方 Opus 5.5 兩輪檢查共同規則，確認符合方法自由、行為底線、不改權限／路由、不增強制攔截。同批最終完整來源 930/930；實際 Gemini 工人新規則下的視窗行為仍待日後小型真任務觀察，沒有把提示測試當作強制保證。
+- 本節取代前文當時「Opus 尚未執行」；正式版本／讀回見共同工程紀錄續記，目前仍為待部署候選。

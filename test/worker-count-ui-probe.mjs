@@ -4,7 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {chromium} from 'playwright';
 import {preview} from 'vite';
-const output=path.resolve('.runtime/worker-count-20261004/ui');await mkdir(output,{recursive:true});
+const output=path.resolve('.runtime/worker-recovery-20261007/ui');await mkdir(output,{recursive:true});
 const server=await preview({preview:{host:'127.0.0.1',port:5198,strictPort:true}});
 const workspace=process.cwd(),errors=[],results=[];
 const state={threadId:'fake-count',workspace,status:'working',busy:true,title:'子代理數量測試',model:'gpt-6.1-sol',provider:'codex',messages:[],tools:[],questions:[],artifacts:[],workers:[],workerDetails:[],workerActivity:{running:0,uncertain:false},conversationActivity:[],accessMode:'workspace-write',capabilities:{}};
@@ -33,7 +33,16 @@ try{
   assert.equal(await page.locator('.app.inspector-hidden').count(),1,'Workers never auto-open an otherwise empty inspector');
   await update({workerActivity:{running:2,uncertain:false}});await text('子代理執行中：2');
   await update({workerActivity:{running:0,uncertain:false}});await text('子代理執行中：0');
-  await update({workerActivity:{running:2,uncertain:true,unconfirmed:1}});await text('子代理已確認執行中：2 · 待確認：1');
+  await update({workerActivity:{running:0,uncertain:false,historicalUnconfirmed:1},workerDetails:[
+   {requestId:'old-flash-fixture',conversationId:'room-old',conversationTitle:'舊聊天室',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true},
+  ]});
+  await page.waitForFunction(()=>document.querySelector('.worker-activity')?.textContent.includes('舊工單結果待確認：1'));
+  assert.match(await page.locator('.worker-activity').getAttribute('class'),/warning/,'Historical unresolved work remains visibly cautionary');
+  await page.locator('.worker-activity').click();const historical=page.getByRole('dialog',{name:'子代理狀態'});
+  await historical.getByText('舊工單結果待確認 · 重啟後無法確認執行結果',{exact:true}).waitFor();
+  await page.screenshot({path:path.join(output,`historical-${width}-${scale}-${theme}.png`)});
+  await page.keyboard.press('Escape');await historical.waitFor({state:'hidden'});
+  await update({workerActivity:{running:2,uncertain:true,unconfirmed:1},workerDetails:[]});await text('子代理已確認執行中：2 · 待確認：1');
   await update({workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails:[
    {requestId:'native-fixture',conversationId:'room-a',conversationTitle:'來源聊天室 A',provider:'codex',task:'檢查程式',status:'running'},
    {requestId:'flash-fixture',conversationId:'room-b',conversationTitle:'來源聊天室 B',provider:'gemini',model:'gemini-3.8-flash',task:'整理資料',status:'unresolved',error:'原生讀回失敗'},

@@ -81,7 +81,7 @@ test('Gemini Flash is accepted only with an explicitly enabled gateway and never
   assert.deepEqual(config.agents,{enabled:true});
   assert.equal(config.agents.default_subagent_model,undefined);
   assert.match(config.developer_instructions,/k_gemini/);
-  assert.match(config.developer_instructions,/gemini_start、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts/);
+  assert.match(config.developer_instructions,/gemini_start、gemini_list、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts/);
   assert.match(config.developer_instructions,/accountId\/handoffFrom/);
   assert.match(config.developer_instructions,/inspect the original result first/);
   assert.match(config.developer_instructions,/Do not replay unknown failures/);

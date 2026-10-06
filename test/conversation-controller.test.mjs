@@ -91,6 +91,21 @@ test('seven live workers remain counted even when another room has unconfirmed w
  }finally{await c.close();}
 });
 
+test('unowned historical work remains unresolved but is separate from current execution and waiting',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const a=await c.open({model:codexModel}),source=f.room(a.threadId);
+  source.state.workers=[{requestId:'old',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true},
+   {requestId:'live',provider:'gemini',status:'running',settled:false},{requestId:'unknown',provider:'gemini',status:'unresolved',settled:false},
+   {requestId:'ended',status:'completed',settled:true,executionUnowned:true}];source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:1,uncertain:true,unconfirmed:1,historicalUnconfirmed:1});
+  const old=c.state.workerDetails.find(row=>row.requestId==='old');assert.equal(old.executionUnowned,true);assert.equal(old.settled,false);assert.equal(old.status,'unresolved');
+  source.state.workers=source.state.workers.filter(row=>row.requestId==='old');source.notify();
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0,historicalUnconfirmed:1});
+  source.state.status='offline';source.notify();assert.equal(c.state.workerActivity.historicalUnconfirmed,1);
+  assert.equal(source.calls.some(([name])=>['workers','stop','send'].includes(name)),false,'Projection neither polls nor stops/replays work');
+ }finally{await c.close();}
+});
+
 test('global worker details project only unresolved rows with their owning room and evidence',async()=>{
  const f=await fixture(),c=f.controller;try{
   const a=await c.open({model:codexModel}),source=f.room(a.threadId);

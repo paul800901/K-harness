@@ -37,8 +37,9 @@ export function WorkerActivityPopover({activity,details,online=true,compact=fals
   if(!map.has(key))map.set(key,{id:key,title:row.conversationTitle??'聊天室名稱未知',rows:[]});
   map.get(key).rows.push(row);return map;
  },new Map()).values()];
+ const compactText=!online||!activity||activity.uncertain?'子代理 · 待確認':summary.quiet?'子代理 · 久未回報':`子代理 ${activity.running??0}`;
  return <div className="worker-activity-popover-anchor">
-  <button type="button" className={`status worker-activity ${!online||!activity||activity.uncertain||summary.quiet?'warning':''}`} aria-haspopup="dialog" ref={menu.trigger} aria-expanded={menu.open} aria-controls={menu.id} popoverTarget={menu.id} title="查看目前所有聊天室的子代理狀態">{compact?(!online||!activity||activity.uncertain?'子代理 · 待確認':summary.quiet?'子代理 · 久未回報':`子代理 ${activity.running??0}`):<>{workerStatus(activity,online)}{summary.quiet?` · 久未回報：${summary.quiet}`:''}</>}</button>
+  <button type="button" className={`status worker-activity ${!online||!activity||activity.uncertain||summary.quiet||summary.historicalUnconfirmed?'warning':''}`} aria-haspopup="dialog" ref={menu.trigger} aria-expanded={menu.open} aria-controls={menu.id} popoverTarget={menu.id} title="查看目前所有聊天室的子代理狀態">{compact?<>{compactText}{summary.historicalUnconfirmed?` · 舊工單結果待確認：${summary.historicalUnconfirmed}`:''}</>:<>{workerStatus(activity,online)}{summary.quiet?` · 久未回報：${summary.quiet}`:''}</>}</button>
   <section className="worker-activity-popover anchored-popover" ref={menu.popup} id={menu.id} popover="auto" onToggle={menu.onToggle} role="dialog" aria-label="子代理狀態">
    <div className="worker-activity-popover-heading"><strong>子代理狀態</strong><button type="button" aria-label="關閉子代理狀態" onClick={()=>menu.close()}>×</button></div>
    {!online&&<p className="worker-popover-note">後端斷線，以下僅為最後保留的狀態；目前執行狀態未知。</p>}

@@ -18,7 +18,7 @@ const clone = value => structuredClone(value);
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
   result.outputFiles=record.outputFiles??[];
@@ -140,6 +140,13 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       delete record.activity; // A saved observation is not evidence of a live worker after restart.
       delete record.inspection;
       delete record.waitingForApproval; // Saved approval state is not a live pending request.
+      // Recovered records have no execution owner in this bridge. Reading them
+      // must not adopt an old PID or rewrite the persisted evidence.
+      if(record.provider==='gemini'&&!record.settled){
+        record.executionUnowned=true;
+        record.status='unresolved';
+        record.error??='K 重啟後 agy 程序與完成結果無法確認；未重播。';
+      }
       records.set(requestId, record); return record;
     } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   };
@@ -402,7 +409,9 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       try {
         const records=await bridgeList(false);
         for(const record of records){
-          if(!record)continue;
+          // Historical Gemini records are not processes owned by this bridge.
+          // Leave their outcome unresolved; closing this host cannot settle them.
+          if(!record||record.executionUnowned===true)continue;
           if(record.settled===true){
             // A completed turn may still own background terminals in THIS host.
             // Historical settled records never trigger a native read or cancellation.

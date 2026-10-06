@@ -439,7 +439,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const active=bridgeInstance;
       const records=await active.list();
       for(const record of records){
-        if(record?.settled)continue;
+        if(record?.settled||record?.executionUnowned===true)continue;
         await active.cancel({requestId:record.requestId});
         const waited=await active.wait({requestId:record.requestId,timeoutMs:10000});
         const verified=await active.inspect({requestId:record.requestId});
@@ -655,7 +655,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         if(host!==hostAtSend||stopping||closing||opening)throw new Error('對話已停止或切換；附件檢查期間未啟動新回合。');
         sentMessage.attachments=attachmentRecords;
         if(nextAccessMode!==state.accessMode||nextEffort!==hostEffort){
-          if(bridgeInstance&&(await bridgeInstance.list()).some(record=>!record.settled))throw new Error('Codex 子代理尚未結束；待工人完成後再切換 Claude 權限模式。');
+          if(bridgeInstance&&(await bridgeInstance.list()).some(record=>!record.settled&&record.executionUnowned!==true))throw new Error('Codex 子代理尚未結束；待工人完成後再切換 Claude 權限模式。');
           await flushPersist();
           const active=host;restartingHost=true;try{await active.close();}catch(error){restartingHost=false;state.busy=false;state.status='uncertain';state.error=`Claude 設定重啟未完成；原 host 關閉未確認：${error.message}`;throw error;}if(host===active)host=null;restartingHost=false;settleNativeChildrenAfterHostClose();
           const accessChanged=nextAccessMode!==state.accessMode;

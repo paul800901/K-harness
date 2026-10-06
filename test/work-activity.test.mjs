@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkActivity,codexWorkActivity,claudeWorkActivity,geminiWorkActivity} from '../src/work-activity.mjs';
-import {workStatus,workerStatus,workerHealth,workerEnded,QUIET_WORK_MS} from '../frontend/work-status.mjs';
+import {workStatus,workerStatus,workerHealth,workerEnded,pendingWorkerSummary,QUIET_WORK_MS} from '../frontend/work-status.mjs';
 
 function fixture(){let now=1000;const state={busy:true,status:'working'},activity=createWorkActivity(state,()=>now);activity.begin();return {state,activity,tick(ms=1000){now+=ms;return now;},get now(){return now;}};}
 test('time passing and status reads never masquerade as fresh native activity',()=>{
@@ -53,7 +53,33 @@ test('worker count keeps known running jobs visible alongside unknowns without c
  assert.equal(workerStatus({running:7,uncertain:true,unconfirmed:2}),'子代理已確認執行中：7 · 待確認：2');
  assert.equal(workerStatus({running:7,uncertain:true,unconfirmed:0}),'子代理已確認執行中：7 · 部分連線待確認');
  assert.equal(workerStatus({running:7,uncertain:false}),'子代理執行中：7');
+ assert.equal(workerStatus({running:0,uncertain:false,historicalUnconfirmed:2}),'子代理執行中：0 · 舊工單結果待確認：2');
+ assert.equal(workerStatus({running:3,uncertain:true,unconfirmed:1,historicalUnconfirmed:2}),'子代理已確認執行中：3 · 待確認：1 · 舊工單結果待確認：2');
+ assert.equal(workerStatus({running:3,historicalUnconfirmed:2},false),'子代理：狀態待確認 · 舊工單結果待確認：2');
  assert.equal(workerStatus({running:7},false),'子代理：狀態待確認');
+});
+
+test('unowned Gemini history is visible but never counted as current work or reported stopped',()=>{
+ const old={conversationId:'a',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
+ const live={conversationId:'a',provider:'codex',status:'running',settled:false};
+ const oldHealth=workerHealth(old,true,1000);
+ assert.equal(oldHealth.historicalUnconfirmed,true);
+ assert.match(oldHealth.text,/舊工單結果待確認/);
+ assert.match(oldHealth.text,/重啟後無法確認執行結果/);
+ assert.doesNotMatch(oldHealth.text,/已停止|已結束/);
+ assert.deepEqual(pendingWorkerSummary([old],true,1000),{count:0,unknown:0,quiet:0,historicalUnconfirmed:1});
+ const idle={threadId:'a',status:'completed',busy:false,workerDetails:[old]};
+ const idleStatus=workStatus(idle,true,1000);
+ assert.equal(idleStatus.kind,'warning');
+ assert.match(idleStatus.text,/主代理待命/);
+ assert.match(idleStatus.text,/舊工單結果待確認：1 個/);
+ assert.doesNotMatch(idleStatus.text,/等待子代理/);
+ const mixed=workStatus({...idle,workerDetails:[old,live]},true,1000);
+ assert.match(mixed.text,/等待子代理：1 個/);
+ assert.match(mixed.text,/舊工單結果待確認：1 個/);
+ assert.doesNotMatch(mixed.text,/等待子代理：2/);
+ assert.equal(pendingWorkerSummary([{...old,settled:true}],true,1000).historicalUnconfirmed,0);
+ assert.equal(workerEnded({...old,status:'completed',settled:true}),true);
 });
 
 test('an idle main waits visibly for its own children without changing native busy or inferring a dead worker',()=>{

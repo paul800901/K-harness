@@ -48,7 +48,7 @@ export function workerPolicyConfig(value,{baseInstructions='',models,geminiGatew
  const auto=policy.model==='auto';
  const flash=policy.model==='gemini-3.8-flash';
  const canUseFlash=geminiGateway;
- const geminiTools='k_gemini 的 gemini_start、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts';
+ const geminiTools='k_gemini 的 gemini_start、gemini_list、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts';
  const gptChoices='gpt-6.1-sol or gpt-6-luna';
  const autoChoices=canUseFlash?`${gptChoices} or gemini-3.8-flash` : gptChoices;
  const effortText=canUseFlash?'low, medium, high for Flash; choose officially supported efforts for GPT':'officially supported reasoning effort';
@@ -63,6 +63,7 @@ export function workerPolicyConfig(value,{baseInstructions='',models,geminiGatew
     : `Default native subagent: ${policy.model}, reasoning effort ${policy.effort}. You may choose ${autoChoices} and the ${effortText} for each task. Follow explicit user choices; do not silently substitute on failure.`,
   `目前官方可用推理程度：${models.filter(m=>WORKER_MODELS.includes(m.model)).map(m=>`${m.model}: ${(m.supportedReasoningEfforts??[]).map(e=>e.reasoningEffort).join(', ')}`).join('; ')}。`,
   'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',
+  ...(canUseFlash?['K Gemini 工單不在 Codex 原生 list_agents 清單；使用者詢問待確認工人而 requestId 不明時，先用 gemini_list 列出本對話工單，再用 gemini_inspect 查明細，不依賴 Chrome。舊工單 executionUnowned 不代表仍在執行、已完成或確認停止，不可因此重播。']:[]),
   canUseFlash?'Use the existing Codex subscription for GPT agents; do not change GPT accounts or subscription. Use gemini_accounts to actively check all saved Gemini quotas while idle; it temporarily switches logins and restores the original. Never declare exhaustion or stop the user task based on cached percentages or a refused/failed query. Gemini account selection/handoff is supported only through the gateway tools and their accountId/handoffFrom fields: inspect the original result first, then create a new handoff for remaining work as needed. Do not replay unknown failures or silently substitute a model.':'Use the existing Codex subscription runtime. Never switch credentials, models, providers or billing routes on failure or quota exhaustion; never replay an unknown outcome or silently substitute a model.',
  ].join('\n');
  return {agents:auto||flash?{enabled:true}:{enabled:true,default_subagent_model:policy.model,default_subagent_reasoning_effort:policy.effort},developer_instructions:[baseInstructions,instructions].filter(Boolean).join('\n\n')};

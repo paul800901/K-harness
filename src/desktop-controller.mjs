@@ -466,7 +466,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(flashBridge){
    const records=await flashBridge.list();
    for(const record of records){
-    if(record?.settled===true)continue;
+    if(record?.settled===true||record?.executionUnowned===true)continue;
     await flashBridge.cancel({requestId:record.requestId});
     const waited=await flashBridge.wait({requestId:record.requestId,timeoutMs:10000});
     const verified=await flashBridge.inspect({requestId:record.requestId});

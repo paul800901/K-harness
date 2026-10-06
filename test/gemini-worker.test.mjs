@@ -14,6 +14,21 @@ test('browser guidance teaches current tool parameters only when the browser is 
  assert.ok(geminiInstruction('test','workspace-write',{url:'http://127.0.0.1:45678/mcp'}).includes(GEMINI_BROWSER_GUIDANCE));
  assert.ok(!geminiInstruction('test','read-only').includes(GEMINI_BROWSER_GUIDANCE));
 });
+test('Flash prompt defines behavioral boundaries without prescribing methods or expanding permissions',()=>{
+ for(const mode of ['read-only','workspace-write','danger-full-access']){
+  const prompt=geminiInstruction('bounded task',mode);
+  assert.match(prompt,/除非使用者明確要求互動視窗/);
+  assert.match(prompt,/在任務與既定權限內自行選擇方法與工具/);
+  assert.match(prompt,/背景工作不得開啟可見終端機、黑窗或搶走前景焦點/);
+  assert.match(prompt,/隱藏視窗不得隱藏錯誤或把失敗說成成功/);
+  assert.match(prompt,/不得在沒有新證據或修正下反覆執行相同失敗操作/);
+  assert.match(prompt,/不得重送結果未確認的工作/);
+  assert.match(prompt,/保留已完成成果，只停止受阻步驟並向主代理回報/);
+  assert.match(prompt,/不得擅改系統設定、終止其他工作或繞過核准/);
+  assert.equal(prompt.includes('不得執行終端機指令'),mode!=='danger-full-access');
+  assert.match(prompt,/<DELEGATED_TASK>\nbounded task\n<\/DELEGATED_TASK>/);
+ }
+});
 const modelList=['low','medium','high'].map(e=>`gemini-3.8-flash-${e}\tFlash`).join('\n');
 const success=response=>JSON.stringify({event:'result',result:{status:'SUCCESS',response}})+'\n';
 function fakeSpawn(answer=success('done'),models=modelList) {
@@ -118,6 +133,7 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
  const launch=fake.calls[1];assert.equal(launch.exe,path.resolve(root,'original-local','agy/bin/agy.exe'));assert.equal(launch.options.cwd,workspace);assert.equal(launch.options.shell,false);assert.equal(launch.options.windowsHide,true);assert.equal(launch.options.stdio[0],'ignore');
  assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'0s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
  assert.match(launch.args[1],/不得超過主代理的授權/);assert.match(launch.args[1],/不得再委派子代理、啟動背景服務/);assert.match(launch.args[1],/不能跑指令/);assert.match(launch.args[1],/<DELEGATED_TASK>\nbounded\n<\/DELEGATED_TASK>/);
+ assert.equal(launch.args[1],geminiInstruction('bounded','read-only'));
  assert.equal(launch.options.env.USERPROFILE,worker.home);assert.equal(launch.options.env.HOME,worker.home);assert.equal(launch.options.env.LOCALAPPDATA,undefined);assert.ok(launch.args[launch.args.indexOf('--log-file')+1].startsWith(worker.home+path.sep));
  assert.equal(launch.options.env.AGY_CLI_DISABLE_AUTO_UPDATE,'true');
  assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'read-only'));
@@ -126,8 +142,10 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
 test('Gemini danger mode alone passes skip; workspace-write runs without skip under its own settings',async()=>{
  const fake=fakeSpawn(),result=await make(fake,{accessMode:'danger-full-access',executable:path.join(root,'agy.exe')}).run({task:'fake',effort:'low'});
  assert.equal(result.status,'completed');assert.ok(fake.calls[1].args.includes('--dangerously-skip-permissions'));assert.doesNotMatch(fake.calls[1].args[1],/不能跑指令/);
+ assert.equal(fake.calls[1].args[1],geminiInstruction('fake','danger-full-access'));
  const write=fakeSpawn(),worker=make(write,{accessMode:'workspace-write'});assert.equal((await worker.run({task:'fake',effort:'low'})).status,'completed');
  assert.equal(write.calls[1].args.includes('--dangerously-skip-permissions'),false);assert.match(write.calls[1].args[1],/只能寫入指定工作區/);
+ assert.equal(write.calls[1].args[1],geminiInstruction('fake','workspace-write'));
  assert.deepEqual(JSON.parse(await readFile(path.join(worker.home,'.gemini/antigravity-cli/settings.json'))),geminiSettings(workspace,'workspace-write'));
 });
 test('Gemini rejects absent native model and invalid effort without a model turn or substitute',async()=>{
@@ -207,13 +225,34 @@ test('Gemini works when Codex init fails; concurrent requestId dedup, final pers
 });
 test('restart turns persisted running Gemini into unresolved and never adopts PID or replays',async()=>{
  const parentId=randomUUID();await mkdir(path.join(root,'.runtime/luna-bridge',parentId),{recursive:true});
- await writeFile(path.join(root,'.runtime/luna-bridge',parentId,'flash.json'),JSON.stringify({...args,parentId,provider:'gemini',workspace,status:'running',pid:2147483647,settled:false,acceptance:'not-reviewed'}));
- let runs=0;const bridge=await geminiBridge({parentId,factory:()=>({run:async()=>runs++})});assert.equal((await bridge.inspect({requestId:'flash'})).status,'unresolved');assert.equal((await bridge.start(args)).status,'unresolved');assert.equal(runs,0);
- await assert.rejects(bridge.close(),/尚未確認停止/);
+ const file=path.join(root,'.runtime/luna-bridge',parentId,'flash.json'),original=JSON.stringify({...args,parentId,provider:'gemini',workspace,status:'running',pid:2147483647,settled:false,acceptance:'not-reviewed'});
+ await writeFile(file,original);
+ let runs=0;const bridge=await geminiBridge({parentId,factory:()=>({run:async()=>runs++})});
+ const rows=await bridge.list(false);assert.equal(rows.length,1);assert.equal(rows[0].status,'unresolved');assert.equal(rows[0].executionUnowned,true);assert.equal(rows[0].settled,false);
+ assert.equal(await readFile(file,'utf8'),original,'Listing does not rewrite historical evidence');
+ assert.equal((await lunaResult(rows[0])).executionUnowned,true,'Model-facing detail preserves the ownership distinction');
+ assert.equal((await bridge.inspect({requestId:'flash'})).status,'unresolved');assert.equal((await bridge.start(args)).status,'unresolved');assert.equal(runs,0);
+ const beforeClose=await readFile(file,'utf8');await bridge.close();
+ assert.equal(await readFile(file,'utf8'),beforeClose,'Closing the current bridge cannot settle or cancel historical work');
+ const saved=JSON.parse(beforeClose);assert.equal(saved.status,'unresolved');assert.equal(saved.settled,false);assert.equal(runs,0);
+});
+test('read-only worker listing stays parent-bound and does not mark owned Gemini runs historical',async()=>{
+ let finish;const bridge=await geminiBridge({factory:()=>({run:o=>new Promise(resolve=>{o.onStart(123);finish=resolve;})})});
+ const live=await bridge.start(args),otherParent=randomUUID(),otherDir=path.join(root,'.runtime/luna-bridge',otherParent);
+ await mkdir(otherDir,{recursive:true});await writeFile(path.join(otherDir,'foreign.json'),JSON.stringify({...args,requestId:'foreign',parentId:otherParent,provider:'gemini',settled:false,status:'running'}));
+ const rows=await bridge.list(false);assert.deepEqual(rows.map(row=>row.requestId),['flash']);assert.equal(rows[0].parentId,live.parentId);assert.notEqual(rows[0].executionUnowned,true);assert.equal(rows[0].status,'running');
+ finish({status:'completed',settled:true,output:'done',outputFiles:[]});await bridge.wait({requestId:'flash',timeoutMs:2000});await bridge.close();
 });
 test('Gemini bridge cancel aborts the owned run and persists cancellation before close',async()=>{
  let aborted=false;const bridge=await geminiBridge({factory:()=>({run:o=>new Promise(r=>{o.onStart(123);o.signal.addEventListener('abort',()=>{aborted=true;r({status:'cancelled',settled:true,output:''});},{once:true});})})});
  await bridge.start(args);assert.equal((await bridge.cancel({requestId:'flash'})).status,'cancelled');assert.equal(aborted,true);await bridge.close();
+});
+test('a current Gemini run whose stop is unconfirmed is not reclassified as historical to allow close',async()=>{
+ const bridge=await geminiBridge({factory:()=>({run:async()=>({status:'unresolved',settled:false,error:'current stop not confirmed'})})});
+ await bridge.start(args);const result=await bridge.wait({requestId:'flash',timeoutMs:2000});
+ assert.equal(result.status,'unresolved');assert.equal(result.settled,false);assert.notEqual(result.executionUnowned,true);
+ await assert.rejects(bridge.close(),/尚未確認停止/);
+ assert.notEqual((await bridge.list(false))[0].executionUnowned,true);
 });
 test('Gemini init failure does not disable Codex; no fallback call',async()=>{
  let turns=0;const bridge=await geminiBridge({factory:()=>{throw Error('Gemini unavailable');},hostFactory:()=>({notify(){},async close(){},async request(method){if(method==='account/read')return {account:{type:'chatgpt'}};if(method==='model/list')return {data:[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]}]};if(method==='thread/start')return {thread:{id:'native'}};if(method==='turn/start'){turns++;return {turn:{id:'turn'}};}if(method==='thread/read')return {thread:{id:'native',cwd:workspace,status:{type:'idle'},turns:[{id:'turn',status:'completed',items:[]}]}};if(method==='thread/backgroundTerminals/list')return {data:[]};return {};}})});

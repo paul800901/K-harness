@@ -9,6 +9,7 @@ export const currentWorkers=state=>Array.isArray(state.workerDetails)?state.work
 const eventTime=value=>typeof value==='number'?value:Date.parse(value??'');
 export function workerHealth(worker,online=true,now=Date.now()){
  if(workerEnded(worker))return {kind:worker.status==='failed'?'danger':'muted',text:statusLabel[worker.status]??'已結束，結果未知'};
+ if(worker.executionUnowned===true)return {kind:'warning',unknown:true,historicalUnconfirmed:true,text:'舊工單結果待確認 · 重啟後無法確認執行結果'};
  if(!online||worker.workerConnection==='failed'||!['running','starting','pending'].includes(worker.status))return {kind:'warning',unknown:true,text:worker.status==='failed'?'失敗 · 停止尚待確認':'狀態待確認'};
  if(worker.confirmationReason)return {kind:'confirmation',text:'等待核准／回答'};
  const last=eventTime(worker.lastActivityAt??worker.activity?.lastEventAt),start=eventTime(worker.activity?.startedAt??worker.startedAt);
@@ -18,17 +19,17 @@ export function workerHealth(worker,online=true,now=Date.now()){
  return {kind:'running',text:`${phase??statusLabel[worker.status]} · ${Number.isFinite(last)?`最近活動 ${formatElapsed(age(last,now))}前`:'尚無活動時間回報'}`};
 }
 export function pendingWorkerSummary(rows,online=true,now=Date.now()){
- const pending=rows.filter(w=>!workerEnded(w)),health=pending.map(w=>workerHealth(w,online,now));
- return {count:pending.length,unknown:health.filter(h=>h.unknown).length,quiet:health.filter(h=>h.quiet).length};
+ const pending=rows.filter(w=>!workerEnded(w)&&w.executionUnowned!==true),historicalUnconfirmed=rows.filter(w=>!workerEnded(w)&&w.executionUnowned===true),health=pending.map(w=>workerHealth(w,online,now));
+ return {count:pending.length,unknown:health.filter(h=>h.unknown).length,quiet:health.filter(h=>h.quiet).length,historicalUnconfirmed:historicalUnconfirmed.length};
 }
 export function workStatus(state,online=true,now=Date.now()) {
  if(!online)return {kind:'danger',text:'後端斷線 · 無法確認工作狀態'};
  const children=pendingWorkerSummary(currentWorkers(state),online,now);
- const pendingText=children.count?`等待子代理：${children.count} 個${children.unknown?` · 待確認：${children.unknown}`:''}${children.quiet?` · 久未回報：${children.quiet}（是否卡住待確認）`:''}`:'';
+ const pendingText=[children.count?`等待子代理：${children.count} 個${children.unknown?` · 待確認：${children.unknown}`:''}${children.quiet?` · 久未回報：${children.quiet}（是否卡住待確認）`:''}`:'',children.historicalUnconfirmed?`舊工單結果待確認：${children.historicalUnconfirmed} 個`:''].filter(Boolean).join(' · ');
  const terminal={offline:'核心已斷線',error:'連線失敗',failed:'工作失敗',uncertain:'工作狀態待確認',connecting:'正在載入對話…',stopping:'正在停止背景工作…',interrupted:'已停止'};
  if(terminal[state.status])return {kind:['connecting','stopping','interrupted'].includes(state.status)?'muted':state.status==='uncertain'?'warning':'danger',text:terminal[state.status]+(pendingText?` · ${pendingText}`:'')};
  if(state.questions?.length)return {kind:'confirmation',text:'等待你的確認'};
- if(!state.busy&&state.status!=='working')return pendingText?{kind:children.unknown||children.quiet?'warning':'waiting',text:`主代理待命 · ${pendingText}`} : state.completionPending?{kind:'waiting',text:'等待結果交接'}:null;
+ if(!state.busy&&state.status!=='working')return pendingText?{kind:children.unknown||children.quiet||children.historicalUnconfirmed?'warning':'waiting',text:`主代理待命 · ${pendingText}`} : state.completionPending?{kind:'waiting',text:'等待結果交接'}:null;
  const a=state.activity,recent=age(a?.lastEventAt,now),waiting=age(a?.phaseSince,now);
  const freshness=recent===null?'尚無核心活動回報':`最近活動 ${formatElapsed(recent)}前`;
  const retry=(state.notices??[]).findLast(n=>n.willRetry&&!n.resolved);
@@ -42,7 +43,8 @@ export function workStatus(state,online=true,now=Date.now()) {
 }
 
 export function workerStatus(activity,online=true) {
- if(!online||!activity)return '子代理：狀態待確認';
- if(!activity.uncertain)return `子代理執行中：${activity.running}`;
- return `子代理已確認執行中：${activity.running} · ${activity.unconfirmed?`待確認：${activity.unconfirmed}`:'部分連線待確認'}`;
+ if(!activity)return '子代理：狀態待確認';
+ if(!online)return `子代理：狀態待確認${activity.historicalUnconfirmed?` · 舊工單結果待確認：${activity.historicalUnconfirmed}`:''}`;
+ const current=activity.uncertain?`子代理已確認執行中：${activity.running} · ${activity.unconfirmed?`待確認：${activity.unconfirmed}`:'部分連線待確認'}`:`子代理執行中：${activity.running}`;
+ return `${current}${activity.historicalUnconfirmed?` · 舊工單結果待確認：${activity.historicalUnconfirmed}`:''}`;
 }

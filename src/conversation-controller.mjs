@@ -20,18 +20,19 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const activity=controller=>{const s=controller.state;return {threadId:s.threadId,workspace:s.workspace,busy:!!s.busy,status:s.status,pendingQuestions:s.questions?.length??0};};
  // Project the existing live owners, never saved history or only the selected room.
  const workerActivity=()=>{
-  let running=0,uncertain=false,unconfirmed=0;
+  let running=0,uncertain=false,unconfirmed=0,historicalUnconfirmed=0;
   for(const controller of controllers){
    const s=controller.state;if(!s.threadId)continue;
    const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
    uncertain||=disconnected;
    for(const worker of s.workers??[]){
     if(worker.kind==='command'||worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
+    if(worker.executionUnowned===true){historicalUnconfirmed++;continue;}
     if(disconnected||!['running','starting','pending'].includes(worker.status)){unconfirmed++;uncertain=true;}
     else if(worker.status==='running')running++;
    }
   }
-  return {running,uncertain,unconfirmed};
+  return {running,uncertain,unconfirmed,...(historicalUnconfirmed?{historicalUnconfirmed}:{})};
  };
  const workerDetails=()=>[...controllers].flatMap(controller=>{
   const s=controller.state;
@@ -54,6 +55,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      agentNickname:summary(worker.agentNickname),name:summary(worker.name),
      status:unresolved?'unresolved':worker.status??(ended?'ended':'unknown'),
      settled:worker.settled===true||ended,
+     ...(worker.executionUnowned===true?{executionUnowned:true}:{}),
      lastActivityAt:worker.lastActivityAt??worker.activity?.lastEventAt,lastReadAt:worker.lastReadAt??worker.readAt,
      activity:worker.activity,startedAt:worker.startedAt,inspection:worker.inspection,lastToolName:worker.lastToolName??worker.activity?.lastToolName,
      error:safeError(worker.error)??safeError(activityTool?.error),

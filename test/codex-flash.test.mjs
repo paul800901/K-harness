@@ -10,7 +10,7 @@ import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 async function fixture({accessMode='workspace-write',savedSession,root:existingRoot,workerPolicy={model:'gpt-6-luna',effort:'high'},cancelSettles=true,delayToolOutput=false,rejectToolOutput=false}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=existingRoot??await mkdtemp(path.join(base,'codex-flash-'));
  if(savedSession)await saveMainSession(root,{threadId:'codex-parent',model:'gpt-6-astra',workspace:root,accessMode,workerPolicy,workerNotifications:{},...savedSession});
- const calls=[],hostOptions=[],hosts=[],gatewayOptions=[],bridgeOptions=[],workerRecords=new Map();let hostCloseCount=0,gatewayCloseCount=0,bridgeCloseCount=0,resolveToolOutput,releaseToolOutput;const toolOutputSent=new Promise(resolve=>{resolveToolOutput=resolve;}),toolOutputGate=new Promise(resolve=>{releaseToolOutput=resolve;});
+ const calls=[],hostOptions=[],hosts=[],gatewayOptions=[],bridgeOptions=[],workerRecords=new Map(),workerOperations=[];let hostCloseCount=0,gatewayCloseCount=0,bridgeCloseCount=0,resolveToolOutput,releaseToolOutput;const toolOutputSent=new Promise(resolve=>{resolveToolOutput=resolve;}),toolOutputGate=new Promise(resolve=>{releaseToolOutput=resolve;});
  const newHost=options=>{let onHostClose,droppedTurn=false,recoveredInterrupted=false;const host={closed:new Promise(resolve=>{onHostClose=resolve;}),notify(){},waitForMcp:async()=>{},close:async()=>{if(options.onEvent)hostCloseCount++;onHostClose();},request:async(method,params)=>{
   calls.push({method,params});
   if(method==='account/read')return {account:{type:'chatgpt'}};
@@ -31,16 +31,16 @@ async function fixture({accessMode='workspace-write',savedSession,root:existingR
  }};hosts.push(host);hostOptions.push(options);return host;};
  const c=createDesktopController({root,executable:'fixture-codex',hostFactory:newHost,workerPolicy,
   bridgeFactory:async options=>{bridgeOptions.push(options);return {
-   start:async args=>{const record={requestId:args.requestId,provider:'gemini',parentId:options.parentId,workspace:options.workspace,status:'running',settled:false,output:'',...args};workerRecords.set(args.requestId,record);options.onChange(record);return structuredClone(record);},
-   list:async()=>[...workerRecords.values()].map(record=>structuredClone(record)),inspect:async({requestId})=>workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null,
-   wait:async({requestId})=>workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null,
-   cancel:async({requestId})=>{const record=workerRecords.get(requestId);if(record&&cancelSettles){record.status='cancelled';record.settled=true;options.onChange(record);}return record?structuredClone(record):null;},
+   start:async args=>{workerOperations.push(['start',args.requestId]);const record={requestId:args.requestId,provider:'gemini',parentId:options.parentId,workspace:options.workspace,status:'running',settled:false,output:'',...args};workerRecords.set(args.requestId,record);options.onChange(record);return structuredClone(record);},
+   list:async includeSettled=>{workerOperations.push(['list',includeSettled]);return [...workerRecords.values()].map(record=>structuredClone(record));},inspect:async({requestId})=>{workerOperations.push(['inspect',requestId]);return workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null;},
+   wait:async({requestId})=>{workerOperations.push(['wait',requestId]);return workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null;},
+   cancel:async({requestId})=>{workerOperations.push(['cancel',requestId]);const record=workerRecords.get(requestId);if(record&&cancelSettles){record.status='cancelled';record.settled=true;options.onChange(record);}return record?structuredClone(record):null;},
    accounts:async()=>({enabled:true,accounts:[{accountId:'fixture-account',checkedAt:'2026-10-03T00:00:00Z'}]}),
    close:async()=>{bridgeCloseCount++;}
   };},
   gatewayFactory:async options=>{gatewayOptions.push(options);return {mcpConfig:{mcpServers:{k_gemini:{type:'http',url:`http://127.0.0.1:${43209+gatewayOptions.length}/mcp`,headers:{Authorization:'Bearer fixture-token'}}}},close:async()=>{gatewayCloseCount++;await options.bridge.close?.();}};}
  });
- return {c,root,calls,get host(){return hosts.at(-1);},hostOptions,gatewayOptions,bridgeOptions,workerRecords,toolOutputSent,releaseToolOutput,get hostCloseCount(){return hostCloseCount;},get gatewayCloseCount(){return gatewayCloseCount;},get bridgeCloseCount(){return bridgeCloseCount;}};
+ return {c,root,calls,get host(){return hosts.at(-1);},hostOptions,gatewayOptions,bridgeOptions,workerRecords,workerOperations,toolOutputSent,releaseToolOutput,get hostCloseCount(){return hostCloseCount;},get gatewayCloseCount(){return gatewayCloseCount;},get bridgeCloseCount(){return bridgeCloseCount;}};
 }
 
 test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain unchanged',async()=>{
@@ -72,10 +72,28 @@ test('stopping closes the thread-bound Flash bridge while retaining the host gat
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});const first=f.calls.find(call=>call.method==='thread/start').params.config.mcp_servers.k_gemini.url;
   await f.c.send({text:'先做一回合'});const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:'stop-close-bridge',model:'gemini-3.8-flash',effort:'low',task:'停止前工人'});
-  await f.c.stop();assert.equal(f.gatewayCloseCount,0);assert.equal(f.bridgeCloseCount,1);assert.equal(f.workerRecords.get('stop-close-bridge').settled,true);
+  const old={requestId:'old-unowned-unresolved',provider:'gemini',parentId:'codex-parent',status:'unresolved',settled:false,executionUnowned:true};f.workerRecords.set(old.requestId,structuredClone(old));
+  assert.equal((await bridge.list()).find(record=>record.requestId===old.requestId).executionUnowned,true,'list reloads the old unowned record');
+ await f.c.stop();assert.equal(f.gatewayCloseCount,0);assert.equal(f.bridgeCloseCount,1);assert.equal(f.workerRecords.get('stop-close-bridge').settled,true);
+ assert.deepEqual(f.workerRecords.get(old.requestId),old,'stopping leaves the historical record unchanged');
+ assert.equal(f.workerOperations.filter(([operation])=>operation==='start').length,1,'stop does not dispatch another worker');
+  assert.equal(f.workerOperations.some(([operation,id])=>operation==='cancel'&&id===old.requestId),false,'never cancel the old unowned request');
+  for(const operation of ['cancel','wait','inspect'])assert.ok(f.workerOperations.some(([name,id])=>name===operation&&id==='stop-close-bridge'),`owned work still uses ${operation} verification`);
   await f.c.send({text:'停止後接續'});
   assert.equal(f.gatewayOptions.length,1);assert.equal(f.calls.find(call=>call.method==='thread/start').params.config.mcp_servers.k_gemini.url,first);assert.ok(f.c.state.threadId);
  }finally{await f.c.close();}
+});
+
+test('closing after loading only old unowned Flash work does not cancel or settle it',async()=>{
+ const f=await fixture();
+ await f.c.open({model:'gpt-6-astra'});
+ const old={requestId:'old-unowned-close',provider:'gemini',parentId:'codex-parent',status:'unresolved',settled:false,executionUnowned:true};f.workerRecords.set(old.requestId,structuredClone(old));
+ const bridge=f.gatewayOptions[0].bridge;assert.equal((await bridge.list()).length,1);
+ await f.c.close();
+ assert.deepEqual(f.workerRecords.get(old.requestId),old);
+ assert.equal(f.workerOperations.some(([operation,id])=>operation==='cancel'&&id===old.requestId),false);
+ assert.equal(f.workerOperations.some(([operation])=>operation==='start'),false,'close does not dispatch another worker');
+ assert.equal(f.bridgeCloseCount,1);assert.equal(f.gatewayCloseCount,1);
 });
 
 test('Flash rows coexist with native GPT rows; permission changes confirm stop and recreate bridge in bounded mode',async()=>{

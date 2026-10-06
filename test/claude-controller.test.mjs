@@ -288,15 +288,34 @@ test('permission switches close the previous bridge and rebuild with the new wor
  }finally{await f.controller.close();}
 });
 
+test('Claude permission switch closes a bridge loaded with only old unowned unresolved Gemini work',async()=>{
+ const f=await fixture();
+ try{
+  await f.controller.open({accessMode:'claude-manual'});
+  const old={requestId:'old-unowned-mode-switch',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
+  f.bridge.records=[structuredClone(old)];let cancelCalls=0,startCalls=0;f.bridge.cancel=async()=>{cancelCalls++;return {settled:true};};
+  const start=f.bridge.start.bind(f.bridge);f.bridge.start=async args=>{startCalls++;return start(args);};
+  const originalBridge=f.gatewayOptions.bridge;
+  assert.deepEqual(await originalBridge.list(),[old],'listing initializes the persisted unowned record');
+  await f.controller.send({text:'切換模式',accessMode:'claude-bypassPermissions'});
+  assert.equal(f.bridge.closed,true,'the old worker bridge can be closed');
+  assert.equal(cancelCalls,0,'do not cancel unowned historical work');assert.deepEqual(f.bridge.records,[old]);
+  assert.equal(startCalls,0,'a permission change does not dispatch new worker work');
+  assert.equal(f.controller.state.accessMode,'claude-bypassPermissions');
+ }finally{await f.controller.close();}
+});
+
 test('unsettled workers prevent a permission switch without closing the existing bridge',async()=>{
  const f=await fixture();try{
   await f.controller.open({accessMode:'claude-manual'});
   await f.gatewayOptions.bridge.start({requestId:'active',task:'bounded'});
-  f.bridge.records=[{requestId:'active',settled:false}];
+  const old={requestId:'old-unowned-mixed',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
+  f.bridge.records=[old,{requestId:'active',settled:false}];
   await assert.rejects(f.controller.send({text:'switch',accessMode:'claude-bypassPermissions'}),/子代理尚未結束/);
   assert.equal(f.controller.state.accessMode,'claude-manual');
   assert.equal(f.bridge.closed,false);
   assert.equal(f.bridgeOptions.accessMode,'workspace-write');
+  assert.deepEqual(f.bridge.records,[old,{requestId:'active',settled:false}],'the unowned row stays unresolved and owned pending work still blocks switching');
  }finally{f.bridge.records=[];await f.controller.close();}
 });
 

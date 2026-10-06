@@ -1,5 +1,9 @@
 # K 最新工程交接索引
 
+- 2026-10-07：[舊 Gemini 工單查詢與等待狀態補修](worker-record-recovery-20261007.md)：新增本對話唯讀工單清單、主代理查詢指引及桌面／手機歷史未確認分開呈現；不再把舊紀錄當作仍在等待，不改 unknown、不重播。來源最終 930/930、built UI 四尺寸、真正 Luna high 自行 list→inspect 通過，真正 Opus 兩輪補修通過，含舊紀錄阻擋正常關閉根因；本人已停止 K，與 Gemini 行為規則一起準備部署，未假標舊工單完成。
+
+- 2026-10-07：[Gemini 工人反覆開黑窗：診斷與派工行為規則候選](gemini-worker-console-20261007.md)：精確對到社群包工人的 Python／未隱藏 Start-Process，包括 04:51 新視窗。本人決定先試共用派工規則：方法自選，不開窗／搶焦點、不隱瞞錯誤、不盲目重試或重播未知工作；不先鎖死用途或增加強制攔截。定向測試 92/92 通過，真模型實機行為尚未試驗；未停止、部署、重啟或 push 正式 K。
+
 - 2026-10-07：[原始附件串流上傳與下載](native-attachment-stream-20261007.md)：一般附件不再受 K 副檔名／影音 modality 白名單阻擋；HTTP raw stream 寫原檔及 stream download，保留 thread/path/auth/origin/遠端 command 防重。Codex／Claude／Gemini傳原始路徑並保留擷取 companion；Gemini僅保留圖片 native gate，PDF／影音未宣稱直接模態可讀。requestTimeout=0、headersTimeout 60秒。16.8MB與1.42GB合成檔 HTTP→磁碟→下載 SHA-256 一致；假資料留存 `.runtime/attachment-stream-20261007`；後續已隨 e0d552c 套用南區，正式讀回見本批選單／附件紀錄。
 - 2026-10-07：[手機設定與 Gemini 全帳號實查](mobile-settings-quota-20261007.md)；南區程式 9bb71b4，來源／乾淨候選各 908/908、真正 Opus 及 79 產物讀回通過，37,035 保護檔與五帳號保留。正式私人 HTTPS 手機尺寸按鈕實查 65 秒，五帳號新值／時間逐一顯示並切回原帳號；依本人要求取消任意顯示 TTL，附件說明收合。首輪一帳號官方失敗及驗收腳本文案逾時保留，不算全成功。已推 GitHub 讀回；本人手機最新畫面待確認。
 

@@ -4,16 +4,17 @@ import {request as httpRequest} from 'node:http';
 import {createLunaGateway} from '../src/luna-gateway.mjs';
 
 function fixture() {
-  const records=new Map();let closeCount=0;
+  const records=new Map();let closeCount=0;const listCalls=[];let listRows,listError;
   const bridge={
     workerPolicy:{model:'auto',effort:'auto'},
     async start({requestId,task}) { const old=records.get(requestId);if(old){if(old.task!==task)throw Error('different task');return old;}const record={requestId,provider:'codex',model:'gpt-6-luna',status:'running',settled:false,acceptance:'not-reviewed',task,output:'',outputFiles:[]};records.set(requestId,record);return record; },
     async wait({requestId}) {const r=records.get(requestId);if(r){r.status='completed';r.settled=true;r.output='done';}return r??null;},
     async inspect({requestId}) {return records.get(requestId)??null;},
     async cancel({requestId}) {const r=records.get(requestId);if(r){r.status='cancelled';r.settled=true;}return r??null;},
+    async list(includeSettled) {listCalls.push(includeSettled);if(listError)throw listError;return listRows??[...records.values()];},
     async close(){closeCount++;},
   };
-  return {bridge,records,closeCount:()=>closeCount};
+  return {bridge,records,listCalls,setListRows(rows){listRows=rows;},setListError(error){listError=error;},closeCount:()=>closeCount};
 }
 async function post(url,token,message,headers={}) {
   return fetch(url,{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json',accept:'application/json, text/event-stream',...headers},body:JSON.stringify(message)});
@@ -38,7 +39,7 @@ test('gateway is loopback-only, bearer-authenticated, and exposes fixed MCP Luna
     const init=await body(await post(config.url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}}));
     assert.equal(init.result.serverInfo.name,'k-luna-gateway');
     const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}}));
-    assert.deepEqual(listed.result.tools.map(tool=>tool.name).sort(),['luna_cancel','luna_inspect','luna_start','luna_wait']);
+    assert.deepEqual(listed.result.tools.map(tool=>tool.name).sort(),['luna_cancel','luna_inspect','luna_list','luna_start','luna_wait']);
     assert.match(listed.result.tools.find(tool=>tool.name==='luna_start').description,/AI 自動選擇目前啟用/);
     const started=await body(await post(config.url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'stable',task:'bounded'}}}));
     assert.equal(started.result.structuredContent.model,'gpt-6-luna');
@@ -65,6 +66,50 @@ test('gateway wait, inspect and cancel route only stable request ids to the brid
     assert.equal((await call(4,'luna_inspect',{requestId:'r1'})).result.structuredContent.output,'done');
     assert.equal((await call(5,'luna_cancel',{requestId:'r1'})).result.structuredContent.status,'cancelled');
   } finally {await gateway.close();}
+});
+
+test('worker list tools expose only unfinished summaries without acknowledging or controlling work',async()=>{
+ const rows=[
+  {requestId:'gemini-old',provider:'gemini',model:'gemini-3.8-flash',status:'unresolved',settled:false,executionUnowned:true,startedAt:1,lastActivityAt:2,lastReadAt:3,error:'known error',task:'private task',output:'private output',pid:321,accountId:'private account'},
+  {requestId:'codex-live',provider:'codex',model:'gpt-6-luna',status:'running',settled:false,task:'private task',output:'private output',pid:322,accountId:'private account'},
+  {requestId:'gemini-settled',provider:'gemini',status:'completed',settled:true,task:'private task'},
+ ];
+ for(const {geminiOnly,prefix,expectedIds} of [
+  {geminiOnly:false,prefix:'luna',expectedIds:['gemini-old','codex-live']},
+  {geminiOnly:true,prefix:'gemini',expectedIds:['gemini-old']},
+ ]){
+  const f=fixture();f.setListRows(rows);let acknowledgements=0,controlCalls=0;
+  f.bridge.resultReady=()=>{acknowledgements++;};
+  for(const name of ['start','inspect','cancel'])f.bridge[name]=async()=>{controlCalls++;throw Error(`unexpected ${name}`);};
+  const gateway=await createLunaGateway({bridge:f.bridge,geminiOnly});
+  try{
+   const config=gateway.mcpConfig.mcpServers[geminiOnly?'k_gemini':'k_luna'],token=config.headers.Authorization.slice(7);
+   const rpc=async(id,method,params)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method,params}));
+   await rpc(1,'initialize',{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'list-test',version:'1'}});
+   const listed=await rpc(2,'tools/list',{}),tool=listed.result.tools.find(entry=>entry.name===`${prefix}_list`);
+   assert(tool);assert.deepEqual(Object.keys(tool.inputSchema.properties),[]);assert.equal(tool.inputSchema.additionalProperties,false);
+   const result=await rpc(3,'tools/call',{name:`${prefix}_list`,arguments:{}});
+   assert.deepEqual(result.result.structuredContent.workers.map(row=>row.requestId),expectedIds);
+   assert.equal(result.result.structuredContent.workers[0].executionUnowned,true);
+   assert.equal(result.result.structuredContent.workers.some(row=>row.settled===true),false);
+   const serialized=JSON.stringify(result.result.structuredContent);
+   for(const secretField of ['private task','private output','private account','"pid"'])assert.equal(serialized.includes(secretField),false,`list excludes ${secretField}`);
+   assert.deepEqual(f.listCalls,[false]);assert.equal(acknowledgements,0);assert.equal(controlCalls,0);
+   const parentOverride=await rpc(4,'tools/call',{name:`${prefix}_list`,arguments:{parentId:'another-conversation'}});
+   assert(parentOverride.error||parentOverride.result?.isError);assert.deepEqual(f.listCalls,[false]);
+  }finally{await gateway.close();}
+ }
+});
+
+test('worker list errors remain unknown instead of becoming an empty successful list',async()=>{
+ const f=fixture();f.setListError(new Error('native list read failed'));
+ const gateway=await createLunaGateway({bridge:f.bridge,geminiOnly:true});
+ try{
+  const config=gateway.mcpConfig.mcpServers.k_gemini,token=config.headers.Authorization.slice(7);
+  const result=await body(await post(config.url,token,{jsonrpc:'2.0',id:1,method:'tools/call',params:{name:'gemini_list',arguments:{}}}));
+  assert.equal(result.result.isError,true);assert.match(result.result.content[0].text,/native list read failed/);assert.match(result.result.content[0].text,/remain unknown/);
+  assert.equal(result.result.structuredContent,undefined);assert.deepEqual(f.listCalls,[false]);
+ }finally{await gateway.close();}
 });
 
 test('gateway acknowledges only successfully prepared results, not output preparation errors',async()=>{
@@ -126,7 +171,7 @@ test('Codex Flash gateway exposes only Gemini tools and forwards account handoff
   const config=gateway.mcpConfig.mcpServers.k_gemini,token=config.headers.Authorization.slice(7);
   const call=async(id,name,args)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}}));
   const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:1,method:'tools/list'}));
-  assert.deepEqual(listed.result.tools.map(t=>t.name).sort(),['gemini_accounts','gemini_cancel','gemini_inspect','gemini_start','gemini_wait']);
+  assert.deepEqual(listed.result.tools.map(t=>t.name).sort(),['gemini_accounts','gemini_cancel','gemini_inspect','gemini_list','gemini_start','gemini_wait']);
   const accountTool=listed.result.tools.find(t=>t.name==='gemini_accounts'),accountGuidance=accountTool.description;
   assert.equal(accountTool.annotations.readOnlyHint,false);assert.equal(accountTool.annotations.idempotentHint,false);assert.match(accountGuidance,/ALL saved.*restoring the original/s);assert.match(accountGuidance,/not conclude quota exhaustion or abandon/);
   assert.match(accountGuidance,/five-hour or weekly quota is confirmed exhausted/);
