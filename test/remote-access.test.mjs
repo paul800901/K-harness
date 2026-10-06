@@ -259,3 +259,38 @@ test('remembered phone HTTP restart, durable no-replay, storage failure and disa
  await writeFile(file,JSON.stringify({...config,enabled:false}));app=await start();assert.equal(app.remoteOrigin,null);await app.close();
  await writeFile(file,JSON.stringify(config));app=await start();assert.equal((await request(url('/api/state'),{headers})).status,403,'disable at startup permanently revokes remembered login');
 });
+
+
+test('remote dictation uses only authenticated audio requests, preserves dedup and redacts diagnostics', async t=>{
+ const root=await mkdtemp(path.join(os.tmpdir(),'k-remote-dictation-'));
+ await mkdir(path.join(root,'.local'));
+ const origin='https://dictation-test.ts.net',login='owner@example.invalid',key=randomBytes(32).toString('hex'),port=await freePort();
+ await writeFile(path.join(root,'.local/remote-access.json'),JSON.stringify({origin,login,keyHash:remoteKeyHash(key),port}));
+ let calls=0,fail=false;
+ const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{},close:async()=>{}}),
+  claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,
+  localDictationFactory:()=>({close:async()=>{},transcribe:async audio=>{calls++;if(fail)throw Object.assign(Error('private path'),{diagnostic:'C:/private/whisper',statusCode:503});return {ok:true,text:audio==='FAKE_WAV'?'手機聽寫測試':''};}})});
+ t.after(()=>app.close());
+ const url=route=>`http://127.0.0.1:${port}${route}`,route='/api/dictation/transcribe',body={audioBase64:'FAKE_WAV'};
+ const headers={host:new URL(origin).host,'tailscale-user-login':login,origin,'x-k-request':'1','content-type':'application/json'};
+ assert.equal((await request(url(route),{method:'POST',headers,body})).status,403);
+ const signed=await request(url('/api/remote/login'),{method:'POST',headers,body:{key}});
+ const authenticated={...headers,cookie:signed.headers.get('set-cookie').split(';')[0]};
+ for(const bad of [{origin:'https://wrong.test'},{'tailscale-user-login':'not-owner'},{'x-k-request':'0'},{cookie:'bad'}])
+  assert.equal((await request(url(route),{method:'POST',headers:{...authenticated,...bad},body})).status,403);
+ assert.equal((await request(url(route),{method:'POST',headers:authenticated,commandId:null,body})).status,400);
+ assert.equal((await request(url(route),{method:'POST',headers:authenticated,body:{...body,path:'forbidden'}})).status,400);
+ assert.equal((await request(url(route),{method:'POST',headers:authenticated,body:{audioBase64:'a'.repeat(16*1024*1024)}})).status,413);
+ assert.equal(calls,0);
+ const commandId=randomUUID();
+ const response=await request(url(route),{method:'POST',headers:authenticated,commandId,body});
+ assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true,text:'手機聽寫測試'});
+ assert.equal((await request(url(route),{method:'POST',headers:authenticated,commandId,body})).status,409);
+ assert.equal(calls,1);
+ fail=true;
+ const failed=await request(url(route),{method:'POST',headers:authenticated,body});
+ assert.equal(failed.status,503);assert.deepEqual(await failed.json(),{ok:false,error:'轉錄要求無法處理。',code:'INVALID_REQUEST'});
+ assert.equal(calls,2);
+ for(const route of ['/api/codex/login','/api/shutdown','/api/core-update','/api/browser/action'])
+  assert.equal((await request(url(route),{method:'POST',headers:authenticated,body:{}})).status,403);
+});

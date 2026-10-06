@@ -1,7 +1,6 @@
 :root{--mobile-height:100dvh}
 .mobile-backdrop,.mobile-panel-heading,.mobile-composer-options{display:none}
 .header-status{display:contents}
-.voice-button[hidden],html[data-k-remote="true"] [data-quote-mic]{display:none}
 .remote-connection{font-size:var(--k-text-xs);color:var(--k-ink-3)}
 @media(max-width:700px){
  html,body{overflow:hidden;overscroll-behavior:none}
@@ -41,6 +40,8 @@
  .message-column>.work-status{margin-left:0;align-self:flex-start;font-size:var(--k-text-xs);display:flex;align-items:baseline}.message-column>.work-status>span{min-width:0}
  .composer-area{padding:6px 12px 10px;flex-shrink:0;max-height:55%;overflow-y:auto}
  .composer-card{padding:10px 10px 6px;border-radius:22px;background:var(--k-raised);box-shadow:var(--k-shadow-1)}
+ .response-quotes{flex-direction:column;align-items:stretch;gap:6px}.response-quotes-chip{align-self:flex-start}
+ .response-quotes-list{position:static;width:100%;max-height:28dvh;box-shadow:none}
  .composer-input{font-size:var(--k-text-input);line-height:1.5;min-height:36px;max-height:25dvh;padding:3px 4px 7px}
  .composer-controls{align-items:center;gap:6px;flex-wrap:nowrap}
  .composer-options{min-width:0;flex:1;gap:2px;flex-wrap:nowrap}

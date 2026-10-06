@@ -16,16 +16,24 @@ function paintWaveform(canvas,levels){
 export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessionKey}){
  const [phase,setPhaseState]=useState('idle'),[notice,setNotice]=useState(''),[consent,setConsent]=useState(false);
  const canvas=useRef(null),job=useRef(null),callback=useRef(onResult),activity=useRef(onActiveChange),scope=useRef(sessionKey);callback.current=onResult;activity.current=onActiveChange;scope.current=sessionKey;
- const native=typeof window!=='undefined'&&typeof window.kBrowser?.onWindowHidden==='function';
+ const remote=typeof document!=='undefined'&&document.documentElement.dataset.kRemote==='true';
+ const desktop=typeof window!=='undefined'&&typeof window.kBrowser?.onWindowHidden==='function';
+ const native=desktop||remote; // Both capture this device and use the computer's local recognizer, never Web Speech.
  const consentKey='k-browser-dictation-consent';
  const setPhase=next=>{setPhaseState(next);activity.current?.(next!=='idle');};
  const release=entry=>{cancelAnimationFrame(entry.frame);entry.stream?.getTracks().forEach(track=>track.stop());entry.context?.close().catch(()=>{});entry.stream=null;entry.context=null;};
  const cancel=()=>{const entry=job.current;if(!entry)return;job.current=null;entry.session?.cancel();release(entry);setPhase('idle');setNotice('已取消這段聽寫，原草稿保留。');};
  const cancelRef=useRef(cancel);cancelRef.current=cancel;
  useEffect(()=>{
-  if(!native||typeof window.kBrowser?.onWindowHidden!=='function')return;
+  if(!desktop)return;
   return window.kBrowser.onWindowHidden(()=>cancelRef.current());
- },[native]);
+ },[desktop]);
+ useEffect(()=>{
+  if(!remote)return;
+  const hidden=()=>{if(document.hidden)cancelRef.current();};
+  document.addEventListener('visibilitychange',hidden);
+  return()=>document.removeEventListener('visibilitychange',hidden);
+ },[remote]);
  useEffect(()=>()=>{const entry=job.current;job.current=null;if(entry){entry.session?.cancel();release(entry);}activity.current?.(false);},[sessionKey]);
  const start=async()=>{
   if(disabled||job.current)return;
@@ -34,14 +42,15 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
   }
   if(native){
    if(typeof navigator==='undefined'||typeof navigator.mediaDevices?.getUserMedia!=='function'){
-    setNotice('目前無法存取本機麥克風；原草稿保留。');activity.current?.(false);return;
+    setNotice('目前無法存取此裝置的麥克風；原草稿保留。');activity.current?.(false);return;
    }
    const entry={scope:scope.current,levels:Array(70).fill(0)};job.current=entry;setPhase('starting');setNotice('');
    const current=()=>job.current===entry&&entry.scope===scope.current;
    const finish=()=>{if(job.current!==entry)return false;const sameScope=entry.scope===scope.current;job.current=null;release(entry);setPhase('idle');return sameScope;};
    entry.session=createNativeDictationSession({
+     ...(remote?{createAudioContext:()=>new AudioContext()}:{ }),
     requestTranscription:async(audioBase64,signal)=>{
-     const response=await fetch('/api/dictation/transcribe',{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify({audioBase64}),signal});
+     const response=await fetch('/api/dictation/transcribe',{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1',...(remote?{'X-K-Command':crypto.randomUUID()}:{})},body:JSON.stringify({audioBase64}),signal});
      const payload=await response.json();
      if(!response.ok)throw new Error(payload?.error||'本機語音辨識失敗。');
      return payload;
@@ -49,7 +58,7 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
     onState:state=>{if(current())setPhase(state);},
     onLevel:level=>{if(current()){entry.levels.shift();entry.levels.push(Math.min(1,level*5));}},
     onLimit:()=>{if(current()){entry.hitLimit=true;setNotice('已達 5 分鐘上限，正在轉錄；完成後不會自動送出。');}},
-    onResult:result=>{if(!finish())return;if(!result.text.trim()){setNotice('沒有辨識到文字，未送出訊息。');return;}callback.current(result);if(entry.hitLimit)setNotice('已達 5 分鐘上限；辨識已完成。');},
+    onResult:result=>{if(!finish())return;if(!result.text.trim()){setNotice('沒有辨識到文字，未送出訊息。');return;}callback.current(remote?{...result,send:false}:result);if(entry.hitLimit)setNotice('已達 5 分鐘上限；辨識已完成。');},
     onError:message=>{if(!finish())return;setNotice(`${message} 未送出；原草稿保留。`);},
    });
    void entry.session.start().then(()=>{

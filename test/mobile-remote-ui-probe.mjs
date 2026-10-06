@@ -9,6 +9,7 @@ import {randomBytes} from 'node:crypto';
 import {chromium} from 'playwright';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
+import {decodePcm16Mono16kWav} from '../src/local-dictation.mjs';
 
 const out=path.resolve('.runtime/mobile-remote');await mkdir(out,{recursive:true});
 const root=await mkdtemp(path.join(out,'ui-')),key=randomBytes(32).toString('hex'),remotePort=Number(process.env.K_TEST_REMOTE_PORT??54838),httpsPort=Number(process.env.K_TEST_HTTPS_PORT??54839),origin=`https://paulus.mobile.test.ts.net:${httpsPort}`;
@@ -33,7 +34,7 @@ const controller={concurrentConversations:true,get state(){return {...current,wo
  async attachmentFile(id){return uploads.get(id);},async artifact(){return {name:'result.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('REMOTE_DOWNLOAD_OK')};},async close(){},
 };
 const service=()=>({status:async()=>({available:true,auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}}),close:async()=>{}});
-const app=await startDesktop({root,port:0,controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{}})});
+const app=await startDesktop({root,port:0,controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{},transcribe:async audio=>{const wav=decodePcm16Mono16kWav(audio);calls.push({op:'dictation',bytes:wav.length});return {ok:true,text:'手機假收音辨識'};}})});
 assert.equal(app.remoteOrigin,origin,'test remote listener must start; never proxy to an existing service');
 let dropNextSendResponse=false;const sendTransports=[];
 const proxy=https.createServer({key:await readFile(path.join(out,'test-key.pem')),cert:await readFile(path.join(out,'test-cert.pem'))},(req,res)=>{
@@ -46,7 +47,7 @@ const wait=ms=>new Promise(r=>setTimeout(r,ms));
 const noOverflow=async page=>assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'horizontal page overflow');
 const screenshot=name=>page.screenshot({path:path.join(out,name+'.png')});
 try{
- browser=await chromium.launch({executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--host-resolver-rules=MAP paulus.mobile.test.ts.net 127.0.0.1','--no-proxy-server']});
+ browser=await chromium.launch({executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream','--host-resolver-rules=MAP paulus.mobile.test.ts.net 127.0.0.1','--no-proxy-server']});
  context=await browser.newContext({viewport:{width:412,height:915},isMobile:true,hasTouch:true,deviceScaleFactor:2,ignoreHTTPSErrors:true,userAgent:'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'});
  page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
  const slow=await context.newCDPSession(page);await slow.send('Network.emulateNetworkConditions',{offline:false,latency:80,downloadThroughput:128000,uploadThroughput:64000});
@@ -87,7 +88,35 @@ try{
  const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker popup outside mobile viewport');
  await workers.getByText(/久未回報不等於已卡死/).waitFor();await noOverflow(page);await screenshot('mobile-worker-status');
  await page.getByRole('button',{name:'關閉子代理狀態',exact:true}).click();await workers.waitFor({state:'hidden'});
- assert.equal(await page.getByRole('button',{name:'開始聽寫',exact:true}).count(),0);await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();
+ await page.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();
+ // Real browser audio capture/PCM encoding and remote POST; synthetic device + recognizer only.
+ const input=page.getByRole('textbox',{name:'工作訊息',exact:true});await input.fill('保留原草稿');
+ await page.getByRole('button',{name:'開始聽寫',exact:true}).click();
+ await page.getByRole('button',{name:'停止聽寫',exact:true}).waitFor();await wait(700);
+ assert.equal(await page.getByRole('button',{name:'轉錄完成後送出',exact:true}).count(),0);
+ await screenshot('mobile-dictation-recording');await noOverflow(page);
+ await page.getByRole('button',{name:'停止聽寫',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.composer-input').value.includes('手機假收音辨識'));
+ assert.equal(await input.inputValue(),'保留原草稿\n手機假收音辨識');
+ assert.equal(calls.filter(c=>c.op==='dictation').length,1);assert(!calls.some(c=>c.op==='send'));
+ await screenshot('mobile-dictation-draft');
+ await page.getByRole('button',{name:'開始聽寫',exact:true}).click();await page.getByRole('button',{name:'停止聽寫',exact:true}).waitFor();
+ await page.getByRole('button',{name:'取消聽寫',exact:true}).click();
+ assert.equal(await input.inputValue(),'保留原草稿\n手機假收音辨識');assert.equal(calls.filter(c=>c.op==='dictation').length,1);
+ await input.fill('');
+ // Quote annotation shares the same private transport and does not submit a message.
+ await page.evaluate(threadId=>sessionStorage.setItem('k-response-annotations:'+encodeURIComponent(threadId),JSON.stringify([{id:'fake-quote',text:'假引用',annotation:'原註解',sourceMessageId:'bulk-assistant'}])),current.threadId);
+ await page.reload();await page.getByText('已連線',{exact:true}).waitFor();await page.getByRole('button',{name:'1 則註解',exact:true}).click();
+ await page.getByRole('button',{name:'聽寫到此段註解',exact:true}).click();await page.getByRole('button',{name:'停止並填入留言',exact:true}).waitFor();await wait(600);
+ await page.getByRole('button',{name:'停止並填入留言',exact:true}).click();
+ await page.waitForFunction(()=>document.querySelector('.quote-annotation-editor textarea').value.includes('手機假收音辨識'));
+ assert.equal(await page.getByRole('textbox',{name:'註解：假引用',exact:true}).inputValue(),'原註解手機假收音辨識');
+ assert.equal(calls.filter(c=>c.op==='dictation').length,2);assert(!calls.some(c=>c.op==='send'));
+ await noOverflow(page);await screenshot('mobile-dictation-quote');await page.getByRole('button',{name:'移除第 1 則註解',exact:true}).click();
+ // Synthetic page-hidden event exercises the same lifecycle used by phone Home/lock.
+ await page.getByRole('button',{name:'開始聽寫',exact:true}).click();await page.getByRole('button',{name:'停止聽寫',exact:true}).waitFor();
+ await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));delete document.hidden;});
+ await page.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='dictation').length,2);
  assert(!calls.some(c=>c.op==='send'),'opening/changing reasoning must not send work');await page.setViewportSize({width:412,height:915});
  // A modal opened over the mobile drawer must be dismissible with Android-style Back.
  await page.getByRole('button',{name:'展開側欄',exact:true}).click();await page.getByRole('button',{name:'新對話',exact:true}).click();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor();await page.goBack();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor({state:'hidden'});await page.getByRole('textbox',{name:'工作訊息',exact:true}).waitFor();
@@ -131,6 +160,7 @@ try{
  // Server accepted the command but its HTTP response was lost: show unknown, never resend.
  const beforeUnknown=calls.filter(c=>c.op==='send').length;dropNextSendResponse=true;await composer().fill('伺服器已接收但回應遺失');await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByText('操作結果未確認；沒有自動重送。請重新連線讀回後再決定。',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);assert(current.messages.some(m=>m.text==='伺服器已接收但回應遺失'));assert.equal(sendTransports.at(-1).command,sendTransports.at(-2).command,'browser transport retry retains request ID');await screenshot('mobile-unknown-result');
  await page.reload();await page.getByText('已連線',{exact:true}).waitFor();await composer().fill('');await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);await page.getByRole('button',{name:'停止工作',exact:true}).click();
+ await page.getByRole('button',{name:'停止工作',exact:true}).waitFor({state:'hidden'});
  // An expired login must be distinguished from transport loss without navigation or replay.
  const beforeExpired=calls.length;await composer().fill('登入失效仍保留的草稿');
  await context.clearCookies();await context.setOffline(true);await context.setOffline(false);

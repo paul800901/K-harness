@@ -249,7 +249,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    json(404,{error:'Not found'});
   }catch(e){if(!res.headersSent){const status=e.statusCode??400;if(requestPath==='/api/dictation/transcribe'){
     const diagnostic=e instanceof LocalDictationError?e.diagnostic:(e.diagnostic??e.message);
-    json(status,{ok:false,error:e instanceof LocalDictationError?e.message:'轉錄要求無法處理。',code:e.code??'INVALID_REQUEST',...(diagnostic?{diagnostic}:{})});}
+    json(status,{ok:false,error:e instanceof LocalDictationError?e.message:'轉錄要求無法處理。',code:e.code??'INVALID_REQUEST',...(!isRemote&&diagnostic?{diagnostic}:{})});}
    else json(status,{error:e.message});}else res.end();}
  };
  const server=http.createServer(handler(false));
