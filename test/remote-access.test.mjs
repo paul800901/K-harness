@@ -1,0 +1,219 @@
+import assert from 'node:assert/strict';
+import {mkdtemp, mkdir, writeFile} from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import {randomBytes,randomUUID} from 'node:crypto';
+import {startDesktop} from '../src/desktop-server.mjs';
+import {remoteKeyHash} from '../src/remote-access.mjs';
+
+const request = (url, {method='GET', headers={}, body,commandId}={}) => new Promise((resolve,reject)=>{
+ const requestHeaders={...headers};
+ const hasCommandHeader=Object.keys(requestHeaders).some(name=>name.toLowerCase()==='x-k-command');
+ if(method==='POST'&&!hasCommandHeader&&commandId!==null)requestHeaders['x-k-command']=commandId??randomUUID();
+ const req=http.request(url,{method,headers:requestHeaders},res=>{
+  const chunks=[];res.on('data',chunk=>chunks.push(chunk));
+  res.on('end',()=>{const text=Buffer.concat(chunks).toString('utf8');resolve({status:res.statusCode,headers:new Headers(res.headers),text:async()=>text,json:async()=>JSON.parse(text)});});
+ });
+ req.on('error',reject);
+ if(body!==undefined)req.end(JSON.stringify(body));else req.end();
+});
+const openEventStream = (url,headers) => {
+ let resolveConnected, rejectConnected, resolveClosed;
+ const connected=new Promise((resolve,reject)=>{resolveConnected=resolve;rejectConnected=reject;});
+ const closed=new Promise(resolve=>{resolveClosed=resolve;});
+ const req=http.get(url,{headers},res=>{
+  if(res.statusCode!==200){res.resume();rejectConnected(new Error(`SSE status ${res.statusCode}`));return;}
+  res.once('data',resolveConnected);
+  res.once('end',resolveClosed);
+ });
+ req.once('error',rejectConnected);
+ return {connected,closed,close:()=>req.destroy()};
+};
+const freePort = async () => {
+ const probe=http.createServer();
+ await new Promise((resolve,reject)=>{probe.once('error',reject);probe.listen(0,'127.0.0.1',resolve);});
+ const {port}=probe.address();
+ await new Promise((resolve,reject)=>probe.close(error=>error?reject(error):resolve()));
+ return port;
+};
+const service = () => ({status:async()=>({}),progress:()=>({}),start:async()=>({}),cancel:async()=>({}),submitCode:async()=>({}),close:async()=>{}});
+
+test('desktop remote access keeps local bootstrap isolated and gates the remote listener', async t=>{
+ const base=path.resolve('.runtime/mobile-remote-tests');
+ await mkdir(base,{recursive:true});
+ const defaultRoot=await mkdtemp(path.join(base,'default-'));
+ const defaultController={state:{threadId:null,workspace:null},close:async()=>{}};
+ const defaultApp=await startDesktop({root:defaultRoot,executable:'fake-executable',port:0,controllerFactory:()=>defaultController,
+  claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,
+  localDictationFactory:()=>({transcribe:async()=>({}),close:async()=>{}})});
+ t.after(()=>defaultApp.close());
+ assert.equal(defaultApp.remoteOrigin,null,'remote listener is absent without a config');
+
+ const root=await mkdtemp(path.join(base,'case-'));
+ const localDir=path.join(root,'.local');
+ await mkdir(localDir,{recursive:true});
+ const remoteFile=path.join(localDir,'remote-access.json');
+ const login='owner@example.ts.net',key=randomBytes(32).toString('hex');
+ const remotePort=await freePort();
+ const remoteOrigin='https://k-mobile-test.ts.net';
+ await writeFile(remoteFile,JSON.stringify({enabled:true,origin:remoteOrigin,login,keyHash:remoteKeyHash(key),port:remotePort}));
+ const calls=[];
+ let controllerFactoryCalls=0;
+ const controller={
+  state:{threadId:'thread-current',workspace:'fake-workspace'}, concurrentConversations:true,
+  sessions:async()=>({sessions:[]}), projects:async()=>({projects:[]}), models:async()=>({models:[]}),
+  usage:async()=>({}), directories:async()=>({directories:[]}),
+  send:async data=>{calls.push(['send',data]);return {ok:true,threadId:data.threadId};},
+  answer:async data=>{calls.push(['answer',data]);return {ok:true,threadId:data.threadId};},
+  stop:async data=>{calls.push(['stop',data]);return {ok:true,threadId:data.threadId};},
+  upload:async data=>{calls.push(['upload',data]);return {ok:true,threadId:data.threadId};},
+  artifact:async (artifactPath,context)=>{calls.push(['artifact',artifactPath,context]);return {name:'fake.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('fake artifact')};},
+  close:async()=>{},
+ };
+ const app=await startDesktop({root,executable:'fake-executable',port:0,controllerFactory:()=>{controllerFactoryCalls++;return controller;},
+  claudeLoginFactory:()=>({...service(),status:async()=>({available:true,auth:{loggedIn:true,authMethod:'fake',apiProvider:'fake',subscriptionType:'fake',email:'sensitive@example.test',accessToken:'fake-access-token',credential:'fake-credential'}})}),
+  codexLoginFactory:service,geminiLoginFactory:service,
+  localDictationFactory:()=>({transcribe:async()=>({}),close:async()=>{}})});
+ t.after(()=>app.close());
+
+ // A single-use local launcher token still opens only the local listener.
+ assert.equal(app.remoteOrigin,remoteOrigin);
+ assert.equal(controllerFactoryCalls,1);
+ const launch=app.createLaunchUrl();
+ const boot=await request(launch,{method:'GET',headers:{host:new URL(app.origin).host}});
+ assert.equal(boot.status,303);
+ const localCookie=boot.headers.get('set-cookie').split(';')[0];
+ assert.equal((await request(launch,{headers:{host:new URL(app.origin).host}})).status,403);
+ assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host}})).status,403);
+ assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie:localCookie}})).status,200);
+ assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie:localCookie,origin:'https://attacker.example'}})).status,403,'existing local cross-origin protection');
+ assert.equal((await request(`${app.origin}/api/send`,{method:'POST',commandId:null,headers:{host:new URL(app.origin).host,cookie:localCookie,origin:app.origin,'x-k-request':'1','content-type':'application/json'},body:{threadId:'local-thread'}})).status,200,'local POST does not require X-K-Command');
+ calls.length=0;
+
+ const remoteUrl=path=>`http://127.0.0.1:${remotePort}${path}`;
+ const identityHeaders={host:new URL(remoteOrigin).host,'tailscale-user-login':login};
+ const remoteHeaders={...identityHeaders,origin:remoteOrigin,'x-k-request':'1','content-type':'application/json'};
+ const remoteGetHeaders={...identityHeaders,origin:remoteOrigin};
+ const assertDenied=async(name,getHeaders,postHeaders)=>{
+  assert.equal((await request(remoteUrl('/api/state'),{headers:getHeaders})).status,403,`${name}: state`);
+  for(const route of ['/api/send','/api/answer'])
+   assert.equal((await request(remoteUrl(route),{method:'POST',headers:postHeaders,body:{threadId:'explicit-thread-42'}})).status,403,`${name}: ${route}`);
+ };
+ const noIdentityGet={host:identityHeaders.host,origin:remoteOrigin};
+ const noIdentityPost={...noIdentityGet,'x-k-request':'1','content-type':'application/json'};
+ const wrongIdentityGet={...remoteGetHeaders,'tailscale-user-login':'other@example.ts.net'};
+ const wrongIdentityPost={...remoteHeaders,'tailscale-user-login':'other@example.ts.net'};
+ await assertDenied('missing identity',noIdentityGet,noIdentityPost);
+ await assertDenied('wrong identity',wrongIdentityGet,wrongIdentityPost);
+ await assertDenied('no remote cookie',remoteGetHeaders,remoteHeaders);
+ await assertDenied('local cookie is not remote auth',{...remoteGetHeaders,cookie:localCookie},{...remoteHeaders,cookie:localCookie});
+ const loginBody={key};
+ assert.equal((await request(remoteUrl('/api/remote/login'),{method:'POST',headers:{...identityHeaders,'x-k-request':'1','content-type':'application/json'},body:loginBody})).status,403,'login requires Origin');
+ assert.equal((await request(remoteUrl('/api/remote/login'),{method:'POST',headers:{...identityHeaders,origin:remoteOrigin,'content-type':'application/json'},body:loginBody})).status,403,'login requires X-K-Request');
+ assert.equal((await request(remoteUrl('/api/remote/login'),{method:'POST',headers:remoteHeaders,body:{key:'wrong-key'}})).status,403,'wrong key');
+ const loginResponse=await request(remoteUrl('/api/remote/login'),{method:'POST',headers:remoteHeaders,body:loginBody});
+ assert.equal(loginResponse.status,200,await loginResponse.text());
+ const remoteCookie=loginResponse.headers.get('set-cookie').split(';')[0];
+ assert.match(remoteCookie,/^__Host-k_remote=/);
+ assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie:remoteCookie}})).status,403,'remote cookie must not authorize local');
+ const authenticatedHeaders={...remoteGetHeaders,cookie:remoteCookie};
+ const authenticatedPost={...remoteHeaders,cookie:remoteCookie};
+
+ assert.equal((await request(remoteUrl('/api/state'),{headers:authenticatedHeaders})).status,200);
+ for(const route of ['/api/send','/api/answer']){
+  assert.equal((await request(remoteUrl(route),{method:'POST',commandId:null,headers:authenticatedPost,body:{threadId:'explicit-thread-42'}})).status,400,`${route} requires X-K-Command`);
+  assert.equal(calls.length,0,`${route} without command ID does not reach controller`);
+  const commandId=randomUUID();
+  const first=await request(remoteUrl(route),{method:'POST',commandId,headers:authenticatedPost,body:{threadId:'explicit-thread-42',payload:'first'}});
+  assert.equal(first.status,200,`${route} initial command`);
+  assert.equal(calls.length,1,`${route} initial command reaches controller once`);
+  const duplicate=await request(remoteUrl(route),{method:'POST',commandId,headers:authenticatedPost,body:{threadId:'explicit-thread-42',payload:'duplicate'}});
+  assert.equal(duplicate.status,409,`${route} duplicate command is not replayed`);
+  assert.equal(calls.length,1,`${route} duplicate does not invoke controller again`);
+  calls.length=0;
+ }
+ const claudeAuth=await request(remoteUrl('/api/claude/auth'),{headers:authenticatedHeaders});
+ assert.equal(claudeAuth.status,200);
+ assert.deepEqual(await claudeAuth.json(),{available:true,auth:{loggedIn:true,authMethod:'fake',apiProvider:'fake',subscriptionType:'fake'}});
+ assert.doesNotMatch(await claudeAuth.text(),/email|credential|accessToken|sensitive@example\.test|fake-access-token|fake-credential/i);
+ const threadId='explicit-thread-42';
+ for(const [route,operation] of [['/api/send','send'],['/api/answer','answer'],['/api/stop','stop'],['/api/upload','upload']]){
+  const response=await request(remoteUrl(route),{method:'POST',headers:authenticatedPost,body:{threadId,payload:`fake-${operation}`}});
+  assert.equal(response.status,200,route);
+  assert.equal((await response.json()).threadId,threadId,route);
+ }
+ const artifact=await request(remoteUrl(`/api/artifact?path=${encodeURIComponent('fake-artifact.txt')}&threadId=${threadId}&download=1`),{headers:authenticatedHeaders});
+ assert.equal(artifact.status,200);
+ assert.equal(await artifact.text(),'fake artifact');
+ assert.deepEqual(calls.map(call=>call[0]),['send','answer','stop','upload','artifact']);
+ for(const [,data] of calls.slice(0,4))assert.equal(data.threadId,threadId);
+ assert.deepEqual(calls[4].slice(1),['fake-artifact.txt',{threadId}]);
+
+ for(const [route,method,body] of [
+  ['/api/codex/login','POST',{}],['/api/core-update','POST',{}],['/api/shutdown','POST',{}],
+  ['/api/browser/action','POST',{threadId}],['/api/pick-workspace','POST',{}],
+ ]) assert.equal((await request(remoteUrl(route),{method,headers:authenticatedPost,body})).status,403,route);
+ assert.equal((await request(remoteUrl('/api/state'),{headers:{...authenticatedHeaders,origin:'https://attacker.example'}})).status,403,'cross-origin remote read');
+
+ const rotatedKey=randomBytes(32).toString('hex');
+ await writeFile(remoteFile,JSON.stringify({enabled:true,origin:remoteOrigin,login,keyHash:remoteKeyHash(rotatedKey),port:remotePort}));
+ assert.equal((await request(remoteUrl('/api/state'),{headers:authenticatedHeaders})).status,403,'key rotation invalidates old cookie');
+ assert.equal((await request(remoteUrl('/api/remote/login'),{method:'POST',headers:remoteHeaders,body:loginBody})).status,403,'old key cannot log in after rotation');
+ const rotatedLogin=await request(remoteUrl('/api/remote/login'),{method:'POST',headers:remoteHeaders,body:{key:rotatedKey}});
+ assert.equal(rotatedLogin.status,200,'new key can log in');
+ const rotatedCookie=rotatedLogin.headers.get('set-cookie').split(';')[0];
+ const rotatedGet={...remoteGetHeaders,cookie:rotatedCookie},rotatedPost={...remoteHeaders,cookie:rotatedCookie};
+ assert.equal((await request(remoteUrl('/api/state'),{headers:rotatedGet})).status,200);
+ const logout=await request(remoteUrl('/api/remote/logout'),{method:'POST',headers:rotatedPost});
+ assert.equal(logout.status,200);
+ assert.match(logout.headers.get('set-cookie'),/__Host-k_remote=;/);
+ assert.equal((await request(remoteUrl('/api/state'),{headers:rotatedGet})).status,403,'logout revokes the cookie session');
+
+ const finalLogin=await request(remoteUrl('/api/remote/login'),{method:'POST',headers:remoteHeaders,body:{key:rotatedKey}});
+ assert.equal(finalLogin.status,200);
+ const finalCookie=finalLogin.headers.get('set-cookie').split(';')[0];
+ const finalHeaders={...remoteGetHeaders,cookie:finalCookie};
+ const sse=openEventStream(remoteUrl('/api/events'),finalHeaders);
+ await sse.connected;
+ await writeFile(remoteFile,JSON.stringify({enabled:false,origin:remoteOrigin,login,keyHash:remoteKeyHash(rotatedKey),port:remotePort}));
+ assert.equal((await request(remoteUrl('/api/state'),{headers:finalHeaders})).status,403,'revoked config denies existing session');
+ const ended=await Promise.race([sse.closed.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),25000))]);
+ if(!ended)sse.close();
+ assert.equal(ended,true,'existing SSE connection closes on the next auth heartbeat within 25 seconds');
+});
+
+test('malformed remote config and an occupied remote port leave local bootstrap and state usable',async t=>{
+ const base=path.resolve('.runtime/mobile-remote-tests');
+ await mkdir(base,{recursive:true});
+ const startLocal=async (root)=>startDesktop({root,executable:'fake-executable',port:0,
+  controllerFactory:()=>({state:{threadId:null,workspace:'fake'},close:async()=>{}}),
+  claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,
+  localDictationFactory:()=>({transcribe:async()=>({}),close:async()=>{}})});
+ const verifyLocal=async app=>{
+  assert.equal(app.remoteOrigin,null);
+  assert.ok(app.remoteError);
+  const boot=await request(app.createLaunchUrl());
+  assert.equal(boot.status,303);
+  const cookie=boot.headers.get('set-cookie').split(';')[0];
+  const state=await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie}});
+  assert.equal(state.status,200);
+ };
+
+ const malformedRoot=await mkdtemp(path.join(base,'malformed-'));
+ await mkdir(path.join(malformedRoot,'.local'),{recursive:true});
+ await writeFile(path.join(malformedRoot,'.local','remote-access.json'),'{malformed json');
+ const malformedApp=await startLocal(malformedRoot);t.after(()=>malformedApp.close());
+ await verifyLocal(malformedApp);
+
+ const busyRoot=await mkdtemp(path.join(base,'busy-port-'));
+ await mkdir(path.join(busyRoot,'.local'),{recursive:true});
+ const remotePort=await freePort();
+ const busyServer=http.createServer((_req,res)=>res.end('fake busy listener'));
+ await new Promise((resolve,reject)=>{busyServer.once('error',reject);busyServer.listen(remotePort,'127.0.0.1',resolve);});
+ t.after(()=>new Promise(resolve=>busyServer.close(()=>resolve())));
+ await writeFile(path.join(busyRoot,'.local','remote-access.json'),JSON.stringify({enabled:true,origin:'https://k-busy-test.ts.net',login:'owner@example.ts.net',keyHash:remoteKeyHash(randomBytes(32).toString('hex')),port:remotePort}));
+ const busyApp=await startLocal(busyRoot);t.after(()=>busyApp.close());
+ await verifyLocal(busyApp);
+});

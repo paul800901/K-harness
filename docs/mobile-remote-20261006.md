@@ -1,0 +1,205 @@
+# K 手機遠端控制層：候選實作與驗證（2026-10-06）
+
+## 結論與範圍
+
+**候選已實作；Samsung Chrome 已登入並送出一次假資料測試，尚未完成離家連線實機驗收，不可稱為已正式可用。** 第一階段未部署／push／安裝。使用者後續全權授權完成接入；Windows／Samsung Tailscale 已在線、USB 已接通、私人 HTTPS 已啟用且未勾選 Funnel。本人已手動啟動私人代理，電腦經真 Tailscale HTTPS 的 K 登入／安全讀回通過；直接操作手機的工具呼叫被 policy 拒絕，Samsung UI 由本人配合實測。正式 K 仍未修改或重啟。最新接入現況見第 8 節；前段測試紀錄保留各自階段邊界。
+
+候選：`C:\Users\Paulus\.codex\worktrees\k-mobile-remote\K-harness`，基底 `d88d1481dba2b834191473f4bf86942ff67eff39`。驗證產物保留於候選 `.runtime/mobile-remote/`（Git 排除）。本批候選程式固定於包含本文件的 Git commit；正式部署版本另記，不以候選提交冒充部署。
+
+## 1. 先確認 current，不把 cwd 或歷史文件當正式真值
+
+- 起始 `D:\K-harness` 是舊 `main/56bb038` 且有既有未提交修改，未覆蓋。
+- `.local/runtime.json` 指向正式版本 `d88d148`；執行中 supervisor／Electron 所在 runtime 為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\trusted-runtime`。此路徑的 sandboxie 名稱是歷史名稱，不代表現在仍以 Sandboxie 執行。
+- 讀取目前入口、Electron owner、desktop-server、React、state-stream、conversation/unified controllers、README 與適用 AGENTS。正式 `src/frontend/shared`、套件及 Vite 設定對 Git `d88d148` 的文字內容（僅正規化換行）一致。
+- 另一來源工作樹 `modal-focus-fix/K-harness` 已到 `76e8fa2`，含尚未部署的其他變更；本候選沒有混入。本次使用其既有 node_modules junction，不安裝或升級相依。
+- 目前正式官方核心檔：Codex 0.160.0、Claude 2.1.289、Antigravity 1.2.17。依 selected-cores 指定路徑讀回，不以旧 README 版本推論。
+
+## 2. 原本已有什麼／真正阻擋
+
+已確認既有 React 使用相對 `/api/...`；HTTP 控制、SSE snapshot/patch/message append、背景 conversation controllers、三原生 unified controller 都已存在。沒有新建第二套 session、adapter、資料庫、Agent gateway 或 WebSocket。
+
+直接阻擋只有：
+
+1. 正確的 local-only 入口（127.0.0.1、精確 Host/Origin、k_session、60 秒一次性 bootstrap）不能直接當手機入口。
+2. 原三欄、桌面輸入與面板行為不適合窄螢幕／鍵盤。
+3. Android 暫停／重新連線必須讀 current snapshot，不能把未知送出結果重播。
+
+採一個額外 **loopback-only listener**，共用原 request handler 與同一 controller。未放寬 local listener。外部連線規劃用 Tailscale Serve 的私人 HTTPS，不使用 Funnel；官方 Serve 與 Funnel 的私人／公開差異見 [Tailscale 文件](https://tailscale.com/docs/features/tailscale-serve)。
+
+## 3. 修改點與機制
+
+| 檔案 | 本批差異 |
+|---|---|
+| `src/desktop-server.mjs` | 同一 handler/controller 增加可選 remote listener、登入／登出、路由限制與 SSE 撤銷；現有 local bootstrap 不變；remote 設定錯誤／port 被占用只停 remote，不阻止桌面啟動 |
+| `src/remote-access.mjs` | 精確 Serve origin／本人 login、隨機存取金鑰雜湊、獨立 cookie、撤銷與限定 API；不是原生供應商登入或多使用者帳號系統 |
+| `scripts/configure-remote.mjs` | 明確指定 state root 的本機設定、rotate／revoke；不安裝或設定 Tailscale、不啟動 K |
+| `frontend/main.jsx` | 共用 UI 加窄螢幕 drawer／成果頁、前景讀回、mobile Back、連線狀態；unknown-result 不重送；遠端隱藏 OS 登入／更新／關機及本機聽寫 |
+| `frontend/state-connection.mjs` | 每條 SSE 必須先收 snapshot；丟棄舊 stream callback；remote 背景化關閉唯讀 stream，桌面保持背景 stream；online／前景只重新讀取 |
+| `frontend/mobile.css` | 單欄、safe-area、visualViewport 高度、44px 觸控目標、長文捲動／code block 橫捲、輸入區與 modal 尺寸 |
+| `frontend/model-picker.jsx` | 遠端不顯示 OS 帳號設定；保留三原生模型清單及 Claude 已登入訂閱檢查（僅必要旗標） |
+| `frontend/index.html`、`frontend/public/manifest.webmanifest`、`frontend/public/icons/*` | 主畫面／standalone manifest、既有 K 標誌 192／512 icon、Android viewport；沒有 service worker 或離線內容快取 |
+| `test/remote-access.test.mjs`、`test/state-connection.test.mjs`、`test/remote-login.test.mjs` | 身分／cookie／原生邊界／撤銷、唯讀恢復及登入失敗呈現／貼上空白處理測試 |
+| `test/mobile-remote-ui-probe.mjs`、`test/mobile-native-probe.mjs` | 明確另行執行的 HTTPS 瀏覽器／原生訂閱假資料 probe，不放入自動模型呼叫迴圈 |
+| 本文件、`README.md`、`docs/development-log.md` | 候選與正式狀態、證據與未完成事項 |
+
+manifest 不需要為安裝而新增空 service worker：[Chrome 官方說明](https://developer.chrome.com/blog/update-install-criteria)指出 Android Chrome 108 起選單安裝不再要求帶 fetch handler 的 service worker。本機 manifest／icon 已讀回，但不據此宣稱 Samsung 已安裝成功。
+
+## 4. 對話、權限與瀏覽器邊界
+
+- **shared active projection 保留。** 手機開 B，桌面也顯示 B；符合本人離桌接手用途。不做 per-client projection。
+- send／answer／stop／附件等命令仍帶明確 threadId，交給現有 controller；不是依送達當下 active 猜目標。原 model/provider/workspace/accessMode/native session／核准語意不改。
+- 遠端可以沿用已有的專案／聊天室管理 API，包括改名、封存、移動及既有確認刪除流程；沒有新增任意檔案存取 API。OS picker／帳號登入／核心更新／shutdown／Chrome 手動控制由 server 拒絕。
+- BrowserPanel 原本就只讀電腦外部 Chrome 狀態；此版本沒有 `browser/frame` 請求，沒有 Windows 畫面串流、CAPTCHA 或登入遠端接手。
+- 窄螢幕 Enter 插入換行，按送出才送；手機使用 Android 鍵盤本身的注音／語音輸入。K 桌面本機聽寫不對 remote 開放。
+- 手機 Back 在 drawer／成果頁／本批 modal 開啟時返回聊天；modal 覆蓋 drawer 時 Back 一次關閉整組浮層，不另建複雜 navigation stack。
+
+## 5. 遠端安全入口（尚未在正式 K 啟用）
+
+預設無 `.local/remote-access.json` 就沒有 remote listener。啟用時：
+
+1. remote 也只 bind 127.0.0.1。只接受設定的完整 `https://<machine>.<tailnet>.ts.net[:port]` Host；Origin 若存在須完全相同，所有 POST 強制 Origin + X-K-Request。
+2. 必須有精確 `Tailscale-User-Login`，拒絕 Funnel header。官方 Serve 會移除外來偽造身分 headers；[官方原始碼](https://github.com/tailscale/tailscale/blob/main/ipn/ipnlocal/serve.go)也保留原始 Host。這是文件／程式核對，**不是此機實測 Serve**。
+3. 本人 tailnet login 仍須另有 K 隨機 256-bit 金鑰；設定只存 SHA-256 雜湊。登入後發獨立 `__Host-k_remote`，Secure／HttpOnly／SameSite=Strict／Path=/，七天到期，server 記憶體 session。原生登入憑證不傳手機。
+4. local k_session 與 remote cookie 不能互用。bootstrap、health、OS 帳號與管理 routes 不對 remote 開放。
+5. logout 撤銷該 cookie；rotate 使舊 key/cookie 全失效；revoke 停全部 remote 授權。新請求立即拒絕，既有 SSE 最遲下一個 20 秒心跳結束。撤銷不停止電腦原生工作。
+6. K 重啟後 session 不保留，須重新輸入同一 key；key 不在 URL／localStorage，沒有配對資料庫。外部連結的首次導航因 Strict cookie 可能先顯示登入頁。
+7. local OS 程序仍屬既有可信邊界；不能把此設計宣稱為防惡意本機程序的 OS 隔離。各人裝置仍應由 tailnet ACL／裝置撤銷管理；K key 是額外能力，而不是「任何 tailnet 成員永久全權」。
+
+### 接入步驟（後續已取得完成接入授權，登入仍由本人操作）
+
+Windows／Samsung 已由本人登入同一私人 tailnet，HTTPS 已啟用；獨立假資料候選先使用 8443→54832，正式 K 的以下設定仍未執行：
+
+```powershell
+node scripts/configure-remote.mjs --root '<候選 state root 絕對路徑>' --origin 'https://<本人裝置>.<tailnet>.ts.net' --login '<本人 Tailscale Login>' --port 47832
+# 本機只顯示一次新 K key；不要貼到 chat／Git，勿使用原生帳號密碼。
+# K 候選下次完整啟動後，再由 Tailscale Serve 私人代理該 loopback port。
+tailscale serve --bg http://127.0.0.1:47832
+```
+
+確切 Serve 用法以已安裝版 [官方 CLI 文件](https://tailscale.com/docs/reference/tailscale-cli/serve)核對；不使用 `tailscale funnel`。若有既有 Serve 設定先讀回，不覆蓋其他服務。撤銷範例：
+
+```powershell
+node scripts/configure-remote.mjs --root '<相同 state root>' --revoke
+# 重建 key 必須明確 --rotate，並重新提供 origin／login／port。
+```
+
+設定 root 是 K 資料的 state root，不是安裝根目錄或程式目錄。正式 state root 已由 launcher 核對為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\private-state`；後續讀回確認該處沒有 remote-access.json。第一階段只完成候選，後续使用者已授權完成接入，但仍須真實驗收、確認工作停止及保留退版，不能強制中斷工作。
+
+## 6. 驗證證據與失敗紀錄
+
+### HTTP／React 瀏覽器
+
+- 使用真實 desktop-server、HTTPS reverse proxy、Playwright 控制既有 Chrome headless，Samsung UA、412×915、touch／DPR2；不是 Samsung 硬體或實際 Tailscale。自簽證書及 `ignoreHTTPSErrors` **僅測試 context**，不加入信任庫、不用於產品。
+- 三供應商假 controller 各既有／新聊天室共六間；desktop bootstrap 開啟第二頁同步跟隨。手機正常三次 send（含一則既有待送）加一次回應遺失 send、桌面另一次 send，串流、Stop、核准／拒絕／提問、附件上傳／下載、artifact 下載皆經真實 HTTP／SSE。
+- 關掉手機 page 時假工作仍 busy；server 完成後重開讀到原 thread 的新狀態，send 計數沒有增加。離線／上線同樣不增加；沒有自動 resend。
+- 開著成果面板時 status／snapshot 更新不關閉；Back 關閉 drawer/modal。360×440 模擬鍵盤高度輸入框仍可見；長回覆50段及長 code 橫捲，page 無水平溢位。無 pageerror。截圖人工讀圖檢查。
+- 初次 probe 的 offline 偵測未通過（SSE 連線未立即報錯），已接 browser offline 關閉唯讀 stream，後續完整 probe 通過。保留初次 failure 與後續紀錄，不將失敗藏掉。
+- 初次完整測試 843/845：兩項本批 CSS token/字體規則失敗，改用既有設計 tokens 後修復。第二次 845/846：既有 `ui-message-timing` 的 40ms 等待未等到檔案寫入；該檔未修改，定向重驗通過（含 mobile/style 共11/11）。第三次完整回歸 848/848 通過；後續真瀏覽器 unknown-result 補測發現下述 transport 重試，修正後再次執行完整回歸，見下方最終數字。
+
+### 已觀察到的 transport 重複：必要的最小修正
+
+在新補測中，proxy 先讓 controller 接到 send，接著在任何 response header 前斷 socket。未修正版 Chromium 實際向 backend 送了兩次相同 POST，第二次進入既有待送佇列；不是 K reconnect 邏輯呼叫 send。這使「前端沒有 retry」不足以保證未知結果不重播。
+
+[Chromium 官方 ShouldResendRequest 原始碼](https://chromium.googlesource.com/chromium/src/+/f0d01d5c/net/http/http_network_transaction.cc)顯示 reused connection 且還未收到 response headers 會重送。依此實測新增 **remote 每次 human POST 的 X-K-Command 請求 ID**；server 在已驗證的 cookie session 中只記 ID Set，第二次相同 ID 回409／unknown-result，不再呼叫 controller、不快取結果、不自動查詢／重播。Set 隨 session 到期／登出／server重啟失效；重啟後舊 cookie 也無法授權，因此不需要 durable ledger／第二資料庫。本機介面不改成強制此 header。
+
+修正後同一 HTTPS 斷回應測試：兩次 transport attempt 保持相同 ID，但 controller 只有一次 send；手機顯示「操作結果未確認」、保留草稿。重新載入讀到已接收的原訊息且 send 計數不增加。這是實測失敗所需的防重，不是 speculative hardening。UI probe 初次失敗記錄保留於 ui-run-final.txt／ui-failure.json，通過紀錄為 ui-run-dedupe-final.txt。
+
+### 真原生 session（不是 fake provider）
+
+使用現有官方訂閱執行檔與 K 專用登入環境、不讀／複製 token、不改計費；新建隔離假 workspace／K 記錄，不接正式聊天室。每家只有兩個簡短文字回合、無工具／目標／子代理。
+
+| 核心 | 新建→送出→desktop 同 thread 讀回→controller/server 全關閉→原 thread resume→讀回前回合隨機標記 |
+|---|---|
+| Codex / GPT-6 Luna low，read-only | 通過；`01a10fe9-8b43-7171-907f-544816e2eff4`；原生 thread/start 一次、thread/resume 同 ID，turn/start 兩次 |
+| Claude Opus 5.5 low，claude-plan | 通過；`claude-06d28594-a5af-4c25-843b-b79adeef5c0a`；相同原生 sessionId，resume false→true |
+| Antigravity / Gemini | 本輪真原生流程未跑；正式 Electron 下仍有 agy 程序，不能確認憑證身分查詢／切換已停，未停止或接管它們。三核心 UI 假資料測試不算第三家原生驗收 |
+
+### 安全／複查及最終狀態
+
+- 最終 `npm run build:ui` 成功；`npm test` **848/848 通過**（34.34秒，`full-tests-accepted.txt`）。Build 保留既有大型 chunk 提示，未為此順手重構。
+- 真 HTTP 拒絕無／錯身分、無／錯 cookie、跨 Origin、remote/local cookie 互用、禁用 routes；缺請求 ID 回400、相同 ID send／answer 重送回409且 controller 次數不增加。local POST 不要求新 header。
+- rotate 舊 key/cookie 失效、新 key 成功；logout 失效；已開 SSE 在 revoke 後約20秒關閉；remote設定損壞／port被占用仍可 local bootstrap/state。Claude auth 假敏感欄位未透出。
+- 本機 configure script 已於新假 state root 實跑 create／拒絕未指定rotate的覆寫／invalid保留原設定／rotate／revoke，設定只存hash，沒有列印金鑰到工程證據（`configure-result.json`）。
+- 真正官方 Claude Opus 5.5 只讀複查三輪（非模擬、自稱或改供應商）：首查 `4e303dfb-4bc3-471e-9c11-82d373f42602`，指出成果面板自行關閉及desktop hidden SSE；已修並重驗。補查 `906b74ec-5f0e-4ad5-b00a-03e5582f6129`，指出 backdrop 關閉未同步狀態及文案，已修。最後 `e8fc2e7a-f547-476a-af92-1abe622d973c`，聚焦新 transport 防重及剩餘改點，未發現 P1/P2；沒有把這輪說成重新執行全測試或正式部署核准。主代理另行讀 diff、848項測試、UI／原生證據並驗收候選範圍。
+- 第一階段收尾唯讀核對：正式版本仍 `d88d148`，108份相關程式／設定與基底內容一致，supervisor 27728／Electron 26616仍是原程序；`formal-source-readback.json` 留證。當時 remote config 檢查對象是安裝根目錄，不能作為正式 state root 的證據；第 8 節已更正並另查實際 state root。第一階段未操作正式 K 工作或憑證、未安裝／清理／push／部署。
+
+證據：`.runtime/mobile-remote/ui-result.json`、`ui-run-dedupe-final.txt`、`mobile-*.png`、`desktop-regression.png`、`native-result.json`、`native-run.txt`、`full-tests-*.txt`、`opus-review/`、`opus-followup/`、`opus-final/`。測試憑證／key、原生診斷與帳號環境不加入 Git。
+
+## 7. 尚未完成，不能升級為已驗收
+
+- 真 Tailscale Serve／HTTPS／Host+identity headers 已由電腦端實際通過；Samsung Chrome 真實登入、送出一次「背景測試」、串流及第40段「測試完成」畫面均已取得，同一 user message 只有一次。手機已顯示完成狀態；僅憑截圖不能確定實際背景停留時間或 Doze。未另外修改 tailnet ACL，也未測另一個未授權 tailnet 身分；既有無 K cookie／錯 key／跨 Origin 拒絕已通過實際代理。
+- Samsung Chrome／Samsung Internet 真實安裝到主畫面、獨立啟動、注音／語音鍵盤、Android navigation/safe-area、實際 file picker／download、Doze／鎖屏與 Wi-Fi→5G 未驗證。viewport 縮小與網路 offline 模擬不能替代這些。
+- Gemini 真實同 session 接續待在不干擾正式帳號操作的時段補驗。
+- 未測實際 Electron launcher 整套正式更新，未改正式 runtime；desktop 瀏覽器、本機 bootstrap、安全與原生 controller 已驗，不冒稱正式 K 已讀回新功能。
+- 大型手機影片上傳仍沿用原 base64／記憶體路徑，本輪只驗小附件，沒有加新容量限制或傳輸框架。
+
+刻意不做：K Cloud、relay、自建 NAT、QR／多使用者帳號、push／Android 背景服務、WebSocket、service worker／離線工作佇列、手機 terminal／editor／Git、遠端桌面、手機本地原生核心、專案全量同步、per-client active、失敗換模／自動重送。沒有新增人用的技術設定頁。
+
+## 8. 本人追加授權與實機接入進度
+
+使用者明確表示「我已連結手機，我全權授權你做好這件事」，並重申僅供個人使用。後續澄清「連結」是 USB 插上電腦並開啟 USB 偵錯，不是 Windows 手機連結，也不是已建立遠端私人網路。沒有新增 K 會員、Google/Apple 登入或多使用者平台；Tailscale 登入是建立本人裝置私人網路，不把原生模型帳號搬到手機。
+
+- **Windows Tailscale 已安裝，未登入。** 官方 stable MSI 1.102.4 AMD64，官方 SHA-256 及 Authenticode Tailscale Inc. 簽章均核對，安裝 exit 0；程式版本读回 1.102.4。安裝包含其必要 Windows 服務／網路元件；沒有重開機。`status --json` 為 `NeedsLogin`，沒有啟用 Serve 或 Funnel。嘗試啟動登入的工具呼叫被 policy 拒絕、未執行；沒有改用別的入口繞過，已請本人從 Tailscale 開啟 Log in。證據在 `.runtime/mobile-connect/installer-verification.json`、`installation-result.json`、`tailscale-install.log`。
+- **USB 尚未接通 ADB。** Windows 有正常的 SAMSUNG Mobile USB Composite Device 與 Modem，但沒有 Android ADB 裝置。既有 SDK ADB 36.0.0 清單為空；[官方修正紀錄](https://developer.android.com/tools/releases/platform-tools)列有 36.0.2 的 Samsung 偵測修正，因此另下載官方 37.0.1 到候選 `.runtime/mobile-connect/android-tools/`，不覆寫既有 SDK。只替換本輪新啟動且無裝置的暫時 ADB daemon，再查清單仍為空。此結果不證明手機沒開偵錯，也不證明線材／驅動故障；待本人解鎖、確認 USB 偵錯及允許此電腦，沒有自行關閉手機安全保護或安裝驅動。
+- **正式 K 仍有工作。** 以 Computer Use 唯讀查看正式 K 視窗，當前聊天室顯示執行中、近期原生活動，另有待確認子代理；未切換對話、未停止或重啟。不能為接入或 Gemini 測試接管未知工作，也不將正式程式替換為候選。
+- **state root 校正。** 實際 launcher 把 `vault/private-state` 傳給 startDesktop；已讀回此目錄存在且 `.local/remote-access.json` 不存在。未寫入正式設定。安裝 root 的同名檢查不再被當作正式 state root 證據。
+
+目前需要本人的步驟只有裝置授權／官方登入；不能宣稱 Samsung 已接通、已安裝 K PWA、已完成 Wi-Fi／行動網路切換或已部署。
+
+### 後續本人完成電腦登入與 USB 授權
+
+本人提供 Tailscale Login successful 與 Windows connected 畫面，並確認 USB 偵錯已開。重新讀回：Windows `BackendState=Running`、本機 online；ADB 37.0.1 已列出 `SM_S9470`、狀態 `device`，Android 16，Windows Android ADB Interface 正常。這取代上一階段「NeedsLogin／ADB 清單為空」，但不等於手機私人網路已連線。
+
+手機已有 Chrome 與 Samsung Internet，尚無 Tailscale 套件；已透過 USB 開啟官方 Google Play 的 `com.tailscale.ipn` 頁面，請本人安裝、登入與處理 Android VPN 同意。選官方建議的 Play 版本以保留正常更新，不另側載 APK 或修改安全設定。
+
+正式 Serve 設定讀回為空。準備獨立假資料候選，僅 `127.0.0.1:54832`，預計 Tailscale HTTPS 8443；沒有正式聊天室、原生核心呼叫或資料接入。`tailscale serve --bg --https=8443 http://127.0.0.1:54832` 回覆 tailnet 尚未啟用 Serve，要求本人網頁同意 HTTPS。官方說明提醒同意頁可能預選 Funnel，因此必須只啟用私人 Serve／HTTPS、不要開啟 Funnel。沒有執行 Funnel，也沒有略過 HTTPS 憑證驗證。
+
+為避免留下等待中的設定操作，已核對並停止本轮自建的假資料 node 程序及尚未完成的 Serve CLI 等待程序；確認 54832 listener 消失、Serve 設定仍為空。不停止 Tailscale 系統服務或正式 K。手機登入、HTTPS 同意完成後再啟動測試；不是已完成 Samsung PWA 驗收。假資料腳本與設定留於 `.runtime/mobile-connect/`，不入 Git。
+
+### 本人完成手機登入，明確委託電腦 HTTPS 設定
+
+使用者回覆手機已弄好，並針對私人 HTTPS／取消 Funnel 的指定步驟要求「這部分你控制電腦用吧」。實際讀回 Windows Running、手機 Android peer online、ADB device；正式版本仍為 d88d148。透過目前本人已登入的 Chrome 設定檔開啟官方 Serve 同意頁，先取消預設勾選的 Funnel，核對按鈕變為單純 Enable HTTPS，再啟用。頁面回覆 **Tailscale Serve is ready to use**，截圖 `.runtime/mobile-connect/tailscale-https-ready.png`。已向本人說明公開憑證紀錄包含裝置網域名稱；這不是公開 K 服務。
+
+重開假資料候選（本輪 PID 16136，`127.0.0.1:54832`）。隨後將 Serve 啟動、狀態查詢、手機測試頁開啟及 USB Chrome 除錯轉送放在同一工具呼叫；該呼叫整體被 policy 拒絕，**沒有執行**，不可猜測是哪個子命令被拒絕或宣稱其他子命令已完成。後續只讀查詢仍是空 Serve 設定。未改用其他入口繞過拒絕；告知本人這是工具限制，不是缺少其授權。假資料候選暫留待接入，不接正式工作；尚未驗證 Samsung UI、真 Serve identity headers 或手機 PWA。
+
+### 本人啟動代理後的真實私人網路驗證
+
+本人提供 PowerShell 成功畫面。讀回 Serve 設定只有 HTTPS 8443，代理 `http://127.0.0.1:54832`，沒有 AllowFunnel／公開路由；node listener 仍只在 127.0.0.1，手機 peer online。`https://paulus.tail47adf4.ts.net:8443/` 使用正常公信 TLS 驗證回 200／K 登入頁，沒有自簽或忽略 HTTPS 錯誤。
+
+由電腦經真正 Serve（不是假 proxy）驗證九項：無 cookie 的 state 403、錯 key 403、客戶端偽造 Tailscale-User-Login 被 Serve 取代、正確 key 200、登入後讀回 fake-room-1、跨 Origin POST 403、原生帳號 route 403、logout 200、舊 cookie 403。cookie 的 Secure／HttpOnly／SameSite=Strict 亦檢查。證據 `.runtime/mobile-connect/real-serve-security.json` 不含 key/cookie。電腦 Chrome 以同一真 HTTPS 登入候選成功，顯示「電腦 K 已連線」及假資料聊天室；畫面 `.runtime/mobile-connect/real-serve-k-connected.png`，不冒稱為 Samsung 畫面。
+
+在本人手動啟用代理後，另嘗試僅開啟手機 Chrome 的 K 網址（不含 USB 除錯轉送）；工具再次明確 policy 拒絕、未執行。後續不再重試手機操作或用替代入口繞過，改請本人直接在手机 Chrome 開啟私人網址並提供畫面。這不是手機／K 出錯的證據，而是工程工具能力的限制；原生帳號及正式 K 不變。
+
+### Samsung 已到登入頁，但登入失敗：訊息與貼上流程補修
+
+本人提供 Samsung Chrome 實機畫面：私人網址已顯示 K 登入頁，送出金鑰後呈現舊版「無法連接或授權」通用錯誤。這證明手機至少已能開啟私人入口，但**不是已進入聊天室／PWA 驗收**。再次核對手機與電腦的 Tailscale UserID 相同、目前 key 雜湊與候選設定一致、PC 經真 Serve 登入成功。尚未取得當次手機 POST 的精確拒絕原因，不宣稱使用者貼錯或原失敗已修好。
+
+已確認的直接缺陷是前端丟棄 server 的具體拒絕原因，把金鑰不符、身分／同源拒絕與網路中斷都寫成同一句話；另外先前交付整份 JSON 讓本人挑選 key，易多貼引號。最小補修只在 `src/remote-access.mjs`：翻譯既有固定錯誤字串；真正 fetch 失敗仍標示未確認結果；貼上時只去前後空白，保留 key 內容與引號拒絕；關閉手機輸入自動大寫／拼字修正並標明只貼金鑰本身。不新增帳號、QR、重試／備援，也不放寬任何 server 驗證。
+
+候選原 key 與 state root 保持不變，提供 Git 排除的一行 key-only 本機檔；未在聊天／測試報告列出秘密。只讀核對假資料 controller 全部不忙、零 user send 後，僅重啟自己的假資料 node，未碰正式 K／Tailscale 服務。測試端加暫時性的 status／固定拒絕原因／Android UA 布林紀錄；不記請求 body、key、cookie，非產品永久 logger。終端 stdin 的 snapshot 呼叫被工具 policy 拒絕，未重試該終端输入；controller 狀態由原有已授權 HTTP 讀回。
+
+驗證：定向 6/6、完整 **850/850**（34.44秒）；真正 Opus 5.5 聚焦複查 session `a825b642-6b4c-4c7a-abff-77dbb6e1c663`，無 P1/P2，已採納將電腦遠端設定變更納入錯誤文案的小修，最後文案後定向 2/2。真正 Tailscale HTTPS 的電腦 Chrome：故意帶引號回明確「金鑰不正確」；同一正確 key 前後多貼空白仍可登入。這是 PC 實測，不冒稱手機重試成功。證據：`.runtime/mobile-connect/login-fix-tests.txt`、`full-tests-login-fix.txt`、`opus-login/`、`phone-login-results.jsonl`、`login-fix-pc-success.png`。目前新診斷紀錄只有 PC 測試，待本人重新整理並重試一次；正式版本仍 d88d148。
+
+### Samsung 真實登入與第一則串流（後續讀回）
+
+本人提供 `37880.jpg`：Samsung Chrome 已進入 `fake-room-1` 假資料聊天室，畫面顯示「電腦 K 已連線」。測試端 `phone-login-results.jsonl` 在 2026-10-06 08:15:12.850 UTC 記錄 Android login status 200；08:16:02 UTC 的 `phone-state-after-login.json` 確認該房間 ready、零 user messages。這取代前段「待手機重試」狀態；先前失敗的精確原因仍未取得，不反推一定是使用者貼錯金鑰。
+
+已請本人送出「背景測試」、回手機主畫面約30秒再切回。後續實機截圖 `Screenshot_20261006_161607_Chrome.jpg` 顯示串流第26至31段及停止按鈕，證明實機送出及串流已通；截圖本身沒有證明已離開／恢復或完成。08:17:57 UTC 經真正私人 HTTPS 唯讀查詢：同一 `fake-room-1` 為 completed、busy=false；user message `user-1`「背景測試」僅一筆（08:16:24.257 UTC），assistant 已到第40段且含「測試完成」，queued/questions 均0；三間假房皆 idle。證據 `.runtime/mobile-connect/phone-state-after-stream.json`。未代送或重播手機工作。
+
+截圖的「尚無核心活動回報」來自本次假 controller 未供應原生活動紀錄，不能解讀為真實模型失敗；此測試沒有呼叫原生模型。仍待本人切回後看到完成結果，才能確認這次實機背景恢復。登入、串流及電腦完成不等於 PWA／行動網路／鎖屏、三原生核心或正式部署全部驗收。
+
+後續本人提供 `Screenshot_20261006_161816_Chrome.jpg`：同一 Samsung Chrome 聊天室已顯示第40段及「測試完成。正式 K 工作未被操作。」；黃色工作中提示消失、停止按鈕恢復為空草稿的停用送出按鈕，長 code 區域有獨立橫向捲軸，未撐寬整頁。這補足手機完成畫面的實機證據，不再是只有 server 完成；截圖不獨立證明背景停留30秒、鎖屏或 Doze。已請本人保持 Tailscale 開啟、關閉 Wi-Fi 改用行動網路送出「行動網路測試」，結果待回報；沒有代送測試訊息。本次只更新工程紀錄，正式 runtime.json 讀回仍為 d88d148，未部署／重啟。
+
+### 「行動網路測試」到達與完成讀回
+
+使用者起初把測試字句送到工程對話；08:28:38 UTC 讀回假聊天室仍只有「背景測試」，因此請本人改到 K 頁面送出，未代送或自動重試。本人後續詢問「現在呢」時，08:32:12 UTC 真 HTTPS 讀回確認同一 `fake-room-1` 新增且僅有一筆 `user-2`「行動網路測試」（08:29:07.886 UTC／臺灣16:29:07）；對應 assistant 回覆含「測試完成」，status=completed、busy=false、queue=0。先前「背景測試」仍僅一筆，無新增房間。證據 `.runtime/mobile-connect/phone-state-after-cellular-request.json`。可確認這次請求已到達且完成、未見重複；伺服器讀回不獨立證明手機 Wi-Fi 已關閉，行動網路情境仍以本人當時實際網路設定為前提，不能將此紀錄當成 Doze／鎖屏驗收。正式 K 未動。
+
+## 9. 繼續驗證與固定候選
+
+本人要求「繼續」。正式 K 的唯讀 accessibility 讀回仍顯示小說翻譯處理中、最近原生活動5秒前及1個子代理待確認；沒有切換 OS 前景或代按停止。本人答覆「等等，我正在關」，因此保留正式工作，等其正常關閉；不能因當下沒有 agy 程序就宣稱帳號已可安全另測或正式 K 已停止。
+
+- 重新完整回歸 **850/850**（34.87秒）及 UI build 通過，既有大型 bundle 提示保留；證據 `full-tests-pre-release.txt`、`build-pre-release.txt`。
+- 原生 probe 加入明確選擇 `K_NATIVE_PROBE_PROVIDERS=gemini` 的路徑，預設仍只 Codex／Claude；只使用已選定的官方 Gemini 核心、新假資料 root、read-only 和兩個簡短回合，不接受帳號管理器、不讀／搬／切換憑證、不重送舊測試或換模型。
+- 真正 Opus 首查 `bb4e4d0d-109f-418f-aecc-7fa0dc91b9c8` 指出測試可能誤過：持久化原生 ID 未必反映第二輪 CLI 回傳，以及 marker 可能被工具讀檔。已直接記錄真 CLI 事件流的 conversation ID，要求兩輪回傳同一 ID，並要求兩輪工具紀錄均為0；未修改產品 controller。
+- 真正 Opus 補查 `dcc991cf-133f-4c6a-bb32-8ff88723cb83` 無 P1/P2。主代理核對測試沒有傳 accounts、原生 chunk 仍送原 parser、第二輪 prompt 沒有 marker。複查未執行實測；Gemini 必須在正式 K 停止後才跑。證據 `.runtime/mobile-connect/opus-native-gemini*/`。
+- 以上是候選準備，不是 Gemini 實測通過、正式接入完成或 GitHub 發布。主畫面安裝、實際鍵盤／檔案選取等仍照第7節保留驗收邊界。

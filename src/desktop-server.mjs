@@ -1,4 +1,5 @@
 import http from 'node:http';
+import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
@@ -10,8 +11,14 @@ import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
+import {readRemoteConfig,createRemoteAccess,remoteRouteAllowed,remoteLoginHtml,remoteLoginJs,remoteLoginCss} from './remote-access.mjs';
 
 export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
+ const remoteFile=path.join(root,'.local','remote-access.json');
+ let remoteConfig=null,remoteError=null;
+ try{remoteConfig=await readRemoteConfig(remoteFile);}catch(error){remoteError=error.message;}
+ const remote=remoteConfig?createRemoteAccess(remoteFile,remoteConfig):null;
+ let remoteServer;
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateListeners=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
@@ -65,21 +72,42 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  const closeServer=()=>{
   if(serverClosePromise)return serverClosePromise;
   if(!server.listening)return Promise.resolve();
-  const pending=new Promise((resolve,reject)=>server.close(error=>error?reject(error):resolve()));
+  const pending=Promise.all([server,remoteServer].filter(s=>s?.listening).map(s=>new Promise((resolve,reject)=>{s.close(error=>error?reject(error):resolve());s.closeAllConnections();})));
   // Owned work is already settled; do not let renderer HTTP connections keep shutdown alive.
   server.closeAllConnections();
   serverClosePromise=pending.finally(()=>{serverClosePromise=null;});
   return serverClosePromise;
  };
  let origin;
- const server=http.createServer(async(req,res)=>{
+ const handler=isRemote=>async(req,res)=>{
   const json=(code,value)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
   let requestPath='';
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
   res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try{
-   if(req.headers.host!==new URL(origin).host)return json(403,{error:'Invalid host'});
-   const url=new URL(req.url,origin);requestPath=url.pathname;
+   const requestOrigin=isRemote?remoteConfig.origin:origin;
+   const remoteIdentity=isRemote?await remote.identity(req):null;
+   if(isRemote?!remoteIdentity:req.headers.host!==new URL(origin).host)return json(403,{error:'Invalid remote identity or host'});
+   const url=new URL(req.url,requestOrigin);requestPath=url.pathname;
+   const authenticated=isRemote?await remote.authorized(req,remoteIdentity):cookieMatches(req);
+   if(isRemote){
+    res.setHeader('Strict-Transport-Security','max-age=31536000');
+    if(req.method==='POST'&&url.pathname==='/api/remote/login'){
+     if(req.headers.origin!==requestOrigin||req.headers['x-k-request']!=='1'||!req.headers['content-type']?.startsWith('application/json'))return json(403,{error:'Explicit same-origin request required'});
+     let body='';for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>1024)return json(413,{error:'Request too large'});}
+     const session=remote.login(JSON.parse(body).key,remoteIdentity);
+     if(!session)return json(403,{error:'Remote access denied'});
+     res.setHeader('Set-Cookie',session);return json(200,{ok:true});
+    }
+    if(req.method==='GET'&&['/remote-login.js','/remote-login.css'].includes(url.pathname)){
+     const js=url.pathname.endsWith('.js');res.setHeader('Content-Type',js?'text/javascript; charset=utf-8':'text/css; charset=utf-8');return res.end(js?remoteLoginJs:remoteLoginCss);
+    }
+    if(req.method==='GET'&&url.pathname==='/'&&!authenticated){res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(remoteLoginHtml);}
+    if(req.method==='POST'&&(req.headers.origin!==requestOrigin||req.headers['x-k-request']!=='1'))return json(403,{error:'Explicit same-origin request required'});
+    if(req.method==='POST'&&url.pathname==='/api/remote/logout'&&authenticated){res.setHeader('Set-Cookie',remote.logout(req));return json(200,{ok:true});}
+    if(url.pathname.startsWith('/api/')&&!remoteRouteAllowed(req.method,url.pathname))return json(403,{error:'此操作只在電腦端提供。'});
+    if(['/bootstrap','/health'].includes(url.pathname))return json(403,{error:'Local entry only'});
+   }
    if(closing&&!(req.method==='GET'&&['/health','/api/state'].includes(url.pathname))&&!(req.method==='POST'&&url.pathname==='/api/shutdown'))return json(503,{error:'K 正在關閉，請稍後重試。'});
    if(req.method==='GET'&&url.pathname==='/bootstrap'){
     const actual=Buffer.from(url.searchParams.get('token')??''),expected=Buffer.from(launchToken??'');
@@ -88,18 +116,21 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     res.writeHead(303,{'Location':'/','Set-Cookie':`k_session=${cookie}; HttpOnly; SameSite=Strict; Path=/`});return res.end();
    }
    if(req.method==='GET'&&url.pathname==='/health')return json(200,{app:'k-harness-desktop',version:1,deployment:'native',workspace:root});
-   if(req.method==='GET'&&(url.pathname==='/'||/^\/assets\/[a-zA-Z0-9_.-]+$/.test(url.pathname))){
-    if(url.pathname==='/'&&!cookieMatches(req))return json(403,{error:'請從可信桌面入口開啟 K。'});
+   if(req.method==='GET'&&(url.pathname==='/'||url.pathname==='/manifest.webmanifest'||/^\/icons\/k-(192|512)\.png$/.test(url.pathname)||/^\/assets\/[a-zA-Z0-9_.-]+$/.test(url.pathname))){
+    if(url.pathname==='/'&&!authenticated)return json(403,{error:'請從可信桌面入口開啟 K。'});
     const name=url.pathname==='/'?'index.html':url.pathname.slice(1);
-    const type=name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':name.endsWith('.jpg')?'image/jpeg':'application/octet-stream';
-    const body=await readFile(new URL(name,uiRoot));res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
+    const type=name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':name.endsWith('.html')?'text/html':name.endsWith('.jpg')?'image/jpeg':name.endsWith('.png')?'image/png':name.endsWith('.webmanifest')?'application/manifest+json':'application/octet-stream';
+    let body=await readFile(new URL(name,uiRoot));
+    if(isRemote&&name==='index.html')body=body.toString('utf8').replace('<html ','<html data-k-remote="true" ');
+    res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
    }
-   if(!cookieMatches(req))return json(403,{error:'請從桌面啟動 K。'});
-   if(req.headers.origin&&req.headers.origin!==origin)return json(403,{error:'Cross-origin request denied'});
+   if(!authenticated)return json(403,{error:isRemote?'遠端授權已失效，請重新登入。':'請從桌面啟動 K。'});
+   if(isRemote&&req.method==='POST')remote.acceptCommand(req);
+   if(req.headers.origin&&req.headers.origin!==requestOrigin)return json(403,{error:'Cross-origin request denied'});
  if(req.method==='GET'&&url.pathname==='/api/events'){
     if(scheduled){clearTimeout(scheduled);scheduled=null;const pendingEvent=stateStream.update(publicState());if(pendingEvent){const frame=`data: ${JSON.stringify(pendingEvent)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}}
     res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});res.write(`data: ${JSON.stringify(stateStream.snapshot(publicState()))}\n\n`);clients.add(res);
-    const heartbeat=setInterval(()=>res.write(': alive\n\n'),20000);req.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
+    const heartbeat=setInterval(async()=>{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
    if(req.method==='GET'&&url.pathname==='/api/gemini/accounts')return json(200,geminiAccounts?await geminiAccounts.list():{enabled:false,activeAccountId:null,busy:false,loginPending:false,accounts:[]});
@@ -108,7 +139,11 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     if(managed?.accounts.length){const row=managed.accounts.find(a=>a.id===managed.activeAccountId);return json(200,{available:true,auth:row?.auth??{status:'unknown'},quota:row?.quota,reason:managed.reason});}
     return json(200,await (geminiAccounts?geminiAccounts.inspect(()=>geminiLogin.status()):geminiLogin.status()));
    }
-   if(req.method==='GET'&&url.pathname==='/api/claude/auth')return json(200,await claudeLogin.status());
+   if(req.method==='GET'&&url.pathname==='/api/claude/auth'){
+    const result=await claudeLogin.status();if(!isRemote)return json(200,result);
+    const {loggedIn,authMethod,apiProvider,subscriptionType}=result.auth??{};
+    return json(200,{available:result.available,auth:{loggedIn,authMethod,apiProvider,subscriptionType}});
+   }
    if(req.method==='GET'&&url.pathname==='/api/claude/login')return json(200,claudeLogin.progress());
    if(req.method==='GET'&&url.pathname==='/api/sessions')return json(200,await controller.sessions());
    if(req.method==='GET'&&url.pathname==='/api/projects')return json(200,await listProjects(root,(await controller.sessions()).sessions));
@@ -201,10 +236,17 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     const diagnostic=e instanceof LocalDictationError?e.diagnostic:(e.diagnostic??e.message);
     json(status,{ok:false,error:e instanceof LocalDictationError?e.message:'轉錄要求無法處理。',code:e.code??'INVALID_REQUEST',...(diagnostic?{diagnostic}:{})});}
    else json(status,{error:e.message});}else res.end();}
- });
+ };
+ const server=http.createServer(handler(false));
  server.once('close',()=>{if(!closedResources.has('本機語音辨識'))void closeLocalDictation().catch(()=>{});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>{origin=`http://127.0.0.1:${server.address().port}`;resolve();});});
- return {origin,controller,onStateChange(listener){stateListeners.add(listener);listener(publicState());return()=>stateListeners.delete(listener);},onClosed(listener){server.once('close',listener);},createLaunchUrl(){
+ if(remoteConfig){
+  remoteServer=http.createServer(handler(true));
+  try{await new Promise((resolve,reject)=>{remoteServer.once('error',reject);remoteServer.listen(remoteConfig.port,'127.0.0.1',resolve);});}
+  catch(error){remoteError=error.message;}
+ }
+ if(remoteError)console.warn('K 遠端入口未啟動；本機入口維持可用：',remoteError);
+ return {origin,remoteOrigin:remoteServer?.listening?remoteConfig.origin:null,remoteError,controller,onStateChange(listener){stateListeners.add(listener);listener(publicState());return()=>stateListeners.delete(listener);},onClosed(listener){server.once('close',listener);},createLaunchUrl(){
   launchToken=randomBytes(32).toString('hex');launchExpires=Date.now()+60000;
   return `${origin}/bootstrap?token=${launchToken}`;
  },async close(){await closeResources();await closeServer();}};

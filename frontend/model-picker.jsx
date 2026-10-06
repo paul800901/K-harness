@@ -6,6 +6,7 @@ import {AccountConnections} from './account-connections.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 
 export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
+const remoteClient=document.documentElement.dataset.kRemote==='true';
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
 const workerOrder=[...GEMINI_WORKER_MODELS,...WORKER_MODELS];
 const modelProvider=model=>model?.provider??providerOf(model?.model);
@@ -51,6 +52,7 @@ function ModelMenu({models,selected,disabled,isAvailable,onChange}){
 export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode='create',hasHistory=false,disabled,geminiGateway=false,loadModels,onCatalog,onClose,onCreate}){
  const [models,setModels]=useState([]),[provider,setProvider]=useState(mode==='switch'?modelProvider({model:currentModel}):'codex'),[model,setModel]=useState(''),[effort,setEffort]=useState(undefined),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const [accountStatus,setAccountStatus]=useState({});
+ useEffect(()=>{if(!remoteClient)return;let live=true;fetch('/api/claude/auth').then(async response=>{if(!response.ok)throw Error('auth unavailable');return response.json();}).then(claude=>{if(live)setAccountStatus({claude});}).catch(()=>{if(live)setAccountStatus({claude:{available:false}});});return()=>{live=false;};},[]);
  const [catalogGeminiGateway,setCatalogGeminiGateway]=useState(geminiGateway===true);
  const [workerPolicy,setWorkerPolicy]=useState(()=>normalizeWorkerPolicy(currentWorkerPolicy));
  const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
@@ -131,7 +133,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const permissionValue=selectedProvider==='claude'?(accessMode==='workspace-write'?'claude-manual':accessMode==='read-only'?'claude-plan':accessMode):accessMode;
  const permissionForSubmit=selectedProvider==='claude'?(accessMode==='workspace-write'?'claude-manual':accessMode==='read-only'?'claude-plan':accessMode):accessMode;
  return <div className="model-picker">
-  <AccountConnections disabled={disabled} provider={provider} hidden={mode!=='create'} onStatus={setAccountStatus} onRefresh={refreshModels}/>
+  {!remoteClient&&<AccountConnections disabled={disabled} provider={provider} hidden={mode!=='create'} onStatus={setAccountStatus} onRefresh={refreshModels}/>}{remoteClient&&<p className="modal-description">模型沿用電腦端訂閱；需要登入時請回到電腦處理。</p>}
   {loading?<p className="modal-description" role="status">正在載入模型…</p>:error?<div role="alert" className="model-load-error"><p>{error}</p><button type="button" onClick={()=>setRevision(value=>value+1)}><RefreshCw size={15}/>重新載入</button></div>:<>
    <section className="main-agent-setting" aria-label="主代理設定">
     <div className="model-picker-flow">

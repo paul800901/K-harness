@@ -1,0 +1,6 @@
+{
+ "id":"/", "name":"K 執行中樞", "short_name":"K", "lang":"zh-Hant-TW",
+ "start_url":"/", "scope":"/", "display":"standalone",
+ "background_color":"#f2ece2", "theme_color":"#f2ece2",
+ "icons":[{"src":"/icons/k-192.png","sizes":"192x192","type":"image/png","purpose":"any"},{"src":"/icons/k-512.png","sizes":"512x512","type":"image/png","purpose":"any"}]
+}
