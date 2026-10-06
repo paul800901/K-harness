@@ -35,6 +35,18 @@ export function reasoningEfforts(model) {
     .filter(value => typeof value === 'string' && value.length > 0);
 }
 
+export function fastServiceTier(model) {
+  const tiers = model?.serviceTiers;
+  if (!Array.isArray(tiers)) return null;
+  const fast = tiers.filter(tier => tier?.name === 'Fast' && typeof tier.id === 'string' && tier.id.length > 0);
+  return fast.length === 1 ? {...fast[0]} : null;
+}
+
+export function mainServiceTier(model, requested) {
+  const fast = fastServiceTier(model);
+  return fast && requested === fast.id ? fast.id : 'default';
+}
+
 export function supportsImages(model) {
   // Official compatibility rule for older catalogs lacking this field.
   return !Array.isArray(model?.inputModalities) || model.inputModalities.includes('image');

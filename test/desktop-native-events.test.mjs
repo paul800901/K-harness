@@ -327,7 +327,7 @@ test('stopping during a goal edit read does not apply the pending objective',asy
  }finally{await f.c.close();}
 });
 
-test('Codex main AI resumes the existing paused goal during its turn without replay, budget changes or cross-thread access',async()=>{
+test('Codex main AI resumes an existing paused or blocked goal during its turn without replay or limit bypass',async()=>{
  let gateway;const f=await fixture({gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/mcp',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}};}}),original=f.host.request;
  let nativeGoal=null;
  f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set'))nativeGoal={...nativeGoal,...params};return {goal:structuredClone(nativeGoal)};}return original(method,params);};
@@ -340,9 +340,10 @@ test('Codex main AI resumes the existing paused goal during its turn without rep
   const count=f.calls.filter(c=>c.method==='thread/goal/set').length;
   assert.deepEqual((await gateway.resumeGoal({},meta)).goal,result.goal);assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count,'already active is a readback, not another set');
   assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,status:'active'}]);
-  for(const status of ['complete','blocked','usageLimited','budgetLimited','unknown']){nativeGoal.status=status;await assert.rejects(gateway.resumeGoal({},meta),/並非已暫停/);assert.equal(nativeGoal.status,status);}
+  nativeGoal.status='blocked';const blockedBefore=structuredClone(nativeGoal),blockedResult=await gateway.resumeGoal({},meta);assert.deepEqual(blockedResult.goal,{...blockedBefore,status:'active'});assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count+1);
+  for(const status of ['complete','usageLimited','budgetLimited','unknown']){nativeGoal.status=status;await assert.rejects(gateway.resumeGoal({},meta),/並非已暫停或受阻/);assert.equal(nativeGoal.status,status);}
   for(const extra of [{objective:'changed'},{tokenBudget:999},{editOnly:true},{refresh:true},{clear:true},{status:'paused'}])await assert.rejects(f.c.goal({status:'active',resumeOnly:true,...extra}));
-  assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count);
+  assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count+1);
   nativeGoal=null;await assert.rejects(gateway.resumeGoal({},meta),/沒有可繼續/);
   emit({method:'turn/completed',params:{threadId,turn:{id:'resume-turn',status:'completed'}}});await assert.rejects(gateway.resumeGoal({},meta),/目前主對話/);
   assert(!f.calls.some(c=>['turn/start','turn/steer','turn/interrupt'].includes(c.method)));

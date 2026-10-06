@@ -1,0 +1,54 @@
+import React,{useEffect,useRef,useState} from 'react';
+import {workerStatus} from './work-status.mjs';
+import './worker-activity-popover.css';
+
+const statusLabel={running:'執行中',starting:'準備中',pending:'等待中',unresolved:'狀態待確認',unavailable:'無法查明',completed:'已完成',failed:'失敗',cancelled:'已取消',canceled:'已取消',stopped:'已停止',interrupted:'已中斷',ended:'已結束，結果未知'};
+const providerLabel={codex:'Codex 原生子代理','claude-native':'Claude Code 原生子代理',gemini:'Gemini Flash 工人'};
+function timestamp(value){
+ const time=Date.parse(value??'');
+ return Number.isFinite(time)?new Intl.DateTimeFormat('zh-TW',{dateStyle:'short',timeStyle:'medium'}).format(time):'尚無活動時間';
+}
+function WorkerRow({row,online}){const status=!online&&!row.settled?'unresolved':row.status;const label=row.task||row.agentNickname||row.name||(row.requestId?`子代理 ${String(row.requestId).slice(-8)}`:'子代理識別碼未知');return <article className="worker-popover-row">
+ <div className="worker-popover-row-title"><strong>{label}</strong><span data-status={status}>{statusLabel[status]??'狀態未知'}</span></div>
+ <small>{providerLabel[row.provider]??row.provider??'工人類型未知'}{row.model?` · ${row.model}`:' · 原生型號未知'}</small>
+ <details><summary>查看狀態細節</summary><dl>
+  <dt>{online?'原生狀態':'上次原生狀態'}</dt><dd>{statusLabel[row.status]??row.status??'未知'}</dd>
+  <dt>工人識別碼</dt><dd>{row.requestId??'未知'}</dd>
+  <dt>最後活動</dt><dd>{timestamp(row.lastActivityAt)}</dd>
+  <dt>最後讀回</dt><dd>{row.lastReadAt?timestamp(row.lastReadAt):'尚無讀回時間'}</dd>
+  {row.confirmationReason&&<><dt>待確認原因</dt><dd>{row.confirmationReason}</dd></>}
+  {row.status==='unresolved'&&!row.confirmationReason&&!row.error&&<><dt>待確認原因</dt><dd>原生狀態未提供原因</dd></>}
+  {row.error&&<><dt>錯誤</dt><dd>{row.error}</dd></>}
+  {row.workerConnection==='failed'&&<><dt>連線</dt><dd>子代理狀態讀回失敗</dd></>}
+ </dl></details>
+</article>;}
+
+export function WorkerActivityPopover({activity,details,online=true}){
+ const [open,setOpen]=useState(false),root=useRef(null),panelId=React.useId();
+ useEffect(()=>{
+  if(!open)return;
+  const outside=event=>{if(!root.current?.contains(event.target))setOpen(false);};
+  const keydown=event=>{if(event.key==='Escape'){event.preventDefault();setOpen(false);root.current?.querySelector('button')?.focus();}};
+  document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',keydown,true);
+  return()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',keydown,true);};
+ },[open]);
+ const rows=Array.isArray(details)?details:[];
+ const groups=[...rows.reduce((map,row)=>{
+  const key=row.conversationId??'unknown';
+  if(!map.has(key))map.set(key,{id:key,title:row.conversationTitle??'聊天室名稱未知',rows:[]});
+  map.get(key).rows.push(row);return map;
+ },new Map()).values()];
+ return <div className="worker-activity-popover-anchor" ref={root}>
+  <button type="button" className={`status worker-activity ${!online||!activity||activity.uncertain?'warning':''}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open?panelId:undefined} title="查看目前所有聊天室的子代理狀態" onClick={()=>setOpen(value=>!value)}>{workerStatus(activity,online)}</button>
+  {open&&<section className="worker-activity-popover" id={panelId} role="dialog" aria-label="子代理狀態">
+   <div className="worker-activity-popover-heading"><strong>子代理狀態</strong><button type="button" aria-label="關閉子代理狀態" onClick={()=>setOpen(false)}>×</button></div>
+   {!online&&<p className="worker-popover-note">後端斷線，以下僅為最後保留的狀態；目前執行狀態未知。</p>}
+   {groups.map(group=><section className="worker-popover-room" key={group.id}>
+    <h3>{group.title}</h3>
+    {group.rows.filter(row=>!row.settled).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-active-${index}`} row={row} online={online}/>)}
+    {!!group.rows.filter(row=>row.settled).length&&<details className="worker-popover-ended"><summary>已結束 {group.rows.filter(row=>row.settled).length} 個</summary>{group.rows.filter(row=>row.settled).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-ended-${index}`} row={row} online={online}/>)}</details>}
+   </section>)}
+   {!groups.length&&<p className="worker-popover-note">目前沒有可列出的子代理明細；計數仍依原生狀態顯示，不推定為已停止。</p>}
+  </section>}
+ </div>;
+}

@@ -34,6 +34,7 @@ test('metadata updates use one atomic file per conversation and concurrent calls
  const {sessions,unreadable}=await listMainSessions(root);
  assert.equal(unreadable,0);assert.equal(sessions[0].title,'title-29');
  assert.equal(sessions[0].parentThreadId,'parent');assert.equal(sessions[0].browserSessionKey,'keep-browser');
+ assert.equal(sessions[0].serviceTier,'default');
  await assert.rejects(saveMainSession(root,{...record,model:''}));
  await saveMainSession(root,{...record,title:'after failure'});
  assert.equal((await listMainSessions(root)).sessions[0].title,'after failure');
@@ -49,7 +50,7 @@ test('legacy snapshots stay intact and their lineage survives fixed-file updates
  const one=await listMainSessions(root,{threadId:'legacy'});
  assert.equal(one.unreadable,0);assert.equal(one.sessions.length,1);
  assert.equal(one.sessions[0].title,'updated');assert.equal(one.sessions[0].parentThreadId,'parent');
- assert.equal(one.sessions[0].browserSessionKey,'legacy-browser');
+ assert.equal(one.sessions[0].browserSessionKey,'legacy-browser');assert.equal(one.sessions[0].serviceTier,'default');
  assert.equal(await readFile(oldPath,'utf8'),old);
  assert.equal((await listMainSessions(root)).unreadable,1);
 });
@@ -74,6 +75,15 @@ test('Claude metadata uses its own provider while legacy Codex records retain su
  const {sessions}=await listMainSessions(root);
  assert.equal(sessions.find(s=>s.threadId==='claude-example').provider,'claude');
  assert.equal(sessions.find(s=>s.threadId==='codex-example').provider,'codex');
+});
+test('selected service tier survives metadata writes while old and invalid values normalize to Standard',async()=>{
+ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const root=await mkdtemp(path.join(base,'service-tier-sessions-'));
+ await saveMainSession(root,{threadId:'fast-chat',model:'gpt-6-luna',serviceTier:'priority'});
+ const saved=(await listMainSessions(root)).sessions[0];assert.equal(saved.serviceTier,'priority');
+ await saveMainSession(root,{...saved,title:'renamed'});assert.equal((await listMainSessions(root)).sessions[0].serviceTier,'priority');
+ await saveMainSession(root,{threadId:'invalid-tier',model:'gpt-6-luna',serviceTier:''});
+ assert.equal((await listMainSessions(root)).sessions.find(row=>row.threadId==='invalid-tier').serviceTier,'default');
 });
 test('saved main sessions survive reopen; listing deduplicates and preserves invalid records',async()=>{
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});

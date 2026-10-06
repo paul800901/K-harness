@@ -91,6 +91,35 @@ test('seven live workers remain counted even when another room has unconfirmed w
  }finally{await c.close();}
 });
 
+test('global worker details project only unresolved rows with their owning room and evidence',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const a=await c.open({model:codexModel}),source=f.room(a.threadId);
+  source.state.title='原生工人來源聊天室';
+  source.state.tools=[{id:'native:child-thread',name:'GPT 子代理',status:'running',details:{threadId:'child-thread',path:'/agent'},createdAt:'2026-10-06T01:02:03.000Z'}];
+  source.state.workers=[
+   {requestId:'codex:child-thread',threadId:'child-thread',provider:'codex',model:'gpt-6.1-sol',agentNickname:'reviewer',lastReadAt:'2026-10-06T01:04:05.000Z',status:'running',settled:false},
+   {requestId:'flash-job',provider:'gemini',model:'gemini-3.8-flash',task:'檢查候選樣式',status:'running',settled:false},
+   {requestId:'unknown-job',provider:'gemini',status:'unresolved',settled:false,error:'讀回失敗'},
+   {requestId:'object-error-job',provider:'gemini',status:'unresolved',settled:false,error:{message:'不可直接render'}},
+   {requestId:'finished-job',provider:'gemini',status:'completed',settled:true},
+   {requestId:'background-command',kind:'command',status:'running',settled:false},
+  ];source.notify();
+  const b=await c.open({model:claudeModel});
+  const rows=c.state.workerDetails;
+  assert.equal(c.state.threadId,b.threadId,'selected room remains independent of global details');
+  assert.equal(rows.length,5,'terminal rows stay available; background commands are omitted');
+  const native=rows.find(row=>row.requestId==='codex:child-thread');
+  assert.equal(native.conversationId,a.threadId);assert.equal(native.conversationTitle,'原生工人來源聊天室');
+  assert.equal(native.task,'reviewer');assert.equal(native.status,'running');assert.equal(native.model,'gpt-6.1-sol');assert.equal(native.agentNickname,'reviewer');
+  assert.equal(native.lastActivityAt,undefined,'tool creation time is not mislabeled as last activity');assert.equal(native.lastReadAt,'2026-10-06T01:04:05.000Z');
+  const flash=rows.find(row=>row.requestId==='flash-job');assert.equal(flash.model,'gemini-3.8-flash');assert.equal(flash.task,'檢查候選樣式');
+  const unknown=rows.find(row=>row.requestId==='unknown-job');assert.equal(unknown.status,'unresolved');assert.equal(unknown.error,'讀回失敗');
+  assert.equal(rows.find(row=>row.requestId==='object-error-job').error,undefined,'non-string native errors are not sent to React');
+  assert.equal(rows.find(row=>row.requestId==='finished-job').settled,true,'existing terminal job remains available for details');
+  source.state.status='offline';source.notify();assert.equal(c.state.workerDetails.find(row=>row.requestId==='codex:child-thread').status,'unresolved');
+ }finally{await c.close();}
+});
+
 test('shared Gemini account quota stays visible while a GPT conversation is selected',async()=>{
  const f=await fixture();try{
   await f.controller.usage();const quota={status:'ready',windows:[{key:'seven_day',remainingPercent:97}]};f.native.find(c=>c.state.provider==='gemini').state.usage={gemini:quota};
