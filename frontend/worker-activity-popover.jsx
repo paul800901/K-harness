@@ -15,7 +15,9 @@ function WorkerRow({row,online,now}){const health=workerHealth(row,online,now);c
   <dt>{online?'原生狀態':'上次原生狀態'}</dt><dd>{statusLabel[row.status]??row.status??'未知'}</dd>
   <dt>工人識別碼</dt><dd>{row.requestId??'未知'}</dd>
   <dt>最後活動</dt><dd>{timestamp(row.lastActivityAt??row.activity?.lastEventAt)}</dd>
+  {row.lastToolName&&<><dt>最近工具</dt><dd>{row.lastToolName}</dd></>}
   <dt>最後讀回</dt><dd>{row.lastReadAt?timestamp(row.lastReadAt):'尚無讀回時間'}</dd>
+  {row.inspection&&<><dt>久無活動檢查</dt><dd>{timestamp(row.inspection.checkedAt)} · {row.inspection.reason}</dd></>}
   {row.confirmationReason&&<><dt>待確認原因</dt><dd>{row.confirmationReason}</dd></>}
   {row.status==='unresolved'&&!row.confirmationReason&&!row.error&&<><dt>待確認原因</dt><dd>原生狀態未提供原因</dd></>}
   {row.error&&<><dt>錯誤</dt><dd>{row.error}</dd></>}

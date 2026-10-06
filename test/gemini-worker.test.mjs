@@ -397,3 +397,15 @@ test('failure and missing git metadata never claim no files or network timeout',
  assert.deepEqual(files.outputFiles,[]);assert.match(files.outputFilesNote,/清單未知，不代表沒有輸出/);
  assert.match(files.outputFilesNote,/先讀回任務指定檔案/);
 });
+
+test('Gemini diagnostics reach inspection before terminal result without another model call',async()=>{
+ const fake=fakeSpawn(null),diagnostics=[];const worker=make(fake);
+ let started;const ready=new Promise(r=>{started=r;});
+ const running=worker.run({task:'synthetic read',effort:'low',onStart:started,onDiagnostic:d=>diagnostics.push(d)});
+ await ready;const child=fake.children.at(-1);
+ const errorEvent=JSON.stringify({step_update:{step_index:4,state:'DONE',tool_info:{name:'view_file',parameters:{AbsolutePath:'fixture.txt'},error:'synthetic not found'}}})+'\n';
+ child.stdout.write(errorEvent);child.stdout.write(errorEvent);
+ assert.equal(diagnostics.length,1);assert.match(diagnostics[0].toolErrors[0].error,/not found/);
+ assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,1);
+ child.stdout.write(success('done'));child.emit('close',0);await running;
+});

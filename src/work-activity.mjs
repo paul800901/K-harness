@@ -9,7 +9,7 @@ export function createWorkActivity(state, now = Date.now) {
   const at=now(),previous=state.activity;
   state.activity={...previous,lastEventAt:at,phase,phaseSince:phase===previous.phase?previous.phaseSince:at};
  };
- const tool = (id,done,kind='tool') => {
+ const tool = (id,done,kind='tool',name) => {
   if(!state.activity)begin();
   if(toolStates.get(id)===done)return; // Repeated tool status is not new output.
   toolStates.set(id,done);
@@ -17,6 +17,7 @@ export function createWorkActivity(state, now = Date.now) {
   const pending=[...tools.values()];
   const phase=pending.some(t=>t.kind==='worker')?'worker':pending.length?'tool':'active';
   record(phase);
+  if(typeof name==='string')state.activity.lastToolName=name;
   if(pending.length)state.activity.phaseSince=Math.min(...pending.filter(t=>t.kind===phase).map(t=>t.since));
  };
  return {begin,record,tool,clear(){tools.clear();toolStates.clear();state.activity=null;}};
@@ -33,7 +34,7 @@ export function codexWorkActivity(activity,{method,params:p={}}) {
  if(['agentMessage','reasoning'].includes(i.type))activity.record();
  else if(i.type==='contextCompaction')activity.record(done?'active':'compacting');
  else if(['mcpToolCall','commandExecution','fileChange','collabAgentToolCall'].includes(i.type))
-  activity.tool(i.id,done,i.type==='collabAgentToolCall'&&i.tool==='wait'||/^(?:gemini|luna)_wait$/.test(i.tool??'')?'worker':'tool');
+  activity.tool(i.id,done,i.type==='collabAgentToolCall'&&i.tool==='wait'||/^(?:gemini|luna)_wait$/.test(i.tool??'')?'worker':'tool',i.tool??i.type);
 }
 
 export function claudeWorkActivity(activity,message) {
@@ -44,7 +45,7 @@ export function claudeWorkActivity(activity,message) {
  }else if(message.type==='assistant'){
   activity.record();
   for(const block of message.message?.content??[])if(block.type==='tool_use')
-   activity.tool(block.id,false,/^(?:Agent|Task|.*__(?:luna|gemini)_wait)$/.test(block.name??'')?'worker':'tool');
+   activity.tool(block.id,false,/^(?:Agent|Task|.*__(?:luna|gemini)_wait)$/.test(block.name??'')?'worker':'tool',block.name);
  }else if(message.type==='user'){
   const blocks=message.message?.content;
   for(const block of Array.isArray(blocks)?blocks:[])if(block.type==='tool_result')activity.tool(block.tool_use_id,true);
@@ -55,6 +56,6 @@ export function claudeWorkActivity(activity,message) {
 
 export function geminiWorkActivity(activity,event) {
  const step=event.step_update;
- if(step?.tool_info)activity.tool(String(step.step_index),step.state==='DONE'||!!step.tool_info.error);
+ if(step?.tool_info)activity.tool(String(step.step_index),step.state==='DONE'||!!step.tool_info.error,'tool',step.tool_info.name??step.tool_name);
  else if(step?.text_delta)activity.record();
 }

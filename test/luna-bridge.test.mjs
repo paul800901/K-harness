@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {createLunaBridge} from '../src/luna-bridge.mjs';
+import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {approvalRequest} from '../src/desktop-permissions.mjs';
 
 const root = path.resolve('.runtime','luna-bridge-tests',randomUUID());
@@ -35,9 +35,9 @@ function fakeHost({accountType='chatgpt', models=catalog, onStart, threadRead, p
   return {host, calls, closeCount:()=>closedCount, setOptions:o=>options=o, finish(threadId='thread-1',turnId='turn-1') {status='completed';host.emit({method:'turn/completed',params:{threadId,turn:{id:turnId,status:'completed'}}});},
     item(threadId,item) {items.push(item);host.emit({method:'item/completed',params:{threadId,item}});},releaseTerminals(){terminals=[];}};
 }
-async function make({accountType,models,onStart,threadRead,onChange=()=>{},onRequest,terminalData,terminalStuck,accessMode='workspace-write',workerPolicy={model:'gpt-6-luna',effort:'high'}}={}) {
+async function make({accountType,models,onStart,threadRead,onChange=()=>{},onRequest,terminalData,terminalStuck,watchOptions,accessMode='workspace-write',workerPolicy={model:'gpt-6-luna',effort:'high'}}={}) {
   let fixture; const parentId=randomUUID();
-  const bridge=await createLunaBridge({root,workspace,parentId,executable:'codex',onChange,onRequest,accessMode,workerPolicy,
+  const bridge=await createLunaBridge({root,workspace,parentId,executable:'codex',onChange,onRequest,accessMode,workerPolicy,watchOptions,
     hostFactory:options=>{fixture=fakeHost({accountType,models,onStart,threadRead,parentId,terminalData,terminalStuck});fixture.setOptions(options);return fixture.host;}});
   return {bridge,fixture};
 }
@@ -301,11 +301,11 @@ test('fully trusted workers send never approval and danger-full-access to the na
  }finally{await bridge.close();}
 });
 
-// Model-facing outputs never repeat in-flight text, and long results remain locally readable.
-test('Luna result hides unfinished output and saves full completed output inside workspace',async()=>{
+// Inspection has a bounded partial preview; complete long output stays local.
+test('Luna result bounds unfinished output and saves full completed output inside workspace',async()=>{
  const {lunaResult}=await import('../src/luna-bridge.mjs');
  const text='result\n'.repeat(4000),r={workspace,parentId:randomUUID(),requestId:'long',settled:false,status:'running',output:text};
- const running=await lunaResult(r);assert.equal(running.output,undefined);assert.equal(running.outputPreview,undefined);assert.equal(running.outputLength,text.length);
+ const running=await lunaResult(r);assert.equal(running.output,undefined);assert.equal(running.outputPreview,text.slice(-1000));assert.equal(running.outputLength,text.length);
  const final=await lunaResult({...r,settled:true,status:'completed'});
  assert.equal(final.output,undefined);assert.equal(final.outputPreview.length,1000);assert.ok(final.outputPath.startsWith(workspace+path.sep));assert.equal(await readFile(final.outputPath,'utf8'),text);
  assert.equal(path.basename(final.outputPath),'long.output.md');
@@ -374,4 +374,77 @@ test('AI-auto bridge requires explicit concrete model and effort, then forwards 
    assert.equal(turn.model,model);assert.equal(turn.effort,effort);
   }
  }finally{await bridge.close();}
+});
+
+test('wait deadline ends only the wait; event completion wakes all listeners without polling',async()=>{
+ const {bridge,fixture}=await make();try{
+  const started=await bridge.start({requestId:'event-wait',task:'long synthetic work'});
+  const timed=await bridge.wait({requestId:started.requestId,timeoutMs:15});
+  assert.equal(timed.settled,false);
+  const before=fixture.calls.filter(c=>c.method==='thread/read').length;
+  const waiting=bridge.wait({requestId:started.requestId,timeoutMs:3000});
+  await new Promise(r=>setTimeout(r,1100));
+  assert.equal(fixture.calls.filter(c=>c.method==='thread/read').length,before+1,'only initial inspect, no one-second poll');
+  const second=bridge.wait({requestId:started.requestId,timeoutMs:3000});
+  fixture.finish();
+  assert((await waiting).settled);assert((await second).settled);
+  assert.equal(fixture.calls.filter(c=>c.method==='turn/start').length,1);
+  assert.equal(fixture.calls.filter(c=>c.method==='turn/interrupt').length,0);
+ }finally{await bridge.close();}
+});
+
+test('runtime quiet check exposes genuine activity without changing or restarting the native work',async()=>{
+ let wake;const attention=new Promise(r=>{wake=r;});
+ const {bridge,fixture}=await make({watchOptions:{quietMs:30},onChange:r=>{if(r.inspection)wake(r);}});
+ try{
+  const started=await bridge.start({requestId:'quiet-bridge',task:'synthetic long work'});
+  fixture.host.emit({method:'item/started',params:{threadId:started.threadId,item:{id:'tool-live',type:'commandExecution'}}});
+  const keepAlive=setTimeout(()=>wake(null),3000);
+  const observed=await attention;clearTimeout(keepAlive);assert(observed);
+  const result=await lunaResult(await bridge.inspect({requestId:started.requestId}));
+  assert.equal(result.inspection.statusObserved,'running');assert.equal(result.activity.lastToolName,'commandExecution');assert(result.lastReadAt);
+  assert.equal(result.settled,false);assert.equal(fixture.calls.filter(c=>c.method==='turn/start').length,1);
+  assert.equal(fixture.calls.filter(c=>c.method==='turn/interrupt').length,0);
+  fixture.finish();
+ }finally{await bridge.close();}
+});
+
+test('delayed inspection cannot replace a newer terminal event with an old running readback',async()=>{
+ let release;const gate=new Promise(r=>{release=r;});let delayed=false;
+ const {bridge,fixture}=await make({threadRead:(p)=>delayed?gate:undefined});
+ try{
+  const started=await bridge.start({requestId:'late-read',task:'fake task'});delayed=true;
+  const reading=bridge.inspect({requestId:started.requestId});await new Promise(r=>setImmediate(r));
+  fixture.finish();release({thread:{id:started.threadId,cwd:workspace,status:{type:'active'},turns:[{id:started.turnId,status:'inProgress',items:[]}]}});
+  assert.equal((await reading).status,'completed');delayed=false;
+ }finally{release?.({});await bridge.close();}
+});
+
+test('unfinished result includes bounded partial output references and approval state',async()=>{
+ const result=await lunaResult({requestId:'partial',status:'running',settled:false,output:'x'.repeat(9000),outputFiles:['part.txt'],waitingForApproval:true,lastActivityAt:100,activity:{phase:'tool',lastEventAt:100}});
+ assert.equal(result.outputLength,9000);assert.equal(result.outputPreview.length,1000);assert.deepEqual(result.outputFiles,['part.txt']);assert.equal(result.waitingForApproval,true);assert.equal(result.lastActivityAt,100);
+});
+
+test('new same-turn native activity clears transient unresolved inspection without another read',async()=>{
+ let fail=false;const {bridge,fixture}=await make({threadRead:()=>{if(fail)throw Error('temporary read failure');}});
+ try{
+  const started=await bridge.start({requestId:'recover-read',task:'fake'});fail=true;
+  assert.equal((await bridge.inspect({requestId:started.requestId})).status,'unresolved');
+  fixture.host.emit({method:'item/agentMessage/delta',params:{threadId:started.threadId,turnId:started.turnId,delta:'new'}});
+  assert.equal((await bridge.list(false))[0].status,'running');
+ }finally{fail=false;await bridge.close();}
+});
+
+test('overlapping approvals remain suspended until the final decision and restart the quiet clock',async()=>{
+ const resolve=[];const {bridge,fixture}=await make({watchOptions:{quietMs:100},onRequest:()=>new Promise(r=>resolve.push(r))});
+ try{
+  const started=await bridge.start({requestId:'approval-watch',task:'fake'});
+  const message={method:'item/commandExecution/requestApproval',params:{threadId:started.threadId,turnId:started.turnId}};
+  const a=fixture.host.requestHandler(message),b=fixture.host.requestHandler(message);
+  await new Promise(r=>setTimeout(r,130));let record=(await bridge.list(false))[0];assert(record.waitingForApproval);assert.equal(record.inspection,undefined);
+  resolve[0]({decision:'accept'});await a;assert((await bridge.list(false))[0].waitingForApproval);
+  const decided=Date.now();resolve[1]({decision:'accept'});await b;record=(await bridge.list(false))[0];
+  assert.equal(record.waitingForApproval,undefined);assert(record.lastActivityAt>=decided);
+  await new Promise(r=>setTimeout(r,10));assert.equal((await bridge.list(false))[0].inspection,undefined);
+ }finally{for(const r of resolve)r({decision:'decline'});await bridge.close();}
 });

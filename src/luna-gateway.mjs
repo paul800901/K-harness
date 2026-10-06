@@ -54,7 +54,7 @@ function createMcpServer(bridge,{geminiOnly=false,editGoal,resumeGoal}={}) {
     args=>bridge.start(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
   register(`${prefix}_wait`,`Manual recovery only: wait for an existing ${geminiOnly?'Flash':'Sol, Luna or Flash'} subagent task. Normal work is completion-notified automatically; do not repeatedly call this tool. A timeout does not cancel or replay it.`,waitSchema,
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
-  register(`${prefix}_inspect`,'Read existing worker task state without starting or replaying work.',idSchema,
+  register(`${prefix}_inspect`,'Read existing worker state, last genuine activity, pending approval, non-destructive inspection and known partial output references without starting or replaying work. K checks prolonged silence in the runtime and sends one attention notice per quiet episode; absence of output is not proof of a dead worker. Do not repeatedly poll. Inspect existing files before any explicitly authorized recovery.',idSchema,
     args=>bridge.inspect(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
   register(`${prefix}_cancel`,'Request cancellation of an existing worker task and read back its native state.',idSchema,
     args=>bridge.cancel(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});

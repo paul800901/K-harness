@@ -83,7 +83,7 @@ function targetFrom(info) {
 }
 
 /** Feed arbitrary UTF-8 chunks; retain only the last result and bounded errors. */
-export function geminiStream(onEvent=()=>{}) {
+export function geminiStream(onEvent=()=>{},onDiagnostic=()=>{}) {
   const decoder=new StringDecoder('utf8');let pending='',result,init;
   const toolErrors=[],deniedTools=[],seen=new Set(),lastTools=new Map();
   const actions={write_to_file:'write_file',replace_file_content:'write_file',multi_replace_file_content:'write_file',view_file:'read_file',read_url_content:'read_url',run_command:'command',call_mcp_tool:'mcp'};
@@ -102,6 +102,7 @@ export function geminiStream(onEvent=()=>{}) {
     const key=JSON.stringify(entry);if(seen.has(key))return;seen.add(key);
     if(toolErrors.length<20)toolErrors.push(entry);
     if(denied(message)&&deniedTools.length<20)deniedTools.push({tool:entry.tool,target:entry.target});
+    onDiagnostic({toolErrors:structuredClone(toolErrors),deniedTools:structuredClone(deniedTools)});
   }
   function feed(text) {pending+=text;let end;while((end=pending.indexOf('\n'))>=0){line(pending.slice(0,end));pending=pending.slice(end+1);}}
   return {write:chunk=>feed(decoder.write(chunk)),end(){
@@ -222,7 +223,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     })();
     return new Set(await catalog);
   }
-  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{}}={}) {
+  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{},onDiagnostic=()=>{}}={}) {
     if(!GEMINI_WORKER_MODELS.includes(model)||!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash 只接受 gemini-3.8-flash 與 low|medium|high；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
     const nativeModel=`${model}-${effort}`;
@@ -238,7 +239,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     const runHome=server?path.join(home,'runs',runId):home;
     await prepare(runHome,server);
     const before=await gitStatus(workspace),telemetry={},activity=createWorkActivity(telemetry);
-    const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);});
+    const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);},onDiagnostic);
     const args=['-p',geminiInstruction(task,accessMode,server),'--model',nativeModel,'--output-format','stream-json','--print-timeout',`${Math.ceil(timeoutMs/1000)}s`,'--log-file',path.join(runHome,`${runId}.log`),'--disable-slash-commands'];
     if(accessMode==='danger-full-access')args.push('--dangerously-skip-permissions');
     // Native turns finish themselves; duration/quiet activity are display-only.

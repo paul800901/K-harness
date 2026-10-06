@@ -214,3 +214,37 @@ test('native goal turn winning a Flash notification race preserves rejected resu
  emit({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'native-goal-turn',status:'completed'}}});await f.toolOutputSent;await new Promise(r=>setTimeout(r,30));assert.equal(attempts,2);assert.equal(f.c.state.status,'working');assert.equal(f.workerRecords.size,1);
  }finally{f.c.state.goal=null;await f.c.close();}
 });
+
+test('quiet Flash notification is delivered once, leaves completion armed, and does not start another worker',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long work'});
+  const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:'quiet-notice',model:'gemini-3.8-flash',effort:'low',task:'fake'});
+  const record=f.workerRecords.get('quiet-notice');record.inspection={noticeId:'quiet-fixture',checkedAt:1000,lastActivityAt:0,statusObserved:'running',reason:'quiet'};
+  f.bridgeOptions[0].onChange(record);
+  f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
+  await f.toolOutputSent;await new Promise(r=>setTimeout(r,30));
+  assert.match(f.calls.find(x=>x.params?.toolOutput)?.params.toolOutput.output,/久無活動不等於卡死/);
+  f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-2',status:'completed'}}});
+  for(let i=0;i<3;i++)f.bridgeOptions[0].onChange(record);
+  await new Promise(r=>setTimeout(r,30));
+  assert.equal(f.calls.filter(x=>x.params?.toolOutput).length,1);
+  delete record.inspection;record.lastActivityAt=5000;f.bridgeOptions[0].onChange(record);
+  record.inspection={noticeId:'quiet-fixture',checkedAt:9000,lastActivityAt:5000,statusObserved:'running',reason:'next long command'};f.bridgeOptions[0].onChange(record);
+  await new Promise(r=>setTimeout(r,20));assert.equal(f.calls.filter(x=>x.params?.toolOutput).length,1,'same job does not wake again just for another quiet command');
+  const saved=(await listMainSessions(f.root)).sessions.find(s=>s.threadId==='codex-parent');assert.equal(saved.workerNotifications['quiet-fixture'],'delivery-attempted');assert.equal(saved.workerNotifications['quiet-notice'],undefined);
+  record.status='completed';record.settled=true;delete record.inspection;f.bridgeOptions[0].onChange(record);
+  for(let i=0;i<30&&!f.calls.some(x=>x.params?.toolOutput?.output.includes('工人完成通知'));i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(f.calls.filter(x=>x.params?.toolOutput).length,2);assert.equal(f.workerRecords.size,1);
+ }finally{await f.c.close();}
+});
+
+test('fresh Flash activity removes a queued quiet warning before the parent is idle',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long work'});
+  const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:'fresh-before-idle',model:'gemini-3.8-flash',effort:'low',task:'fake'});
+  const record=f.workerRecords.get('fresh-before-idle');record.inspection={noticeId:'quiet-expired'};f.bridgeOptions[0].onChange(record);
+  delete record.inspection;record.lastActivityAt=Date.now();f.bridgeOptions[0].onChange(record);
+  f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
+  await new Promise(r=>setTimeout(r,40));assert.equal(f.calls.filter(x=>x.params?.toolOutput).length,0);
+ }finally{await f.c.close();}
+});

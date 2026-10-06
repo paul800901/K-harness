@@ -4,7 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {chromium} from 'playwright';
 import {preview} from 'vite';
-const out=path.resolve('.runtime/worker-wait-20261006/ui');await mkdir(out,{recursive:true});
+const out=path.resolve('.runtime/long-work-observation-20261006/ui');await mkdir(out,{recursive:true});
 const server=await preview({preview:{host:'127.0.0.1',port:5196,strictPort:true}}),errors=[],results=[];let browser;
 try{
  browser=await chromium.launch({headless:true,executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe'});
@@ -24,6 +24,11 @@ try{
   await page.evaluate(now=>window.testNow=now+300000,now);
   await panel.getByText('已 5 分 2 秒無新活動回報 · 是否卡住待確認',{exact:true}).waitFor();
   await footer.filter({hasText:'久未回報：1'}).waitFor();
+  const checked={...base,workerDetails:details.map(w=>w.requestId==='flash-1'?{...w,lastToolName:'view_file',inspection:{checkedAt:now+300000,lastActivityAt:now-2000,reason:'久無新活動，查詢仍未結束；不能據此判定卡死，未停止或重送。'}}:w)};
+  await page.evaluate(s=>window.testState(s),checked);
+  await panel.getByText('查看狀態細節',{exact:true}).first().click();
+  await panel.getByText('久無活動檢查',{exact:true}).waitFor();await panel.getByText('view_file',{exact:true}).waitFor();
+  await panel.getByText(/不能據此判定卡死/).waitFor();
   const overflow=await panel.evaluate(e=>{const r=e.getBoundingClientRect();return{left:r.left,right:r.right,inner:innerWidth,overflow:e.scrollWidth>e.clientWidth+1};});assert(overflow.left>=0&&overflow.right<=overflow.inner&&!overflow.overflow,JSON.stringify(overflow));
   await panel.getByText('已結束 1 個',{exact:true}).click();await panel.locator('[data-status="danger"]').filter({hasText:'失敗'}).waitFor();
   await page.screenshot({path:path.join(out,`${width}-${scale}-quiet.png`)});

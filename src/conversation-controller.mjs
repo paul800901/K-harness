@@ -55,9 +55,9 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      status:unresolved?'unresolved':worker.status??(ended?'ended':'unknown'),
      settled:worker.settled===true||ended,
      lastActivityAt:worker.lastActivityAt??worker.activity?.lastEventAt,lastReadAt:worker.lastReadAt??worker.readAt,
-     activity:worker.activity,startedAt:worker.startedAt,
+     activity:worker.activity,startedAt:worker.startedAt,inspection:worker.inspection,lastToolName:worker.lastToolName??worker.activity?.lastToolName,
      error:safeError(worker.error)??safeError(activityTool?.error),
-     confirmationReason:summary(question?.title??question?.text),
+     confirmationReason:summary(question?.title??question?.text??(worker.waitingForApproval?'原生工具等待核准':undefined)),
      workerConnection:s.workerConnection,
     };
    });

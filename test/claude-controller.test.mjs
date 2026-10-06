@@ -1160,3 +1160,36 @@ test('Claude stop closes the host even when clearing the native goal is unconfir
 test('Claude cannot silently turn an edit-only request into new work',async()=>{
  const f=await fixture();try{await f.controller.open({});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.host.startCalls.length,0);}finally{await f.controller.close();}
 });
+
+for(const provider of ['gemini','codex'])test(`${provider} quiet notice wakes Claude only once and preserves later completion`,async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'synthetic long work'});await f.gatewayOptions.bridge.start({requestId:'quiet',task:'bounded'});
+  const record={provider,parentId:f.controller.state.threadId,requestId:'quiet',status:'running',settled:false,inspection:{noticeId:'quiet-one',checkedAt:1000,lastActivityAt:0}};
+  f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
+  assert.match(f.host.startCalls[1][0].text,/久無活動不等於卡死/);
+  f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,2);
+  record.settled=true;record.status='completed';delete record.inspection;record.output='done';f.bridgeOptions.onChange(record);await waitFor(()=>f.host.startCalls.length===3);
+  assert.match(f.host.startCalls[2][0].text,/工人完成通知/);
+ }finally{await f.controller.close();}
+});
+
+test('Claude native progress ignores elapsed pulses; full background snapshot is not completion',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'synthetic'});const emit=f.hostOptions.onMessage;
+  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'bg-task',tool_use_id:'bg-tool'});
+  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'fg-task',tool_use_id:'fg-tool'});
+  const worker=f.controller.state.workers.find(w=>w.nativeTaskId==='bg-task');
+  emit({type:'system',subtype:'task_progress',task_id:'bg-task',usage:{total_tokens:9,tool_uses:1,duration_ms:5},last_tool_name:'Read'});
+  const progress=worker.lastActivityAt;assert(Number.isFinite(progress));assert.equal(worker.lastToolName,'Read');
+  emit({type:'system',subtype:'task_progress',task_id:'bg-task',usage:{total_tokens:9,tool_uses:1,duration_ms:50000}});assert.equal(worker.lastActivityAt,progress);
+  emit({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'bg-task',task_type:'local_agent'}]});
+  emit({type:'system',subtype:'background_tasks_changed',tasks:[]});
+  assert.equal(worker.status,'unresolved');assert.equal(worker.settled,false);assert.equal(worker.lastActivityAt,progress);
+  assert.equal(f.controller.state.workers.find(w=>w.nativeTaskId==='fg-task').status,'running','not a background task, absence is not authoritative');
+  emit({type:'system',subtype:'task_notification',task_id:'bg-task',status:'completed',summary:'done'});
+  assert.equal(worker.status,'completed');assert.equal(worker.settled,true);
+  assert.equal(worker.backgroundMissing,undefined);assert.equal(worker.error,undefined);
+  emit({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'bg-task'}]});assert.equal(worker.status,'completed');
+  assert.equal(f.host.startCalls.length,1,'native notifications remain the native core responsibility, no duplicate K wake');
+ }finally{await f.controller.close();}
+});
