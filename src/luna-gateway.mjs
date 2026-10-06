@@ -26,7 +26,7 @@ function createMcpServer(bridge,{geminiOnly=false,editGoal,resumeGoal}={}) {
     }catch(error){return {isError:true,content:[{type:'text',text:String(error?.message??error)+' Do not retry automatically; inspect the current native goal.'}]};}
   });
   if(resumeGoal)server.registerTool('goal_resume',{
-    description:'Resume this main Codex conversation\'s existing paused native goal ONLY after the user explicitly asks to continue/resume it. No second confirmation or browser is needed. Editing goal text alone is NOT a resume request. Preserve the same goal objective, budget and usage; do not create a goal, restart/replay a task or bypass usage/budget limits. Safe during the current main turn: the native core manages continuation after that turn. Subagents cannot resume the parent goal. Use native get_goal to inspect. This is K conversation control, not a Gemini worker task.',
+    description:'Resume this main Codex conversation\'s existing paused or blocked native goal ONLY after the user explicitly asks to continue/resume it. No second confirmation or browser is needed. Editing goal text alone is NOT a resume request. Preserve the same goal objective, budget and usage; do not create a goal, restart/replay a task or bypass usage/budget limits. Safe during the current main turn: the native core manages continuation after that turn. Subagents cannot resume the parent goal. Use native get_goal to inspect. This is K conversation control, not a Gemini worker task.',
     inputSchema:z.strictObject({}),
     annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
   },async(args,context)=>{

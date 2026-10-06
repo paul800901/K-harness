@@ -631,3 +631,26 @@ test('Codex receives Google Ops connector without replacing Flash MCP or native 
   assert.equal(call.sandbox,'read-only');
  }finally{await f.c.close();}
 });
+
+
+test('native child activity survives status reads while its parent stays idle and never starts another turn',async()=>{
+ const f=await fixture();const original=f.host.request;let ended=false;
+ f.host.request=async(method,p)=>{
+  if(p?.threadId==='observed-child'&&method==='thread/read')return {thread:{parentThreadId:'test-thread',status:{type:ended?'idle':'active'},turns:[{id:'child-turn',status:ended?'completed':'inProgress'}]}};
+  if(p?.threadId==='observed-child'&&method==='turn/interrupt'){ended=true;return {};}
+  return original(method,p);
+ };
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  f.hooks.onEvent({method:'item/started',params:{threadId:'test-thread',item:{id:'child-announcement',type:'subAgentActivity',agentThreadId:'observed-child',kind:'started'}}});
+  await f.c.workers();const before=f.calls.filter(c=>c.method==='turn/start').length;
+  f.hooks.onEvent({method:'turn/started',params:{threadId:'observed-child',turn:{id:'child-turn'}}});
+  f.hooks.onEvent({method:'item/reasoning/textDelta',params:{threadId:'observed-child',turnId:'child-turn',delta:'work'}});
+  await f.c.workers();const at=f.c.state.workers[0].activity.lastEventAt;
+  assert.equal(typeof at,'number');assert.equal(f.c.state.busy,false);
+  f.hooks.onEvent({method:'thread/tokenUsage/updated',params:{threadId:'observed-child'}});
+  await f.c.workers();assert.equal(f.c.state.workers[0].activity.lastEventAt,at);
+  f.hooks.onEvent({method:'item/reasoning/textDelta',params:{threadId:'foreign',turnId:'child-turn',delta:'foreign'}});
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,before);
+ }finally{ended=true;await f.c.close();}
+});

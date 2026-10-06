@@ -41,14 +41,14 @@ try{
    return route.fulfill({json:result});
   });
   await page.goto('http://127.0.0.1:5198');
-  const effort=page.getByRole('combobox',{name:'推理程度'}),model=page.getByRole('button',{name:'選擇主代理模型'});
-  await effort.waitFor();assert.equal(await effort.inputValue(),'');
+  const effort=page.getByRole('combobox',{name:'推理程度',includeHidden:true}),effortTrigger=page.getByRole('button',{name:'推理程度與速度',exact:true}),model=page.getByRole('button',{name:'選擇主代理模型'});
+  await effortTrigger.click();await effort.waitFor();assert.equal(await effort.inputValue(),'');
   await effort.selectOption('high');assert.equal(await effort.inputValue(),'high','Luna high remains a local draft before state changes');
   await page.evaluate(state=>window.testState(state),sol);
   const capacityNote=page.locator('.capacity-model-change-note');await capacityNote.waitFor();
   assert.equal((await capacityNote.textContent()).trim(),'服務容量不足，主代理已改由 GPT-6.1 Sol／中 接續（原 GPT-6 Luna）');
   assert.equal(await effort.inputValue(),'medium','fallback state, not the Luna high draft, is visible while busy');
-  assert.equal(await effort.isDisabled(),true);
+  assert.equal(await effortTrigger.isDisabled(),true);assert.match(await effortTrigger.textContent(),/中/);
   assert.equal(await model.isDisabled(),true);
   assert.equal(await model.textContent(),'GPT-6.1 Sol','actual main model remains readable while disabled');
   assert.equal(await page.locator('.capacity-model-change-note').count(),1,'one capacity note for the turn');
@@ -58,7 +58,7 @@ try{
   assert.equal((await page.locator('.model-change-note').textContent()).trim(),'主代理已切換：gpt-6-luna · Codex 訂閱 → GPT-6.1 Sol · Codex 訂閱','ordinary manual model-change text is unchanged');
   const disabledStyles=await page.evaluate(()=>{
    const sample=element=>{const style=getComputedStyle(element);return {display:style.display,opacity:style.opacity,color:style.color,background:style.backgroundColor,cursor:style.cursor};};
-   return {model:sample(document.querySelector('.composer-model')),effort:sample(document.querySelector('.composer-effort select'))};
+   return {model:sample(document.querySelector('.composer-model')),effort:sample(document.querySelector('.reasoning-trigger'))};
   });
   assert.equal(disabledStyles.model.opacity,'1','disabled model text is not dimmed');
   assert.equal(disabledStyles.effort.opacity,'1','disabled effort text remains fully opaque and readable');

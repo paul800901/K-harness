@@ -13,7 +13,7 @@ const SOL='gpt-6.1-sol';
 const LEGACY_SOL='gpt-6-sol';
 const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const catalog=[
- {model:ASTRA,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
+ {model:ASTRA,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image'],serviceTiers:[{id:'priority',name:'Fast',description:'Fast service'}]},
  {model:TERRA,displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},
  {model:LUNA,displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text']},
  ...[SOL,LEGACY_SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']})),
@@ -25,8 +25,8 @@ const flush=()=>new Promise(resolve=>setImmediate(resolve));
 async function fixture({sessions=[],completeTurns=true,controllerOptions={},failAt=null,models=catalog}={}){
  await mkdir(ROOT_TESTS,{recursive:true});
  const root=await mkdtemp(path.join(ROOT_TESTS,'desktop-model-switch-'));
- const histories=new Map(),unsupportedTurnReads=new Set(),calls=[],hosts=[];
- let nextThread=0,nextTurn=0;
+ const histories=new Map(),nativeTiers=new Map(),unsupportedTurnReads=new Set(),calls=[],hosts=[];
+ let nextThread=0,nextTurn=0,turnStartOverride=null;
  for(const session of sessions){
   histories.set(session.threadId,session.history??existingHistory(session.threadId));
   await saveMainSession(root,{threadId:session.threadId,model:session.model??ASTRA,workspace:session.workspace??root,accessMode:session.accessMode??'workspace-write',effort:session.effort??'high',workerPolicy:session.workerPolicy});
@@ -35,6 +35,7 @@ async function fixture({sessions=[],completeTurns=true,controllerOptions={},fail
   const waiters=[];let resolveClosed;
   const host={closed:new Promise(resolve=>{resolveClosed=resolve;}),calls,waiters,closeCount:0,
    notify(message){calls.push({method:'$notify',p:message});},
+   emit(event){options.onEvent?.(event);},
    waitForMcp(threadId,name){return Promise.resolve({threadId,name,status:'ready'});},
    async close(){this.closeCount++;resolveClosed();},
    async request(method,p={}){
@@ -53,13 +54,15 @@ async function fixture({sessions=[],completeTurns=true,controllerOptions={},fail
      if(failAt==='thread/start')throw new Error('fixture thread start failure');
      const id=`model-switch-new-${++nextThread}`;
      histories.set(id,{turns:[]});unsupportedTurnReads.add(id);
-     return {thread:{id}};
+     nativeTiers.set(id,p.serviceTier??'default');return {thread:{id},serviceTier:nativeTiers.get(id)};
     }
-    if(method==='thread/resume')return {thread:{id:p.threadId}};
+    if(method==='thread/resume')return {thread:{id:p.threadId},serviceTier:nativeTiers.get(p.threadId)??'default'};
     if(method==='thread/backgroundTerminals/list')return {data:[],nextCursor:null};
     if(method==='thread/backgroundTerminals/clean')return {};
     if(method==='turn/start'){
+     if(turnStartOverride)return turnStartOverride({params:p,emit:event=>options.onEvent?.(event)});
      const id=`model-switch-turn-${++nextTurn}`;
+     nativeTiers.set(p.threadId,p.serviceTier??nativeTiers.get(p.threadId)??'default');
      unsupportedTurnReads.delete(p.threadId);
      const text=p.input?.find(item=>item.type==='text')?.text??'';
      const prior=histories.get(p.threadId)??{turns:[]};
@@ -81,7 +84,7 @@ async function fixture({sessions=[],completeTurns=true,controllerOptions={},fail
   hosts.push(host);return host;
  };
  const makeController=()=>createDesktopController({root,executable:'fixture',hostFactory,...controllerOptions});
- return {root,c:makeController(),makeController,hosts,calls,histories,unsupportedTurnReads};
+ return {root,c:makeController(),makeController,hosts,calls,histories,nativeTiers,unsupportedTurnReads,setTurnStartOverride(fn){turnStartOverride=fn;}};
 }
 
 test('failed open closes the injected owner browser gateway',async()=>{
@@ -126,9 +129,10 @@ test('switch confirmation can be declined, is required for existing history, and
   const before={model:f.c.state.model,effort:f.c.state.effort,modelChanges:structuredClone(f.c.state.modelChanges)};
   await assert.rejects(f.c.selectModel({threadId:'existing',model:TERRA}),/先確認/);
   const cancelled=await f.c.selectModel({threadId:'existing',model:TERRA,confirmed:false});
-  assert.deepEqual(cancelled,{cancelled:true,threadId:'existing',model:ASTRA,effort:'high'});
+  assert.deepEqual(cancelled,{cancelled:true,threadId:'existing',model:ASTRA,effort:'high',serviceTier:'default',effectiveServiceTier:'default'});
   await assert.rejects(f.c.selectModel({threadId:'existing',model:'not-in-picker',confirmed:true}),/未提供指定模型/);
   await assert.rejects(f.c.selectModel({threadId:'existing',model:TERRA,effort:'ultra',confirmed:true}),/推理程度目前不可用/);
+  await assert.rejects(f.c.selectModel({threadId:'existing',model:TERRA,serviceTier:'priority',confirmed:true}),/指定服務速度目前不可用/);
   assert.deepEqual({model:f.c.state.model,effort:f.c.state.effort,modelChanges:f.c.state.modelChanges},before);
   assert.equal((await f.c.sessions()).sessions.find(item=>item.threadId==='existing').model,ASTRA);
   await f.c.selectModel({threadId:'existing',model:TERRA,confirmed:true});
@@ -156,9 +160,9 @@ test('two model selections affect only the next turn, preserve effort policy and
 
   const beforeSelections=f.calls.filter(call=>call.method==='turn/start'||call.method==='thread/start').length;
   const terra=await f.c.selectModel({threadId,model:TERRA,confirmed:true});
-  assert.deepEqual(terra,{cancelled:false,threadId,model:TERRA,effort:'high'});
+  assert.deepEqual(terra,{cancelled:false,threadId,model:TERRA,effort:'high',serviceTier:'default',effectiveServiceTier:'default'});
   const luna=await f.c.selectModel({threadId,model:LUNA,confirmed:true});
-  assert.deepEqual(luna,{cancelled:false,threadId,model:LUNA,effort:'low'});
+  assert.deepEqual(luna,{cancelled:false,threadId,model:LUNA,effort:'low',serviceTier:'default',effectiveServiceTier:'default'});
   assert.equal(f.calls.filter(call=>call.method==='turn/start'||call.method==='thread/start').length,beforeSelections);
   assert.equal(f.c.state.modelChanges.length,0);
   assert.equal(f.c.state.accessMode,'read-only');
@@ -229,7 +233,7 @@ test('blank unsent conversation keeps its restoration cache after selecting anot
   const opened=await f.c.open({model:ASTRA,effort:'high',accessMode:'read-only'});
   const blankId=opened.threadId;
   const selected=await f.c.selectModel({threadId:blankId,model:TERRA});
-  assert.deepEqual(selected,{cancelled:false,threadId:blankId,model:TERRA,effort:'high'});
+  assert.deepEqual(selected,{cancelled:false,threadId:blankId,model:TERRA,effort:'high',serviceTier:'default',effectiveServiceTier:'default'});
   await f.c.open({model:ASTRA,threadId:'other'});
   await f.c.open({model:TERRA,threadId:blankId});
   assert.equal(f.c.state.threadId,blankId);
@@ -246,5 +250,64 @@ test('blank unsent conversation keeps its restoration cache after selecting anot
   assert.equal(f.c.state.modelChanges.length,0);
   const saved=(await f.c.sessions()).sessions.find(item=>item.threadId===blankId);
   assert.equal(saved.lastUsedModel,TERRA);
+ }finally{await f.c.close();}
+});
+
+test('Fast remains a saved next-turn choice for an unsent room and is applied only by its first native turn',async()=>{
+ const f=await fixture();
+ try{
+  const opened=await f.c.open({model:ASTRA}),threadId=opened.threadId;
+  const started=f.calls.find(call=>call.method==='thread/start');assert.equal(started.p.serviceTier,'default');
+  assert.deepEqual(f.c.state.fastTier,{id:'priority',name:'Fast',description:'Fast service'});assert.equal(f.c.state.serviceTier,'default');assert.equal(f.c.state.effectiveServiceTier,'default');
+  await f.c.selectModel({threadId,model:ASTRA,serviceTier:'priority'});
+  assert.equal(f.calls.some(call=>call.method==='thread/resume'&&call.p.threadId===threadId),false,'an unsent prepared thread has no native rollout to resume');
+  assert.equal(f.c.state.serviceTier,'priority');assert.equal(f.c.state.effectiveServiceTier,'default');
+  assert.equal((await listMainSessions(f.root)).sessions.find(row=>row.threadId===threadId).serviceTier,'priority');
+  await f.c.send({text:'Fast is applied on first send'});
+  const turn=f.calls.filter(call=>call.method==='turn/start').at(-1);assert.equal(turn.p.serviceTier,'priority');assert.equal(turn.p.serviceTierForTurn,undefined);assert.equal(f.c.state.effectiveServiceTier,'priority');
+  await f.c.close();const reopened=f.makeController();
+  try{await reopened.open({threadId,model:ASTRA});assert.equal(reopened.state.serviceTier,'priority');assert.equal(reopened.state.effectiveServiceTier,'priority');}
+  finally{await reopened.close();}
+ }finally{if(f.c.state.status!=='offline')await f.c.close();}
+});
+
+test('selecting a model without Fast schedules Standard without rewriting the native effective tier early',async()=>{
+ const f=await fixture();
+ try{
+  const opened=await f.c.open({model:ASTRA,serviceTier:'priority'}),threadId=opened.threadId;
+  assert.equal(f.c.state.effectiveServiceTier,'priority');
+  await f.c.send({text:'Fast turn'});
+  await f.c.selectModel({threadId,model:TERRA,serviceTier:'default',confirmed:true});
+  assert.equal(f.c.state.fastTier,null);assert.equal(f.c.state.serviceTier,'default');assert.equal(f.c.state.effectiveServiceTier,'priority');
+  assert.equal(f.calls.filter(call=>call.method==='thread/resume'&&call.p.threadId===threadId).length,0,'model and tier selection do not reopen or restart a submitted native thread');
+  await f.c.send({text:'Standard next turn'});
+  const turn=f.calls.filter(call=>call.method==='turn/start').at(-1);assert.equal(turn.p.serviceTier,'default');assert.equal(f.c.state.effectiveServiceTier,'default');
+ }finally{await f.c.close();}
+});
+
+test('a native turn-start event does not apply the requested tier when its request is rejected',async()=>{
+ const f=await fixture({sessions:[{threadId:'existing'}]});
+ try{
+  await f.c.open({model:ASTRA,threadId:'existing'});
+  await f.c.selectModel({threadId:'existing',model:ASTRA,serviceTier:'priority'});
+  f.setTurnStartOverride(({params,emit})=>{
+   emit({method:'turn/started',params:{threadId:params.threadId,turn:{id:'native-goal-turn'}}});
+   throw Object.assign(new Error('native turn already active'),{protocolMessage:{code:-32600}});
+  });
+  await assert.rejects(f.c.send({text:'do not infer this turn tier'}));
+  assert.equal(f.c.state.serviceTier,'priority');
+  assert.equal(f.c.state.effectiveServiceTier,'default','the event may belong to a native goal, not the rejected K turn');
+ }finally{await f.c.close();}
+});
+
+test('a turn-start transport failure makes the effective tier unknown until native readback',async()=>{
+ const f=await fixture();
+ try{
+  const {threadId}=await f.c.open({model:ASTRA,serviceTier:'priority'});
+  await f.c.selectModel({threadId,model:ASTRA,serviceTier:'default'});
+  f.setTurnStartOverride(()=>Promise.reject(new Error('fixture transport timeout')));
+  await assert.rejects(f.c.send({text:'delivery unknown'}),/fixture transport timeout/);
+  assert.equal(f.c.state.serviceTier,'default');
+  assert.equal(f.c.state.effectiveServiceTier,null);
  }finally{await f.c.close();}
 });

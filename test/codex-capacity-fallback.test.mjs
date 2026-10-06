@@ -5,11 +5,11 @@ import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 const LUNA='gpt-6-luna',SOL='gpt-6.1-sol';
-const catalog=[LUNA,SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']}));
+const catalog=[LUNA,SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image'],serviceTiers:[{id:'priority',name:'Fast',description:'Fast service'}]}));
 const overload={message:'Selected model is at capacity.',codexErrorInfo:'serverOverloaded'};
-async function fixture({goal=null,models=catalog,model=LUNA,failStart=false,immediateFailure=false,replyLost=false,solError=null,startAck=null,flash=false}={}){
+async function fixture({goal=null,models=catalog,model=LUNA,serviceTier='default',failStart=false,immediateFailure=false,replyLost=false,solError=null,startAck=null,flash=false}={}){
  await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/capacity-'));
- await saveMainSession(root,{threadId:'parent',model,effort:'high',accessMode:'read-only',workspace:root});
+ await saveMainSession(root,{threadId:'parent',model,effort:'high',serviceTier,accessMode:'read-only',workspace:root});
  const calls=[],turns=[];let nativeGoal=goal,opts,gate=null,closed,turnNumber=0,gateway,bridgeOptions,flashRecord;
  const emit=(method,params={})=>opts.onEvent({method,params:{threadId:'parent',...params}});
  const finish=(error=overload,id=turns.at(-1)?.id)=>{const t=turns.find(t=>t.id===id);if(t){t.status=error?'failed':'completed';t.error=error;}emit('turn/completed',{turn:{id,status:error?'failed':'completed',error}});};
@@ -54,6 +54,19 @@ test('capacity switches same native thread to Sol medium once; no prompt replay,
   const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.modelChanges[0].reason,'capacity');assert.equal(saved.modelChanges[0].toEffort,'medium');
   await f.c.close();const reopened=f.make();try{await reopened.open({threadId:'parent',model:SOL});assert.equal(reopened.state.modelChanges[0].reason,'capacity');assert.equal(reopened.state.effort,'medium');assert.equal(reopened.state.messages.length,2);}finally{await reopened.close();}
  }finally{await f.c.close();}
+});
+
+test('capacity handoff preserves Fast only when the target model catalog supports Fast',async()=>{
+ const supported=await fixture({serviceTier:'priority'});
+ try{
+  await supported.c.send({text:'fake fast task'});assert.equal(supported.calls.find(x=>x.method==='turn/start').p.serviceTier,'priority');supported.finish();await settle(supported.c);
+  const fallback=supported.calls.filter(x=>x.method==='turn/start').at(-1);assert.equal(fallback.p.model,SOL);assert.equal(fallback.p.serviceTier,'priority');assert.equal(supported.c.state.serviceTier,'priority');assert.equal(supported.c.state.effectiveServiceTier,'priority');
+ }finally{await supported.c.close();}
+ const unsupported=await fixture({serviceTier:'priority',models:[catalog[0],{...catalog[1],serviceTiers:[]}]});
+ try{
+  await unsupported.c.send({text:'fake fast task'});unsupported.finish();await settle(unsupported.c);
+  const fallback=unsupported.calls.filter(x=>x.method==='turn/start').at(-1);assert.equal(fallback.p.model,SOL);assert.equal(fallback.p.serviceTier,'default');assert.equal(unsupported.c.state.serviceTier,'default');assert.equal(unsupported.c.state.effectiveServiceTier,'default');
+ }finally{await unsupported.c.close();}
 });
 
 test('goal overload resumes only prior active native goal, status-only after Sol override',async()=>{
@@ -111,6 +124,9 @@ test('capacity failure during Flash completion delivery continues once without r
   assert.equal(starts.filter(x=>x.p.toolOutput).length,1);assert.equal(starts[2].p.model,SOL);assert.equal(starts[2].p.effort,'medium');
   assert.equal(starts[2].p.toolOutput,undefined);assert(!JSON.stringify(starts[2].p.input).includes('fake worker result'));
   assert.equal(f.c.state.status,'completed');assert.equal(f.c.state.model,SOL);
-  const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.model,SOL);assert.equal(saved.workerNotifications['fake-flash'],'delivery-attempted');
+  // UI completion can precede the queued atomic session write under a loaded full suite.
+  let saved;const deadline=Date.now()+3000;
+  do{saved=(await listMainSessions(f.root)).sessions[0];if(saved.model===SOL&&saved.workerNotifications?.['fake-flash']==='delivery-attempted')break;await new Promise(r=>setTimeout(r,20));}while(Date.now()<deadline);
+  assert.equal(saved.model,SOL);assert.equal(saved.workerNotifications['fake-flash'],'delivery-attempted');
  }finally{await f.c.close();}
 });

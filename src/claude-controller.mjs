@@ -84,7 +84,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   state.usage={claude:{status:'unavailable',auth:null,checkedAt:null,rateLimitStatus:null,extraUsageDisabled:null},codex:{status:'not-checked'}};
   let host=null, hostEffort=null, bridge=null, bridgeInstance=null, bridgeInitPromise=null, gateway=null, opening=false, closing=false, stopping=false, restartingHost=false, activeGeneration=0, persistChain=Promise.resolve(), persistError=null;
   const pending = new Map();
-  const activity=createWorkActivity(state);
+  const activity=createWorkActivity(state),childActivities=new Map();
   let compactionIds=new Set(),goalRefreshNeeded=false,goalSettled=Promise.resolve();
   const compactionSnapshot=()=>({ids:[...compactionIds],complete:state.progress.compactionsComplete,inFlight:state.busy});
   let currentGroupId=null,activeAssistantId=null,currentTurnId=null;const nativePending=new Set();const nativeStreams=new Map();let streamingNativeId=null;
@@ -219,7 +219,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const uuid=typeof message?.uuid==='string'?message.uuid:null;
     // A replay of an already observed child event must not revive a settled or
     // unresolved worker as running. Check before any state mutation.
-    if(uuid&&nativeChildEventIds.has(uuid))return true;
+    if(message.isReplay||uuid&&nativeChildEventIds.has(uuid))return true;
     if(stopping||closing||['interrupted','offline','uncertain'].includes(state.status))return true;
     let worker=state.workers.find(item=>item.provider==='claude-native'&&item.requestId===parentToolUseId);
     if(!worker){
@@ -229,6 +229,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     }
     if(worker.settled){if(uuid){nativeChildEventIds.add(uuid);if(nativeChildEventIds.size>2000)nativeChildEventIds.delete(nativeChildEventIds.values().next().value);}return true;}
     worker.status='running';
+    if(!childActivities.has(parentToolUseId))childActivities.set(parentToolUseId,createWorkActivity(worker));
+    claudeWorkActivity(childActivities.get(parentToolUseId),{...message,parent_tool_use_id:null});
     if(uuid){nativeChildEventIds.add(uuid);if(nativeChildEventIds.size>2000)nativeChildEventIds.delete(nativeChildEventIds.values().next().value);}
     if(message?.type==='user'&&!worker.prompt){
       const prompt=plainText(message);
@@ -323,7 +325,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(!message.isReplay&&!stopping&&!closing&&!['interrupted','offline','uncertain'].includes(state.status)){
         let worker=state.workers.find(w=>w.provider==='claude-native'&&w.requestId===message.tool_use_id);
         if(!worker){worker={provider:'claude-native',requestId:message.tool_use_id,task:message.description??'Claude Code 原生子代理',status:'running',settled:false,createdAt:new Date().toISOString()};state.workers.push(worker);}
-        worker.nativeTaskId=message.task_id;
+        worker.nativeTaskId=message.task_id;worker.startedAt??=new Date().toISOString();
       }
     } else if(message?.type==='system'&&message?.subtype==='task_started'&&message.task_type==='local_bash') {
       // Native background commands outlive the main response. Use the existing
@@ -564,7 +566,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         const workspace=await validateWorkspace(relocation?.workspace??commonSaved?.workspace??saved?.workspace??state.workspace);
         state.threadId=uiId(id);state.workspace=workspace;state.accessMode=chosenAccess;state.browserAccess={enabled:false,networkAccess:false};state.effort=chosenEffort;state.title=saved?.title??'';state.parentThreadId=commonSaved?.parentThreadId??null;state.parentTitle=commonSaved?.parentTitle??null;
         state.goal=clone(saved?.goal??null);state.goalError=null;state.goalPending=false;
-        state.messages=clone(saved?.messages??source?.messages??[]);state.tools=clone(saved?.tools??source?.tools??[]);currentGroupId=state.messages.at(-1)?.groupId??null;activeAssistantId=null;currentTurnId=state.messages.findLast(m=>m.role==='user')?.id??null;state.notices=[];state.reasoning=[];state.progress.plan=[];state.progress.tokenUsage=null;nativePending.clear();nativeStreams.clear();nativeChildEventIds.clear();streamingNativeId=null;state.artifacts=[...(saved?.artifacts??source?.artifacts??[])];state.workers=[];state.questions=[];state.busy=false;
+        state.messages=clone(saved?.messages??source?.messages??[]);state.tools=clone(saved?.tools??source?.tools??[]);currentGroupId=state.messages.at(-1)?.groupId??null;activeAssistantId=null;currentTurnId=state.messages.findLast(m=>m.role==='user')?.id??null;state.notices=[];state.reasoning=[];state.progress.plan=[];state.progress.tokenUsage=null;nativePending.clear();nativeStreams.clear();nativeChildEventIds.clear();childActivities.clear();streamingNativeId=null;state.artifacts=[...(saved?.artifacts??source?.artifacts??[])];state.workers=[];state.questions=[];state.busy=false;
         const compactions=(saved??source)?.compactions;
         compactionIds=new Set((compactions?.ids??[]).filter(id=>typeof id==='string'&&id));
         state.progress.compaction='idle';

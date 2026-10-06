@@ -18,7 +18,9 @@ const rooms=new Map(),uploads=new Map(),calls=[],errors=[];let emit,current,id=0
 const makeRoom=model=>({threadId:`fake-room-${++id}`,title:`${model.provider} 手機測試`,workspace:root,model:model.model,modelDisplayName:model.displayName,provider:model.provider,accessMode:model.provider==='claude'?'claude-manual':'workspace-write',effort:'low',efforts:['low'],inputModalities:['text'],status:'ready',busy:false,messages:[],tools:[],questions:[],artifacts:[],workers:[],queuedMessages:[],notices:[],progress:{},capabilities:{goal:false,fileSearch:false},browserAccess:{enabled:false}});
 for(const model of models){const room=makeRoom(model);rooms.set(room.threadId,room);current=room;}
 current=rooms.values().next().value;
-const controller={concurrentConversations:true,get state(){return {...current,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
+current.fastTier={id:'fast',name:'Fast'};current.serviceTier='default';current.effectiveServiceTier='default';
+const workerDetails=[{conversationId:current.threadId,conversationTitle:'目前聊天室',requestId:'worker-current',provider:'codex',model:'gpt-6-luna',status:'running',settled:false,lastActivityAt:Date.now()-360000},{conversationId:'fake-room-2',conversationTitle:'另一個聊天室',requestId:'worker-other',provider:'gemini',status:'unresolved',settled:false}];
+const controller={concurrentConversations:true,get state(){return {...current,workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
  sessions:async()=>({sessions:[...rooms.values()]}),models:async()=>({models}),usage:async()=>({}),markViewed:()=>({ok:true}),
  async open(data){calls.push({op:'open',...data});if(data.threadId)current=rooms.get(data.threadId);else{current=makeRoom(models.find(m=>m.model===data.model));rooms.set(current.threadId,current);}emit();return {threadId:current.threadId};},
  async send(data){const room=rooms.get(data.threadId);calls.push({op:'send',...data});assert(room);if(room.busy){room.queuedMessages.push({id:`queue-${calls.length}`,text:data.text,createdAt:new Date().toISOString(),status:'queued'});emit();return {queued:true};}room.messages.push({id:`user-${calls.length}`,role:'user',text:data.text,attachments:(data.attachmentIds??[]).map(id=>uploads.get(id)),createdAt:new Date().toISOString()});room.busy=true;room.status='working';emit();return {sent:true};},
@@ -50,6 +52,21 @@ try{
  // Back dismisses the drawer; same existing rooms, no mobile copies.
  await page.getByRole('button',{name:'展開側欄',exact:true}).click();await page.getByRole('dialog',{name:'工作區與聊天室'}).waitFor();await screenshot('mobile-drawer');await page.goBack();await page.getByRole('button',{name:'展開側欄',exact:true}).waitFor();
  desktop=await browser.newPage({viewport:{width:1440,height:1000}});await desktop.goto(app.createLaunchUrl());await desktop.getByRole('textbox',{name:'工作訊息',exact:true}).waitFor();
+ // Preserve the newer Codex reasoning/Fast picker when integrating mobile layout.
+ await page.setViewportSize({width:360,height:440});
+ await page.getByRole('button',{name:'推理程度與速度',exact:true}).click();
+ const reasoning=page.getByRole('dialog',{name:'推理程度與速度設定',exact:true});await reasoning.waitFor();
+ const reasoningBox=await reasoning.boundingBox();assert(reasoningBox.x>=0&&reasoningBox.y>=0&&reasoningBox.x+reasoningBox.width<=360&&reasoningBox.y+reasoningBox.height<=440,'reasoning popup outside mobile viewport');
+ assert.equal(await page.getByRole('switch',{name:'原生加速',exact:true}).isChecked(),false);
+ await noOverflow(page);await screenshot('mobile-codex-reasoning');
+ await reasoning.getByRole('combobox',{name:'推理程度',exact:true}).selectOption('low');await reasoning.waitFor({state:'hidden'});
+ await page.locator('.header-actions .worker-activity').click();
+ const workers=page.getByRole('dialog',{name:'子代理狀態',exact:true});await workers.waitFor();await workers.getByRole('heading',{name:'另一個聊天室',exact:true}).waitFor();
+ const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=440,'worker popup outside mobile viewport');
+ await workers.getByText(/久未回報不等於已卡死/).waitFor();await noOverflow(page);await screenshot('mobile-worker-status');
+ await page.getByRole('button',{name:'關閉子代理狀態',exact:true}).click();await workers.waitFor({state:'hidden'});
+ assert.equal(await page.getByRole('button',{name:'開始聽寫',exact:true}).count(),0);await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();
+ assert(!calls.some(c=>c.op==='send'),'opening/changing reasoning must not send work');await page.setViewportSize({width:412,height:915});
  // A modal opened over the mobile drawer must be dismissible with Android-style Back.
  await page.getByRole('button',{name:'展開側欄',exact:true}).click();await page.getByRole('button',{name:'新對話',exact:true}).click();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor();await page.goBack();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor({state:'hidden'});await page.getByRole('textbox',{name:'工作訊息',exact:true}).waitFor();
  const first=current.threadId;
@@ -92,6 +109,6 @@ try{
  // Server accepted the command but its HTTP response was lost: show unknown, never resend.
  const beforeUnknown=calls.filter(c=>c.op==='send').length;dropNextSendResponse=true;await composer().fill('伺服器已接收但回應遺失');await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByText('操作結果未確認；沒有自動重送。請重新連線讀回後再決定。',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);assert(current.messages.some(m=>m.text==='伺服器已接收但回應遺失'));assert.equal(sendTransports.at(-1).command,sendTransports.at(-2).command,'browser transport retry retains request ID');await screenshot('mobile-unknown-result');
  await page.reload();await page.getByText('電腦 K 已連線',{exact:true}).waitFor();await composer().fill('');await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);await page.getByRole('button',{name:'停止工作',exact:true}).click();
- assert.deepEqual(errors,[]);await writeFile(path.join(out,'ui-result.json'),JSON.stringify({passed:true,evidence:'real HTTPS proxy and desktop-server, synthetic Tailscale identity and native controllers',viewport:[412,915],keyboardLikeViewport:[360,440],rooms:rooms.size,mobileSendCount:sends+1,unknownAcceptedSendCount:1,sendTransports,totalSendCount:calls.filter(c=>c.op==='send').length,calls,manifest,errors},null,2));console.log(JSON.stringify({passed:true,rooms:rooms.size,sendCount:sends}));
+ assert.deepEqual(errors,[]);await writeFile(path.join(out,'ui-result.json'),JSON.stringify({passed:true,evidence:'real HTTPS proxy and desktop-server, synthetic Tailscale identity and native controllers',viewport:[412,915],keyboardLikeViewport:[360,440],codexReasoningPopup:reasoningBox,fastRemainedDefault:true,rooms:rooms.size,mobileSendCount:sends+1,unknownAcceptedSendCount:1,sendTransports,totalSendCount:calls.filter(c=>c.op==='send').length,calls,manifest,errors},null,2));console.log(JSON.stringify({passed:true,rooms:rooms.size,sendCount:sends}));
 }catch(error){if(page&&!page.isClosed())await page.screenshot({path:path.join(out,'ui-failure.png')});await writeFile(path.join(out,'ui-failure.json'),JSON.stringify({error:error.stack,errors,calls},null,2));throw error;}
 finally{await browser?.close();proxy.closeAllConnections();await new Promise(r=>proxy.close(r));await app.close();}

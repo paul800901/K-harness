@@ -1,21 +1,25 @@
 // Presentation telemetry only. Neither a clock tick nor a status/usage read is
-// evidence of native work. Do not persist this across process restarts.
+// evidence of native work. Saved child observations remain historical only;
+// never restore their phase as evidence of a live worker after restart.
 export function createWorkActivity(state, now = Date.now) {
- const tools = new Map();
- const begin = () => { tools.clear(); const at=now(); state.activity={startedAt:at,lastEventAt:null,phase:'starting',phaseSince:at}; };
+ const tools = new Map(),toolStates=new Map();
+ const begin = () => { tools.clear();toolStates.clear(); const at=now(); state.activity={startedAt:at,lastEventAt:null,phase:'starting',phaseSince:at}; };
  const record = (phase='active') => {
   if(!state.activity)begin();
   const at=now(),previous=state.activity;
   state.activity={...previous,lastEventAt:at,phase,phaseSince:phase===previous.phase?previous.phaseSince:at};
  };
  const tool = (id,done,kind='tool') => {
+  if(!state.activity)begin();
+  if(toolStates.get(id)===done)return; // Repeated tool status is not new output.
+  toolStates.set(id,done);
   if(done)tools.delete(id);else if(!tools.has(id))tools.set(id,{kind,since:now()});
   const pending=[...tools.values()];
   const phase=pending.some(t=>t.kind==='worker')?'worker':pending.length?'tool':'active';
   record(phase);
   if(pending.length)state.activity.phaseSince=Math.min(...pending.filter(t=>t.kind===phase).map(t=>t.since));
  };
- return {begin,record,tool,clear(){tools.clear();state.activity=null;}};
+ return {begin,record,tool,clear(){tools.clear();toolStates.clear();state.activity=null;}};
 }
 
 // Call only after checking the owning native thread and current turn. Child

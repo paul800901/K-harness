@@ -108,7 +108,7 @@ export function createUnifiedController(options){
     await queue.load(active.state.threadId);onChange();return result;
    }finally{changing=false;}
   },
-  async selectModel(data){if(modelProvider(data.model)!==api.state.provider)throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');return active.selectModel(data);},
+  async selectModel(data){if(modelProvider(data.model)!==api.state.provider)throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');if(data.serviceTier!==undefined&&api.state.provider!=='codex')throw new Error('服務速度選擇只支援 Codex 原生服務層級。');return active.selectModel(data);},
   async moveWorkspace({threadId,workspace}){
    if(changing||queue.sending||queue.state.queuedMessages.length||active.state.busy||active.state.questions?.length)throw Error('請先結束目前工作、核准與待送訊息，再移動聊天室。');
    if(threadId!==active.state.threadId||!['ready','completed','interrupted','failed'].includes(active.state.status))throw Error('請先正常開啟這個聊天室，再移動工作區。');

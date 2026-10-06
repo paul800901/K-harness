@@ -9,7 +9,7 @@ import {sessionAttachment,sessionArtifact,workspaceGuidance} from './session-wor
 import path from 'node:path';
 import {codexQuota} from './usage.mjs';
 import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
-import {listMainModels,findMainModel,reasoningEfforts,supportsImages} from './main-models.mjs';
+import {listMainModels,findMainModel,reasoningEfforts,supportsImages,fastServiceTier,mainServiceTier} from './main-models.mjs';
 import {normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
 import {collectNativeWorkerIds,checkNativeWorkers} from './native-workers.mjs';
 import {permissionMode,turnPermissions,threadPermissions,approvalRequest} from './desktop-permissions.mjs';
@@ -27,9 +27,9 @@ function codexInput(text,attachments=[]){
 
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
- const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
+ const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
- const activity=createWorkActivity(state);
+ const activity=createWorkActivity(state),childActivities=new Map();
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
@@ -43,7 +43,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(change.turnId&&change.turnId!==id)return;
   change.turnId=id;
   state.model=selected.model;state.modelDisplayName=selected.displayName??null;
-  state.inputModalities=selected.inputModalities??['text','image'];state.efforts=reasoningEfforts(selected);state.effort='medium';state.lastUsedModel=selected.model;
+  state.inputModalities=selected.inputModalities??['text','image'];state.efforts=reasoningEfforts(selected);state.effort='medium';state.fastTier=fastServiceTier(selected);state.serviceTier=capacityStart.serviceTier;state.lastUsedModel=selected.model;
   state.modelChanges.push({...change});
   state.error=null;
   for(const notice of state.notices)if(notice.kind==='nativeError'&&notice.turnId===change.sourceTurnId)notice.resolved=true;
@@ -114,7 +114,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(state.notices.length>100)state.notices.splice(0,state.notices.length-100);
  };
  const resolveRetryNotices=noticeTurnId=>{for(const n of state.notices)if(n.willRetry&&(noticeTurnId===undefined||n.turnId===noticeTurnId))n.resolved=true;};
- const selectionKey=(model,workspace,policy,effort,access)=>JSON.stringify([model,workspace,policy,effort??null,access]);
+ const selectionKey=(model,workspace,policy,effort,access,serviceTier='default')=>JSON.stringify([model,workspace,policy,effort??null,access,serviceTier]);
+ const effectiveServiceTier=result=>typeof result?.serviceTier==='string'&&result.serviceTier.length?result.serviceTier:null;
+ const startNativeTurn=async(active,params)=>{
+  const tier=params.serviceTier??'default';
+  try{const result=await active.request('turn/start',params);if(host===active&&state.threadId===params.threadId)state.effectiveServiceTier=tier;return result;}
+  catch(error){if(error.protocolMessage===undefined&&host===active&&state.threadId===params.threadId)state.effectiveServiceTier=null;throw error;}
+ };
  const clearQuestions=(matches=()=>true)=>{for(const [id,p] of pending){if(!matches(p))continue;p.resolve(p.approval?.cancel());pending.delete(id);state.questions=state.questions.filter(q=>q.id!==id);}};
  const syncArtifacts=()=>{
   const direct=[];
@@ -191,8 +197,19 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(e.method==='serverRequest/resolved'){clearQuestions(q=>q.threadId===p.threadId&&q.requestId===p.requestId);changed();return;}
   if(p.threadId!==state.threadId){
+   if(!childActivities.has(p.threadId)&&!collectNativeWorkerIds([...items.values()]).includes(p.threadId))return;
+   if(!opening&&!closing&&!stopping){
+    let child=childActivities.get(p.threadId);
+    if(!child){const holder={};child={holder,activity:createWorkActivity(holder)};childActivities.set(p.threadId,child);}
+    if(e.method==='turn/started'){child.turnId=p.turn?.id;child.ended=false;}
+    if(!child.ended&&(!child.turnId||!p.turnId||child.turnId===p.turnId)){
+     const previous=child.holder.activity;codexWorkActivity(child.activity,e);
+     if(child.holder.activity!==previous){const row=state.workers.find(w=>w.threadId===p.threadId);if(row)row.activity=child.holder.activity;changed();}
+    }
+    if(e.method==='turn/completed'&&(!child.turnId||child.turnId===p.turn?.id))child.ended=true;
+   }
    if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}
-   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method)&&collectNativeWorkerIds([...items.values()]).includes(p.threadId))void workers().catch(()=>{});
+   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method))void workers().catch(()=>{});
    return;
   }
   if(e.method==='turn/completed'&&capacityHandled.has(p.turn?.id))return;
@@ -306,18 +323,19 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(priorGoal?.status==='active'&&(!before||before.createdAt!==priorGoal.createdAt||before.objective!==priorGoal.objective||!['active','blocked'].includes(before.status)))throw Error('目標已暫停、變更或受額度／預算限制，未自動接續。');
    if(!current())return;
    if(turnId)throw Error('原生核心已開始其他回合，未重複接續。');
-   capacityStart={selected,change:{turnId:null,sourceTurnId:failedId,fromModel:state.model,toModel:selected.model,fromEffort,toEffort:'medium',reason:'capacity',at:new Date().toISOString()}};
+   const fallbackServiceTier=state.serviceTier==='default'?'default':fastServiceTier(selected)?.id??'default';
+   capacityStart={selected,serviceTier:fallbackServiceTier,change:{turnId:null,sourceTurnId:failedId,fromModel:state.model,toModel:selected.model,fromEffort,toEffort:'medium',reason:'capacity',at:new Date().toISOString()}};
    activeGroupId=randomUUID();state.status='working';activity.begin();changed();
    // New reconciliation instruction in the same native history, never replay
    // the failed prompt/attachments or restart unknown tool/subagent work.
    const text='[K 系統接續事件] 使用者已授權：上一個 Luna 主回合因官方 serverOverloaded 結束，現由 GPT-6.1 Sol／中接手。這不是使用者新任務，也不是重播上一回合。請先核對同一對話既有結果、專案實際輸出與工人狀態，再繼續尚未完成且已授權的工作。仍在執行或結果未知的工具／子代理不可重送、重派或重複寫入；不要自行換帳號、模型、權限、預算或計費方式。保留原目標範圍及停止要求。';
    attempted=true;
-   const result=await active.request('turn/start',{threadId,model:selected.model,effort:'medium',input:[{type:'text',text}],...turnPermissions(state.accessMode,state.workspace)});
+   const result=await startNativeTurn(active,{threadId,model:selected.model,effort:'medium',serviceTier:fallbackServiceTier,input:[{type:'text',text}],...turnPermissions(state.accessMode,state.workspace)});
    if(!result?.turn?.id)throw Error('原生核心未回傳接續回合識別碼。');
    accepted=true;applyCapacityModel(result.turn.id);
    if(state.busy)turnId=result.turn.id;
    const saved=(await listMainSessions(root,{threadId})).sessions[0];
-   await saveMainSession(root,{...saved,model:state.model,effort:state.effort,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});
+   await saveMainSession(root,{...saved,model:state.model,effort:state.effort,serviceTier:state.serviceTier,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});
    if(!current())return;
    // Native turn overrides are now Sol/medium. Only revive this previously
    // active goal's overload block; status-only preserves budget and usage.
@@ -336,7 +354,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // A start event is native acceptance evidence even if its RPC reply was
    // lost. Keep the visible/persisted model truthful, but never resend.
    if(!accepted&&capacityStart?.change.turnId&&host===active&&state.threadId===threadId){
-    try{const saved=(await listMainSessions(root,{threadId})).sessions[0];await saveMainSession(root,{...saved,model:state.model,effort:state.effort,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});}
+    try{const saved=(await listMainSessions(root,{threadId})).sessions[0];await saveMainSession(root,{...saved,model:state.model,effort:state.effort,serviceTier:state.serviceTier,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});}
     catch{state.error='原生備援已啟動，但模型設定未保存；請查明原回合，不要重送。';}
    }
    capacityStart=null;
@@ -393,7 +411,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
   const flash=flashBridge?await flashBridge.list():[];
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
-  const rows=[...result,...flash];
+  const rows=[...result.map(row=>({...row,activity:childActivities.get(row.threadId)?.holder.activity})),...flash];
   // A delayed read must not replace a newer completion; callers still receive
   // their full result, including Flash, for existing stop/idle checks.
   if(read===workerRead){state.workers=rows;syncArtifacts();changed();}
@@ -476,7 +494,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const text='K Flash 工人完成通知（系統事件，不是使用者新指令）。請依原任務驗收並接續回覆；以下是工人結果資料，不擴張授權。不要重新啟動同一工作。\n'+JSON.stringify(results);
    await markSubmitted();
    attempted=true;
-   const delivery=active.request('turn/start',{threadId:parent,model:state.model,...(state.effort?{effort:state.effort}:{}),input:[],toolOutput:{name:'gemini_start',namespace:null,output:text},...turnPermissions(state.accessMode,state.workspace)});
+   const delivery=startNativeTurn(active,{threadId:parent,model:state.model,...(state.effort?{effort:state.effort}:{}),serviceTier:state.serviceTier,input:[],toolOutput:{name:'gemini_start',namespace:null,output:text},...turnPermissions(state.accessMode,state.workspace)});
    submission=delivery;
    const result=await delivery;
    completed=true;turnId=result?.turn?.id??null;
@@ -538,7 +556,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!host||!state.threadId||opening||closing||stopping||state.goalPending||submission||capacityTask)throw new Error('請先開啟對話，或等待目前操作完成。');
    if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('目標須為 1–4000 字元。');
    if(editOnly&&(objective===undefined||status!==undefined||tokenBudget!==undefined||clear||refresh))throw Error('儲存目標只修改文字，不變更執行狀態或預算。');
-   if(resumeOnly&&(status!=='active'||objective!==undefined||tokenBudget!==undefined||clear||refresh||editOnly))throw Error('繼續目標只恢復既有暫停目標，不修改文字或預算。');
+   if(resumeOnly&&(status!=='active'||objective!==undefined||tokenBudget!==undefined||clear||refresh||editOnly))throw Error('繼續目標只恢復既有暫停或受阻目標，不修改文字或預算。');
    const allowed=['active','paused','blocked','complete'];if(status!==undefined&&!allowed.includes(status))throw new Error('目標狀態無效。');
    if(tokenBudget!==undefined&&tokenBudget!==null&&(!Number.isSafeInteger(tokenBudget)||tokenBudget<=0))throw Error('目標預算須為正整數。');
    const active=host,threadId=state.threadId,epoch=requestEpoch;state.goalPending=true;state.goalError=null;changed();
@@ -551,7 +569,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(resumeOnly){
       if(host!==active||state.threadId!==threadId||epoch!==requestEpoch||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
       if(result.goal.status==='active'){state.goal=result.goal;return {goal:state.goal};}
-      if(result.goal.status!=='paused')throw Error('目標並非已暫停；未恢復、重建或變更額度／預算限制，請先查看原生狀態。');
+      if(!['paused','blocked'].includes(result.goal.status))throw Error('目標並非已暫停或受阻；未恢復、重建或變更額度／預算限制，請先查看原生狀態。');
      }
     }
     // A goal can start native turns without a normal user send. Preserve this
@@ -609,7 +627,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(host){if(state.threadId)await stopThreadTerminals(host,state.threadId);const previous=host;host=null;hostEpoch++;await previous.close();}
     viewEpoch++;requestEpoch++;clearQuestions();items.clear();unsentSessions.clear();reasoningParts.clear();turnId=null;
     await closeBrowser();
-    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},status:'idle',error:null,workerConnection:null,workerError:null,browserAccess:{enabled:false,networkAccess:false}});
+    Object.assign(state,{workspace,threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,title:'',messages:[],tools:[],workers:[],artifacts:[],efforts:[],effort:null,lastUsedModel:null,modelChanges:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},status:'idle',error:null,workerConnection:null,workerError:null,browserAccess:{enabled:false,networkAccess:false}});
     state.usage.flash={totalTokens:0,responses:0,unconfirmed:0,pending:0};return {workspace};
    }finally{opening=false;changed();}
   },
@@ -632,36 +650,40 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const access=permissionMode(accessMode),parent=state.threadId;
    if((access==='auto-review'||access==='danger-full-access')&&access!==state.accessMode&&permissionConfirmed!==true)throw Error('切換到此高權限模式前，必須明確確認 permissionConfirmed:true；分支未建立。');
    const {config,...permissions}=threadPermissions(access,state.workspace);
-   const result=await host.request('thread/fork',{threadId:parent,lastTurnId:point.turnId,cwd:state.workspace,model,...permissions,config:{...config,...(effort?{model_reasoning_effort:effort}:{})}});
-   await saveMainSession(root,{threadId:result.thread.id,model,workspace:state.workspace,accessMode:access,effort,workerPolicy:state.workerPolicy,parentThreadId:parent,parentTitle:state.title});
-   return this.open({threadId:result.thread.id,model,effort,accessMode:access});
+   const result=await host.request('thread/fork',{threadId:parent,lastTurnId:point.turnId,cwd:state.workspace,model,serviceTier:'default',...permissions,config:{...config,...(effort?{model_reasoning_effort:effort}:{})}});
+   await saveMainSession(root,{threadId:result.thread.id,model,workspace:state.workspace,accessMode:access,effort,serviceTier:'default',workerPolicy:state.workerPolicy,parentThreadId:parent,parentTitle:state.title});
+   return this.open({threadId:result.thread.id,model,effort,serviceTier:'default',accessMode:access});
   },
-  async selectModel({threadId,model,effort,confirmed}={}){
-   if(state.busy||opening||closing||stopping)throw new Error('請先等待目前連線、工作或停止程序結束，再切換模型。');
+  async selectModel({threadId,model,effort,serviceTier,confirmed}={}){
+   if(state.busy||turnId||submission||capacityTask||opening||closing||stopping)throw new Error('請先等待目前連線、工作或停止程序結束，再切換模型。');
    if(!host||!state.threadId||threadId!==state.threadId)throw new Error('K 對話已切換或過期，請重新開啟後再選模型。');
    if(typeof model!=='string'||!model.trim())throw new Error('請選擇可用的 Codex 模型。');
    const needsConfirmation=model!==state.model&&state.messages.some(message=>message.role==='user');
-   if(needsConfirmation&&confirmed===false)return {cancelled:true,threadId,model:state.model,effort:state.effort};
+   if(needsConfirmation&&confirmed===false)return {cancelled:true,threadId,model:state.model,effort:state.effort,serviceTier:state.serviceTier,effectiveServiceTier:state.effectiveServiceTier};
    if(needsConfirmation&&confirmed!==true)throw new Error('此對話已有訊息；請先確認更換主模型。');
    opening=true;
    try{
     const catalog=await this.models();
     const selected=findMainModel(catalog.models,model);
     if(!selected)throw new Error('目前帳號未提供指定模型。');
+    const fast=fastServiceTier(selected);
+    if(serviceTier!==undefined&&serviceTier!=='default'&&serviceTier!==fast?.id)throw new Error('指定服務速度目前不可用。');
+    const selectedServiceTier=mainServiceTier(selected,serviceTier===undefined?(model===state.model?state.serviceTier:'default'):serviceTier);
     const efforts=reasoningEfforts(selected);
     const defaultEffort=efforts.includes(selected.defaultReasoningEffort)?selected.defaultReasoningEffort:null;
     const selectedEffort=effort===undefined||effort===null?(efforts.includes(state.effort)?state.effort:defaultEffort):effort;
     if(selectedEffort!==null&&!efforts.includes(selectedEffort))throw new Error('指定推理程度目前不可用。');
     const saved=(await listMainSessions(root)).sessions.find(session=>session.threadId===threadId);
     if(!saved)throw new Error('K 對話不存在或已過期。');
-    if(model!==state.model||selectedEffort!==state.effort){
-     await saveMainSession(root,{...saved,model,effort:selectedEffort,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});
+    if(state.busy||turnId||submission||capacityTask||stopping||closing||state.threadId!==threadId)throw new Error('目前工作或對話狀態已改變；服務速度與模型選擇未更新。');
+    if(model!==state.model||selectedEffort!==state.effort||selectedServiceTier!==state.serviceTier){
+     await saveMainSession(root,{...saved,model,effort:selectedEffort,serviceTier:selectedServiceTier,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});
      const unsent=unsentSessions.get(threadId);
-     if(unsent)unsent.selection=selectionKey(model,state.workspace,state.workerPolicy,selectedEffort,state.accessMode);
-     state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.effort=selectedEffort;
+     if(unsent)unsent.selection=selectionKey(model,state.workspace,state.workerPolicy,selectedEffort,state.accessMode,selectedServiceTier);
+     state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.effort=selectedEffort;state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);
      changed();
     }
-    return {cancelled:false,threadId,model:state.model,effort:state.effort};
+    return {cancelled:false,threadId,model:state.model,effort:state.effort,serviceTier:state.serviceTier,effectiveServiceTier:state.effectiveServiceTier};
    }finally{opening=false;changed();}
   },
   async upload(data){if(!state.threadId||opening||closing||data.threadId!==state.threadId)throw new Error('對話已切換，請在目前對話重新加入附件。');const threadId=state.threadId;return saveAttachment(state.workspace,threadId,data);},
@@ -675,7 +697,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // Sidebar labels/visibility are local K metadata; never alter model history.
    await saveMainSession(root,found);if(threadId===state.threadId){state.title=found.title;changed();}return found;
   },
-  async open({model,threadId,effort,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation}={}){
+  async open({model,threadId,effort,serviceTier,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation}={}){
    if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
    if(typeof model!=='string'||!model.trim())throw new Error('請選擇可用的 Codex 模型。');
    // Reserve before any asynchronous session/catalog read.  Catalog failure
@@ -694,7 +716,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(host&&threadId===state.threadId&&!state.busy&&state.browserAccess.enabled){
      try{const browser=await browserRequest(root,state,threadId,'/state');if(browser.recoveryRequired===true)browserRecoveryThreadId=threadId;}catch{/* An absent endpoint is not evidence that the MCP host must be replaced. */}
     }
-   if(!relocation&&host&&flashGateway&&threadId===state.threadId&&model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&effort===undefined&&workerPolicy===undefined&&accessMode===undefined&&browserRecoveryThreadId!==threadId)return {threadId};
+    if(!relocation&&host&&flashGateway&&threadId===state.threadId&&model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&effort===undefined&&serviceTier===undefined&&workerPolicy===undefined&&accessMode===undefined&&browserRecoveryThreadId!==threadId)return {threadId};
     // Validate against a fresh official catalog before touching the active
     // conversation or host, so a bad model/effort cannot destroy current UI.
     const catalog=await this.models({signal});
@@ -702,6 +724,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(!selected)throw new Error('目前帳號未提供指定模型。');
     const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,catalog.models,{geminiGateway:true});
     const efforts=reasoningEfforts(selected);
+    const selectedServiceTier=mainServiceTier(selected,serviceTier??saved?.serviceTier??'default');
     effort=effort??saved?.effort??undefined;
     if(effort!==undefined&&(!efforts.includes(effort)))throw new Error('指定推理程度目前不可用。');
     if(relocation&&host&&(await listTerminals(host,threadId)).length)throw Error('背景命令仍在執行，請先結束再移動聊天室。');
@@ -725,7 +748,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
      // Reading history does not require resuming the agent or starting MCP.
      // Keep the old view intact until the target history has been obtained.
-     const selection=selectionKey(model,workspace,policy,effort,access);
+     const selection=selectionKey(model,workspace,policy,effort,access,selectedServiceTier);
      if(saved?.codexSession)nativeThreads.set(threadId,saved.codexSession.nativeThreadId);
      const prepared=saved?.codexSession?.hasSubmitted===false;
      const unsent=unsentSessions.get(threadId);
@@ -735,9 +758,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const compactionsComplete=!threadId||prepared||Array.isArray(prior?.thread?.turns)&&prior.thread.turns.every(turn=>Array.isArray(turn.items));
      const nextUiTiming=threadId?await loadUiMessageTiming(root,threadId):{version:1,messages:{},tools:{}};
      state.previousWorkspaces=relocation?.previousWorkspaces??saved?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??saved?.previousArtifacts??[];
-     compactionIds=new Set();clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
+     compactionIds=new Set();clearQuestions();turnId=null;items.clear();childActivities.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      uiTiming=nextUiTiming;activeGroupId=null;reasoningParts.clear();fileChangePatches.clear();state.notices=[];state.reasoning=[];state.turnDiffs=[];state.sandboxReadiness=null;state.parentThreadId=saved?.parentThreadId??null;state.parentTitle=saved?.parentTitle??null;
-     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
+     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
      for(const turn of prior?.thread.turns??[])for(const i of turn.items??[]){
@@ -772,7 +795,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('Flash MCP gateway 未提供有效的專案限定連線設定。');
      const googleOps=await googleOpsMcp(workspace,{root});
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
-     const config={cwd:workspace,model,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
+     const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId&&!prepared){
@@ -790,7 +813,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       if(threadId){nativeThreads.set(threadId,session.thread.id);session=localRefs(session);}
      }
      if(typeof host.waitForMcp==='function')await abortable(host.waitForMcp(session.thread.id,'k_gemini'),signal);
-     signal.throwIfAborted();state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);
+     signal.throwIfAborted();state.threadId=session.thread.id;state.workerPolicy=policy;state.accessMode=access;state.browserAccess={enabled:!!browserServer,networkAccess:!!browserServer,sessionKey:browserSessionKey(browserServer)};state.effort=unsent&&unsent.selection===selection?(effort??null):session.reasoningEffort??session.thread?.reasoningEffort??(effort===undefined?null:effort);state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);state.effectiveServiceTier=effectiveServiceTier(session);
       const openedThreadId=state.threadId,openedHost=host,readinessEpoch=viewEpoch;
       try{
        const readiness=await abortable(openedHost.request('windowsSandbox/readiness',undefined,5000),signal);
@@ -805,10 +828,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
        if(host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch)addNotice('warning',`Windows 沙箱就緒狀態查詢失敗：${error.message}`,'windowsSandboxReadiness');
       }
       state.title=saved?.title??'';
-      if(!threadId||prepared)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access)});
+      if(!threadId||prepared)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access,state.serviceTier)});
       state.goal=null;state.goalError=null;state.goalPending=false;
       try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch(error){state.goalError=`原生目標暫時無法讀回：${error.message}`;}
-      await saveMainSession(root,{...saved,...relocation,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!threadId&&!prepared}});
+      await saveMainSession(root,{...saved,...relocation,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!threadId&&!prepared}});
      state.workerConnection='ready';
      signal.throwIfAborted();state.status='ready';void usage();return {threadId:state.threadId};
    }catch(e){if(signal.aborted){
@@ -833,7 +856,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // MCP server configuration is applied at thread start/resume, not turn/start.
    // Reopen the same native thread with the selected mode so read-only really
    // removes browser tools; thread history stays native and is never replayed.
-   if(access!==state.accessMode){const expectedThreadId=state.threadId;await this.open({threadId:expectedThreadId,model:state.model,effort:turnEffort,workerPolicy:state.workerPolicy,accessMode:access,permissionConfirmed});if(!host||opening||closing||stopping||state.busy||state.threadId!==expectedThreadId||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('權限切換後對話狀態已改變；未送出訊息。');}
+   if(access!==state.accessMode){const expectedThreadId=state.threadId;await this.open({threadId:expectedThreadId,model:state.model,effort:turnEffort,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy,accessMode:access,permissionConfirmed});if(!host||opening||closing||stopping||state.busy||state.threadId!==expectedThreadId||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('權限切換後對話狀態已改變；未送出訊息。');}
    // Reserve before async attachment validation, so concurrent requests cannot double-send.
    state.busy=true;activity.begin();stopRequested=false;const attachments=[];let finishSubmission;
    submission=new Promise(resolve=>{finishSubmission=resolve;});
@@ -848,7 +871,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     let wasPrepared=false;
     try{
      wasPrepared=await markSubmitted();
-     const result=await host.request('turn/start',{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),input,...turnPermissions(access,state.workspace)});
+     const result=await startNativeTurn(host,{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),serviceTier:state.serviceTier,input,...turnPermissions(access,state.workspace)});
      const sentTurnId=result.turn.id;message(sentMessage.id,'user',text,attachments,sentTurnId);
      if(state.busy&&!capacityHandled.has(sentTurnId))turnId=sentTurnId;
      if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges=[...state.modelChanges,{turnId:sentTurnId,fromModel:state.lastUsedModel,toModel:state.model,at:new Date().toISOString()}];

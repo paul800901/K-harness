@@ -26,13 +26,42 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
    uncertain||=disconnected;
    for(const worker of s.workers??[]){
-    if(worker.kind==='command'||worker.settled===true||['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
+    if(worker.kind==='command'||worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
     if(disconnected||!['running','starting','pending'].includes(worker.status)){unconfirmed++;uncertain=true;}
     else if(worker.status==='running')running++;
    }
   }
   return {running,uncertain,unconfirmed};
  };
+ const workerDetails=()=>[...controllers].flatMap(controller=>{
+  const s=controller.state;
+  if(!s.threadId)return [];
+  const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
+  const summary=value=>typeof value==='string'?value.split(/\r?\n/u,1)[0].trim().slice(0,240):undefined;
+  const safeError=value=>typeof value==='string'?value.slice(0,500):undefined;
+  return (s.workers??[]).filter(worker=>worker.kind!=='command').map(worker=>{
+    const nativeThreadId=worker.threadId;
+    const activityTool=(s.tools??[]).find(tool=>
+     nativeThreadId&&((tool.id===`native:${nativeThreadId}`||tool.details?.threadId===nativeThreadId)||tool.details?.threadIds?.includes?.(nativeThreadId)));
+    const question=nativeThreadId?(s.questions??[]).find(item=>item.isSubagent&&item.threadId===nativeThreadId):null;
+    const ended=worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status);
+    const unresolved=!ended&&(disconnected||!['running','starting','pending'].includes(worker.status));
+    return {
+     requestId:worker.requestId,threadId:nativeThreadId,conversationId:s.threadId,
+     conversationTitle:s.title||'未命名聊天室',conversationProvider:s.provider,
+     provider:worker.provider,model:worker.model??activityTool?.details?.model,
+     task:summary(worker.agentNickname??worker.name??worker.task??activityTool?.details?.description??activityTool?.details?.task??activityTool?.details?.path),
+     agentNickname:summary(worker.agentNickname),name:summary(worker.name),
+     status:unresolved?'unresolved':worker.status??(ended?'ended':'unknown'),
+     settled:worker.settled===true||ended,
+     lastActivityAt:worker.lastActivityAt??worker.activity?.lastEventAt,lastReadAt:worker.lastReadAt??worker.readAt,
+     activity:worker.activity,startedAt:worker.startedAt,
+     error:safeError(worker.error)??safeError(activityTool?.error),
+     confirmationReason:summary(question?.title??question?.text),
+     workerConnection:s.workerConnection,
+    };
+   });
+ });
  const target=data=>{
   if(closing)throw Error('K 正在關閉。');
   const controller=typeof data?.threadId==='string'?rooms.get(data.threadId):null;
@@ -94,7 +123,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),completionAttention:attention.state};},
+  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
   markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),

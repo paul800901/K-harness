@@ -1,3 +1,4 @@
+import {createWorkActivity,codexWorkActivity} from './work-activity.mjs';
 import {mkdir, lstat, readFile, writeFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
@@ -103,7 +104,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   let requestGuard=()=>undefined;
   let host, codexError, gemini;
   const geminiRuns=new Map();
-  const records = new Map();
+  const records = new Map(),activities=new Map();
   const approvalItems = new Map();
   const operations = new Map(), ownedThreads=new Set();
   const persistTails = new Map();
@@ -125,6 +126,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       const record = JSON.parse(await readFile(path.join(directory, `${requestId}.json`), 'utf8'));
       if (record.requestId !== requestId || record.parentId !== parentId) throw new Error('Luna 工作紀錄身分不符。');
       record.acceptance ??= 'not-reviewed'; record.outputFiles ??= [];
+      delete record.activity; // A saved observation is not evidence of a live worker after restart.
       records.set(requestId, record); return record;
     } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   };
@@ -133,6 +135,11 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     const record = [...records.values()].find(value => value.threadId && value.threadId === p.threadId);
     if (!record) return;
     if (message.method === 'turn/started') record.turnId = p.turn?.id ?? record.turnId;
+    if(!record.settled&&(!record.turnId||!p.turnId||record.turnId===p.turnId)){
+      if(!activities.has(record.requestId))activities.set(record.requestId,createWorkActivity(record));
+      codexWorkActivity(activities.get(record.requestId),message);
+      if(record.activity?.lastEventAt!=null)record.lastActivityAt=record.activity.lastEventAt;
+    }
     const itemKey=`${p.threadId}:${p.turnId}:${p.item?.id}`;
     // Pending file changes may arrive before thread/read includes the item.
     if(message.method==='item/started'&&p.item?.type==='fileChange'&&p.turnId===record.turnId)approvalItems.set(itemKey,clone(p.item));
@@ -201,7 +208,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
         await persist(record); changed(record);
         return clone(record);
       }
-      extractThread(result.thread, workspace, record);
+      extractThread(result.thread, workspace, record);record.lastReadAt=new Date().toISOString();
       await persist(record); changed(record);
     } catch {
       record.status='unresolved'; record.settled=false;
@@ -291,7 +298,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       await persist(record);changed(record);
       try{
         gemini??=geminiFactory({...geminiOptions,root,workspace,accessMode});
-        handle.completion=Promise.resolve().then(()=>gemini.run({task,model,effort,accountId,signal:controller.signal,onAccount:identity=>{record.accountId=identity.accountId;record.accountEmail=identity.accountEmail;},onStart:pid=>{
+        handle.completion=Promise.resolve().then(()=>gemini.run({task,model,effort,accountId,signal:controller.signal,onActivity:value=>{record.activity=value;if(value.lastEventAt!=null)record.lastActivityAt=value.lastEventAt;changed(record);},onAccount:identity=>{record.accountId=identity.accountId;record.accountEmail=identity.accountEmail;},onStart:pid=>{
           record.pid=pid;record.status='running';record.startedAt=new Date().toISOString();
           void persist(record).then(()=>changed(record)).catch(()=>{});
         }})).then(result=>Object.assign(record,result)).catch(error=>{

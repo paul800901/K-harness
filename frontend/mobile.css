@@ -16,8 +16,12 @@
  main>header{padding:4px 10px;min-height:48px;gap:2px}
  .header-title{display:flex;align-items:center;gap:4px;flex-basis:100%;overflow:hidden}
  .header-title>div{min-width:0}
- .header-actions{width:100%;gap:8px;justify-content:space-between;min-height:36px;flex-wrap:nowrap}
- .header-actions .compaction-count,.header-actions .worker-activity{display:none}
+ .header-actions{width:100%;gap:8px;justify-content:space-between;min-height:36px;flex-wrap:wrap}
+ .header-actions .compaction-count{display:none}
+ .header-actions .worker-activity-popover-anchor>.worker-activity{display:block;width:100%;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+ .header-actions .worker-activity-popover-anchor{position:static;flex:1;max-width:34vw}
+ .header-actions>.work-status{order:1;flex-basis:100%}
+ .header-actions .worker-activity-popover{position:fixed;top:calc(96px + env(safe-area-inset-top));right:12px;width:min(380px,calc(100vw - 24px));max-height:calc(var(--mobile-height,100dvh) - 120px)}
  .header-breadcrumb{max-width:100%;gap:5px}.header-breadcrumb>span:first-child{max-width:40vw}
  .viewport{padding:12px 14px;overscroll-behavior:contain;touch-action:pan-y}
  .message-column{min-width:0;max-width:100%}.markdown{overflow-wrap:anywhere;min-width:0}

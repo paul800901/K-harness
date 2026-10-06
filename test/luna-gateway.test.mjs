@@ -164,7 +164,7 @@ test('goal resume MCP has no goal, thread, budget or confirmation override and f
   const config=gateway.mcpConfig.mcpServers.k_gemini,token=config.headers.Authorization.slice(7);
   const rpc=async(id,method,params)=>body(await post(config.url,token,{jsonrpc:'2.0',id,method,params}));
   const listed=await rpc(1,'tools/list',{}),tool=listed.result.tools.find(t=>t.name==='goal_resume');assert(tool);assert.deepEqual(Object.keys(tool.inputSchema.properties),[]);assert.equal(tool.inputSchema.additionalProperties,false);
-  assert.match(tool.description,/ONLY after the user explicitly asks/);assert.match(tool.description,/Editing goal text alone is NOT/);
+  assert.match(tool.description,/paused or blocked/);assert.match(tool.description,/ONLY after the user explicitly asks/);assert.match(tool.description,/Editing goal text alone is NOT/);
   const meta={'x-codex-turn-metadata':{thread_id:'parent',turn_id:'turn'}};
   const result=await rpc(2,'tools/call',{name:'goal_resume',arguments:{},_meta:meta});assert.equal(result.result.isError,undefined);assert.deepEqual(calls,[{args:{},meta}]);
   for(const args of [{objective:'new'},{threadId:'other'},{tokenBudget:999},{confirmed:true},{status:'active'}]){const bad=await rpc(3,'tools/call',{name:'goal_resume',arguments:args});assert(bad.error||bad.result?.isError);}

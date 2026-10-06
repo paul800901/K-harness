@@ -2,9 +2,9 @@
 
 ## 結論與範圍
 
-**候選已實作；Samsung Chrome 已登入並送出一次假資料測試，尚未完成離家連線實機驗收，不可稱為已正式可用。** 第一階段未部署／push／安裝。使用者後續全權授權完成接入；Windows／Samsung Tailscale 已在線、USB 已接通、私人 HTTPS 已啟用且未勾選 Funnel。本人已手動啟動私人代理，電腦經真 Tailscale HTTPS 的 K 登入／安全讀回通過；直接操作手機的工具呼叫被 policy 拒絕，Samsung UI 由本人配合實測。正式 K 仍未修改或重啟。最新接入現況見第 8 節；前段測試紀錄保留各自階段邊界。
+**候選已實作並整合另一批新版 K；865/865、手機介面及 Gemini 真原生接續通過。** Samsung Chrome 已登入、送出假資料並看到串流及完成畫面；離家連線／主畫面獨立啟動等完整實機驗收仍未完成。本人已手動啟動私人代理，電腦經真 Tailscale HTTPS 的 K 登入／安全讀回通過；未開 Funnel。直接操作手機的工具呼叫被 policy 拒絕，Samsung UI 由本人配合實測。額度恢復後的真正 Opus 整合複查發現手機子代理入口退化，已補修並通過補查；本程式 commit 固定時尚未部署。最新現況見第 10 節；前段紀錄保留各自階段邊界。
 
-候選：`C:\Users\Paulus\.codex\worktrees\k-mobile-remote\K-harness`，基底 `d88d1481dba2b834191473f4bf86942ff67eff39`。驗證產物保留於候選 `.runtime/mobile-remote/`（Git 排除）。本批候選程式固定於包含本文件的 Git commit；正式部署版本另記，不以候選提交冒充部署。
+候選：`C:\Users\Paulus\.codex\worktrees\k-mobile-remote\K-harness`，初始基底 `d88d1481dba2b834191473f4bf86942ff67eff39`；本輪恢復後已整合新版正式程式 `4201a285d48ee32a57313e4d73afafa4a3d74191` 及其文件收尾 `07f057661bc688437fa1a171af75301ed9a4987e`。驗證產物保留於候選 `.runtime/mobile-remote/`（Git 排除）。舊候選已固定，最新整合仍在工作樹／暫存區，待最後複查後再固定發布版本；正式部署版本另記，不以候選提交冒充部署。
 
 ## 1. 先確認 current，不把 cwd 或歷史文件當正式真值
 
@@ -213,3 +213,37 @@ node scripts/configure-remote.mjs --root '<相同 state root>' --revoke
 - 暫停前只讀確認三個假房間全部 idle、無待確認，保存測試狀態；核對 PID 32120 的 node 腳本及 loopback 54832 所屬後停止本輪假資料服務，確認 listener 已關。未停止正式 K、未改 Tailscale Serve／服務或本人登入。手機測試網址此時暫無後端，不應把暫停後的連線錯誤當成產品回歸。證據 `phone-state-before-pause.json`、`pause-result.json`。
 - **恢復時必先核對另一邊更新後的正式 commit 與差異，再整合本批手機改動並重驗。不得直接拿這份舊基底準備目錄覆蓋新版正式 K。** 再完成 Gemini 同原生 session 實測與剩餘實機驗收，才可依本人恢復授權安排正式接入。
 - 此段是文件收尾；不因文件 commit 較新而宣稱程式已重建或部署。沒有變更原工作樹、推送、搬取原生憑證或操作正式翻譯目標。
+
+## 9. 本人關閉後恢復：整合新版，最後複查待完成
+
+使用者明確回覆「已經關了 修」。先核對正式 47831 已無 listener、K supervisor／Electron 已停止；正式版本已由另一批更新為 `4201a285d48ee32a57313e4d73afafa4a3d74191`。112 個正式來源／套件檔與該版本一致（文字僅正規化換行），證據 `.runtime/mobile-connect/formal-new-base-readback.json`。未操作既有翻譯目標或未確認工人。
+
+### 整合與驗證
+
+- 在本手機 worktree 合併 `07f057661bc688437fa1a171af75301ed9a4987e`（程式同 4201a28，額外只有文件）。手動處理 `frontend/main.jsx` 與工程索引衝突，保留新版受阻目標恢复、Codex 推理／Fast 選單、子代理明細、待命活動及安全關閉恢復；沒有以舊候選覆蓋新功能。原 `D:\K-harness` 未提交修改不動。
+- 整合來源完整 **865/865**（34.20 秒）、Vite 建置通過；真 HTTPS 測試代理／React／HTTP／SSE 的完整手機與桌面 probe 通過，仍使用假 controller／假 Tailscale 身分，不冒充正式原生或 Samsung 實機。證據 `.runtime/mobile-connect/merged-tests.txt`、`merged-build.txt`、`merged-ui-run.txt`、`.runtime/mobile-remote/ui-result.json`。
+- 追加新版 Codex 選單的手機衝突回歸：360×440 鍵盤等效視窗內可打開、完整顯示、選擇推理程度並關閉；Fast 維持標準，沒有送出工作；手機沒有電腦聽寫按鈕，桌面仍有。實際截圖 `mobile-codex-reasoning.png` 已目視。這不是 Samsung 真鍵盤／原生加速回合驗收；原生 Fast 語意沿用新版既有測試。
+
+### Gemini 真原生接續
+
+- 第一次限定唯讀測試在原生 eligibility 階段回官方 **UNAVAILABLE 503**，尚無 native session ID／模型 init，程序已結束。保存 `.runtime/mobile-remote/native-gemini-attempt1-failure.json` 及 `native-gemini-attempt1-run.txt`；不把啟動期間暫時的登入狀態判成需要重新登入。
+- 核對正式及測試服務已停止、無殘留 agy 後，另建一個假資料測試根目錄，不重播未知工作；第二次兩個短回合成功。未換帳號、模型、權限或計費。使用正式已選定 Antigravity 1.2.17、`gemini-3.8-flash-low`、既有原生登入，未保存／切換或搬取憑證。
+- 首回合產生驗證字串；關閉整個候選 server/controller，重新啟動並開啟同一個 K 對話後，第二回合不提供字串、要求回憶。兩次原生 stdout 都回同一 native conversation ID `4bea14b8-fe87-4fdf-b604-b655f059a3be`，驗證字串相同；兩回合工具計數均為 0。結果 `.runtime/mobile-remote/native-gemini-result.json`、`native-gemini-attempt2-run.txt`。Codex／Claude 同歷史驗證屬前段舊基底實測，這次沒有重跑。
+
+### 尚未完成與停止位置
+
+- 真正 Opus 5.5 的新版整合複查 session `a34b7ffc-25cf-4dbe-a516-2452caf6dda0` 回額度限制，顯示臺灣時間 **18:40** 恢復；證據 `.runtime/mobile-connect/opus-merged/`。這次沒有完成審查，不以舊基底多輪已通過或 Astra 自查替代；未換模型／帳號／API 路徑。
+- 已詢問本人要保留候選等 Opus 可用，或明確允許本次 Astra 驗證先部署。截至本次紀錄尚無答覆，依既有 SOP 保留候選，不把未回答當成豁免；不設定自動排程、不承諾自行醒來。
+- **本批仍未建立正式遠端設定、替换正式 runtime、重啟 K 或 push。** 正式版本仍 4201a28，測試服務關閉。舊 `prepare-mobile-4522f24-20261006` 只保留，不可部署；新版複查通過／本人明確變更條件後，才固定新 commit、建立新的乾淨部署包、再次核對停止狀態及執行正式讀回。
+
+## 10. 額度恢復後的複查與修正
+
+本人於臺灣 18:47 明確要求「47分了 做吧」，恢復正常複查與部署流程，並非豁免審查。
+
+- 真正 Opus 5.5 session `aebf6107-dc4f-45cb-b3c6-ccf75366d268`：發現一項 P2，手機舊 CSS 隱藏 `.worker-activity`，合併新版後連同跨聊天室子代理明細入口一起隱藏。採納最小修正：保留入口、文字省略、手機 popup 固定於視窗內、同時涵蓋 681–700px；保留全部跨聊天室資料與既有安全邊界。
+- 主代理實際目視後，再修標頭文字受擠與工具鈕獨占一列：子代理按鈕可縮並顯示省略號，工作狀態排下一列。未新增輪詢、路由、原生回合或管理設定。`frontend/mobile.css` 為唯一追加產品檔；`test/mobile-remote-ui-probe.mjs` 增加跨聊天室／久未回報／360×440 popup bounds／關閉實測。
+- 真正 Opus 整合補查 session `e65d7c58-0ebd-4485-a2c2-edf4dfa2b279` 無 P1/P2；最後三條標頭 CSS 的聚焦複查 session `9ebcc8d9-83a8-4f40-8d93-1c60c41f38a0` 亦無 P1/P2。主代理核對 WorkStatus 直接子元素、空狀態不渲染，以及截圖後接受。官方訂閱、真 `claude-opus-5-5`；未換帳號、模型或 API 計費。
+- 完整 HTTPS 手機／桌面 probe 通過並目視 `mobile-chat.png`、`mobile-worker-status.png`。首次最終全測 863/865：兩個既有測試在固定等待 40ms 後提前讀非同步狀態；未修改相關產品或測試，95/95 定向及全套重跑 **865/865**（48.78 秒）通過。保留兩次紀錄，不隱藏第一次失敗；證據 `final-tests.txt`、`final-targeted-rerun.txt`、`final-tests-rerun.txt`。
+- 非阻擋限制保留：子代理小彈窗不攔 Android 返回鍵（可用關閉鈕或外點）；原生加速勾選框受手機觸控高度影響；Fast 待套用長標籤、極窄／放大顯示的裁切風險未完整實機驗證。沒有為此新增 overlay 狀態傳遞架構；正式原生核准與未知工作不重播不變。
+- 複查證據 `.runtime/mobile-connect/opus-merged-after-reset/`、`opus-merged-followup/`、`opus-mobile-layout-final/`。第一次最終 CSS 複查腳本字串替換造成 JavaScript syntax error，未啟動原生程序，修正工程腳本後才執行；非產品失敗或模型重播。
+- 下一步由本 commit 建立新乾淨候選，建置／完整測試後，核對正式仍為 4201a28 且全停，保留上一版程式／啟動器，才套用與讀回；不部署舊準備包、不修改既有對話／目標／模型登入。

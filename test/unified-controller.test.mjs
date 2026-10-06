@@ -141,8 +141,18 @@ test('same-provider model selection delegates, while cross-provider selection ne
   assert.deepEqual(f.codex.calls.find(call=>call.method==='selectModel').data,{threadId:'codex-new',model:CODEX_OTHER});
   const before=f.codex.calls.filter(call=>call.method==='selectModel').length;
   await assert.rejects(f.controller.selectModel({threadId:'codex-new',model:CLAUDE_MODEL}),/跨供應商/);
+  await assert.rejects(f.controller.selectModel({threadId:'codex-new',model:CLAUDE_MODEL,serviceTier:'priority'}),/跨供應商/);
   assert.equal(f.codex.calls.filter(call=>call.method==='selectModel').length,before);
   assert.equal(f.claude,undefined);
+ }finally{await f.controller.close();}
+});
+
+test('service tier selection is explicitly Codex-only rather than silently ignored by other providers',async()=>{
+ const f=await fixture();
+ try{
+  await f.controller.open({model:CLAUDE_MODEL});
+  await assert.rejects(f.controller.selectModel({threadId:'claude-new',model:CLAUDE_MODEL,serviceTier:'default'}),/只支援 Codex/);
+  assert.equal(f.claude.calls.some(call=>call.method==='selectModel'),false);
  }finally{await f.controller.close();}
 });
 
