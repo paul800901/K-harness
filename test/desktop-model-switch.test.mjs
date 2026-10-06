@@ -271,6 +271,32 @@ test('Fast remains a saved next-turn choice for an unsent room and is applied on
  }finally{if(f.c.state.status!=='offline')await f.c.close();}
 });
 
+test('creating a Fast room configures its first explicit turn without changing default permissions',async()=>{
+ const f=await fixture();
+ try{
+  const opened=await f.c.open({model:ASTRA,serviceTier:'priority'}),threadId=opened.threadId;
+  const started=f.calls.find(call=>call.method==='thread/start');
+  assert.equal(started.p.serviceTier,'priority');
+  assert.equal(f.calls.some(call=>call.method==='turn/start'),false,'opening a room must not send a message');
+  assert.equal(f.c.state.accessMode,'workspace-write');
+  assert.equal(started.p.config.approval_policy,'on-request');
+  assert.equal(started.p.config.approvals_reviewer,'user');
+  assert.equal(started.p.config.sandbox_mode,'workspace-write');
+  assert.deepEqual(started.p.config.sandbox_workspace_write.writable_roots,[f.root]);
+  const saved=(await listMainSessions(f.root)).sessions.find(row=>row.threadId===threadId);
+  assert.equal(saved.serviceTier,'priority');assert.equal(saved.accessMode,'workspace-write');
+
+  await f.c.send({text:'Explicit first message'});
+  const turn=f.calls.find(call=>call.method==='turn/start');
+  assert.equal(turn.p.serviceTier,'priority');
+  assert.equal(turn.p.approvalPolicy,'on-request');assert.equal(turn.p.approvalsReviewer,'user');
+  assert.equal(turn.p.sandboxPolicy.type,'workspaceWrite');
+  assert.deepEqual(turn.p.sandboxPolicy.writableRoots,[f.root]);
+  assert.equal(turn.p.sandboxPolicy.networkAccess,false);
+  assert.equal(f.calls.filter(call=>call.method==='thread/start').length,1);
+ }finally{await f.c.close();}
+});
+
 test('selecting a model without Fast schedules Standard without rewriting the native effective tier early',async()=>{
  const f=await fixture();
  try{

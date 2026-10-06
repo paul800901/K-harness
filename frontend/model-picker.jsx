@@ -4,8 +4,10 @@ import {WORKER_MODELS,GEMINI_WORKER_MODELS,GEMINI_WORKER_EFFORTS,normalizeWorker
 import {PermissionPicker} from './permission-picker.jsx';
 import {AccountConnections} from './account-connections.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
+import {fastServiceTier,mainServiceTier} from '../src/main-models.mjs';
+import {ReasoningPicker,effortName} from './reasoning-picker.jsx';
 
-export const effortName={none:'無',minimal:'最低',low:'低',medium:'中',high:'高',xhigh:'極高',max:'最高',ultra:'超高（Ultra）'};
+export {effortName};
 const remoteClient=document.documentElement.dataset.kRemote==='true';
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
 const workerOrder=[...GEMINI_WORKER_MODELS,...WORKER_MODELS];
@@ -56,6 +58,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const [catalogGeminiGateway,setCatalogGeminiGateway]=useState(geminiGateway===true);
  const [workerPolicy,setWorkerPolicy]=useState(()=>normalizeWorkerPolicy(currentWorkerPolicy));
  const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
+ const [serviceTier,setServiceTier]=useState('default');
  const initializedProvider=useRef(mode==='switch'?modelProvider({model:currentModel}):'codex');
 
  const refreshModels=async kind=>{
@@ -90,6 +93,9 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  },[revision]);
 
  const selected=models.find(item=>item.model===model);
+ const fastTier=modelProvider(selected)==='codex'?fastServiceTier(selected):null;
+ const selectedServiceTier=mainServiceTier(selected,serviceTier);
+ useEffect(()=>{setServiceTier('default');},[model,fastTier?.id]);
  const claudeStatus=accountStatus.claude,auth=claudeStatus?.auth;
  const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
  const isAvailable=item=>item?.available!==false&&(modelProvider(item)!=='claude'||claudeVerified);
@@ -139,7 +145,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
     <div className="model-picker-flow">
      <div className="model-setting-row"><span>提供者</span>{mode==='switch'?<span className="model-provider-fixed">{providerLabel(provider)}<small>既有對話維持同一提供者</small></span>:<div className="model-provider-tabs" role="group" aria-label="選擇主代理提供者">{['codex','claude','gemini'].map(item=><button type="button" key={item} aria-pressed={provider===item} disabled={disabled} onClick={()=>chooseProvider(item)}>{providerLabel(item)}</button>)}</div>}</div>
      <div className="model-setting-row"><span>模型</span><div><ModelMenu key={provider} models={visibleModels} selected={selected} disabled={disabled} isAvailable={isAvailable} onChange={chooseModel}/>{billingNote(selected)&&<p className="model-billing-note" role="note">{billingNote(selected)}</p>}{!visibleModels.length&&<p className="step-hint">目前帳號未提供可用模型。</p>}</div></div>
-     <label className="model-setting-row"><span>推理程度</span><select aria-label="主代理推理程度" value={effort??''} disabled={disabled||!hasReasoningOptions} onChange={event=>chooseEffort(event.target.value||null)}><option value="">模型預設{inheritedEffort?`（${effortName[inheritedEffort]??inheritedEffort}）`:''}</option>{supportedEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}</select></label>
+     {mode==='create'&&selectedProvider==='codex'&&fastTier?<div className="model-setting-row"><span>推理與速度</span><ReasoningPicker creating value={effort??''} currentEffort={inheritedEffort} efforts={supportedEfforts.map(item=>item.reasoningEffort)} onChange={value=>chooseEffort(value||null)} fastTier={fastTier} serviceTier={selectedServiceTier} effectiveServiceTier={selectedServiceTier} onTierChange={setServiceTier} disabled={disabled}/></div>:<label className="model-setting-row"><span>推理程度</span><select aria-label="主代理推理程度" value={effort??''} disabled={disabled||!hasReasoningOptions} onChange={event=>chooseEffort(event.target.value||null)}><option value="">模型預設{inheritedEffort?`（${effortName[inheritedEffort]??inheritedEffort}）`:''}</option>{supportedEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}</select></label>}
      {mode==='create'&&<div className="model-setting-row"><span>操作權限</span><PermissionPicker label="新對話操作權限" value={permissionValue} provider={selectedProvider} disabled={disabled} onChange={(value,confirmed)=>{setAccessMode(value);setPermissionConfirmed(confirmed);}}/></div>}
     </div>
    </section>
@@ -155,6 +161,6 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
      {!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort}>{effortName[workerPolicy.effort]??workerPolicy.effort}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
     </select></label>}{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前未由目錄確認可用；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
   </>}
-  <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||invalidWorker||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
+  <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||invalidWorker||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy,...(selectedProvider==='codex'?{serviceTier:selectedServiceTier}:{})}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </div>;
 }
