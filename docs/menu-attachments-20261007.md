@@ -76,8 +76,15 @@
 - 第二輪真正 Opus 5.5，session `100f1dfa-7349-43cd-81a7-24af3a7dfc45`，明確認證／來源歸屬、F1/F2/F4 及 quote 聽寫接線正確，**程式碼無阻擋級問題**。
 - 第二輪指出低風險 B1：刪掉最後一則引用會卸載 popover，瀏覽器不送 toggle，open state 留 true。採其最小一行修正：close 遇已卸載／已關 popup 直接 setOpen(false)。實際六尺寸刪完→重新加入→再次展開均通過。
 - E1：送審 packet 恰好截到測試增補中的失敗矩陣，沒有以該份資料宣稱通過；保留審查指出的證據不一致。測試原本先保持 quote top layer 開啟，再程式化選取下方文字、缺少人類 pointerdown，因此遮住工具列。修正 fixture 為真外點關閉→確定性 Range→真按鈕點擊；無 DOM click 繞過。最後 `candidate.json` 為 102/102、errors=[]、unexpectedPosts=[]。
-- Mobile probe 原假 controller 未實作新 raw upload／stream download，首次在下載等待失敗；已補成真 saveAttachmentStream 和 source readback，完整 HTTPS 假身分流程通過（6 對話／3 次送出）。主輸入及引用聽寫、原始附件保存／下載、斷線重連與不重送均通過。證據 `.runtime/mobile-remote/ui-result.json`；不當成真 Tailscale 或實機驗收。
+- Mobile probe 原假 controller 未實作新 raw upload／stream download，首次在下載等待失敗；已補成真 saveAttachmentStream 和 source readback，完整 HTTPS 假身分流程通過（6 個合成對話，含已接收但回覆中斷時不重送）。主輸入及引用聽寫、原始附件保存／下載、斷線重連與不重送均通過。證據 `.runtime/mobile-remote/ui-result.json`；不當成真 Tailscale 或實機驗收。
 
 ## 固定候選準備
 
-來源及必要回歸已完成；接著以固定 Git archive、沿用鎖檔相符的現有相依建立乾淨候選，不安裝套件，不複製使用者資料或修改正式 runtime。乾淨建置／測試結果另補本節。
+固定程式版本 `e0d552c20eac96b15e6a5677314d2a09a349be8a` 已由 Git archive 建立乾淨候選，路徑 `.runtime/menu-attachments-20261007/candidate-e0d552c`。沿用鎖檔相符的現有實體相依，沒有安裝套件、搬使用者資料或更動正式 runtime。
+
+- 乾淨 UI、瀏覽器擴充、Windows 啟動器建置通過；完整測試 **921/921**。
+- 乾淨候選 6 個 UI 產物（HTML、3 個 assets、2 個 icons）與已做 102 項矩陣／完整手機合成流程的來源建置逐檔 SHA-256 相同；manifest JSON 內容完全相同，只差 Git archive 的 LF 與來源 CRLF。既有 bundle 大小警告保留，非建置失敗。
+- 第一次比對誤將來源保留的歷史資產全部納入，乾淨候選没有舊檔故失敗；第二次確認現用 6 檔相同、manifest 僅換行差異。沒有清除歷史資產，也未宣稱 manifest 位元組 hash 相同。
+- 候選收據 `.runtime/menu-attachments-20261007/prepared.json`：validated=true、deployed=false、noInstall=true；正式設定讀回仍 `a2ae2f02d1ea58120a189b57f57fe2d351639519`。
+- **已完成準備，停止在更新前。** 未部署、未重啟、未 push。使用者通知已停止 K 後，仍需確認自有工作停止、保留程式可退版本，再按既有安裝路徑限制套用本固定候選及正式讀回。
+- 本批未更動手機安裝殼，預計更新電腦 K 後將手機 K 關掉重開即可；真手機／Tailscale 新版驗收仍待正式更新。
