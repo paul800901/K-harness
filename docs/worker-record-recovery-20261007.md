@@ -48,3 +48,15 @@
 - 補修後 GPT／Claude 控制器 109/109、Gemini bridge 51/51；最後完整來源套件 **930/930**（`source-tests-final.log`）。目前 owned 未確認停止仍拒絕、混合新／舊只取消本次工作、舊記錄不改 settled／requestId、不派新工作。
 - 非阻擋既有範圍：fork／移動工作區／閒置回收的未知工作守衛仍保守，未藉本批一併放寬；未接受「新任務自己宣稱互動窗授權」，原 delegated-task 不擴權規則保留。list 不寫記錄；inspect 沿既有流程會寫回觀察，不能把兩者混稱唯讀位元組不變。
 - 目前 ready for deployment，尚未套用正式。下一步固定 Git 程式 SHA，乾淨候選建置／930 項回歸，確認 K 停止、保留退版、交換程式並做正式讀回；手機殼未改，無需重裝 App。依既有 SOP 完成後推現有私人 GitHub，不更新東區。
+
+## 南區正式套用與讀回（05:54）
+
+- 固定程式版本 `6dbd8cfb733e144c14c35b8077611a0028fa8936`，前版為 `e0d552c20eac96b15e6a5677314d2a09a349be8a`。乾淨 Git archive 候選 UI／擴充／啟動器建置成功，完整 **930/930**；只複製 lock 相同的既有實體相依，未安裝套件。六個現用 UI 檔位元組一致，manifest JSON 等價（換行不同）。
+- 套用前確認原入口的 K 程序與 47831／54832 listener 均已停止。只透過既有安裝交換程式與啟動器；退版保存在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791323617619`，不還原或搬動對話資料。
+- 交換前後 **39,057** 個既有資料／設定／原生執行檔雜湊一致；五個 Gemini 帳號及選定身分不變。相關 close 補修檔為 `src/desktop-controller.mjs`、`src/claude-controller.mjs` 及 `src/luna-bridge.mjs`，沒有以廣泛解除 unknown 守衛代替修復。
+- **正式舊紀錄實讀**：用已安裝版本讀原對話 348 筆工單，唯一未結案 `30years_ch019_P01_translation_20261005_r1` 正確為 unresolved／settled=false／executionUnowned=true；該 bridge 正常 close。全部 348 筆 JSON 雜湊不變，原生啟動／onChange 次數皆 0，沒有取消、重派或把舊結果假標完成。這不是小說成果驗收，也不是使用者操作整個桌面關閉的端到端驗收。
+- 從原本 `D:\K-harness\Start-K-Desktop.ps1` 開啟，launcher 05:54:22 回 ready；未另起替代後端。正式設定 SHA、**79 個程式產物**及三個 HTTP UI 資產皆一致；health=native，未授權首頁／state 仍為 403。
+- 真正私人 HTTPS 在 1440×1000、390×750 兩尺寸接通、無 page error／橫向溢出；沒有送工作、改目標、切帳號或選其他聊天室。暫時驗收登入已登出，全部原手機登入雜湊仍在；訊息、當前對話及目標前後相同。這是桌面 headless 瀏覽器讀回，不是本輪 Android 實機。
+- 正常重開後保護清單只有 Gemini 帳號 metadata、原生 cli.log 與一個既有 crash log 雜湊變動；帳號 IDs／active identity 不變。部署交換時的 39,057 檔完全一致與重開後原生狀態更新分開記錄，未宣稱整個啟動期間磁碟完全不寫入。
+- 程式已推既有私人 `origin/main` 並精確讀回 `6dbd8cfb733e144c14c35b8077611a0028fa8936`；後續文件收尾另 commit，不重部署。收據保留 `.runtime/worker-recovery-20261007/` 及 `D:\K-harness\.runtime\worker-recovery-deploy-20261007/`。
+- **現在狀態：南區程式已部署並正式讀回；東區未更新。** 手機殼不變，不需重裝；Gemini 新規則實際是否遵守仍待新任務觀察，不能宣稱已硬性封鎖黑窗或卡頓根因全數解決。沒有恢復真實翻譯目標、重播影音工單或改使用者工作結果。
