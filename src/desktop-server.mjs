@@ -10,6 +10,7 @@ import {listProjects,addProject,updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
+import {remoteStateEvent} from '../shared/remote-state.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 import {readRemoteConfig,createRemoteAccess,remoteRouteAllowed,remoteLoginHtml,remoteLoginJs,remoteLoginCss} from './remote-access.mjs';
 
@@ -19,7 +20,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  try{remoteConfig=await readRemoteConfig(remoteFile);}catch(error){remoteError=error.message;}
  const remote=remoteConfig?createRemoteAccess(remoteFile,remoteConfig):null;
  let remoteServer;
- const cookie=randomBytes(32).toString('hex'),clients=new Set(),stateListeners=new Set(),stateStream=createStateStream();let scheduled;
+ const cookie=randomBytes(32).toString('hex'),clients=new Set(),remoteClients=new WeakSet(),stateListeners=new Set(),stateStream=createStateStream();let scheduled;
  // Delivery of this one-use URL
  // belongs to the trusted launcher; there is deliberately no HTTP mint route.
  let launchToken=null,launchExpires=0;
@@ -40,8 +41,14 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
  let closing=false;
  let pickerAbort=null;
  const publicState=()=>{const state=controller.state;return geminiAccounts?.cachedUsage?{...state,usage:{...state.usage,gemini:geminiAccounts.cachedUsage}}:state;};
+ const broadcast=event=>{
+  if(!event)return;let localFrame,remoteFrame;
+  for(const client of clients){if(client.destroyed)continue;
+   client.write(remoteClients.has(client)?remoteFrame??= `data: ${JSON.stringify(remoteStateEvent(event))}\n\n`:localFrame??= `data: ${JSON.stringify(event)}\n\n`);
+  }
+ };
  const controller=controllerFactory({root,executable,onChange(){
-  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const state=publicState();for(const listener of stateListeners)listener(state);const event=stateStream.update(state);if(!event)return;const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);},60);
+  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const state=publicState();for(const listener of stateListeners)listener(state);broadcast(stateStream.update(state));},60);
  }});
  const closedResources=new Set();
  let resourceCloseAttempt=null;
@@ -124,12 +131,12 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     if(isRemote&&name==='index.html')body=body.toString('utf8').replace('<html ','<html data-k-remote="true" ');
     res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
    }
-   if(!authenticated)return json(403,{error:isRemote?'遠端授權已失效，請重新登入。':'請從桌面啟動 K。'});
+   if(!authenticated)return json(403,{error:isRemote?'遠端授權已失效，請重新登入。':'請從桌面啟動 K。',...(isRemote?{code:'K_REMOTE_AUTH_REQUIRED'}:{})});
    if(isRemote&&req.method==='POST')remote.acceptCommand(req);
    if(req.headers.origin&&req.headers.origin!==requestOrigin)return json(403,{error:'Cross-origin request denied'});
  if(req.method==='GET'&&url.pathname==='/api/events'){
-    if(scheduled){clearTimeout(scheduled);scheduled=null;const pendingEvent=stateStream.update(publicState());if(pendingEvent){const frame=`data: ${JSON.stringify(pendingEvent)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}}
-    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});res.write(`data: ${JSON.stringify(stateStream.snapshot(publicState()))}\n\n`);clients.add(res);
+    if(scheduled){clearTimeout(scheduled);scheduled=null;broadcast(stateStream.update(publicState()));}
+    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});const snapshot=stateStream.snapshot(publicState());res.write(`data: ${JSON.stringify(isRemote?remoteStateEvent(snapshot):snapshot)}\n\n`);clients.add(res);if(isRemote)remoteClients.add(res);
     const heartbeat=setInterval(async()=>{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
@@ -148,6 +155,12 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(req.method==='GET'&&url.pathname==='/api/sessions')return json(200,await controller.sessions());
    if(req.method==='GET'&&url.pathname==='/api/projects')return json(200,await listProjects(root,(await controller.sessions()).sessions));
    if(req.method==='GET'&&url.pathname==='/api/models')return json(200,await controller.models());
+   if(req.method==='GET'&&['/api/tool','/api/turn-diff'].includes(url.pathname)){
+    const state=controller.state;
+    if(!state.threadId||url.searchParams.get('threadId')!==state.threadId)return json(409,{error:'聊天室已切換，請回到原對話查看紀錄。'});
+    const kind=url.pathname==='/api/tool'?'tool':'diff',record=(kind==='tool'?state.tools:state.turnDiffs)?.find(item=>(kind==='tool'?item.id:item.turnId)===url.searchParams.get('id'));
+    return record?json(200,{[kind]:record}):json(404,{error:'這筆紀錄目前無法讀取；未重開或重送工作。'});
+   }
    if(req.method==='GET'&&url.pathname==='/api/state')return json(200,publicState());
    if(req.method==='GET'&&['/api/browser/state','/api/browser/frame','/api/browser/download'].includes(url.pathname)){
     const pageId=url.searchParams.get('pageId'),download=url.pathname==='/api/browser/download',downloadId=url.searchParams.get('id');
@@ -196,7 +209,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(url.pathname.startsWith('/api/gemini/accounts/')){
     const operation={'capture':'capture','login':'startLogin','finish':'finishLogin','cancel':'cancelLogin','activate':'activate','refresh':'refresh'}[url.pathname.slice('/api/gemini/accounts/'.length)];
     if(!operation||!geminiAccounts)throw Error('此版本未提供 Gemini 多帳號操作。');
-    const result=await geminiAccounts[operation](data);const event=stateStream.update(publicState());if(event){const frame=`data: ${JSON.stringify(event)}\n\n`;for(const client of clients)if(!client.destroyed)client.write(frame);}return json(200,result);
+    const result=await geminiAccounts[operation](data);broadcast(stateStream.update(publicState()));return json(200,result);
    }
    if(url.pathname==='/api/gemini/login'){
     if((await geminiAccounts?.list())?.accounts.length)throw Error('請在 Gemini 多帳號區使用加入帳號或重新登入。');

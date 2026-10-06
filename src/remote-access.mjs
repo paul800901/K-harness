@@ -60,7 +60,7 @@ export function createRemoteAccess(file,initial){
 
 // Human remote controls reuse the existing routes. OS login, core updates,
 // shutdown, directory picking and Chrome manual control stay at the desktop.
-const reads=new Set(['/api/claude/auth','/api/events','/api/state','/api/sessions','/api/projects','/api/models','/api/usage','/api/artifact','/api/attachment','/api/browser/state','/api/browser/download']);
+const reads=new Set(['/api/tool','/api/turn-diff','/api/claude/auth','/api/events','/api/state','/api/sessions','/api/projects','/api/models','/api/usage','/api/artifact','/api/attachment','/api/browser/state','/api/browser/download']);
 const writes=new Set(['/api/open','/api/send','/api/steer','/api/queue','/api/stop','/api/answer','/api/upload','/api/workers','/api/goal','/api/model','/api/metadata','/api/projects/metadata','/api/workspace','/api/workspace/move','/api/archives/delete','/api/attention/read','/api/compact','/api/fork','/api/native/files/search','/api/native/review']);
 export const remoteRouteAllowed=(method,pathname)=>method==='GET'?reads.has(pathname):method==='POST'&&writes.has(pathname);
 

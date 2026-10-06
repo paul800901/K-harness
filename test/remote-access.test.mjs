@@ -62,7 +62,7 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
  const calls=[];
  let controllerFactoryCalls=0;
  const controller={
-  state:{threadId:'thread-current',workspace:'fake-workspace'}, concurrentConversations:true,
+  state:{threadId:'thread-current',workspace:'fake-workspace',tools:[{id:'tool-1',output:'EXACT_TOOL_OUTPUT',details:{source:'native'},patchChanges:[{path:'fake.txt',diff:'EXACT_PATCH'}]}],turnDiffs:[{turnId:'turn-1',diff:'EXACT_TURN_DIFF'}]}, concurrentConversations:true,
   sessions:async()=>({sessions:[]}), projects:async()=>({projects:[]}), models:async()=>({models:[]}),
   usage:async()=>({}), directories:async()=>({directories:[]}),
   send:async data=>{calls.push(['send',data]);return {ok:true,threadId:data.threadId};},
@@ -120,6 +120,21 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
  assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie:remoteCookie}})).status,403,'remote cookie must not authorize local');
  const authenticatedHeaders={...remoteGetHeaders,cookie:remoteCookie};
  const authenticatedPost={...remoteHeaders,cookie:remoteCookie};
+
+ const expired=await request(remoteUrl('/api/sessions'),{headers:{...remoteGetHeaders,cookie:'__Host-k_remote=expired-before-restart'}});
+ assert.equal(expired.status,403);
+ assert.equal((await expired.json()).code,'K_REMOTE_AUTH_REQUIRED');
+ const wrongIdentity=await request(remoteUrl('/api/sessions'),{headers:{...authenticatedHeaders,'tailscale-user-login':'different@example.test'}});
+ assert.equal(wrongIdentity.status,403);
+ assert.equal((await wrongIdentity.json()).code,undefined,'wrong private network identity is not misreported as an expired K login');
+ for(const [route,id,field,expected]of [['tool','tool-1','tool',controller.state.tools[0]],['turn-diff','turn-1','diff',controller.state.turnDiffs[0]]]){
+  const url=remoteUrl(`/api/${route}?threadId=thread-current&id=${id}`);
+  assert.equal((await request(url,{headers:remoteGetHeaders})).status,403);
+  const result=await request(url,{headers:authenticatedHeaders});assert.equal(result.status,200);assert.deepEqual((await result.json())[field],expected);
+  assert.equal((await request(remoteUrl(`/api/${route}?threadId=other-room&id=${id}`),{headers:authenticatedHeaders})).status,409);
+  assert.equal((await request(remoteUrl(`/api/${route}?threadId=thread-current&id=missing`),{headers:authenticatedHeaders})).status,404);
+ }
+ assert.equal(calls.length,0,'lazy record reads never open, send, stop or mutate work');
 
  assert.equal((await request(remoteUrl('/api/state'),{headers:authenticatedHeaders})).status,200);
  for(const route of ['/api/send','/api/answer']){
