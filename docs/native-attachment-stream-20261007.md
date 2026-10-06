@@ -28,3 +28,7 @@
 - 附件擷取記憶體補修的定向回歸：`node --test test/desktop-files.test.mjs test/claude-controller.test.mjs`，104/104 passed。涵蓋 32 MiB+17 bytes 合成文字附件 stream 原檔保存與磁碟 SHA-256、超界跳過 extraction 且仍保存、bounded preview 僅讀 4 KiB／保留完整 size、既有 PDF/DOCX 解析失敗保留原附件，以及 Claude 附件預覽提示的 byte count／原始路徑。未宣稱完整來源測試或正式運行驗收。
 
 - 確認前次只有 read-only PowerShell .NET 方法失敗、沒有不明副作用後，在同一合成 thread 接續一次限定讀回，維持 gpt-6-luna／low／read-only、原 K profile；改用普通 `Get-Content -LiteralPath ... -Raw` 與 `Get-Item ... | Select-Object -ExpandProperty Length`。Turn `01a112b6-5417-7972-b033-4d4a45719ce1` completed，三檔標記及 79 bytes 均由原始 command output 讀回，與本機合成檔一致。沒有重傳附件、新增其他 thread、擴權或重播使用者工作。證據 `.runtime/native-attachment-smoke-20261007/followup-result.json`（原始 output 與核對）及 `run-followup-readonly.mjs`；只證明 K 到原生核心的原始檔讀取，非影音解碼／模態能力測試。
+
+## 後續正式狀態
+
+使用者通知已「離開並停止 K」後，本批隨固定程式 `e0d552c20eac96b15e6a5677314d2a09a349be8a` 套用南區並推既有 GitHub，程式／入口讀回與對話、五帳號、手機登入保留已核對。本人手機重開與底部選單亦確認成功；不將其說成真實大型影音解讀驗收。部署、退版與正式證據见 [本批總紀錄](menu-attachments-20261007.md#本人停止後正式套用2026-10-07)。此前文中「未部署」描述候選階段，不是最終狀態。
