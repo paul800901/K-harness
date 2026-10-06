@@ -1,3 +1,4 @@
+import {RemoteRecord} from './remote-record.jsx';
 import React,{useEffect,useRef,useState} from 'react';
 import {Copy,Check,X} from 'lucide-react';
 import {visibleNativeNotices,nativeNoticeText} from './native-notices.mjs';
@@ -30,11 +31,11 @@ function patchStatusLabel(status){
  }
 }
 export function NativeDiffs({state}){
- const turns=state.turnDiffs??[],patches=(state.tools??[]).filter(tool=>tool.patchChanges?.length);
+ const turns=state.turnDiffs??[],patches=(state.tools??[]).filter(tool=>tool.patchChanges?.length||tool.hasPatchChanges);
  return <section className="native-diffs"><h3>檔案差異</h3>
   {!turns.length&&!patches.length&&<p>{state.capabilities?.turnDiffs===false?'此供應商尚無已接入的原生差異來源。':'尚未收到原生檔案差異；不代表檔案沒有改動。'}</p>}
-  {turns.map(diff=><details key={diff.turnId}><summary>回合 {diff.turnId}</summary><pre>{diff.diff}</pre></details>)}
-  {patches.map(tool=><details key={tool.id}><summary>檔案變更 · {patchStatusLabel(tool.status)}</summary>{tool.patchChanges.map((change,index)=><section key={index}><strong>{change.path}</strong><pre>{change.diff}</pre></section>)}</details>)}
+  {turns.map(diff=>diff.diffDeferred?<RemoteRecord key={diff.turnId} threadId={state.threadId} kind="turn-diff" id={diff.turnId} summary={`回合 ${diff.turnId}`}>{({diff})=><pre>{diff.diff}</pre>}</RemoteRecord>:<details key={diff.turnId}><summary>回合 {diff.turnId}</summary><pre>{diff.diff}</pre></details>)}
+  {patches.map(tool=>tool.detailsDeferred?<RemoteRecord key={tool.id} threadId={state.threadId} kind="tool" id={tool.id} summary={`檔案變更 · ${patchStatusLabel(tool.status)}`}>{({tool})=>(tool.patchChanges??[]).map((change,index)=><section key={index}><strong>{change.path}</strong><pre>{change.diff}</pre></section>)}</RemoteRecord>:<details key={tool.id}><summary>檔案變更 · {patchStatusLabel(tool.status)}</summary>{tool.patchChanges.map((change,index)=><section key={index}><strong>{change.path}</strong><pre>{change.diff}</pre></section>)}</details>)}
   <small>狀態依原生紀錄顯示，不代表目前檔案內容；唯讀檢視，不會還原檔案或回溯對話。</small>
  </section>;
 }

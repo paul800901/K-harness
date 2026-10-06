@@ -11,17 +11,20 @@ import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
 
 const out=path.resolve('.runtime/mobile-remote');await mkdir(out,{recursive:true});
-const root=await mkdtemp(path.join(out,'ui-')),key=randomBytes(32).toString('hex'),remotePort=54832,httpsPort=54833,origin=`https://paulus.mobile.test.ts.net:${httpsPort}`;
+const root=await mkdtemp(path.join(out,'ui-')),key=randomBytes(32).toString('hex'),remotePort=Number(process.env.K_TEST_REMOTE_PORT??54832),httpsPort=Number(process.env.K_TEST_HTTPS_PORT??54833),origin=`https://paulus.mobile.test.ts.net:${httpsPort}`;
 await mkdir(path.join(root,'.local'));await writeFile(path.join(root,'.local/remote-access.json'),JSON.stringify({origin,login:'test-owner@example.invalid',keyHash:remoteKeyHash(key),port:remotePort}));
 const models=[['gpt-6-luna','GPT-6 Luna','codex'],['claude-opus-5-5','Claude Opus 5.5','claude'],['gemini-3.8-flash','Gemini 3.8 Flash','gemini']].map(([model,displayName,provider])=>({model,displayName,provider,available:true,inputModalities:['text'],supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low'}));
 const rooms=new Map(),uploads=new Map(),calls=[],errors=[];let emit,current,id=0;
 const makeRoom=model=>({threadId:`fake-room-${++id}`,title:`${model.provider} 手機測試`,workspace:root,model:model.model,modelDisplayName:model.displayName,provider:model.provider,accessMode:model.provider==='claude'?'claude-manual':'workspace-write',effort:'low',efforts:['low'],inputModalities:['text'],status:'ready',busy:false,messages:[],tools:[],questions:[],artifacts:[],workers:[],queuedMessages:[],notices:[],progress:{},capabilities:{goal:false,fileSearch:false},browserAccess:{enabled:false}});
 for(const model of models){const room=makeRoom(model);rooms.set(room.threadId,room);current=room;}
 current=rooms.values().next().value;
+current.messages=[{id:'bulk-user',role:'user',text:'歷史大紀錄測試',groupId:'bulk-group',turnId:'bulk-turn',createdAt:'2026-10-06T00:00:00Z'},{id:'bulk-assistant',role:'assistant',text:'歷史回覆已完成',groupId:'bulk-group',turnId:'bulk-turn',createdAt:'2026-10-06T00:01:00Z'}];
+current.tools=Array.from({length:5000},(_,i)=>({id:`bulk-tool-${i}`,groupId:'bulk-group',turnId:'bulk-turn',name:i===0?'延後讀取測試':`shell-${i}`,status:'completed',output:i===0?'EXACT_LAZY_OUTPUT':'x'.repeat(6000),details:{text:'y'.repeat(1000)},...(i===0?{patchChanges:[{path:'lazy-fake.txt',diff:'EXACT_LAZY_PATCH'}]}:{})}));
+current.turnDiffs=[{turnId:'bulk-turn',diff:'EXACT_LAZY_TURN_DIFF'}];
 current.fastTier={id:'fast',name:'Fast'};current.serviceTier='default';current.effectiveServiceTier='default';
 const workerDetails=[{conversationId:current.threadId,conversationTitle:'目前聊天室',requestId:'worker-current',provider:'codex',model:'gpt-6-luna',status:'running',settled:false,lastActivityAt:Date.now()-360000},{conversationId:'fake-room-2',conversationTitle:'另一個聊天室',requestId:'worker-other',provider:'gemini',status:'unresolved',settled:false}];
 const controller={concurrentConversations:true,get state(){return {...current,workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
- sessions:async()=>({sessions:[...rooms.values()]}),models:async()=>({models}),usage:async()=>({}),markViewed:()=>({ok:true}),
+ sessions:async()=>({sessions:[...rooms.values()].map(({messages,tools,turnDiffs,...metadata})=>metadata)}),models:async()=>({models}),usage:async()=>({}),markViewed:()=>({ok:true}),
  async open(data){calls.push({op:'open',...data});if(data.threadId)current=rooms.get(data.threadId);else{current=makeRoom(models.find(m=>m.model===data.model));rooms.set(current.threadId,current);}emit();return {threadId:current.threadId};},
  async send(data){const room=rooms.get(data.threadId);calls.push({op:'send',...data});assert(room);if(room.busy){room.queuedMessages.push({id:`queue-${calls.length}`,text:data.text,createdAt:new Date().toISOString(),status:'queued'});emit();return {queued:true};}room.messages.push({id:`user-${calls.length}`,role:'user',text:data.text,attachments:(data.attachmentIds??[]).map(id=>uploads.get(id)),createdAt:new Date().toISOString()});room.busy=true;room.status='working';emit();return {sent:true};},
  async stop(data){calls.push({op:'stop',...data});const room=rooms.get(data.threadId);room.busy=false;room.status='interrupted';emit();return {stopped:true};},
@@ -45,8 +48,23 @@ try{
  browser=await chromium.launch({executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--host-resolver-rules=MAP paulus.mobile.test.ts.net 127.0.0.1','--no-proxy-server']});
  context=await browser.newContext({viewport:{width:412,height:915},isMobile:true,hasTouch:true,deviceScaleFactor:2,ignoreHTTPSErrors:true,userAgent:'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36'});
  page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));
- await page.goto(origin);await page.getByLabel('K 存取金鑰').fill(key);await page.getByRole('button',{name:'連接 K',exact:true}).click();
- await page.getByText('電腦 K 已連線',{exact:true}).waitFor();await noOverflow(page);await screenshot('mobile-chat');
+ const slow=await context.newCDPSession(page);await slow.send('Network.emulateNetworkConditions',{offline:false,latency:80,downloadThroughput:128000,uploadThroughput:64000});
+ await page.goto(origin);const connectStarted=Date.now();await page.getByLabel('K 存取金鑰').fill(key);await page.getByRole('button',{name:'連接 K',exact:true}).click();
+ await page.getByText('正在同步電腦 K',{exact:true}).waitFor({timeout:20000});
+ assert.equal(await page.getByText('後端斷線 · 無法確認工作狀態',{exact:true}).count(),0);
+ await page.getByText('電腦 K 已連線',{exact:true}).waitFor({timeout:20000});const slowConnectMs=Date.now()-connectStarted;
+ assert(slowConnectMs<30000,'large history must connect on a 1 Mbps read stream within 30 seconds');
+ await slow.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+ await noOverflow(page);await screenshot('mobile-chat');
+ await page.locator('.turn-process>summary').first().click();
+ await page.getByText('工具：延後讀取測試 · 已完成',{exact:true}).click();await page.getByText('EXACT_LAZY_OUTPUT',{exact:true}).waitFor();
+ await page.locator('.turn-process>summary').first().click();
+ await page.getByRole('button',{name:'切換工具與成果面板',exact:true}).click();
+ await page.getByText('檔案變更與檢視',{exact:true}).click();
+ await page.getByText('回合 bulk-turn',{exact:true}).click();await page.getByText('EXACT_LAZY_TURN_DIFF',{exact:true}).waitFor();
+ await page.getByText('檔案變更 · 已完成',{exact:true}).click();await page.getByText('EXACT_LAZY_PATCH',{exact:true}).waitFor();
+ await page.locator('.mobile-backdrop').evaluate(el=>el.click());
+ assert.equal(calls.length,0,'loading remote details must remain read-only');
  assert.equal((await context.cookies()).find(c=>c.name==='__Host-k_remote').secure,true);
  const manifest=await page.evaluate(async()=>{const manifest=await(await fetch('/manifest.webmanifest')).json();return {manifest,icons:await Promise.all(manifest.icons.map(async icon=>{const blob=await(await fetch(icon.src)).blob();const bitmap=await createImageBitmap(blob);return [bitmap.width,bitmap.height];}))};});assert.deepEqual(manifest.icons,[[192,192],[512,512]]);
  // Back dismisses the drawer; same existing rooms, no mobile copies.
@@ -109,6 +127,17 @@ try{
  // Server accepted the command but its HTTP response was lost: show unknown, never resend.
  const beforeUnknown=calls.filter(c=>c.op==='send').length;dropNextSendResponse=true;await composer().fill('伺服器已接收但回應遺失');await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByText('操作結果未確認；沒有自動重送。請重新連線讀回後再決定。',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);assert(current.messages.some(m=>m.text==='伺服器已接收但回應遺失'));assert.equal(sendTransports.at(-1).command,sendTransports.at(-2).command,'browser transport retry retains request ID');await screenshot('mobile-unknown-result');
  await page.reload();await page.getByText('電腦 K 已連線',{exact:true}).waitFor();await composer().fill('');await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);await page.getByRole('button',{name:'停止工作',exact:true}).click();
- assert.deepEqual(errors,[]);await writeFile(path.join(out,'ui-result.json'),JSON.stringify({passed:true,evidence:'real HTTPS proxy and desktop-server, synthetic Tailscale identity and native controllers',viewport:[412,915],keyboardLikeViewport:[360,440],codexReasoningPopup:reasoningBox,fastRemainedDefault:true,rooms:rooms.size,mobileSendCount:sends+1,unknownAcceptedSendCount:1,sendTransports,totalSendCount:calls.filter(c=>c.op==='send').length,calls,manifest,errors},null,2));console.log(JSON.stringify({passed:true,rooms:rooms.size,sendCount:sends}));
+ // An expired login must be distinguished from transport loss without navigation or replay.
+ const beforeExpired=calls.length;await composer().fill('登入失效仍保留的草稿');
+ await context.clearCookies();await context.setOffline(true);await context.setOffline(false);
+ await page.getByText(/手機登入已失效（例如電腦 K 已重新啟動）/).waitFor();
+ assert.equal(await composer().inputValue(),'登入失效仍保留的草稿');assert.equal(calls.length,beforeExpired);
+ await page.setViewportSize({width:360,height:640});await noOverflow(page);
+ const reconnect=page.getByRole('button',{name:'重新登入',exact:true}),reconnectBox=await reconnect.boundingBox();
+ assert(reconnectBox.width>200&&reconnectBox.height<90,'reconnect action must not wrap into a narrow vertical column');
+ await screenshot('mobile-expired-login');await reconnect.click();await page.getByLabel('K 存取金鑰').waitFor();
+ await page.getByLabel('K 存取金鑰').fill(key);await page.getByRole('button',{name:'連接 K',exact:true}).click();
+ await page.getByText('電腦 K 已連線',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);
+ assert.deepEqual(errors,[]);await writeFile(path.join(out,'ui-result.json'),JSON.stringify({passed:true,evidence:'real HTTPS proxy and desktop-server, synthetic Tailscale identity and native controllers',viewport:[412,915],slowConnectMs,historyTools:5000,slowNetworkMbps:1,lazyExactReads:true,keyboardLikeViewport:[360,440],codexReasoningPopup:reasoningBox,fastRemainedDefault:true,rooms:rooms.size,mobileSendCount:sends+1,unknownAcceptedSendCount:1,sendTransports,totalSendCount:calls.filter(c=>c.op==='send').length,calls,manifest,errors},null,2));console.log(JSON.stringify({passed:true,rooms:rooms.size,sendCount:sends}));
 }catch(error){if(page&&!page.isClosed())await page.screenshot({path:path.join(out,'ui-failure.png')});await writeFile(path.join(out,'ui-failure.json'),JSON.stringify({error:error.stack,errors,calls},null,2));throw error;}
 finally{await browser?.close();proxy.closeAllConnections();await new Promise(r=>proxy.close(r));await app.close();}

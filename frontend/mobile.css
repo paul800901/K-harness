@@ -4,6 +4,9 @@
 .voice-button[hidden],html[data-k-remote="true"] [data-quote-mic]{display:none}
 .remote-connection{font-size:var(--k-text-xs);color:var(--k-ink-3)}
 @media(max-width:700px){
+ .remote-disconnected{flex-wrap:wrap}
+ .remote-disconnected>span{flex:1;min-width:0}
+ .remote-disconnected>.remote-reconnect{flex-basis:100%;white-space:nowrap}
  html,body{overflow:hidden;overscroll-behavior:none}
  #root{zoom:1;width:100%;height:var(--mobile-height,100dvh)}
  .app,.app.sidebar-hidden,.app.inspector-hidden,.app.sidebar-hidden.inspector-hidden{display:block;padding:0;height:100%;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}

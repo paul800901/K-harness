@@ -260,3 +260,32 @@ node scripts/configure-remote.mjs --root '<相同 state root>' --revoke
 - 正常啟動後原生額度查詢使Gemini帳號紀錄／CLI log／SQLite暫存及一個既有crash紀錄出現變動或消失；五帳號身分與目前帳號雜湊仍相同，其餘既有保護檔無變更。未手動刪除原生檔案。啟動後保護檔首次讀回遇瞬時消失的db-shm，僅在啟動後核對中明列這類SQLite暫存消失，不放寬交換前後的精確比對。HTTP驗證腳本首次將未收完整的SSE片段當JSON，修正只解析完整事件後13項通過；產品SSE沒有改動。
 - 程式已推到既有 `origin/main`，遠端精確讀回同c8127f9；沒有force push／搬動既有tag，原D槽未提交工作樹不動。發佈前核對本個人金鑰未出現在diff、未提交.local／.runtime／憑證檔。本頁與README的純文件收尾另外提交，不重啟正式K；東區未更新。
 - 部署證據共用位置 `D:\K-harness\.runtime\mobile-remote-deploy-20261006`；完整複查／畫面／測試保留本工程工作樹 `.runtime/mobile-connect/`。上節非阻擋限制與尚未完成的實機項目仍有效，不把本機正式可讀回擴稱所有手機操作都已驗收。
+
+
+## 12. 長對話首次同步與斷線提示補修（候選，未套用）
+
+### 問題與查證
+- 本人 21:18／21:23 手機截圖：先登入失效，重新輸入金鑰後可進工作台，但尚無對話快照時仍顯示「後端斷線」。不能把登入補修當成手機問題已解決。
+- 正式仍是 c8127f9；桌面 47831 與手機 54832 同由 Electron PID37316 提供，該次程序於臺灣 21:14:48 啟動。遠端 session 存記憶體，重啟後需重新登入；沒有另開第二個正式後端。
+- Tailscale 狀態曾回手機 offline／last seen 約 20:30，但直接 ping 同一手機有 43 ms 回應。因此已撤回「offline 標記足以證明手機斷網」的推論，未停用／重設 Tailscale。
+- 經正式私人 HTTPS，新診斷登入可讀 state 與 SSE。23 秒連續串流收到 6 個事件／心跳，未自行結束；沒有送出訊息、停止、換帳號或操作翻譯目標。第一版诊断脚本逐次重掃累加大字串而逾時，換成串流邊界掃描後成功；不是產品串流失敗證據。
+- 真瀏覽器的分頁限定 1 Mbps 測試：舊 UI 顯示斷線時仍持續收到 SSE 資料；移除限速即顯示已連線。限速已還原。這直接證明首次下載被誤標為後端斷線，並重現大歷史同步瓶頸；不等於取得 Android 本機網路紀錄，不能宣稱每次手機中斷都已定位。
+- 21:32:41 同一正式 state 的記憶體量測：629 訊息、5122 工具；完整事件 **36,493,356 bytes**，候選遠端摘要事件 **1,636,177 bytes**，減少 **95.5%**。只記筆數／容量與狀態，未另保存真實對話、工具內容或秘密。證據 `.runtime/mobile-connect/slim-state-measurement.json`。
+
+### 最小修正與保留邊界
+- `shared/remote-state.mjs`：只對遠端 SSE 的 snapshot／patch 摘除工具 output、details、patchChanges 及回合差異正文；保留全部訊息、目標、核准、工人、工具 ID／狀態／歸屬。桌面 SSE 與核心完整狀態不變。
+- `src/desktop-server.mjs`／`src/remote-access.mjs`：同一個 state stream 基線，廣播時依入口選完整或摘要事件；新增兩個唯讀紀錄 route，必須通過既有私人身分與 K session，精確符合目前 threadId／record ID。不讀別的聊天室、不重開核心、不讀任意路徑、不重送工作。
+- `frontend/remote-record.jsx`、`main.jsx`、`native-ui.jsx`：手機在既有工具／差異細節展開時，才讀該筆完整且未截斷的紀錄。收合／切換取消未完成讀取；明示內容是展開當下紀錄，收合再展開讀新結果。沒有額外歷史庫、持久快取、背景輪詢或技術管理頁；桌面呈現不變。
+- `state-connection.mjs`／`work-status.jsx`：首次同步與已斷線分開呈現；取得完整快照前仍禁止操作，不因 HTTP 連上就宣稱工作狀態已確認。SSE 失敗後只用既有小型 GET sessions 區分已失效登入，過期診斷結果不得覆蓋新快照。不自動導頁、存金鑰或重送指令。
+- `mobile.css`：重新登入按鈕改整列，修正截圖中擠成直排。提示先複製草稿再手動登入；原生權限、雙重入口隔離、金鑰輪換／撤銷與 POST 請求去重不變。
+
+### 驗證與審查
+- 定向 **9/9**；全套 **870/870**（46.41 秒）；Vite 建置通過。狀態投影覆蓋新增／文字追加／欄位變更／排序／移除／切換聊天室；紀錄 route 覆蓋未登入、錯房間、缺紀錄與完整內容讀回。證據 `slim-targeted-tests.txt`、`slim-full-tests.txt`、`slim-build.txt`。
+- 真 HTTPS 代理＋React＋HTTP/SSE、假 Tailscale 身分與假核心 UI probe：5000 筆肥大工具紀錄，1 Mbps 限速含登入與前端載入首次 **15.032 秒**、最後建置再跑 **14.569 秒**接通；初始顯示同步而非斷線；工具 output、patch、回合 diff 皆精確讀回。另含原六聊天室、送出、停止、核准／拒絕、提問、佇列、附件、斷網重連、未知回應不重送及登入過期保稿／手動登入流程。不是 Android 實機驗收。證據 `.runtime/mobile-remote/ui-result.json`、畫面、`slim-ui-run.txt` 與 `slim-ui-final-run.txt`。測試改用 54842／54843，未占用正式埠；主代理目視最後登入失效畫面，兩處工作狀態皆明確標示登入失效，草稿保留、登入鈕不再擠成直排。
+- 初版「只區分登入失效」真正 Opus 5.5 複查無 P1/P2；保留 502 期間仍可能須手動重連、離線時舊登入提示暫留等 P3。已採納拿掉「原金鑰」的文字，以免輪換後誤導。
+- 完整串流／按需讀取整合補查：真正 `claude-opus-5-5` session `f6a81369-3d37-44ca-9d0c-32a26c268448`，官方訂閱唯讀，**無 P1/P2**。認可同一狀態基準、完整 patch 語意、精確房間／紀錄讀取、取消舊請求及登入檢查競態；接受每次串流失敗查一次唯讀 sessions 的 P3 成本，不加新快取／重试管理。證據 `.runtime/mobile-connect/opus-mobile-slim/`。
+- Opus 指出審查包缺少 `frontend/work-status.mjs`、`shared/conversation-groups.mjs`，其包外 Grep 被拒，未假稱已查全庫。主代理已補讀兩檔，並搜尋完整 frontend/shared 的 output／details／patchChanges 使用處：工作／子代理狀態靠 status、activity、workerDetails；訊息分組靠 messages／groupId／turnId，皆不依賴移出的工具本文。其他命中為已改按需讀取的工具／差異 UI、未裁減的 worker output 與 question details，以及既有 state-stream 合併器；未發現遺漏的 UI 消費者。
+
+### 正式狀態與下一步
+- 本節修正尚在工程候選，**未替換／重啟正式 K，未部署、未 push**。本人回報再次斷線後，22:16:29 正式 HTTPS 唯讀回查 200／390 ms：同一 Electron PID37316 提供兩個入口，真實翻譯 busy、goal active，原生最近活動 2 秒前，另 1 個子代理狀態待確認。未送出、停止或重送工作；只登出本次診斷 session，未撤銷手機登入。
+- 整合 Opus 複查與最後建置／UI 讀回已完成，固定本批程式；待正式工作確實停止，按既有 SOP 保留退版、乾淨候選重驗、套用及手機實機重新連線驗收。東區不動。正式未更新前仍可能重現舊同步問題，不以候選通過宣稱手機已修好。
