@@ -119,7 +119,12 @@ const writes=new Set(['/api/gemini/accounts/refresh-all','/api/dictation/transcr
 export const remoteRouteAllowed=(method,pathname)=>method==='GET'?reads.has(pathname):method==='POST'&&writes.has(pathname);
 
 export const remoteLoginHtml=`<!doctype html><html lang="zh-Hant-TW"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content"><meta name="theme-color" content="#f2ece2"><link rel="manifest" href="/manifest.webmanifest"><title>K 遠端存取</title><link rel="stylesheet" href="/remote-login.css"></head><body><main><h1>K 執行中樞</h1><p>私人遠端入口。工作仍在電腦執行。</p><form><label for="key">K 存取金鑰</label><input id="key" name="key" type="password" autocomplete="current-password" autocapitalize="none" spellcheck="false" required><small>只貼上金鑰本身，不含引號或設定檔其他內容。</small><button>連接 K</button><p role="alert"></p></form><p>只需配對一次。此裝置會記住登入；持續使用可延續，登出或電腦端撤銷後失效。</p></main><script src="/remote-login.js"></script></body></html>`;
-export const remoteLoginJs=`document.querySelector('form').addEventListener('submit',async e=>{
+export const remoteLoginJs=`// External entry can omit a Strict cookie on the first navigation even when
+// pairing remains valid. Only a successful same-origin read restores the page.
+window.addEventListener('pageshow',()=>{
+ fetch('/api/sessions',{cache:'no-store'}).then(response=>{if(response.ok)location.replace('/');}).catch(()=>{});
+});
+document.querySelector('form').addEventListener('submit',async e=>{
  e.preventDefault();const button=e.target.querySelector('button'),error=e.target.querySelector('[role=alert]');button.disabled=true;error.textContent='';
  try{
   const response=await fetch('/api/remote/login',{method:'POST',headers:{'Content-Type':'application/json','X-K-Request':'1'},body:JSON.stringify({key:document.querySelector('#key').value.trim()})});
