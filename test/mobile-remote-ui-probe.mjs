@@ -24,8 +24,9 @@ current.tools=Array.from({length:5000},(_,i)=>({id:`bulk-tool-${i}`,groupId:'bul
 current.turnDiffs=[{turnId:'bulk-turn',diff:'EXACT_LAZY_TURN_DIFF'}];
 current.fastTier={id:'fast',name:'Fast'};current.serviceTier='default';current.effectiveServiceTier='default';
 const workerDetails=[{conversationId:current.threadId,conversationTitle:'目前聊天室',requestId:'worker-current',provider:'codex',model:'gpt-6-luna',status:'running',settled:false,lastActivityAt:Date.now()-360000},{conversationId:'fake-room-2',conversationTitle:'另一個聊天室',requestId:'worker-other',provider:'gemini',status:'unresolved',settled:false}];
-const controller={concurrentConversations:true,get state(){return {...current,workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
- sessions:async()=>({sessions:[...rooms.values()].map(({messages,tools,turnDiffs,...metadata})=>metadata)}),models:async()=>({models}),usage:async()=>({}),markViewed:()=>({ok:true}),
+const quotaReads=[];let testUsage={codex:{status:'ready',windows:[{key:'primary',minutes:300,remainingPercent:73}]}};
+const controller={concurrentConversations:true,get state(){return {...current,usage:testUsage,workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
+ sessions:async()=>({sessions:[...rooms.values()].map(({messages,tools,turnDiffs,...metadata})=>metadata)}),models:async()=>({models}),usage:async force=>{quotaReads.push(force);if(force)testUsage={codex:{status:'ready',checkedAt:new Date().toISOString(),windows:[{key:'primary',minutes:300,remainingPercent:72}]}};return {...testUsage,gemini:{accounts:[{id:'fake-account',email:'fake@example.test',quota:{status:'stale',windows:[]}}]}};},markViewed:()=>({ok:true}),
  async open(data){calls.push({op:'open',...data});if(data.threadId)current=rooms.get(data.threadId);else{current=makeRoom(models.find(m=>m.model===data.model));rooms.set(current.threadId,current);}emit();return {threadId:current.threadId};},
  async send(data){const room=rooms.get(data.threadId);calls.push({op:'send',...data});assert(room);if(room.busy){room.queuedMessages.push({id:`queue-${calls.length}`,text:data.text,createdAt:new Date().toISOString(),status:'queued'});emit();return {queued:true};}room.messages.push({id:`user-${calls.length}`,role:'user',text:data.text,attachments:(data.attachmentIds??[]).map(id=>uploads.get(id)),createdAt:new Date().toISOString()});room.busy=true;room.status='working';emit();return {sent:true};},
  async stop(data){calls.push({op:'stop',...data});const room=rooms.get(data.threadId);room.busy=false;room.status='interrupted';emit();return {stopped:true};},
@@ -34,7 +35,7 @@ const controller={concurrentConversations:true,get state(){return {...current,wo
  async attachmentFile(id){return uploads.get(id);},async artifact(){return {name:'result.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('REMOTE_DOWNLOAD_OK')};},async close(){},
 };
 const service=()=>({status:async()=>({available:true,auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}}),close:async()=>{}});
-const app=await startDesktop({root,port:0,controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{},transcribe:async audio=>{const wav=decodePcm16Mono16kWav(audio);calls.push({op:'dictation',bytes:wav.length});return {ok:true,text:'手機假收音辨識'};}})});
+const app=await startDesktop({root,port:0,geminiAccounts:{usage:async()=>null,refreshAll:async()=>{quotaReads.push('all');return {activeAccountId:'fake-account',accounts:[{id:'fake-account',email:'fake@example.test',quota:{status:'ready',windows:[{key:'five_hour',label:'5 小時',remainingPercent:91}]}}],note:'已查詢全部帳號並切回原帳號。'};}},controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{},transcribe:async audio=>{const wav=decodePcm16Mono16kWav(audio);calls.push({op:'dictation',bytes:wav.length});return {ok:true,text:'手機假收音辨識'};}})});
 assert.equal(app.remoteOrigin,origin,'test remote listener must start; never proxy to an existing service');
 let dropNextSendResponse=false;const sendTransports=[];
 const proxy=https.createServer({key:await readFile(path.join(out,'test-key.pem')),cert:await readFile(path.join(out,'test-cert.pem'))},(req,res)=>{
@@ -118,6 +119,22 @@ try{
  await page.evaluate(()=>{Object.defineProperty(document,'hidden',{configurable:true,value:true});document.dispatchEvent(new Event('visibilitychange'));delete document.hidden;});
  await page.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='dictation').length,2);
  assert(!calls.some(c=>c.op==='send'),'opening/changing reasoning must not send work');await page.setViewportSize({width:412,height:915});
+ // Settings retains a small attachment disclosure and an authorized idle-only remote quota action.
+ await page.getByRole('button',{name:'展開側欄',exact:true}).click();await page.getByRole('button',{name:'設定',exact:true}).click();
+ const settings=page.getByRole('dialog',{name:'設定',exact:true});await settings.waitFor();
+ assert.equal(await settings.locator('.attachment-help').getAttribute('open'),null);
+ assert.equal(await settings.locator('.attachment-help p').isVisible(),false);
+ await screenshot('mobile-settings-compact');await noOverflow(page);
+ await settings.locator('.attachment-help>summary').click();assert.equal(await settings.locator('.attachment-help p').isVisible(),true);
+ await settings.locator('.attachment-help>summary').click();
+ await settings.getByRole('button',{name:'查看／更新額度',exact:true}).click();
+ const quotaDialog=page.getByRole('dialog',{name:'額度與用量',exact:true});await quotaDialog.waitFor();
+ const beforeQuota=quotaReads.filter(v=>v===true).length;
+ await quotaDialog.getByRole('button',{name:'更新額度與用量',exact:true}).click();
+ await quotaDialog.getByText('72%',{exact:true}).waitFor();await quotaDialog.getByText('91%',{exact:true}).waitFor();assert.equal(quotaReads.filter(v=>v==='all').length,1);assert.equal(quotaReads.filter(v=>v===true).length,beforeQuota+1);
+ assert(!calls.some(c=>c.op==='send'),'querying quota must not send work');await noOverflow(page);await screenshot('mobile-quota');
+ assert.equal(await quotaDialog.getByRole('button',{name:/切換使用|登入|更新核心/}).count(),0);
+ await quotaDialog.getByRole('button',{name:'完成',exact:true}).click();await page.locator('.mobile-backdrop').evaluate(el=>el.click());
  // A modal opened over the mobile drawer must be dismissible with Android-style Back.
  await page.getByRole('button',{name:'展開側欄',exact:true}).click();await page.getByRole('button',{name:'新對話',exact:true}).click();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor();await page.goBack();await page.getByRole('dialog',{name:'新對話',exact:true}).waitFor({state:'hidden'});await page.getByRole('textbox',{name:'工作訊息',exact:true}).waitFor();
  const first=current.threadId;

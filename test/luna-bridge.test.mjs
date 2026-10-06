@@ -452,3 +452,9 @@ test('overlapping approvals remain suspended until the final decision and restar
   await new Promise(r=>setTimeout(r,10));assert.equal((await bridge.list(false))[0].inspection,undefined);
  }finally{for(const r of resolve)r({decision:'decline'});await bridge.close();}
 });
+
+
+test('main-agent Gemini account lookup performs live all-account query, never cached list',async()=>{
+ let queries=0;const bridge=await createLunaBridge({root,workspace,parentId:'quota-query-parent',geminiOptions:{accounts:{list:()=>{throw Error('cached list forbidden');},refreshAll:async()=>{queries++;return {quotaCheck:{allExhausted:false},accounts:[]};}}}});
+ try{assert.equal((await bridge.accounts()).quotaCheck.allExhausted,false);assert.equal(queries,1);}finally{await bridge.close();}
+});

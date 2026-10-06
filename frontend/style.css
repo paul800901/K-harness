@@ -123,3 +123,5 @@ main>header{height:auto;min-height:52px;padding-block:12px;flex-wrap:wrap}.heade
 
 .capacity-continuation{align-items:flex-start;padding-left:0}.capacity-model-change-note{max-width:100%;padding:8px 12px;border:1px solid var(--k-line);border-radius:var(--k-radius-md);background:var(--k-sunken);color:var(--k-ink-2);font-size:var(--k-text-sm);line-height:1.5;overflow-wrap:anywhere}.composer-model:disabled,.composer-effort select:disabled{opacity:1;color:var(--k-ink);background:var(--k-sunken);border:1px solid var(--k-line);cursor:not-allowed}
 @media(max-width:1020px){.composer-options{flex:1 1 auto;flex-wrap:wrap;align-items:center;column-gap:8px;row-gap:4px}.composer-options>.permission-picker,.composer-options>.composer-effort{flex:0 0 auto}.composer-options .permission-trigger:disabled{opacity:1;color:var(--k-ink);background:var(--k-sunken);border:1px solid var(--k-line)}}
+
+.attachment-help{padding:12px 0;border-top:1px solid var(--k-line)}.attachment-help>summary,.account-quota-history>summary{cursor:pointer;font-size:var(--k-text-sm);color:var(--k-ink-3)}.attachment-help>summary{padding:8px 0}.account-quota-history small{display:block;margin-top:4px}

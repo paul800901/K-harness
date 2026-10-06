@@ -13,7 +13,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  let data={version:1,activeAccountId:null,accounts:[],loginPending:null,uncertain:false};
  let changing=false,running=0,refreshPending=null,acquiring=null;
  let loading;
- const load=()=>loading??=(async()=>{try{data=JSON.parse(await readFile(file,'utf8'));if(data.version!==1||!Array.isArray(data.accounts)||data.accounts.some(row=>!validId(row.id)||typeof row.email!=='string'))throw Error('Gemini 帳號紀錄格式不符，未覆寫。');}catch(error){if(error.code!=='ENOENT')throw error;}})();
+ const load=()=>loading??=(async()=>{try{data=JSON.parse(await readFile(file,'utf8'));if(data.version!==1||!Array.isArray(data.accounts)||data.accounts.some(row=>!validId(row.id)||typeof row.email!=='string'))throw Error('Gemini 帳號紀錄格式不符，未覆寫。');}catch(error){if(error.code!=='ENOENT')throw error;}if(data.quotaRefreshOriginalId)data.uncertain=true;})();
  const save=async()=>{await atomicWrite(file,JSON.stringify(data,null,2));onChange();};
  const find=id=>data.accounts.find(row=>row.id===id);
  const stamp=()=>new Date(clock()).toISOString();
@@ -23,7 +23,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  const exhausted=row=>quotaCurrent(row)&&row.quota.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
  function publicRow(row){
   const quota=clone(row.quota??unknown());
-  if(quota.windows?.length&&(row.id!==data.activeAccountId||clock()-Date.parse(quota.checkedAt??'')>=60000))quota.status='stale';
+  if(quota.windows?.length&&(clock()-Date.parse(quota.checkedAt??'')>=60000))quota.status='stale';
   return {id:row.id,email:row.email,auth:clone(row.auth??{status:'unknown'}),quota};
  }
  function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,checking:!!refreshPending,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
@@ -61,6 +61,17 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   const identity=await vault.activate(id,{preserveCurrent:!restoring});
   if(identity.accountId!==id)throw Error('Gemini 切換後身分不符，未開始工作。');
   data.activeAccountId=id;await save();await query(find(id));
+ }
+ async function restoreQuotaAccount(){
+  const id=data.quotaRefreshOriginalId;
+  if(!id)return;
+  try{
+   await vault.assertIdle();
+   const identity=await vault.current();
+   if(identity&&!find(identity.accountId))throw Error('目前登入已在 K 外變更，未覆寫未登記帳號');
+   if(identity?.accountId!==id){const restored=await vault.activate(id);if(restored.accountId!==id)throw Error('還原後身分不符');}
+   data.activeAccountId=id;delete data.quotaRefreshOriginalId;data.uncertain=false;await save();
+  }catch(error){data.quotaRefreshOriginalId=id;data.uncertain=true;await save();throw Error(`尚未確認已切回查詢前帳號；請停止 Gemini 程序後再按更新全部帳號恢復。${error.message}`);}
  }
  function remember(identity){
   if(!validId(identity?.accountId)||typeof identity.email!=='string')throw Error('無法確認 Gemini 帳號身分，未加入。');
@@ -102,9 +113,34 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(refreshPending)return refreshPending;
    refreshPending=exclusive(async()=>{
     if(data.loginPending)throw Error('登入完成後請按「完成登入」，或取消回原帳號。');
+    if(data.quotaRefreshOriginalId)throw Error('上次全部額度查詢尚未還原帳號；請按更新全部帳號恢復。');
     if(data.uncertain){await vault.assertIdle();data.uncertain=false;await save();}
     const row=await current();if(row)await query(row);else await save();return snapshot();
    });try{return await refreshPending;}finally{refreshPending=null;}
+  },
+  async refreshAll(){
+   await load();assertEnabled();
+   if(refreshPending)await refreshPending;
+   const pending=exclusive(async()=>{
+    if(data.loginPending)throw Error('請先完成或取消帳號登入。');
+    // An interrupted batch restores its original login only; never resumes the batch.
+    if(data.quotaRefreshOriginalId){await restoreQuotaAccount();return {...snapshot(),note:'已切回中斷查詢前的帳號；未重新執行全部查詢。'};}
+    await vault.assertIdle();
+    if(data.uncertain){data.uncertain=false;await save();}
+    requireIdleLogin();
+    if(!data.accounts.length)return snapshot();
+    const original=await current();if(!original)throw Error('目前登入尚未加入 K，未切換帳號。');
+    data.quotaRefreshOriginalId=original.id;data.uncertain=true;await save();
+    let failure;
+    try{
+     await query(original);
+     for(const row of data.accounts)if(row.id!==original.id)await activate(row.id);
+    }catch(error){failure=error;}finally{await restoreQuotaAccount();}
+    if(failure)throw Error(`${failure.message} 已切回原帳號；本次查詢未全部完成。`);
+    const failed=data.accounts.filter(row=>!['ready','available'].includes(row.quota?.status)||!row.quota.windows?.length||row.quota.windows.some(w=>!Number.isFinite(w.remainingPercent))).length;
+    return {...snapshot(),quotaCheck:{checkedAt:stamp(),allExhausted:failed?null:data.accounts.every(row=>row.quota.windows.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock()))},note:failed?`已查詢全部帳號並切回原帳號；${failed} 個帳號未取得最新額度。`:'已查詢全部帳號並切回原帳號。'};
+   });
+   refreshPending=pending;try{return await pending;}finally{if(refreshPending===pending)refreshPending=null;}
   },
   async usage(refresh=false){
    await load();
@@ -137,7 +173,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
       if(accountId&&!find(accountId))throw Error('Gemini 帳號選擇無效，未開始工作。');
       // Refresh before selecting: either official quota window may require a
       // handoff, but an old/failed lookup must not rotate subscription logins.
-      if(!running&&(chosen.auth?.status!=='authenticated'||queryAge(chosen)>=60000))await query(chosen);
+      if(!running)await query(chosen);
       if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
       if(exhausted(chosen)){
        if(running)throw Error('目前 Gemini 工作尚未結束，不能交接帳號；未送出本工作。');

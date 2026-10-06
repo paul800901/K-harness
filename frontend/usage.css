@@ -15,3 +15,5 @@
 .gemini-usage-identity{min-width:0}.gemini-usage-identity>strong{display:block;font-size:var(--k-text-sm);font-weight:700}.gemini-usage-status{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;margin-top:3px;font-size:var(--k-text-xs);color:var(--k-ink-3)}.usage-current{padding:0 5px;border-radius:4px;background:var(--k-selected);color:var(--k-ink)}
 .gemini-usage-value{text-align:right;font-size:var(--k-text-xs);color:var(--k-ink-3);white-space:nowrap}.gemini-usage-value>b{display:block;color:var(--k-ink);font-size:var(--k-text-md);font-weight:400;font-variant-numeric:tabular-nums}.usage-expand{color:var(--k-ink-3);text-align:center}.gemini-usage-account[open] .usage-expand{transform:rotate(180deg)}.gemini-usage-account>.usage-timestamps{padding:0 12px 10px}
 @media(max-width:520px){.gemini-usage-account>summary{grid-template-columns:minmax(0,1fr) 48px 48px 10px;gap:6px;padding:9px 8px}.gemini-usage-account>.usage-timestamps{padding:0 8px 9px}}
+
+.usage-toolbar button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;min-height:44px}

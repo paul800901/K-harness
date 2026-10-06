@@ -3,6 +3,8 @@ import {ChevronDown,RefreshCw} from 'lucide-react';
 import {officialClaudeLoginUrl as officialLoginUrl} from '../shared/claude-login-url.mjs';
 import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 
+import {quotaIsHistorical,quotaPercent,quotaReset} from './quota-display.mjs';
+
 const NO_GEMINI_ACCOUNTS=[];
 export function AccountConnections({disabled=false,provider='codex',defaultOpen=false,hidden=false,onStatus,onRefresh}){
  const [claudeStatus,setClaudeStatus]=useState(null),[claudeLoading,setClaudeLoading]=useState(true),[claudeAction,setClaudeAction]=useState(false);
@@ -52,14 +54,16 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
    const result=await response.json();if(!response.ok)throw Error(result.error||'無法更新 Gemini 帳號狀態。');
    setGeminiAccounts(result);const current=await refreshGeminiAccounts();
    if(action==='finish')setGeminiNotice('Gemini 帳號已保存並確認登入。');
+   if(action==='refresh-all')setGeminiNotice(result.note||'已查詢全部帳號並切回原帳號。');
+   if(action==='refresh'){const active=current?.accounts?.find(a=>a.id===current.activeAccountId);setGeminiNotice(quotaIsHistorical(active?.quota)?(active?.quota?.note||'目前帳號額度尚未取得，未把舊資料當作更新成功。'):'已更新目前帳號額度；其他帳號未查詢。');}
    if(['capture','cancel'].includes(action)&&!current?.accounts?.length)await refreshGeminiStatus();
    if(action==='cancel')setGeminiNotice(result.activeAccountId?'已取消新增，原有帳號已恢復。':'已取消新增；若已在官方程式登入，該登入仍保留，尚未加入 K。');
    if(action==='login')setGeminiNotice('已開啟官方登入，請本人完成登入。登入完成後關閉官方視窗，再回來保存帳號。');
-   if(['capture','finish','cancel','activate','refresh'].includes(action)&&current?.activeAccountId&&!current.loginPending){
+   if(['capture','finish','cancel','activate','refresh','refresh-all'].includes(action)&&current?.activeAccountId&&!current.loginPending){
     const active=current.accounts?.find(account=>account.id===current.activeAccountId);
     if(active?.auth?.status==='authenticated')await onRefresh?.('gemini');
    }
-   window.dispatchEvent(new Event('k-gemini-usage-refresh'));
+   if(!['refresh','refresh-all'].includes(action))window.dispatchEvent(new Event('k-gemini-usage-refresh'));
   }catch(error){setGeminiNotice(error.message||'無法更新 Gemini 帳號狀態。');await refreshGeminiAccounts();}
   finally{setGeminiAction(false);}
  };
@@ -160,14 +164,17 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
     {geminiAccountsLoading?<span role="status">正在讀取 Gemini 帳號…</span>:<>
      {geminiAccountRows.map(account=>{
       const active=account.id===geminiAccounts.activeAccountId,authenticated=account.auth?.status==='authenticated',quota=account.quota;
-      const value=key=>quota?.windows?.find(w=>w.key===key)?.remainingPercent;
+      const historical=quotaIsHistorical(quota);
+      const value=key=>historical?'—':quotaPercent(quota?.windows?.find(w=>w.key===key));
       return <div className="gemini-account-card" key={account.id} data-account-id={account.id}>
        <div className="gemini-account-card-head"><strong>{account.email||'未確認帳號'}</strong><span>{active?'目前使用 · ':''}{authenticated?'已驗證':account.auth?.status==='signed-out'?'待重新登入':'尚未確認'}</span></div>
        {account.auth?.checkedAt&&<small>登入確認：{new Date(account.auth.checkedAt).toLocaleString('zh-TW')}</small>}
-       <div className="gemini-account-quota"><span>每週：{value('seven_day')==null?'—':`${value('seven_day')}%`}</span><span>5 小時：{value('five_hour')==null?'—':`${value('five_hour')}%`}</span></div>
-       {quota?.checkedAt&&<small>額度查詢：{new Date(quota.checkedAt).toLocaleString('zh-TW')}{quota.status==='stale'?' · 舊資料':''}</small>}
-       {quota?.windows?.filter(w=>w.resetsAt).map(w=><small key={w.key}>{w.label|| (w.key==='seven_day'?'每週':'5 小時')}重設：{new Date(w.resetsAt*1000).toLocaleString('zh-TW')}</small>)}
-       {quota?.status==='stale'&&<small>目前顯示上次查詢的額度，尚未更新。</small>}
+       <div className="gemini-account-quota"><span>每週：{value('seven_day')}</span><span>5 小時：{value('five_hour')}</span></div>
+       {historical&&<small>目前額度待查詢，不以舊資料判定可用或耗盡。</small>}
+       <details className="account-quota-history"><summary>{historical?'上次查詢紀錄':'查詢與重設時間'}</summary>
+        <small>{quota?.checkedAt?`額度查詢：${new Date(quota.checkedAt).toLocaleString('zh-TW')}`:'尚未查詢額度。'}</small>
+        {quota?.windows?.map(w=><small key={w.key}>{historical?'上次回報・':''}{w.label||(w.key==='seven_day'?'每週':'5 小時')}：{quotaPercent(w)}；重設時間：{quotaReset(w)}</small>)}
+       </details>
        {!active&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('activate',{accountId:account.id})}>切換使用</button>}
       </div>;
      })}
@@ -176,7 +183,7 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
       <small>開始新增前請先關閉官方 Antigravity／agy；保存或取消前也請先關閉。K 不會強制關閉程式。</small>
      </div>}
      {geminiLoginPending&&<div className="gemini-login-pending" role="status"><strong>正在新增 Gemini 帳號</strong><span>請本人在官方 Antigravity 登入程式完成 Google 登入；完成後先關閉官方視窗，再按「登入完成，保存帳號」。取消前也請先關閉官方視窗；K 不會強制關閉。若已有原帳號，取消會恢復原帳號；若原本未登入，取消不會撤銷你在官方程式完成的登入，該登入仍未加入 K。</span><div className="provider-auth-actions"><button type="button" disabled={disabled||geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('finish')}>登入完成，保存帳號</button><button type="button" disabled={geminiAction||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('cancel')}>取消新增</button></div></div>}
-     {geminiAccountRows.length>0&&<div className="provider-auth-actions">{!geminiLoginPending&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('login')}>新增 Gemini 帳號</button>}<button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh')}>刷新目前帳號額度</button></div>}
+     {geminiAccountRows.length>0&&<div className="provider-auth-actions">{!geminiLoginPending&&<button type="button" disabled={disabled||geminiAction||geminiBusy||!geminiAccountsEnabled} onClick={()=>geminiAccountAction('login')}>新增 Gemini 帳號</button>}<button type="button" disabled={disabled||geminiAction||(geminiBusy&&!geminiUncertain)||!geminiAccountsEnabled||geminiLoginPending} onClick={()=>geminiAccountAction('refresh-all')}>更新全部帳號額度</button></div>}
      {geminiBusy&&!geminiUncertain&&<small role="status">{geminiAccounts?.checking?'正在查詢 Gemini 額度，查詢結束後即可切換帳號。':'Gemini 正在工作或確認帳號，請等目前操作結束後再切換或登入其他帳號。'}</small>}
      {!geminiAccountsEnabled&&<small role="status">此版本尚未開放帳號保存、登入或切換；不會更動目前登入。</small>}
      {geminiAccounts?.reason&&<small>{geminiAccounts.reason}</small>}

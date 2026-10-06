@@ -72,7 +72,7 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
   artifact:async (artifactPath,context)=>{calls.push(['artifact',artifactPath,context]);return {name:'fake.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('fake artifact')};},
   close:async()=>{},
  };
- const app=await startDesktop({root,executable:'fake-executable',port:0,controllerFactory:()=>{controllerFactoryCalls++;return controller;},
+ const app=await startDesktop({root,executable:'fake-executable',port:0,geminiAccounts:{refreshAll:async()=>{calls.push(['refresh-all']);return {accounts:[],activeAccountId:null};}},controllerFactory:()=>{controllerFactoryCalls++;return controller;},
   claudeLoginFactory:()=>({...service(),status:async()=>({available:true,auth:{loggedIn:true,authMethod:'fake',apiProvider:'fake',subscriptionType:'fake',email:'sensitive@example.test',accessToken:'fake-access-token',credential:'fake-credential'}})}),
   codexLoginFactory:service,geminiLoginFactory:service,
   localDictationFactory:()=>({transcribe:async()=>({}),close:async()=>{}})});
@@ -120,6 +120,12 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
  assert.equal((await request(`${app.origin}/api/state`,{headers:{host:new URL(app.origin).host,cookie:remoteCookie}})).status,403,'remote cookie must not authorize local');
  const authenticatedHeaders={...remoteGetHeaders,cookie:remoteCookie};
  const authenticatedPost={...remoteHeaders,cookie:remoteCookie};
+ assert.equal((await request(remoteUrl('/api/gemini/accounts/refresh-all'),{method:'POST',headers:remoteHeaders,body:{}})).status,403);
+ const quotaCommand=randomUUID();
+ assert.equal((await request(remoteUrl('/api/gemini/accounts/refresh-all'),{method:'POST',headers:authenticatedPost,commandId:quotaCommand,body:{}})).status,200);
+ assert.equal((await request(remoteUrl('/api/gemini/accounts/refresh-all'),{method:'POST',headers:authenticatedPost,commandId:quotaCommand,body:{}})).status,409);
+ assert.deepEqual(calls,[['refresh-all']]);calls.length=0;
+
 
  const expired=await request(remoteUrl('/api/sessions'),{headers:{...remoteGetHeaders,cookie:'__Host-k_remote=expired-before-restart'}});
  assert.equal(expired.status,403);

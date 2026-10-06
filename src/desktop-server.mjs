@@ -209,7 +209,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(url.pathname==='/api/browser/action')return json(200,await browserRequest(root,controller.state,data.threadId,'/action',data));
    if(url.pathname==='/api/codex/login')return json(200,await codexLogin.start());
    if(url.pathname.startsWith('/api/gemini/accounts/')){
-    const operation={'capture':'capture','login':'startLogin','finish':'finishLogin','cancel':'cancelLogin','activate':'activate','refresh':'refresh'}[url.pathname.slice('/api/gemini/accounts/'.length)];
+    const operation={'capture':'capture','login':'startLogin','finish':'finishLogin','cancel':'cancelLogin','activate':'activate','refresh':'refresh','refresh-all':'refreshAll'}[url.pathname.slice('/api/gemini/accounts/'.length)];
     if(!operation||!geminiAccounts)throw Error('此版本未提供 Gemini 多帳號操作。');
     const result=await geminiAccounts[operation](data);broadcast(stateStream.update(publicState()));return json(200,result);
    }

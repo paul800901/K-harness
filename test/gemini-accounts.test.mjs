@@ -317,11 +317,11 @@ test('unknown network quota is not interpreted as zero or as exhaustion',async()
  assert.equal(invoked,1);assert.equal(result.accountId,A);
 });
 
-test('inactive account quota is marked stale and not presented as current',async()=>{
+test('recent inactive official quota remains readable until its query becomes stale',async()=>{
  const f=await fixture({identity:{accountId:A,email:'a@example.test'}});await f.accounts.capture();
  f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
  const state=await f.accounts.list();
- assert.equal(state.accounts.find(row=>row.id===A).quota.status,'stale');
+ assert.equal(state.accounts.find(row=>row.id===A).quota.status,'available');
  assert.equal(state.accounts.find(row=>row.id===B).quota.status,'available');
 });
 
@@ -469,4 +469,52 @@ test('quota query busy flag clears after a timeout-shaped response without disca
  assert.equal((await f.accounts.list()).checking,true);assert.equal((await f.accounts.list()).busy,true);
  resolveStatus({temporaryFailure:true,auth:{status:'unknown'},reason:'query timeout'});await pending;
  const result=await f.accounts.list();assert.equal(result.checking,false);assert.equal(result.busy,false);assert.deepEqual(result.accounts.map(r=>r.id),[A,B]);
+});
+
+
+test('refreshAll queries every saved account once and restores original without sending model work',async()=>{
+ let left=0;const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'five_hour',remainingPercent:left,resetsAt:future}]})});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.calls.activate.length=0;const before=f.calls.status;left=75;
+ const result=await f.accounts.refreshAll();assert.equal(f.calls.status,before+2);assert.deepEqual(f.calls.activate,[A,B]);assert.equal(f.current.accountId,B);assert.equal(result.activeAccountId,B);assert.equal(result.busy,false);assert.equal(result.quotaCheck.allExhausted,false);assert(result.accounts.every(a=>a.quota.windows[0].remainingPercent===75));
+ assert.equal(JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-accounts.json'),'utf8')).quotaRefreshOriginalId,undefined);
+});
+test('all-account query refuses running work, external native processes and pending login without switching',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
+ const lease=await f.accounts.acquire();await assert.rejects(f.accounts.refreshAll(),/正在工作/u);await lease.release();
+ f.idle=false;await assert.rejects(f.accounts.refreshAll(),/fixture busy/u);f.idle=true;
+ await f.accounts.startLogin();await assert.rejects(f.accounts.refreshAll(),/登入/u);assert.deepEqual(f.calls.activate,[]);
+});
+test('all-account query restores original on failure and never reports unknown as exhausted',async()=>{
+ let fail=false;const f=await fixture({identity:{accountId:A,email},statusFor:current=>fail&&current.accountId===A?{temporaryFailure:true,reason:'lookup failed',auth:{status:'unknown'}}:authStatus()});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();fail=true;
+ const result=await f.accounts.refreshAll();assert.equal(result.quotaCheck.allExhausted,null);assert.equal(f.current.accountId,B);assert.match(result.note,/1 個帳號未取得/u);
+ f.login.status=async()=>{throw Error('native query failed');};await assert.rejects(f.accounts.refreshAll(),/native query failed/u);assert.equal(f.current.accountId,B);
+});
+test('failed restoration survives restart, blocks work, and explicit retry only restores original',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();
+ const activate=f.vault.activate;f.vault.activate=async id=>{if(id===B)throw Error('restore failed');return activate(id);};
+ await assert.rejects(f.accounts.refreshAll(),/尚未確認已切回/u);assert.equal(f.current.accountId,A);
+ const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true});await assert.rejects(restarted.acquire(),/停止尚未確認/u);await assert.rejects(restarted.refresh(),/尚未還原/u);
+ f.vault.activate=activate;const queries=f.calls.status;const result=await restarted.refreshAll();assert.equal(f.current.accountId,B);assert.equal(f.calls.status,queries);assert.match(result.note,/未重新執行/u);assert.equal(result.uncertain,false);
+});
+test('worker rechecks even recent exhausted snapshot instead of rejecting a now replenished account',async()=>{
+ let remaining=0;const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'five_hour',remainingPercent:remaining,resetsAt:future}]})});await f.accounts.capture();remaining=88;
+ const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);assert.equal(f.calls.status,2);
+});
+
+test('all-account refresh clears non-batch uncertain state only after native idle is confirmed',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();const lease=await f.accounts.acquire();await lease.release({settled:false});
+ f.idle=false;await assert.rejects(f.accounts.refreshAll(),/fixture busy/u);assert.equal((await f.accounts.list()).uncertain,true);
+ f.idle=true;const result=await f.accounts.refreshAll();assert.equal(result.uncertain,false);const next=await f.accounts.acquire();await next.release();
+});
+test('new work and inspection each wait for an all-account scan and see restored original',async()=>{
+ for(const mode of ['work','inspect']){
+  let pause=false,finish,start;const started=new Promise(resolve=>start=resolve);
+  const f=await fixture({identity:{accountId:A,email},statusFor:()=>pause?new Promise(resolve=>{pause=false;finish=()=>resolve(authStatus());start();}):authStatus()});
+  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();pause=true;
+  const scan=f.accounts.refreshAll();await started;let ran=false;
+  const next=mode==='work'?f.accounts.acquire().then(async lease=>{assert.equal(lease.accountId,B);ran=true;await lease.release();}):f.accounts.inspect(async()=>{assert.equal(f.current.accountId,B);ran=true;});
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(ran,false);
+  finish();await Promise.all([scan,next]);assert.equal(ran,true);assert.equal(f.current.accountId,B);
+ }
 });
