@@ -53,4 +53,4 @@
 - 可退回程式：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791302009787`（上一版 `3a9cccd`）。只退程式／啟動器，不當成使用者資料還原。
 - 程式已推送既有 GitHub `origin/main`，讀回完整 SHA `a0890874b3f6e2eb9aa3ef62a92ee3a630397d90`。本節後續文件收尾另 commit，不重部署文件。東區未更新。
 - 證據：工程工作樹 `.runtime/long-work-observation-20261006/`；正式讀回 `D:\K-harness\.runtime\long-work-observation-deploy-20261006/`。原生日誌、真實帳號資料與 `.runtime` 未推送。
-- 本輪没有恢复暫停目標、發送小說訊息、重送工單或切换帳號。K 保持開啟供本人使用；手機工程另作私人 HTTPS 持續連線驗證，本批不把該項尚未回報的結果當成已通過。
+- 本輪沒有恢復暫停目標、發送小說訊息、重送工單或切換帳號。K 保持開啟供本人使用；手機工程後續補交的五分鐘私人 HTTPS、重連及本人重新登入成功證據，已核對並記於 [合併版手機正式驗收](mobile-remote-20261006.md#15-合併版手機正式驗收2026-10-07-收尾)。這次文件收尾不再部署或操作使用者工作。
