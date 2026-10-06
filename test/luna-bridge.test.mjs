@@ -439,12 +439,16 @@ test('overlapping approvals remain suspended until the final decision and restar
  const resolve=[];const {bridge,fixture}=await make({watchOptions:{quietMs:100},onRequest:()=>new Promise(r=>resolve.push(r))});
  try{
   const started=await bridge.start({requestId:'approval-watch',task:'fake'});
+  fixture.host.emit({method:'item/started',params:{threadId:started.threadId,turnId:started.turnId,item:{id:'approval-command',type:'commandExecution'}}});
   const message={method:'item/commandExecution/requestApproval',params:{threadId:started.threadId,turnId:started.turnId}};
   const a=fixture.host.requestHandler(message),b=fixture.host.requestHandler(message);
   await new Promise(r=>setTimeout(r,130));let record=(await bridge.list(false))[0];assert(record.waitingForApproval);assert.equal(record.inspection,undefined);
   resolve[0]({decision:'accept'});await a;assert((await bridge.list(false))[0].waitingForApproval);
   const decided=Date.now();resolve[1]({decision:'accept'});await b;record=(await bridge.list(false))[0];
   assert.equal(record.waitingForApproval,undefined);assert(record.lastActivityAt>=decided);
+  fixture.host.emit({method:'thread/tokenUsage/updated',params:{threadId:started.threadId,turnId:started.turnId}});
+  fixture.host.emit({method:'item/started',params:{threadId:started.threadId,turnId:started.turnId,item:{id:'approval-command',type:'commandExecution'}}});
+  assert.equal((await bridge.list(false))[0].lastActivityAt,record.lastActivityAt,'non-progress and duplicate events cannot undo the approval decision clock');
   await new Promise(r=>setTimeout(r,10));assert.equal((await bridge.list(false))[0].inspection,undefined);
  }finally{for(const r of resolve)r({decision:'decline'});await bridge.close();}
 });

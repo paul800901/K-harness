@@ -139,6 +139,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       record.acceptance ??= 'not-reviewed'; record.outputFiles ??= [];
       delete record.activity; // A saved observation is not evidence of a live worker after restart.
       delete record.inspection;
+      delete record.waitingForApproval; // Saved approval state is not a live pending request.
       records.set(requestId, record); return record;
     } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
   };
@@ -151,8 +152,8 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     if(!record.settled&&(!record.turnId||!p.turnId||record.turnId===p.turnId)){
       if(!activities.has(record.requestId))activities.set(record.requestId,createWorkActivity(record));
       codexWorkActivity(activities.get(record.requestId),message);
-      if(record.activity?.lastEventAt!=null)record.lastActivityAt=record.activity.lastEventAt;
-      if(record.status==='unresolved'&&p.turnId===record.turnId&&/^(item\/|turn\/started$)/.test(message.method))record.status='running';
+      if(record.activity?.lastEventAt!=null)record.lastActivityAt=Math.max(record.lastActivityAt??0,record.activity.lastEventAt);
+      if(record.status==='unresolved'&&(p.turnId??p.turn?.id)===record.turnId&&/^(item\/|turn\/started$)/.test(message.method))record.status='running';
     }
     const itemKey=`${p.threadId}:${p.turnId}:${p.item?.id}`;
     // Pending file changes may arrive before thread/read includes the item.
