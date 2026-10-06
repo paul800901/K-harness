@@ -124,6 +124,9 @@ test('capacity failure during Flash completion delivery continues once without r
   assert.equal(starts.filter(x=>x.p.toolOutput).length,1);assert.equal(starts[2].p.model,SOL);assert.equal(starts[2].p.effort,'medium');
   assert.equal(starts[2].p.toolOutput,undefined);assert(!JSON.stringify(starts[2].p.input).includes('fake worker result'));
   assert.equal(f.c.state.status,'completed');assert.equal(f.c.state.model,SOL);
-  const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.model,SOL);assert.equal(saved.workerNotifications['fake-flash'],'delivery-attempted');
+  // UI completion can precede the queued atomic session write under a loaded full suite.
+  let saved;const deadline=Date.now()+3000;
+  do{saved=(await listMainSessions(f.root)).sessions[0];if(saved.model===SOL&&saved.workerNotifications?.['fake-flash']==='delivery-attempted')break;await new Promise(r=>setTimeout(r,20));}while(Date.now()<deadline);
+  assert.equal(saved.model,SOL);assert.equal(saved.workerNotifications['fake-flash'],'delivery-attempted');
  }finally{await f.c.close();}
 });

@@ -26,7 +26,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    const disconnected=['offline','error','uncertain'].includes(s.status)||s.workerConnection==='failed';
    uncertain||=disconnected;
    for(const worker of s.workers??[]){
-    if(worker.kind==='command'||worker.settled===true||['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
+    if(worker.kind==='command'||worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
     if(disconnected||!['running','starting','pending'].includes(worker.status)){unconfirmed++;uncertain=true;}
     else if(worker.status==='running')running++;
    }
@@ -44,7 +44,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     const activityTool=(s.tools??[]).find(tool=>
      nativeThreadId&&((tool.id===`native:${nativeThreadId}`||tool.details?.threadId===nativeThreadId)||tool.details?.threadIds?.includes?.(nativeThreadId)));
     const question=nativeThreadId?(s.questions??[]).find(item=>item.isSubagent&&item.threadId===nativeThreadId):null;
-    const ended=worker.settled===true||['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status);
+    const ended=worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status);
     const unresolved=!ended&&(disconnected||!['running','starting','pending'].includes(worker.status));
     return {
      requestId:worker.requestId,threadId:nativeThreadId,conversationId:s.threadId,
@@ -54,7 +54,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      agentNickname:summary(worker.agentNickname),name:summary(worker.name),
      status:unresolved?'unresolved':worker.status??(ended?'ended':'unknown'),
      settled:worker.settled===true||ended,
-     lastActivityAt:worker.lastActivityAt,lastReadAt:worker.lastReadAt??worker.readAt,
+     lastActivityAt:worker.lastActivityAt??worker.activity?.lastEventAt,lastReadAt:worker.lastReadAt??worker.readAt,
+     activity:worker.activity,startedAt:worker.startedAt,
      error:safeError(worker.error)??safeError(activityTool?.error),
      confirmationReason:summary(question?.title??question?.text),
      workerConnection:s.workerConnection,

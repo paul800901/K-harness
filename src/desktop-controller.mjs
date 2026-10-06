@@ -29,7 +29,7 @@ function codexInput(text,attachments=[]){
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
- const activity=createWorkActivity(state);
+ const activity=createWorkActivity(state),childActivities=new Map();
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
@@ -197,8 +197,19 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(e.method==='serverRequest/resolved'){clearQuestions(q=>q.threadId===p.threadId&&q.requestId===p.requestId);changed();return;}
   if(p.threadId!==state.threadId){
+   if(!childActivities.has(p.threadId)&&!collectNativeWorkerIds([...items.values()]).includes(p.threadId))return;
+   if(!opening&&!closing&&!stopping){
+    let child=childActivities.get(p.threadId);
+    if(!child){const holder={};child={holder,activity:createWorkActivity(holder)};childActivities.set(p.threadId,child);}
+    if(e.method==='turn/started'){child.turnId=p.turn?.id;child.ended=false;}
+    if(!child.ended&&(!child.turnId||!p.turnId||child.turnId===p.turnId)){
+     const previous=child.holder.activity;codexWorkActivity(child.activity,e);
+     if(child.holder.activity!==previous){const row=state.workers.find(w=>w.threadId===p.threadId);if(row)row.activity=child.holder.activity;changed();}
+    }
+    if(e.method==='turn/completed'&&(!child.turnId||child.turnId===p.turn?.id))child.ended=true;
+   }
    if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}
-   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method)&&collectNativeWorkerIds([...items.values()]).includes(p.threadId))void workers().catch(()=>{});
+   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method))void workers().catch(()=>{});
    return;
   }
   if(e.method==='turn/completed'&&capacityHandled.has(p.turn?.id))return;
@@ -400,7 +411,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
   const flash=flashBridge?await flashBridge.list():[];
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
-  const rows=[...result,...flash];
+  const rows=[...result.map(row=>({...row,activity:childActivities.get(row.threadId)?.holder.activity})),...flash];
   // A delayed read must not replace a newer completion; callers still receive
   // their full result, including Flash, for existing stop/idle checks.
   if(read===workerRead){state.workers=rows;syncArtifacts();changed();}
@@ -747,7 +758,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const compactionsComplete=!threadId||prepared||Array.isArray(prior?.thread?.turns)&&prior.thread.turns.every(turn=>Array.isArray(turn.items));
      const nextUiTiming=threadId?await loadUiMessageTiming(root,threadId):{version:1,messages:{},tools:{}};
      state.previousWorkspaces=relocation?.previousWorkspaces??saved?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??saved?.previousArtifacts??[];
-     compactionIds=new Set();clearQuestions();turnId=null;items.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
+     compactionIds=new Set();clearQuestions();turnId=null;items.clear();childActivities.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      uiTiming=nextUiTiming;activeGroupId=null;reasoningParts.clear();fileChangePatches.clear();state.notices=[];state.reasoning=[];state.turnDiffs=[];state.sandboxReadiness=null;state.parentThreadId=saved?.parentThreadId??null;state.parentTitle=saved?.parentTitle??null;
      state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));

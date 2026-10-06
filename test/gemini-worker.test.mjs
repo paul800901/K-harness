@@ -306,3 +306,31 @@ test('Flash-only bridge never opens a Codex worker host and refuses GPT dispatch
   assert.equal(hosts,0);assert.equal(runs,1);
  }finally{await bridge.close();}
 });
+
+
+test('Flash streams real child activity without a second model call or status-query heartbeat',async()=>{
+ const updates=[],fake=fakeSpawn(null);let started;
+ const ready=new Promise(r=>started=r);
+ const run=make(fake).run({task:'fake activity',effort:'low',onStart:started,onActivity:a=>updates.push(structuredClone(a))});
+ await ready;const child=fake.children.at(-1);
+ child.stdout.write(JSON.stringify({event:'step_update',step_update:{step_index:1,text_delta:'working'}})+'\n');
+ const at=updates.at(-1).lastEventAt;assert.equal(typeof at,'number');
+ child.stdout.write(JSON.stringify({event:'ping'})+'\n');
+ assert.equal(updates.at(-1).lastEventAt,at);
+ child.stdout.write(success('done'));child.emit('close',0);
+ assert.equal((await run).status,'completed');
+ assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,1);
+});
+
+test('bridge activity is display-only; waiting inspections neither rerun nor settle Flash',async()=>{
+ let finish,options,runs=0;const changes=[],gate=new Promise(r=>finish=r);
+ const bridge=await geminiBridge({onChange:r=>changes.push(r),factory:()=>({run:async o=>{options=o;runs++;o.onStart(123);await gate;return {status:'completed',settled:true,output:'done'};}})});
+ try{
+  await bridge.start(args);await new Promise(r=>setImmediate(r));
+  options.onActivity({startedAt:1000,lastEventAt:2000,phase:'tool',phaseSince:2000});
+  assert.equal(changes.at(-1).activity.lastEventAt,2000);
+  for(let n=0;n<3;n++){const record=await bridge.inspect({requestId:'flash'});assert.equal(record.settled,false);assert.equal(record.lastActivityAt,2000);}
+  assert.equal(runs,1);finish();await new Promise(r=>setTimeout(r,30));
+  assert.equal((await bridge.inspect({requestId:'flash'})).settled,true);
+ }finally{finish();await bridge.close();}
+});

@@ -1,3 +1,4 @@
+import {createWorkActivity,geminiWorkActivity} from './work-activity.mjs';
 import {spawn, execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {createHash, randomUUID} from 'node:crypto';
@@ -220,7 +221,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     })();
     return new Set(await catalog);
   }
-  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart}={}) {
+  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{}}={}) {
     if(!GEMINI_WORKER_MODELS.includes(model)||!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash 只接受 gemini-3.8-flash 與 low|medium|high；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
     const nativeModel=`${model}-${effort}`;
@@ -235,10 +236,11 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     const server=await browser?.config({conversationId:`flash-${runId}`,accessMode,provider:'gemini'});
     const runHome=server?path.join(home,'runs',runId):home;
     await prepare(runHome,server);
-    const before=await gitStatus(workspace),parser=geminiStream();
+    const before=await gitStatus(workspace),telemetry={},activity=createWorkActivity(telemetry);
+    const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);});
     const args=['-p',geminiInstruction(task,accessMode,server),'--model',nativeModel,'--output-format','stream-json','--print-timeout',`${Math.max(1,Math.ceil(timeoutMs/1000))}s`,'--log-file',path.join(runHome,`${runId}.log`),'--disable-slash-commands'];
     if(accessMode==='danger-full-access')args.push('--dangerously-skip-permissions');
-    const result=await geminiProcess(binary,args,{cwd:workspace,env:geminiEnvironment(env,runHome),signal,timeoutMs,spawnImpl,killTree,onStart,onChunk:chunk=>parser.write(chunk)});
+    const result=await geminiProcess(binary,args,{cwd:workspace,env:geminiEnvironment(env,runHome),signal,timeoutMs,spawnImpl,killTree,onStart:pid=>{activity.begin();onStart?.(pid);onActivity(telemetry.activity);},onChunk:chunk=>parser.write(chunk)});
     const parsed=parser.end();
     return {...geminiOutcome(parsed,result),...geminiOutputFiles(before,await gitStatus(workspace),workspace),acceptance:'not-reviewed',nativeModel,profile,exitCode:result.code};
     }finally{

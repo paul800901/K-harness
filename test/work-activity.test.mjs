@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkActivity,codexWorkActivity,claudeWorkActivity,geminiWorkActivity} from '../src/work-activity.mjs';
-import {workStatus,workerStatus,QUIET_WORK_MS} from '../frontend/work-status.mjs';
+import {workStatus,workerStatus,workerHealth,workerEnded,QUIET_WORK_MS} from '../frontend/work-status.mjs';
 
 function fixture(){let now=1000;const state={busy:true,status:'working'},activity=createWorkActivity(state,()=>now);activity.begin();return {state,activity,tick(ms=1000){now+=ms;return now;},get now(){return now;}};}
 test('time passing and status reads never masquerade as fresh native activity',()=>{
@@ -54,4 +54,37 @@ test('worker count keeps known running jobs visible alongside unknowns without c
  assert.equal(workerStatus({running:7,uncertain:true,unconfirmed:0}),'子代理已確認執行中：7 · 部分連線待確認');
  assert.equal(workerStatus({running:7,uncertain:false}),'子代理執行中：7');
  assert.equal(workerStatus({running:7},false),'子代理：狀態待確認');
+});
+
+test('an idle main waits visibly for its own children without changing native busy or inferring a dead worker',()=>{
+ const state={threadId:'a',status:'completed',busy:false,workerDetails:[
+  {conversationId:'a',status:'running',settled:false,activity:{lastEventAt:1000}},
+  {conversationId:'a',status:'unresolved',settled:false},
+  {conversationId:'a',status:'failed',settled:false},
+  {conversationId:'a',status:'completed',settled:true},
+  {conversationId:'b',status:'running',settled:false}
+ ]},before=structuredClone(state);
+ assert.match(workStatus(state,true,1000).text,/主代理待命 · 等待子代理：3 個 · 待確認：2/);
+ const quiet=workStatus(state,true,1000+QUIET_WORK_MS);
+ assert.match(quiet.text,/久未回報：1（是否卡住待確認）/);assert.equal(quiet.kind,'warning');
+ assert.deepEqual(state,before,'display clock cannot launch a turn, settle, stop or retry');
+ assert.match(workStatus({...state,status:'interrupted'},true).text,/已停止 · 等待子代理：3/);
+ assert.match(workerHealth({status:'failed',settled:false}).text,/停止尚待確認/);
+ assert.equal(workerEnded({status:'failed',settled:false}),false);
+ assert.match(workerHealth({status:'failed',settled:true}).text,/失敗/);
+ assert.match(workerHealth({status:'running',lastReadAt:new Date().toISOString()}).text,/尚無活動時間/);
+ assert.match(workerHealth({status:'running',activity:{lastEventAt:1000}},false,1001).text,/待確認/);
+ assert.match(workerHealth({status:'running',confirmationReason:'核准'},true,1001).text,/等待核准/);
+ assert.equal(workStatus({...state,workerDetails:[]}),null);
+ assert.equal(workStatus({...state,workerDetails:[],completionPending:true,goalPending:true}).text,'等待結果交接');
+});
+
+test('unchanged Gemini tool status pulses never refresh worker activity',()=>{
+ const f=fixture(),pulse={step_update:{step_index:3,tool_info:{name:'read_file'},state:'RUNNING'}};
+ geminiWorkActivity(f.activity,pulse);const first=f.state.activity.lastEventAt;
+ f.tick(QUIET_WORK_MS);geminiWorkActivity(f.activity,pulse);
+ assert.equal(f.state.activity.lastEventAt,first);
+ assert.equal(workerHealth({status:'running',activity:f.state.activity},true,f.now).quiet,true);
+ geminiWorkActivity(f.activity,{step_update:{step_index:3,tool_info:{name:'read_file'},state:'DONE'}});
+ assert.equal(workerHealth({status:'running',activity:f.state.activity},true,f.now).quiet,undefined);
 });

@@ -111,12 +111,12 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   return {window,owner,services,show(){if(closed||closing)throw Error('Workbench is closing.');window.show();window.focus();owner.webContents.send('k-native-browser-page',{refresh:true});},close(){
    if(closePromise)return closePromise;if(closed)return Promise.resolve();
    closing=true;
-   taskbarAttention?.dispose();focusNotifier.dispose();
    closePromise=(async()=>{
     // Services retain their own active-work policy at the caller boundary.
     await services.app.close();closed=true;
+    taskbarAttention?.dispose();focusNotifier.dispose();
     if(!owner.webContents.isDestroyed())owner.webContents.close();if(!window.isDestroyed())window.destroy();
-   })().catch(error=>{closePromise=null;throw error;});
+   })().catch(error=>{closing=false;closePromise=null;throw error;});
    return closePromise;
   }};
  }catch(error){

@@ -51,7 +51,7 @@ try{
   await update({workerActivity:{running:3,uncertain:false}});await text('子代理執行中：3');
   await page.evaluate(()=>window.testStream.onerror());await text('子代理：狀態待確認');
   await page.locator('.worker-activity').click();await popover.waitFor();assert.equal(await popover.locator('.worker-popover-row-title span[data-status="running"]').count(),0,'disconnected live rows cannot claim confirmed execution');
-  assert.equal(await popover.locator('.worker-popover-row-title span[data-status="unresolved"]').count(),2);await page.keyboard.press('Escape');
+  assert.equal(await popover.locator('.worker-popover-row-title span[data-status="warning"]').count(),2);await page.keyboard.press('Escape');
   await update({workerActivity:{running:1,uncertain:false}});await text('子代理執行中：1');
   const geometry=await page.locator('.worker-activity').evaluate(el=>{
    const r=el.getBoundingClientRect(),h=el.closest('header').getBoundingClientRect();
