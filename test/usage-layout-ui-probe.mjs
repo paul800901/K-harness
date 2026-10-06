@@ -49,6 +49,12 @@ try{
  state.usage.gemini.accounts[0].quota=quota(0,null);state.usage.gemini.accounts[2].auth.status='signed-out';state.usage.gemini.accounts[2].quota={status:'unavailable',windows:[]};state.usage.gemini.accounts[3].auth.status='unknown';await send();
  const a=usage.locator('[data-account-id="a"]'),c=usage.locator('[data-account-id="c"]'),d=usage.locator('[data-account-id="d"]');
  await a.getByText('0%',{exact:true}).waitFor();assert.deepEqual(await a.locator('.gemini-usage-value b').allTextContents(),['0%','—']);assert.match(await c.innerText(),/未登入.*尚無可用額度資料/su);assert.match(await d.innerText(),/尚未確認/u);
+ assert.match(await a.locator('summary').innerText(),/上次實查/u);
+ state.usage.gemini.accounts[0].quota.windows[1].resetsAt=Math.floor(Date.now()/1000)-1;await send();
+ await a.getByText(/目前額度待查詢/u).waitFor();assert.deepEqual(await a.locator('.gemini-usage-value b').allTextContents(),['—','—']);
+ state.usage.gemini.accounts[0].quota.checkedAt=new Date().toISOString();await send();
+ await a.getByText('0%',{exact:true}).waitFor();assert.deepEqual(await a.locator('.gemini-usage-value b').allTextContents(),['0%','—']);
+ receipt.checks.push('last-query time is always visible; crossing an official reset requires confirmation, a new official result supersedes the past reset without inventing 100%');
  await page.evaluate(()=>window.fixtureEvents.onerror());await page.waitForFunction(()=>document.querySelector('.usage-toolbar button').disabled);assert.match(await a.innerText(),/目前額度待查詢/u);
  receipt.checks.push('zero vs unknown quota, signed-out and unknown auth stay visible, offline disables refresh and marks old data; refresh invokes only the authorized all-account query action');
  await page.setViewportSize({width:390,height:844});

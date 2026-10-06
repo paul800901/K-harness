@@ -18,5 +18,13 @@ test('expired reset stays historical, never rolls forward or invents replenishme
  assert.equal(w.remainingPercent,0);assert.equal(w.resetsAt,1791237484);
  assert.equal(quotaReset({}),'官方未提供');
  // A fresh official quota remains usable even if its reported reset is in the past.
- assert.equal(quotaIsHistorical({status:'ready',windows:[w]}),false);
+ assert.equal(quotaIsHistorical({status:'ready',checkedAt:new Date(now).toISOString(),windows:[w]},true,now),false);
+});
+test('display follows the official reset, not a 60-second or five-minute expiry',()=>{
+ const checked=Date.parse('2026-10-07T00:00:00Z'),reset=checked+7*86400000;
+ const quota={status:'ready',checkedAt:new Date(checked).toISOString(),windows:[{remainingPercent:0,resetsAt:reset/1000}]};
+ for(const elapsed of [60000,300000,86400000])assert.equal(quotaIsHistorical(quota,true,checked+elapsed),false);
+ assert.equal(quotaIsHistorical(quota,true,reset),true);
+ assert.equal(quotaIsHistorical({...quota,checkedAt:new Date(reset+1).toISOString()},true,reset+1),false);
+ assert.equal(quota.windows[0].remainingPercent,0,'never infer replenishment');
 });

@@ -317,7 +317,7 @@ test('unknown network quota is not interpreted as zero or as exhaustion',async()
  assert.equal(invoked,1);assert.equal(result.accountId,A);
 });
 
-test('recent inactive official quota remains readable until its query becomes stale',async()=>{
+test('inactive official quota remains a readable last-query result',async()=>{
  const f=await fixture({identity:{accountId:A,email:'a@example.test'}});await f.accounts.capture();
  f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
  const state=await f.accounts.list();
@@ -517,4 +517,14 @@ test('new work and inspection each wait for an all-account scan and see restored
   await new Promise(resolve=>setImmediate(resolve));assert.equal(ran,false);
   finish();await Promise.all([scan,next]);assert.equal(ran,true);assert.equal(f.current.accountId,B);
  }
+});
+
+test('slow multi-account queries retain their results without a display time limit',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),slow=false;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>{if(slow)now+=240000;return authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:100,resetsAt:future}]});}});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ slow=true;const result=await f.accounts.refreshAll();assert(result.accounts.every(a=>a.quota.status==='ready'));assert.equal(result.quotaCheck.allExhausted,false);
+ const queried=result.accounts.map(a=>a.quota.checkedAt);assert.equal(new Set(queried).size,5);
+ now+=86400000;const later=await f.accounts.list();assert(later.accounts.every(a=>a.quota.status==='ready'));
+ assert.deepEqual(later.accounts.map(a=>a.quota.checkedAt),queried,'waiting must not invent new query times');
 });

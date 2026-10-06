@@ -8,6 +8,7 @@ const refreshUsage=async force=>{const response=await fetch(`/api/usage${force?'
 
 export function Usage({state,online,onDetails}){
  const quota=state.usage?.codex;
+ const gemini=state.usage?.gemini,geminiHistorical=quotaIsHistorical(gemini,online);
  useEffect(()=>{
   let inFlight=false;
   const update=async()=>{if(document.hidden||inFlight||!online)return;inFlight=true;try{await refreshUsage(false);}catch{}finally{inFlight=false;}};
@@ -23,7 +24,7 @@ export function Usage({state,online,onDetails}){
    <span className="usage-label">剩餘額度</span>
    <span className="usage-row"><span className="usage-provider">Codex</span><span className="usage-values">{windows.length?[...windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':w.minutes===300?'5 小時':windowName(w)} {w.remainingPercent}%</span></React.Fragment>):'—'}</span>{stale&&<em>舊</em>}</span>
    <span className="usage-row"><span className="usage-provider">Claude</span><span className="usage-values">{state.usage?.claude?.windows?.some(w=>w.remainingPercent!=null)?state.usage.claude.windows.filter(w=>['five_hour','seven_day'].includes(w.key)).sort((a,b)=>a.key==='seven_day'?-1:b.key==='seven_day'?1:0).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={Number.isFinite(w.remainingPercent)&&w.remainingPercent<20?'warning':undefined}>{w.key==='five_hour'?'5 小時':'本週'} {w.remainingPercent??'—'}{w.remainingPercent==null?'':'%'}</span></React.Fragment>):'—'}</span>{(!online||state.usage?.claude?.status==='stale')&&<em>舊</em>}</span>
-   <span className="usage-row"><span className="usage-provider">Gemini</span><span className="usage-values" title={state.usage?.gemini?.accountEmail||undefined}>{state.usage?.gemini?.accountEmail&&<span className="usage-account-email">{state.usage.gemini.accountEmail}</span>}{state.usage?.gemini?.windows?.length?[...state.usage.gemini.windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':windowName(w)} {w.remainingPercent}%</span></React.Fragment>):'—'}{state.usage?.gemini?.accounts?.length>0&&<small className="usage-account-count">{state.usage.gemini.accounts.length} 個帳號</small>}</span>{(!online||state.usage?.gemini?.status==='stale')&&<em>舊</em>}</span>
+   <span className="usage-row"><span className="usage-provider">Gemini</span><span className="usage-values" title={gemini?.accountEmail||undefined}>{gemini?.accountEmail&&<span className="usage-account-email">{gemini.accountEmail}</span>}{!geminiHistorical&&gemini?.windows?.length?[...gemini.windows].sort((a,b)=>b.minutes-a.minutes).map((w,i)=><React.Fragment key={w.key}>{i>0?' · ':''}<span className={w.remainingPercent<20?'warning':undefined}>{w.minutes===10080?'本週':windowName(w)} {quotaPercent(w)}</span></React.Fragment>):'—'}{gemini?.accounts?.length>0&&<small className="usage-account-count">{gemini.accounts.length} 個帳號</small>}<small className="usage-account-count">{geminiHistorical?'目前額度待查詢':'上次查詢結果'}</small></span></span>
   </button>
  </section>;
 }
@@ -72,14 +73,14 @@ export function UsageDetails({state,online}){
    {geminiAccounts.length?<>
     <div className="gemini-usage-accounts">{geminiAccounts.map(account=><details className="gemini-usage-account" key={account.id} data-account-id={account.id}>
      <summary>
-      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{!online||account.quota?.status==='stale'?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span></span></span>
+      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{quotaIsHistorical(account.quota,online)?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span></span><span className="gemini-usage-status">{account.quota?.checkedAt?`上次實查 ${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}</span></span>
       <span className="gemini-usage-value">每週 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'seven_day')}</b></span>
       <span className="gemini-usage-value">5 小時 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'five_hour')}</b></span>
       <span className="usage-expand" aria-hidden="true">⌄</span>
      </summary>
      <div className="usage-timestamps"><span>{account.quota?.checkedAt?`上次查詢：${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚未查詢額度。'}</span>{(account.quota?.windows??[]).map(w=><span key={w.key}>{quotaIsHistorical(account.quota,online)?'上次回報・':''}{w.label||(w.key==='seven_day'?'每週':'5 小時')}：{quotaPercent(w)}；重設時間：{quotaReset(w)}</span>)}</div>
     </details>)}</div>
-    <p className="usage-note">點帳號列查看查詢時間。更新會在 Gemini 閒置時輪流查詢全部帳號，再切回原帳號；工作中不切換。</p>
+    <p className="usage-note">百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。更新會在 Gemini 閒置時輪流查詢全部帳號，再切回原帳號；工作中不切換。</p>
    </>:<>
     <div className="quota-line">{gemini?.windows?.length?gemini.windows.map(w=><span key={w.key}>{windowName(w)} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>{gemini?.note??'尚未取得官方額度。'}</span>}</div>
     <p className="usage-note">{!online||gemini?.status==='stale'?'舊資料，等待更新。':'約每分鐘更新。'}直接查詢 Antigravity 官方額度，不以 Token 推算。</p>

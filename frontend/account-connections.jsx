@@ -169,6 +169,7 @@ export function AccountConnections({disabled=false,provider='codex',defaultOpen=
       return <div className="gemini-account-card" key={account.id} data-account-id={account.id}>
        <div className="gemini-account-card-head"><strong>{account.email||'未確認帳號'}</strong><span>{active?'目前使用 · ':''}{authenticated?'已驗證':account.auth?.status==='signed-out'?'待重新登入':'尚未確認'}</span></div>
        {account.auth?.checkedAt&&<small>登入確認：{new Date(account.auth.checkedAt).toLocaleString('zh-TW')}</small>}
+       <small>{quota?.checkedAt?`上次實查：${new Date(quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}；以下為該次回報，非即時額度。</small>
        <div className="gemini-account-quota"><span>每週：{value('seven_day')}</span><span>5 小時：{value('five_hour')}</span></div>
        {historical&&<small>目前額度待查詢，不以舊資料判定可用或耗盡。</small>}
        <details className="account-quota-history"><summary>{historical?'上次查詢紀錄':'查詢與重設時間'}</summary>

@@ -23,7 +23,8 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  const exhausted=row=>quotaCurrent(row)&&row.quota.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
  function publicRow(row){
   const quota=clone(row.quota??unknown());
-  if(quota.windows?.length&&(clock()-Date.parse(quota.checkedAt??'')>=60000))quota.status='stale';
+  // Return the last official result and its query time, without a display TTL.
+  // A slow batch must not invalidate its own results; workers still query live.
   return {id:row.id,email:row.email,auth:clone(row.auth??{status:'unknown'}),quota};
  }
  function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,checking:!!refreshPending,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
@@ -147,7 +148,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(!data.accounts.length)return null;
    if(!changing&&!running&&!data.loginPending&&!data.uncertain&&enabled){
     const row=find(data.activeAccountId);
-    if(refresh||!row||queryAge(row)>=60000)try{await api.refresh();}catch{/* cached values remain explicitly stale */}
+    if(refresh||!row||queryAge(row)>=60000)try{await api.refresh();}catch{/* retain the last result, never claim a new successful query */}
    }
    const rows=data.accounts.map(publicRow),active=rows.find(row=>row.id===data.activeAccountId);
    return {...(active?.quota??unknown()),accountId:active?.id??null,accountEmail:active?.email??null,accounts:rows};
