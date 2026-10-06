@@ -8,6 +8,7 @@ import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
 import {chromium} from 'playwright';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {saveAttachmentStream} from '../src/desktop-files.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
 import {decodePcm16Mono16kWav} from '../src/local-dictation.mjs';
 
@@ -32,7 +33,9 @@ const controller={concurrentConversations:true,get state(){return {...current,us
  async stop(data){calls.push({op:'stop',...data});const room=rooms.get(data.threadId);room.busy=false;room.status='interrupted';emit();return {stopped:true};},
  async answer(data){calls.push({op:'answer',...data});rooms.get(data.threadId).questions=[];emit();return {answered:true};},
  async upload(data){calls.push({op:'upload',threadId:data.threadId});const file={id:`upload-${uploads.size}`,name:data.name,size:Buffer.from(data.base64,'base64').length,bytes:Buffer.from(data.base64,'base64'),contentType:'text/plain',isText:true};uploads.set(file.id,file);return {id:file.id,name:file.name,size:file.size};},
- async attachmentFile(id){return uploads.get(id);},async artifact(){return {name:'result.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('REMOTE_DOWNLOAD_OK')};},async close(){},
+ async uploadStream(data,stream){calls.push({op:'uploadStream',threadId:data.threadId,name:data.name});const file=await saveAttachmentStream(root,data.threadId,{name:data.name,stream});uploads.set(file.id,file);return {id:file.id,name:file.name,size:file.size};},
+ async attachmentFile(id){return uploads.get(id);},async attachmentSource(id,context={}){const file=uploads.get(id);if(!file)throw Error('fake attachment not found');if(context.threadId!==file.threadId)throw Error('fake attachment belongs to another thread');return {name:file.name,path:path.join(root,file.path),size:file.size,contentType:file.contentType};},
+ async artifact(){return {name:'result.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('REMOTE_DOWNLOAD_OK')};},async close(){},
 };
 const service=()=>({status:async()=>({available:true,auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}}),close:async()=>{}});
 const app=await startDesktop({root,port:0,geminiAccounts:{usage:async()=>null,refreshAll:async()=>{quotaReads.push('all');return {activeAccountId:'fake-account',accounts:[{id:'fake-account',email:'fake@example.test',quota:{status:'ready',windows:[{key:'five_hour',label:'5 小時',remainingPercent:91}]}}],note:'已查詢全部帳號並切回原帳號。'};}},controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{},transcribe:async audio=>{const wav=decodePcm16Mono16kWav(audio);calls.push({op:'dictation',bytes:wav.length});return {ok:true,text:'手機假收音辨識'};}})});
@@ -151,6 +154,7 @@ try{
  const composer=()=>page.getByRole('textbox',{name:'工作訊息',exact:true});
  await composer().fill('中文注音測試');await composer().press('Enter');assert(!calls.some(c=>c.op==='send'),'mobile Enter must only insert a newline');await composer().fill('附件與工作');
  await page.locator('input[type=file]').setInputFiles({name:'手機附件.txt',mimeType:'text/plain',buffer:Buffer.from('MOBILE_FILE')});await page.locator('.composer-card .attachment-chip').waitFor();await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,1);
+ const attachmentSend=calls.filter(c=>c.op==='send').at(-1);assert.equal(calls.filter(c=>c.op==='uploadStream').length,1,'remote attachment must use raw streamed upload');assert.equal(attachmentSend.attachmentIds?.length,1,'the first send must contain the uploaded attachment ID');const uploaded=uploads.get(attachmentSend.attachmentIds[0]);assert.equal(uploaded.name,'手機附件.txt');assert.equal(await readFile(path.join(root,uploaded.path),'utf8'),'MOBILE_FILE');assert.equal(await page.getByRole('alert').count(),0,'attachment upload/send must not show an error alert');
  current.messages.push({id:'streaming',role:'assistant',text:'串流第一段',partial:true,createdAt:new Date().toISOString()});emit();await page.getByText('串流第一段',{exact:true}).waitFor();
  current.messages.at(-1).text+='，第二段';emit();await page.getByText('串流第一段，第二段',{exact:true}).waitFor();
  await composer().fill('待送訊息');await page.getByRole('button',{name:'送出訊息（加入待送）',exact:true}).click();await page.locator('.queued-message').waitFor();assert.equal(current.queuedMessages.length,1);await screenshot('mobile-queue');current.queuedMessages=[];emit();

@@ -536,10 +536,20 @@ test('text attachments use UTF-8 byte threshold and workspace Read paths in plan
    assert.equal(sent.includes(text),!large);
    assert.ok(sent.includes(`bytes="${Buffer.byteLength(text)}"`));
    assert.ok(sent.includes(path.resolve(f.root,a.textPath)));
+   assert.ok(sent.includes(`originalPath="${path.resolve(f.root,a.path)}"`));
    assert.equal(await readFile(path.join(f.root,a.textPath),'utf8'),text);
    assert.equal(f.hostOptions.accessMode,'claude-plan');
    f.hostOptions.onMessage({type:'result',is_error:false});
   }
+ }finally{await f.controller.close();}
+});
+test('Claude gives generic media original file path without reading it into the native prompt',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});const media=await f.controller.upload({threadId,name:'synthetic.m4a',base64:Buffer.from([0,1,2,3,255]).toString('base64')});
+  await f.controller.send({text:'inspect through native file tools',attachmentIds:[media.id]});
+  const part=f.host.startCalls.at(-1).find(item=>item.type==='text'&&item.text.includes('<K_ATTACHMENT'))?.text;
+  assert.ok(part.includes(`originalPath="${path.resolve(f.root,media.path)}"`));assert.ok(part.includes('bytes="5"'));assert.ok(part.includes('只能作為檔案參考'));
+  assert.ok(!part.includes('0,1,2,3'));
  }finally{await f.controller.close();}
 });
 test('Claude image and text attachment metadata survives native replay and projection reopen',async()=>{

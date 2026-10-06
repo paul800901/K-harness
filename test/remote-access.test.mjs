@@ -17,7 +17,7 @@ const request = (url, {method='GET', headers={}, body,commandId}={}) => new Prom
   res.on('end',()=>{const text=Buffer.concat(chunks).toString('utf8');resolve({status:res.statusCode,headers:new Headers(res.headers),text:async()=>text,json:async()=>JSON.parse(text)});});
  });
  req.on('error',reject);
- if(body!==undefined)req.end(JSON.stringify(body));else req.end();
+ if(body!==undefined)req.end(typeof body==='string'||Buffer.isBuffer(body)?body:JSON.stringify(body));else req.end();
 });
 const openEventStream = (url,headers) => {
  let resolveConnected, rejectConnected, resolveClosed;
@@ -39,6 +39,18 @@ const freePort = async () => {
  return port;
 };
 const service = () => ({status:async()=>({}),progress:()=>({}),start:async()=>({}),cancel:async()=>({}),submitCode:async()=>({}),close:async()=>{}});
+
+test('local and remote HTTP servers disable only the fixed request-body timeout for streamed attachments',async()=>{
+ const base=path.resolve('.runtime/mobile-remote-tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'stream-timeout-'));
+ const remotePort=await freePort(),localDir=path.join(root,'.local');await mkdir(localDir,{recursive:true});
+ await writeFile(path.join(localDir,'remote-access.json'),JSON.stringify({enabled:true,origin:'https://k-mobile-timeout.ts.net',login:'owner@example.ts.net',keyHash:remoteKeyHash(randomBytes(32).toString('hex')),port:remotePort}));
+ const original=http.createServer,servers=[];http.createServer=function(...args){const server=Reflect.apply(original,this,args);servers.push(server);return server;};let app;
+ try{app=await startDesktop({root,port:0,controllerFactory:()=>({state:{},close:async()=>{}}),claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({transcribe:async()=>({}),close:async()=>{}})});}
+ finally{http.createServer=original;}
+ try{
+  assert.equal(servers.length,2);for(const server of servers){assert.equal(server.requestTimeout,0);assert.equal(server.headersTimeout,60_000);}
+ }finally{await app.close();}
+});
 
 test('desktop remote access keeps local bootstrap isolated and gates the remote listener', async t=>{
  const base=path.resolve('.runtime/mobile-remote-tests');
@@ -69,6 +81,7 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
   answer:async data=>{calls.push(['answer',data]);return {ok:true,threadId:data.threadId};},
   stop:async data=>{calls.push(['stop',data]);return {ok:true,threadId:data.threadId};},
   upload:async data=>{calls.push(['upload',data]);return {ok:true,threadId:data.threadId};},
+  uploadStream:async (data,stream)=>{let size=0;for await(const chunk of stream)size+=chunk.length;calls.push(['uploadStream',data,size]);return {ok:true,threadId:data.threadId,size};},
   artifact:async (artifactPath,context)=>{calls.push(['artifact',artifactPath,context]);return {name:'fake.txt',contentType:'text/plain',isText:true,bytes:Buffer.from('fake artifact')};},
   close:async()=>{},
  };
@@ -125,6 +138,18 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
  assert.equal((await request(remoteUrl('/api/gemini/accounts/refresh-all'),{method:'POST',headers:authenticatedPost,commandId:quotaCommand,body:{}})).status,200);
  assert.equal((await request(remoteUrl('/api/gemini/accounts/refresh-all'),{method:'POST',headers:authenticatedPost,commandId:quotaCommand,body:{}})).status,409);
  assert.deepEqual(calls,[['refresh-all']]);calls.length=0;
+
+ const rawHeaders={...authenticatedPost,'content-type':'application/octet-stream','x-k-thread-id':'thread-current','x-k-file-name':encodeURIComponent('synthetic.m4a')};
+ assert.equal((await request(remoteUrl('/api/upload'),{method:'POST',headers:{...remoteHeaders,'content-type':'application/octet-stream','x-k-thread-id':'thread-current','x-k-file-name':'synthetic.m4a'},body:Buffer.from('not authenticated')})).status,403,'raw upload requires remote auth before body dispatch');
+ assert.equal(calls.length,0);
+ assert.equal((await request(remoteUrl('/api/upload'),{method:'POST',headers:rawHeaders,commandId:null,body:Buffer.from('missing command')})).status,400,'raw upload does not bypass X-K-Command');
+ const uploadCommand=randomUUID(),raw=Buffer.from('synthetic raw attachment');
+ const rawUploaded=await request(remoteUrl('/api/upload'),{method:'POST',headers:rawHeaders,commandId:uploadCommand,body:raw});
+ assert.equal(rawUploaded.status,200);assert.deepEqual(await rawUploaded.json(),{ok:true,threadId:'thread-current',size:raw.length});
+ assert.deepEqual(calls,[['uploadStream',{threadId:'thread-current',name:'synthetic.m4a'},raw.length]]);
+ assert.equal((await request(remoteUrl('/api/upload'),{method:'POST',headers:rawHeaders,commandId:uploadCommand,body:raw})).status,409,'raw upload honors exact-once command IDs');
+ assert.equal(calls.length,1);
+ calls.length=0;
 
 
  const expired=await request(remoteUrl('/api/sessions'),{headers:{...remoteGetHeaders,cookie:'__Host-k_remote=expired-before-restart'}});

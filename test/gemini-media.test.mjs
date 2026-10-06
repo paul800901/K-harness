@@ -16,24 +16,23 @@ function pdfBytes(count=1){
 }
 test('native PDF preserves original visuals beyond the former 60-page cap; ordinary extraction remains explicit',async()=>{
  const root=await fixture(),bytes=pdfBytes(),data={name:'scan.pdf',base64:bytes.toString('base64')};
- await assert.rejects(saveAttachment(root,'a',data),/掃描檔/);
+ const fallback=await saveAttachment(root,'a',data);assert.equal(fallback.textPath,undefined);assert.match(fallback.warning,/保留原始附件/);assert.deepEqual(await readFile(path.join(root,fallback.path)),bytes);
  const item=await saveAttachment(root,'a',data,{inputModalities:modalities});
  assert.equal(item.textPath,undefined);assert.equal(item.warning,null);assert.deepEqual(await readFile(path.join(root,item.path)),bytes);
  assert.equal((await readPresentedFile(root,item.path)).contentType,'application/pdf');
  const many=pdfBytes(61),manyItem=await saveAttachment(root,'a',{...data,base64:many.toString('base64')},{inputModalities:modalities});
  assert.deepEqual((await readPresentedFile(root,manyItem.path)).bytes,many);
- await assert.rejects(saveAttachment(root,'a',{...data,base64:Buffer.from('not a PDF').toString('base64')},{inputModalities:modalities}));
+ const corrupt=await saveAttachment(root,'a',{...data,base64:Buffer.from('not a PDF').toString('base64')});assert.match(corrupt.warning,/保留原始附件/);assert.deepEqual(await readFile(path.join(root,corrupt.path)),Buffer.from('not a PDF'));
 });
-test('only opted-in models accept audio/video, retain bytes and enforce conversation ownership',async()=>{
+test('audio/video and unknown files are preserved without modality whitelists and remain conversation-owned',async()=>{
  const root=await fixture();for(const [ext,kind] of [['wav','audio'],['mp3','audio'],['m4a','audio'],['mp4','video']]){
   const bytes=ext==='wav'?Buffer.alloc(10*1024*1024,65):Buffer.from('unit fixture: transport only, not media acceptance'),data={name:`file.${ext}`,base64:bytes.toString('base64')};
-  await assert.rejects(saveAttachment(root,'a',data),/未上傳或換模/);
-  const item=await saveAttachment(root,'a',data,{inputModalities:modalities});assert.equal(item.kind,kind);assert.equal(item.textPath,undefined);
+  const item=await saveAttachment(root,'a',data);assert.equal(item.kind,kind);assert.equal(item.textPath,undefined);
   assert.deepEqual((await readPresentedFile(root,item.path)).bytes,bytes);assert.equal((await loadAttachment(root,'a',item.id)).name,data.name);
   await assert.rejects(loadAttachment(root,'b',item.id),/其他對話/);
  }
 });
-test('Gemini sends native media original paths, preserves legacy PDFs and refuses unverified model switches',async()=>{
+test('Gemini generic media uses original paths after model change without claiming verified modality support',async()=>{
  const root=await fixture(),calls=[];let done;
  const c=createGeminiController({root,executable:path.join(root,'fake-agy.exe'),loginFactory:()=>({status:async()=>({available:true,models:['gemini-3.1-pro-low','gemini-unknown-low']})}),
   run:async(_b,args,{onChunk})=>{calls.push(args);onChunk(Buffer.from(JSON.stringify({event:'init',conversation_id:'11111111-1111-4111-8111-111111111111'})+'\n'+JSON.stringify({event:'result',result:{status:'SUCCESS',response:'transport test'}})+'\n'));return {code:0};},onChange:s=>{if(s&&!s.busy)done?.();}});
@@ -45,16 +44,20 @@ test('Gemini sends native media original paths, preserves legacy PDFs and refuse
   await writeFile(path.join(root,'.runtime/uploads',pdf.id,'attachment.json'),JSON.stringify(legacy));
   const settled=new Promise(resolve=>{done=resolve;});await c.send({text:'inspect',attachmentIds:[pdf.id,audio.id]});await settled;
   const prompt=calls[0][1];assert.ok(prompt.includes('source.pdf'));assert.ok(prompt.includes('source.wav'));assert.ok(!prompt.includes('content.txt'));
+  assert.ok(prompt.includes(path.resolve(root,pdf.path).replaceAll('\\','\\\\')));assert.ok(prompt.includes(path.resolve(root,audio.path).replaceAll('\\','\\\\')));
   await c.selectModel({threadId,model:'gemini-unknown',effort:'low'});
-  await assert.rejects(c.send({text:'no silent fallback',attachmentIds:[audio.id]}),/尚未驗證/);assert.equal(calls.length,1);
-  await assert.rejects(c.upload({threadId,name:'new.mp4',base64:Buffer.from('fake').toString('base64')}),/尚未接通/);
+  const next=new Promise(resolve=>{done=resolve;});await c.send({text:'native generic path only',attachmentIds:[audio.id]});await next;assert.equal(calls.length,2);assert.ok(calls[1][1].includes('source.wav'));
+  const scan=await c.upload({threadId,name:'unreadable.pdf',base64:Buffer.from('synthetic unreadable PDF').toString('base64')});assert.ok(scan.warning);
+  const final=new Promise(resolve=>{done=resolve;});await c.send({text:'path and warning only',attachmentIds:[scan.id]});await final;
+  assert.equal(calls.length,3);assert.ok(calls[2][1].includes(path.resolve(root,scan.path).replaceAll('\\','\\\\')));assert.ok(calls[2][1].includes(scan.warning));
+  const video=await c.upload({threadId,name:'new.mp4',base64:Buffer.from('fake').toString('base64')});assert.equal(video.kind,'video');
  }finally{await c.close();}
 });
 
 
 test('PDF and media HTTP downloads retain attachment disposition, MIME and exact bytes',async()=>{
  const root=await fixture();let item;
- const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{},close:async()=>{},attachmentFile:async()=>({...await readPresentedFile(root,item.path),name:item.name})})});
+ const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{threadId:'a'},close:async()=>{},attachmentFile:async()=>({...await readPresentedFile(root,item.path),name:item.name}),attachmentSource:async()=>({name:item.name,path:path.join(root,item.path),size:item.size,contentType:item.contentType})})});
  try{
   const bootstrap=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=bootstrap.headers.get('set-cookie').split(';')[0];
   for(const name of ['page.pdf','sound.wav','sound.mp3','sound.m4a','clip.mp4']){

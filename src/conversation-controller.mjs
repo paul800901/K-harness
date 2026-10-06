@@ -218,6 +218,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   },
   directories(parent){return active.directories(parent);},
   attachmentFile(id,context){return target(context).attachmentFile(id);},
+  attachmentSource(id,context){return target(context).attachmentSource(id,context);},
   artifact(name,context){return target(context).artifact(name);},
   async close(){
    closing=true;
@@ -233,6 +234,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   },
  };
  for(const method of ['send','steer','queue','goal','answer','upload','selectModel','review','fuzzyFileSearch'])api[method]=data=>target(data)[method](data);
+ api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
  api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}return target(data).stop();};
  return api;

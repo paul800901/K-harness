@@ -208,7 +208,8 @@ test('desktop attachment scope and restored display survive reopen without expos
   const a=await f.c.upload({threadId:'test-thread',name:'測試.txt',base64:Buffer.from('合計 19').toString('base64')});
   await f.c.send({text:'請整理附件',attachmentIds:[a.id]});
   const input=f.calls.find(x=>x.method==='turn/start').p.input;
-  assert.match(input[0].text,/K_ATTACHMENT_CONTEXT/);assert.equal(f.c.state.messages[0].attachments[0].id,a.id);
+  assert.match(input[0].text,/K_ATTACHMENT_CONTEXT/);const context=JSON.parse(input[0].text.match(/<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>/)[1]);
+  assert.equal(context.files[0].originalPath,path.resolve(f.root,a.path));assert.equal(context.files[0].readPath,path.resolve(f.root,a.textPath));assert.equal(f.c.state.messages[0].attachments[0].id,a.id);
   const item={type:'userMessage',id:'native-attachment',content:input};
   for(const method of ['item/started','item/completed']){
    f.hooks.onEvent({method,params:{threadId:'test-thread',turnId:'turn-1',item}});
@@ -221,6 +222,20 @@ test('desktop attachment scope and restored display survive reopen without expos
   assert.equal(f.c.state.messages[0].text,'請整理附件');assert.equal(f.c.state.messages[0].attachments[0].name,'測試.txt');
   assert.equal((await f.c.attachmentFile(a.id)).bytes.toString(),'合計 19');
   await assert.rejects(f.c.artifact('README.md'));
+ }finally{await f.c.close();}
+});
+
+test('unrecognized and extraction-failed attachments reach Codex by original path with warnings',async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});
+  const media=await f.c.upload({threadId:'test-thread',name:'flight.LRF',base64:Buffer.from('synthetic LRF fixture').toString('base64')});
+  const broken=await f.c.upload({threadId:'test-thread',name:'broken.docx',base64:Buffer.from('synthetic invalid DOCX').toString('base64')});
+  assert.match(broken.warning,/保留原始附件/);assert.equal(broken.textPath,undefined);
+  await f.c.send({text:'請依原生檔案工具檢查',attachmentIds:[media.id,broken.id]});
+  const input=f.calls.findLast(x=>x.method==='turn/start').p.input[0].text;
+  const context=JSON.parse(input.match(/<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>/)[1]);
+  assert.equal(context.files[0].originalPath,path.resolve(f.root,media.path));assert.equal(context.files[0].readPath,path.resolve(f.root,media.path));
+  assert.equal(context.files[1].originalPath,path.resolve(f.root,broken.path));assert.equal(context.files[1].readPath,path.resolve(f.root,broken.path));assert.match(context.files[1].warning,/保留原始附件/);
  }finally{await f.c.close();}
 });
 

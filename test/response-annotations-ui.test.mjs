@@ -27,11 +27,12 @@ test('only complete assistant response text is marked quote-selectable; user and
 test('selection comment popover and composer annotation list are mutually exclusive; outside and Escape dismiss the list',()=>{
   assert.match(component,/data-response-comment-popover="true"/);
   assert.match(component,/aria-label=\{responseQuoteCountLabel\(quotes\.length\)\}/);
-  assert.match(component,/if\(!quotes\?\.length\|\|collapse\)setExpanded\(false\)/);
   const quotes=component.slice(component.indexOf('export function ResponseQuotes'),component.indexOf('export function ResponseSelectionPopover'));
-  assert.match(quotes,/addEventListener\('pointerdown',outside,true\)/);
-  assert.match(quotes,/removeEventListener\('pointerdown',outside,true\)/);
-  assert.match(quotes,/if\(event\.key==='Escape'\)\{event\.preventDefault\(\);setExpanded\(false\);\}/);
+  assert.match(quotes,/useAnchoredPopover\(\{width:360\}\)/);
+  assert.match(quotes,/if\(!quotes\?\.length\|\|collapse\)menu\.close\(false\)/);
+  assert.match(quotes,/popover="auto" onToggle=\{menu\.onToggle\}/);
+  assert.match(quotes,/expanded&&quotes\.map/);
+  assert.match(quotes,/popoverTarget=\{menu\.id\}/);
   assert.doesNotMatch(component,/response-quotes-actions|aria-label="送出引用與註解"/);
   assert.match(main,/setQuotePopover\(\{mode:'comment',quoteId:quote\.id,range,rect:range\.getBoundingClientRect\(\)\}\)/);
   assert.match(main,/<ResponseSelectionPopover selection=\{quotePopover\}/);

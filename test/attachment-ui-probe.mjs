@@ -39,7 +39,8 @@ try{
   await page.route('**/api/**',async route=>{
    const endpoint=new URL(route.request().url()).pathname;
    if(route.request().method()==='POST'){
-    const data=route.request().postDataJSON();try{
+    const request=route.request(),binary=endpoint==='/api/upload'&&request.headers()['content-type']==='application/octet-stream';
+    const data=binary?{threadId:request.headers()['x-k-thread-id'],name:decodeURIComponent(request.headers()['x-k-file-name']),base64:request.postDataBuffer().toString('base64')}:request.postDataJSON();try{
      assert.equal(data.threadId,c.state.threadId);let result;
      if(endpoint==='/api/upload')result=await c.upload(data);
      else if(endpoint==='/api/send')result=c.state.busy?await queue.enqueue(data):await c.send(data);
@@ -56,7 +57,7 @@ try{
    const composer=page.getByRole('textbox',{name:'工作訊息',exact:true}),fileInput=page.locator('input[type=file]');
    await composer.fill('請整理這十二份假附件');
    await fileInput.setInputFiles(Array.from({length:12},(_,n)=>({name:`假資料-${n+1}.txt`,mimeType:'text/plain',buffer:n===0?Buffer.alloc(10*1024*1024,65):Buffer.from(`TEST ONLY ${n+1}`)})));
-   await page.waitForFunction(()=>document.querySelectorAll('.composer-card .attachment-chip').length===12&&!document.querySelector('.composer-card .attachment-row')?.textContent.includes('讀取'));
+   await page.waitForFunction(()=>document.querySelectorAll('.composer-card .attachment-chip').length===12&&!/正在上傳|電腦正在保存/.test(document.querySelector('.composer-card .attachment-row')?.textContent??''));
    await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.locator('.user-bubble').first().waitFor();
    assert.equal(await page.locator('.user-bubble').first().innerText(),'請整理這十二份假附件');assert.equal(await page.locator('.user-message .attachment-chip').count(),12);assert.equal(c.state.messages.find(m=>m.role==='user').attachments[0].size,10*1024*1024);
    await page.waitForFunction(()=>document.querySelectorAll('.composer-card .attachment-chip').length===0);

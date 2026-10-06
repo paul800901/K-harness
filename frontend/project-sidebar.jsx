@@ -1,33 +1,26 @@
-import React,{useEffect,useState,useRef} from 'react';
+import React,{useEffect,useState} from 'react';
+import {useAnchoredPopover} from './anchored-popover.jsx';
 import {Folder,FolderOpen,ChevronRight,Plus,Pin,Pencil,Archive,ArrowUp,ArrowDown,Ellipsis} from 'lucide-react';
 import {projectKey,groupProjectSessions,sortSessions} from './project-groups.mjs';
 
 // Project-row arrangement adapted from DeepSeekHarness ui-workspace/rows/Rows.tsx.
 // Copyright (c) 2026 DeepSeek, MIT; see docs/third-party-workspace.md.
 function RowMenu({className,label,title,children}) {
-  const ref=useRef(null);
-  useEffect(()=>{
-    const outside=event=>{if(ref.current?.open&&!ref.current.contains(event.target))ref.current.open=false;};
-    const escape=event=>{
-      if(event.key==='Escape'&&ref.current?.open){event.preventDefault();ref.current.open=false;ref.current.querySelector('summary').focus();}
-    };
-    document.addEventListener('pointerdown',outside);
-    document.addEventListener('focusin',outside);
-    document.addEventListener('keydown',escape);
-    return ()=>{document.removeEventListener('pointerdown',outside);document.removeEventListener('focusin',outside);document.removeEventListener('keydown',escape);};
-  },[]);
-  return <details ref={ref} className={className} name="k-sidebar-row-menu" onClickCapture={event=>{
-    if(event.target.closest('button')&&!event.target.closest('button').disabled){ref.current.open=false;ref.current.querySelector('summary').focus();}
-  }}><summary aria-label={label} title={title}><Ellipsis size={17}/></summary><div>{children}</div></details>;
+  const menu=useAnchoredPopover();
+  return <div className={className} data-open={menu.open}>
+    <button ref={menu.trigger} type="button" className="row-menu-trigger" aria-label={label} title={title} aria-expanded={menu.open} aria-controls={menu.id} popoverTarget={menu.id}><Ellipsis size={17}/></button>
+    <div ref={menu.popup} id={menu.id} popover="auto" className="row-menu-popup anchored-popover" aria-label={title} onToggle={menu.onToggle} onClickCapture={event=>{
+      const button=event.target.closest('button');if(button&&!button.disabled)menu.close();
+    }}>{children}</div>
+  </div>;
 }
 
 function ProjectMenu({project,onRenameProject,onProjectDetails,onProjectMetadata}) {
-  const run=(event,action)=>{event.currentTarget.closest('details').open=false;action();};
   return <RowMenu className="project-menu" label={`管理工作區 ${project.name}`} title="工作區選項">
-    <button onClick={event=>run(event,()=>onProjectDetails(project))}><Folder size={13}/>工作區詳細資訊</button>
-    <button onClick={event=>run(event,()=>onRenameProject(project))}><Pencil size={13}/>重新命名</button>
-    <button onClick={event=>run(event,()=>onProjectMetadata({path:project.path,pinned:!project.pinned}))}><Pin size={13}/>{project.pinned?'取消釘選工作區':'釘選工作區'}</button>
-    <button onClick={event=>run(event,()=>onProjectMetadata({path:project.path,archived:true}))}><Archive size={13}/>封存工作區</button>
+    <button onClick={()=>onProjectDetails(project)}><Folder size={13}/>工作區詳細資訊</button>
+    <button onClick={()=>onRenameProject(project)}><Pencil size={13}/>重新命名</button>
+    <button onClick={()=>onProjectMetadata({path:project.path,pinned:!project.pinned})}><Pin size={13}/>{project.pinned?'取消釘選工作區':'釘選工作區'}</button>
+    <button onClick={()=>onProjectMetadata({path:project.path,archived:true})}><Archive size={13}/>封存工作區</button>
   </RowMenu>;
 }
 

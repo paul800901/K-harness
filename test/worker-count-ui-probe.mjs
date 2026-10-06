@@ -24,7 +24,7 @@ try{
    await route.fulfill({json});
   });
   const update=changes=>page.evaluate(changes=>window.testStream.onmessage({data:JSON.stringify({type:'patch',changes})}),changes);
-  const text=expected=>page.waitForFunction(expected=>document.querySelector('.worker-activity')?.textContent===expected,expected);
+  const text=expected=>page.waitForFunction(expected=>document.querySelector('.worker-activity')?.textContent===expected,width<700?(expected.includes('待確認')?'子代理 · 待確認':expected.replace('子代理執行中：','子代理 ')):expected);
   await page.goto('http://127.0.0.1:5198');await text('子代理執行中：0');
   await update({workerActivity:{running:3,uncertain:false}});await text('子代理執行中：3');
   assert.equal(await page.locator('.app.inspector-hidden').count(),1,'Count visible with inspector closed');
@@ -46,13 +46,13 @@ try{
   await popover.getByText('原生型號未知',{exact:false}).first().waitFor();
   await popover.getByText('已完成的工作',{exact:true}).waitFor({state:'hidden'});await popover.getByText('已結束 1 個',{exact:true}).click();await popover.getByText('已完成的工作',{exact:true}).waitFor();
   await page.screenshot({path:path.join(output,`popover-${width}-${scale}-${theme}.png`)});
-  await page.keyboard.press('Escape');await popover.waitFor({state:'detached'});
-  await page.locator('.worker-activity').click();await popover.waitFor();await page.evaluate(()=>document.body.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true})));await popover.waitFor({state:'detached'});
+  await page.keyboard.press('Escape');await popover.waitFor({state:'hidden'});
+  await page.locator('.worker-activity').click();await popover.waitFor();await page.mouse.click(4,4);await popover.waitFor({state:'hidden'});
   await update({workerActivity:{running:3,uncertain:false}});await text('子代理執行中：3');
   await page.evaluate(()=>window.testStream.onerror());await text('子代理：狀態待確認');
   await page.locator('.worker-activity').click();await popover.waitFor();assert.equal(await popover.locator('.worker-popover-row-title span[data-status="running"]').count(),0,'disconnected live rows cannot claim confirmed execution');
   assert.equal(await popover.locator('.worker-popover-row-title span[data-status="warning"]').count(),2);await page.keyboard.press('Escape');
-  await update({workerActivity:{running:1,uncertain:false}});await text('子代理執行中：1');
+  await page.evaluate(state=>window.testStream.onmessage({data:JSON.stringify({type:'snapshot',state:{...state,workerActivity:{running:1,uncertain:false}}})}),state);await text('子代理執行中：1');
   const geometry=await page.locator('.worker-activity').evaluate(el=>{
    const r=el.getBoundingClientRect(),h=el.closest('header').getBoundingClientRect();
    return {rect:r.toJSON(),header:h.toJSON(),insideHeader:r.left>=h.left&&r.right<=h.right&&r.top>=h.top&&r.bottom<=h.bottom,unclipped:el.scrollWidth<=el.clientWidth,visible:r.width>0&&r.height>0};

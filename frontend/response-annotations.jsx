@@ -4,27 +4,20 @@ import {Mic,Square,X} from 'lucide-react';
 import {useVoiceComposer,VoiceWaveform} from './voice-composer.jsx';
 import {insertAtSelection,insertTranscriptForQuote,responsePopoverPosition,responseQuoteCountLabel} from './response-annotations.mjs';
 import './response-annotations.css';
+import {useAnchoredPopover} from './anchored-popover.jsx';
 
 export function ResponseQuotes({quotes,onChange,threadId,collapse=false,disabled=false,onVoiceActive,claimVoice,voiceOwner}){
- const section=useRef(null),[expanded,setExpanded]=useState(false);
- useEffect(()=>setExpanded(false),[threadId]);
- useEffect(()=>{if(!quotes?.length||collapse)setExpanded(false);},[quotes?.length,collapse]);
- useEffect(()=>{
-  if(!expanded)return;
-  const outside=event=>{if(!section.current?.contains(event.target))setExpanded(false);};
-  const escape=event=>{if(event.key==='Escape'){event.preventDefault();setExpanded(false);}};
-  document.addEventListener('pointerdown',outside,true);
-  document.addEventListener('keydown',escape,true);
-  return()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',escape,true);};
- },[expanded]);
+ const menu=useAnchoredPopover({width:360}),expanded=menu.open;
+ useEffect(()=>menu.close(false),[threadId]);
+ useEffect(()=>{if(!quotes?.length||collapse)menu.close(false);},[quotes?.length,collapse]);
  if(!quotes?.length)return null;
- return <section ref={section} className="response-quotes" aria-label="已加入的回覆註解">
-  <button className="response-quotes-chip" type="button" aria-label={responseQuoteCountLabel(quotes.length)} aria-expanded={expanded} onClick={()=>setExpanded(value=>!value)}>
+ return <section className="response-quotes" aria-label="已加入的回覆註解">
+  <button ref={menu.trigger} className="response-quotes-chip" type="button" aria-label={responseQuoteCountLabel(quotes.length)} aria-expanded={expanded} popoverTarget={menu.id}>
    {responseQuoteCountLabel(quotes.length)}
   </button>
-  {expanded&&<div className="response-quotes-list" role="region" aria-label="檢視與編輯註解">
-   {quotes.map((quote,index)=><QuoteDraft key={quote.id} quote={quote} index={index} total={quotes.length} onChange={onChange} threadId={threadId} disabled={disabled} onVoiceActive={onVoiceActive} claimVoice={claimVoice} voiceOwner={voiceOwner}/>) }
-  </div>}
+  <div ref={menu.popup} id={menu.id} popover="auto" onToggle={menu.onToggle} className="response-quotes-list anchored-popover" role="region" aria-label="檢視與編輯註解">
+   {expanded&&quotes.map((quote,index)=><QuoteDraft key={quote.id} quote={quote} index={index} total={quotes.length} onChange={onChange} threadId={threadId} disabled={disabled} onVoiceActive={onVoiceActive} claimVoice={claimVoice} voiceOwner={voiceOwner}/>) }
+  </div>
  </section>;
 }
 

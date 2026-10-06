@@ -1,6 +1,7 @@
-import React,{useEffect,useRef,useState} from 'react';
+import React,{useEffect,useState} from 'react';
 import {workerStatus,workerHealth,workerEnded,pendingWorkerSummary} from './work-status.mjs';
 import './worker-activity-popover.css';
+import {useAnchoredPopover} from './anchored-popover.jsx';
 
 const statusLabel={running:'執行中',starting:'準備中',pending:'等待中',unresolved:'狀態待確認',unavailable:'無法查明',completed:'已完成',failed:'失敗',cancelled:'已取消',canceled:'已取消',stopped:'已停止',interrupted:'已中斷',ended:'已結束，結果未知'};
 const providerLabel={codex:'Codex 原生子代理','claude-native':'Claude Code 原生子代理',gemini:'Gemini Flash 工人'};
@@ -26,14 +27,7 @@ function WorkerRow({row,online,now}){const health=workerHealth(row,online,now);c
 </article>;}
 
 export function WorkerActivityPopover({activity,details,online=true,compact=false}){
- const [open,setOpen]=useState(false),root=useRef(null),panelId=React.useId();
- useEffect(()=>{
-  if(!open)return;
-  const outside=event=>{if(!root.current?.contains(event.target))setOpen(false);};
-  const keydown=event=>{if(event.key==='Escape'){event.preventDefault();setOpen(false);root.current?.querySelector('button')?.focus();}};
-  document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',keydown,true);
-  return()=>{document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',keydown,true);};
- },[open]);
+ const menu=useAnchoredPopover({width:380});
  const rows=Array.isArray(details)?details:[],hasPending=rows.some(row=>!workerEnded(row));
  const [now,setNow]=useState(Date.now);
  useEffect(()=>{if(!hasPending)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[hasPending]);
@@ -43,10 +37,10 @@ export function WorkerActivityPopover({activity,details,online=true,compact=fals
   if(!map.has(key))map.set(key,{id:key,title:row.conversationTitle??'聊天室名稱未知',rows:[]});
   map.get(key).rows.push(row);return map;
  },new Map()).values()];
- return <div className="worker-activity-popover-anchor" ref={root}>
-  <button type="button" className={`status worker-activity ${!online||!activity||activity.uncertain||summary.quiet?'warning':''}`} aria-haspopup="dialog" aria-expanded={open} aria-controls={open?panelId:undefined} title="查看目前所有聊天室的子代理狀態" onClick={()=>setOpen(value=>!value)}>{compact?(!online||!activity||activity.uncertain?'子代理 · 待確認':summary.quiet?'子代理 · 久未回報':`子代理 ${activity.running??0}`):<>{workerStatus(activity,online)}{summary.quiet?` · 久未回報：${summary.quiet}`:''}</>}</button>
-  {open&&<section className="worker-activity-popover" id={panelId} role="dialog" aria-label="子代理狀態">
-   <div className="worker-activity-popover-heading"><strong>子代理狀態</strong><button type="button" aria-label="關閉子代理狀態" onClick={()=>setOpen(false)}>×</button></div>
+ return <div className="worker-activity-popover-anchor">
+  <button type="button" className={`status worker-activity ${!online||!activity||activity.uncertain||summary.quiet?'warning':''}`} aria-haspopup="dialog" ref={menu.trigger} aria-expanded={menu.open} aria-controls={menu.id} popoverTarget={menu.id} title="查看目前所有聊天室的子代理狀態">{compact?(!online||!activity||activity.uncertain?'子代理 · 待確認':summary.quiet?'子代理 · 久未回報':`子代理 ${activity.running??0}`):<>{workerStatus(activity,online)}{summary.quiet?` · 久未回報：${summary.quiet}`:''}</>}</button>
+  <section className="worker-activity-popover anchored-popover" ref={menu.popup} id={menu.id} popover="auto" onToggle={menu.onToggle} role="dialog" aria-label="子代理狀態">
+   <div className="worker-activity-popover-heading"><strong>子代理狀態</strong><button type="button" aria-label="關閉子代理狀態" onClick={()=>menu.close()}>×</button></div>
    {!online&&<p className="worker-popover-note">後端斷線，以下僅為最後保留的狀態；目前執行狀態未知。</p>}
    {!!summary.quiet&&<p className="worker-popover-note">久未回報不等於已卡死；展開明細可看最後活動。狀態查詢不會刷新活動時間，也不會自動重派。</p>}
    {groups.map(group=><section className="worker-popover-room" key={group.id}>
@@ -55,6 +49,6 @@ export function WorkerActivityPopover({activity,details,online=true,compact=fals
     {!!group.rows.filter(row=>workerEnded(row)).length&&<details className="worker-popover-ended"><summary>已結束 {group.rows.filter(row=>workerEnded(row)).length} 個</summary>{group.rows.filter(row=>workerEnded(row)).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-ended-${index}`} row={row} online={online} now={clock}/>)}</details>}
    </section>)}
    {!groups.length&&<p className="worker-popover-note">目前沒有可列出的子代理明細；計數仍依原生狀態顯示，不推定為已停止。</p>}
-  </section>}
+  </section>
  </div>;
 }

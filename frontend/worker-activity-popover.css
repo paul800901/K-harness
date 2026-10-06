@@ -1,7 +1,7 @@
 .worker-activity-popover-anchor{position:relative;display:flex;align-items:center;min-width:0}
 .worker-activity-popover-anchor>.worker-activity{appearance:none;border:0;background:transparent;padding:4px 2px;font-family:inherit;cursor:pointer;max-width:min(48vw,360px);white-space:normal;text-align:left;line-height:1.35;overflow-wrap:anywhere}
 .worker-activity-popover-anchor>.worker-activity:focus-visible{outline:2px solid var(--k-brass);outline-offset:2px;border-radius:5px}
-.worker-activity-popover{position:absolute;z-index:80;right:0;top:calc(100% + 10px);width:min(380px,calc(100vw - 24px));max-height:min(70vh,560px);overflow:auto;padding:12px;background:var(--k-raised);border:1px solid var(--k-line);border-radius:var(--k-radius-md);box-shadow:var(--k-shadow-2);white-space:normal;color:var(--k-ink)}
+.worker-activity-popover{width:min(380px,calc(100vw - 24px));max-height:min(70vh,560px);overflow:auto;padding:12px;background:var(--k-raised);border:1px solid var(--k-line);border-radius:var(--k-radius-md);box-shadow:var(--k-shadow-2);white-space:normal;color:var(--k-ink)}
 .worker-activity-popover-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:var(--k-text-sm)}
 .worker-activity-popover-heading button{flex:none;width:30px;height:30px;padding:0;border:0;background:transparent;color:var(--k-ink-3);font-size:var(--k-text-lg);line-height:1}
 .worker-popover-room{padding-top:7px}

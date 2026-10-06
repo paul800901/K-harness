@@ -1,6 +1,8 @@
 import http from 'node:http';
 import path from 'node:path';
+import {createReadStream} from 'node:fs';
 import {readFile} from 'node:fs/promises';
+import {pipeline} from 'node:stream/promises';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
@@ -178,10 +180,23 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(req.method==='GET'&&url.pathname==='/api/directories')return json(200,await controller.directories(url.searchParams.get('path')??undefined));
    if(req.method==='GET'&&['/api/artifact','/api/attachment'].includes(url.pathname)){
     const context={threadId:url.searchParams.get('threadId')};
+    if(url.pathname==='/api/attachment'&&url.searchParams.get('download')==='1'){
+     const file=await controller.attachmentSource(url.searchParams.get('id'),context);
+     res.writeHead(200,{'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,'Content-Type':file.contentType,'Content-Length':String(file.size)});
+     await pipeline(createReadStream(file.path),res);return;
+    }
     const file=url.pathname==='/api/artifact'?await controller.artifact(url.searchParams.get('path'),context):await controller.attachmentFile(url.searchParams.get('id'),context);
     if(url.searchParams.get('download')==='1'){res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);res.setHeader('Content-Type',file.contentType);return res.end(file.bytes);}
     if(file.contentType.startsWith('image/')){res.setHeader('Content-Type',file.contentType);return res.end(file.bytes);}
     return json(200,{name:file.name,isText:file.isText,text:file.isText?file.bytes.subarray(0,262144).toString('utf8'):null,truncated:file.bytes.length>262144,size:file.bytes.length});
+   }
+   if(req.method==='POST'&&url.pathname==='/api/upload'&&req.headers['content-type']?.split(';',1)[0].trim().toLowerCase()==='application/octet-stream'){
+    if(req.headers['x-k-request']!=='1')return json(403,{error:'Explicit local request required'});
+    const threadId=req.headers['x-k-thread-id'],encodedName=req.headers['x-k-file-name'];
+    if(typeof threadId!=='string'||typeof encodedName!=='string')return json(400,{error:'附件資料不完整。'});
+    let name;try{name=decodeURIComponent(encodedName);}catch{return json(400,{error:'附件名稱無效。'});}
+    if(!req.headers['x-k-command']||typeof req.headers['x-k-command']!=='string')return json(400,{error:'附件請求識別無效。'});
+    return json(200,await controller.uploadStream({threadId,name},req));
    }
    if(req.method!=='POST'||req.headers['x-k-request']!=='1'||!req.headers['content-type']?.startsWith('application/json'))return json(403,{error:'Explicit local request required'});
    // Attachments have no K-specific byte cap. Keep the limits on other commands,
@@ -252,11 +267,11 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     json(status,{ok:false,error:e instanceof LocalDictationError?e.message:'轉錄要求無法處理。',code:e.code??'INVALID_REQUEST',...(!isRemote&&diagnostic?{diagnostic}:{})});}
    else json(status,{error:e.message});}else res.end();}
  };
- const server=http.createServer(handler(false));
+ const server=http.createServer({requestTimeout:0,headersTimeout:60_000},handler(false));
  server.once('close',()=>{if(!closedResources.has('本機語音辨識'))void closeLocalDictation().catch(()=>{});});
  await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',()=>{origin=`http://127.0.0.1:${server.address().port}`;resolve();});});
  if(remoteConfig){
-  remoteServer=http.createServer(handler(true));
+  remoteServer=http.createServer({requestTimeout:0,headersTimeout:60_000},handler(true));
   try{await new Promise((resolve,reject)=>{remoteServer.once('error',reject);remoteServer.listen(remoteConfig.port,'127.0.0.1',resolve);});}
   catch(error){remoteError=error.message;}
  }

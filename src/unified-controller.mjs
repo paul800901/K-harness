@@ -178,8 +178,8 @@ export function createUnifiedController(options){
   },
   async close(){await queue.close();await Promise.all([codex.close(),claude?.close(),gemini?.close()]);},
  };
- for(const name of ['workers','directories','upload','attachmentFile','artifact','steer','goal','compact','answer'])api[name]=(...args)=>{
-  if(changing&&['upload','steer','goal','compact','answer'].includes(name))throw new Error('正在切換對話，請稍候。');
+ for(const name of ['workers','directories','upload','uploadStream','attachmentFile','attachmentSource','artifact','steer','goal','compact','answer'])api[name]=(...args)=>{
+  if(changing&&['upload','uploadStream','steer','goal','compact','answer'].includes(name))throw new Error('正在切換對話，請稍候。');
   return active[name](...args);
  };
  api.send=async data=>{if(changing)throw Error('正在切換對話。');if(active.state.busy||queue.state.queuedMessages.length)return queue.enqueue(data);return active.send(data);};

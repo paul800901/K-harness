@@ -1,0 +1,2 @@
+.anchored-popover[popover]{position:fixed;inset:auto;margin:0;box-sizing:border-box;overflow:auto;overscroll-behavior:contain;color:var(--k-ink)}
+.anchored-popover[popover]:not(:popover-open){display:none}

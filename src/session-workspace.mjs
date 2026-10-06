@@ -1,6 +1,7 @@
 import path from 'node:path';
-import {access} from 'node:fs/promises';
+import {access,stat} from 'node:fs/promises';
 import {loadAttachment,readPresentedFile} from './desktop-files.mjs';
+import {checkedPath} from './files.mjs';
 
 const inside=(root,file)=>{const relative=path.relative(root,file);return relative!==''&&relative!=='..'&&!relative.startsWith(`..${path.sep}`)&&!path.isAbsolute(relative);};
 
@@ -23,6 +24,12 @@ export async function sessionAttachment(workspace,previousWorkspaces,threadId,id
   return {...await loadAttachment(root,threadId,id),workspace:root};
  }
  throw Error('找不到這個對話的附件；原檔案未搬移或刪除。');
+}
+
+export async function sessionAttachmentSource(workspace,previousWorkspaces,threadId,id){
+ const item=await sessionAttachment(workspace,previousWorkspaces,threadId,id);
+ const source=await checkedPath(item.workspace,item.path,false),info=await stat(source);
+ return {name:item.name,path:source,size:info.size,contentType:item.contentType};
 }
 
 export async function sessionArtifact(workspace,previousWorkspaces,name){

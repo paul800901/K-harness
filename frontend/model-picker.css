@@ -10,8 +10,8 @@ dialog:has(.model-picker) .modal-actions{margin-top:20px}
 .model-setting-row select,.worker-settings-body select{width:100%;min-width:0;min-height:38px;padding:8px 10px;font-size:var(--k-text-sm)}
 .model-setting-row .reasoning-picker{min-width:0}
 .model-setting-row .reasoning-trigger{width:100%;min-height:38px;justify-content:space-between;padding:8px 10px;border:1px solid var(--k-line-strong);border-radius:var(--k-radius-sm);background:var(--k-raised);white-space:normal;text-align:left}
-.model-provider-tabs{display:inline-flex;justify-self:start;gap:3px;padding:3px;border-radius:9px;background:var(--k-desk)}
-.model-provider-tabs button{min-width:84px;padding:7px 15px;border-radius:7px;font-size:var(--k-text-sm);color:var(--k-ink-3)}
+.model-provider-tabs{display:flex;max-width:100%;justify-self:start;gap:3px;padding:3px;border-radius:9px;background:var(--k-desk)}
+.model-provider-tabs button{flex:1;min-width:0;padding:7px 10px;border-radius:7px;font-size:var(--k-text-sm);color:var(--k-ink-3)}
 .model-provider-tabs button[aria-pressed=true]{background:var(--k-raised);color:var(--k-ink);box-shadow:var(--k-shadow-1)}
 .model-provider-fixed{display:flex;align-items:center;flex-wrap:wrap;gap:10px;min-height:38px}
 .model-provider-fixed small{color:var(--k-ink-3);font-size:var(--k-text-xs)}

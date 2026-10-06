@@ -1,24 +1,78 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readdir,readFile} from 'node:fs/promises';
+import {Readable} from 'node:stream';
+import {createReadStream} from 'node:fs';
+import http from 'node:http';
+import {createHash,randomUUID} from 'node:crypto';
+import {pipeline} from 'node:stream/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import JSZip from 'jszip';
-import {saveAttachment,loadAttachment,readPresentedFile} from '../src/desktop-files.mjs';
+import {saveAttachment,saveAttachmentStream,loadAttachment,readPresentedFile} from '../src/desktop-files.mjs';
+import {sessionAttachmentSource} from '../src/session-workspace.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 async function fixture(){const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'attachments-'));}
 const upload=(root,name,bytes)=>saveAttachment(root,'thread-a',{name,base64:Buffer.from(bytes).toString('base64')});
 
-test('attachments preserve original bytes, extract UTF-8, and reject cross-thread/path/unsupported input',async()=>{
+test('attachments preserve original bytes, extract UTF-8, and reject cross-thread/path/secret names',async()=>{
  const root=await fixture(),bytes=Buffer.from('\ufeff名稱,數量\r\n蘋果,7\r\n');
  const a=await upload(root,'content.txt',bytes);assert.deepEqual(await readFile(path.join(root,a.path)),bytes);
  assert.match(await readFile(path.join(root,a.textPath),'utf8'),/蘋果,7/);
  assert.equal((await loadAttachment(root,'thread-a',a.id)).name,'content.txt');
  await assert.rejects(loadAttachment(root,'thread-b',a.id));await assert.rejects(loadAttachment(root,'thread-a','../outside'));
- for(const name of ['../secret.txt','.env.local','auth.json','file.exe'])await assert.rejects(upload(root,name,'no'));
- await assert.rejects(upload(root,'invalid.txt',Buffer.from([0xff,0xfe])));
+ for(const name of ['../secret.txt','.env.local','auth.json'])await assert.rejects(upload(root,name,'no'));
+ const invalid=await upload(root,'invalid.txt',Buffer.from([0xff,0xfe]));assert.match(invalid.warning,/保留原始附件/);assert.deepEqual(await readFile(path.join(root,invalid.path)),Buffer.from([0xff,0xfe]));
  for(const base64 of ['', 'invalid!', 'YQ='])await assert.rejects(saveAttachment(root,'thread-a',{name:'bad.txt',base64}));
  assert.equal((await readPresentedFile(root,a.path)).isText,true);
+});
+
+test('raw media and unknown extensions stream to original-path records without modality gates or Base64',async()=>{
+ const root=await fixture();
+ for(const name of ['recording.m4a','camera.mp4','flight.LRF','unknown.bin']){
+  const bytes=Buffer.from(`synthetic:${name}`),record=await saveAttachmentStream(root,'thread-stream',{name,stream:Readable.from([bytes])});
+  assert.equal(record.size,bytes.length);assert.equal(record.threadId,'thread-stream');assert.equal(record.name,name);
+  assert.deepEqual(await readFile(path.join(root,record.path)),bytes);assert.equal(record.textPath,undefined);
+ }
+ await assert.rejects(saveAttachmentStream(root,'thread-stream',{name:'bad.m4a',stream:Readable.from([])}),/不可為空/);
+ await assert.rejects(loadAttachment(root,'other-thread',(await saveAttachmentStream(root,'thread-stream',{name:'same.m4a',stream:Readable.from(['x'])})).id),/其他對話/);
+});
+
+test('optional text extraction skips files above 32 MiB without limiting the original stream',async()=>{
+ const root=await fixture(),chunk=Buffer.alloc(1024*1024,0x71),size=32*1024*1024+17,expected=createHash('sha256');
+ for(let left=size;left>0;){const length=Math.min(left,chunk.length);expected.update(chunk.subarray(0,length));left-=length;}
+ const expectedHash=expected.digest('hex');
+ async function* content(){for(let left=size;left>0;){const length=Math.min(left,chunk.length);yield length===chunk.length?chunk:chunk.subarray(0,length);left-=length;}}
+ const record=await saveAttachmentStream(root,'thread-large',{name:'large-notes.txt',stream:Readable.from(content())});
+ assert.equal(record.size,size);assert.equal(record.textPath,undefined);assert.match(record.warning,/原檔已保存.*不預先擷取文字/);
+ const hash=createHash('sha256');let received=0;for await(const part of createReadStream(path.join(root,record.path))){received+=part.length;hash.update(part);}
+ assert.equal(received,size);assert.equal(hash.digest('hex'),expectedHash);
+ assert.equal((await loadAttachment(root,'thread-large',record.id)).path,record.path);
+});
+
+test('bounded presented-file reads return only the requested preview bytes and full file size',async()=>{
+ const root=await fixture(),text='A'.repeat(24*1024),record=await saveAttachmentStream(root,'thread-preview',{name:'preview.txt',stream:Readable.from([Buffer.from(text)])});
+ const preview=await readPresentedFile(root,record.textPath,{maxBytes:4096});
+ assert.equal(preview.bytes.length,4096);assert.equal(preview.size,Buffer.byteLength(text));assert.equal(preview.truncated,true);
+ assert.equal(preview.bytes.toString('utf8'),'A'.repeat(4096));
+ await assert.rejects(readPresentedFile(root,record.textPath,{maxBytes:-1}),/預覽長度無效/);
+});
+
+test('extraction failure keeps original PDF and DOCX and records a warning',async()=>{
+ const root=await fixture();
+ for(const [name,bytes] of [['bad.pdf',Buffer.from('not a pdf')],['bad.docx',Buffer.from('not a zip')]]){
+  const record=await saveAttachmentStream(root,'thread-extract',{name,stream:Readable.from([bytes])});
+  assert.match(record.warning,/失敗/);assert.equal(record.textPath,undefined);assert.deepEqual(await readFile(path.join(root,record.path)),bytes);
+ }
+});
+
+test('an interrupted raw stream never creates an attachment record',async()=>{
+ const root=await fixture(),before=new Set(await readdir(path.join(root,'.runtime/uploads')).catch(()=>[]));
+ async function* broken(){yield Buffer.from('partial fixture');throw new Error('synthetic disconnect');}
+ await assert.rejects(saveAttachmentStream(root,'thread-a',{name:'disconnect.m4a',stream:Readable.from(broken())}),/synthetic disconnect/);
+ const folder=(await readdir(path.join(root,'.runtime/uploads'))).find(name=>!before.has(name));assert.ok(folder);
+ await assert.rejects(readFile(path.join(root,'.runtime/uploads',folder,'attachment.json')));
+ assert.ok(Buffer.isBuffer(await readFile(path.join(root,'.runtime/uploads',folder,'source.m4a.partial'))));
 });
 
 test('DOCX attachment has real text extraction and original download bytes',async()=>{
@@ -44,7 +98,8 @@ test('PDF text extraction preserves all 61 pages and more than 256 KiB of text',
 test('large attachments cross the real HTTP upload, compact preview and full download without K size caps',async()=>{
  const root=await fixture(),bytes=Buffer.from('FAKE_LARGE_ATTACHMENT_BEGIN\n'+'x'.repeat(10*1024*1024)+'\nFAKE_LARGE_ATTACHMENT_END');
  const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{threadId:'thread-a'},close:async()=>{},
-  upload:data=>saveAttachment(root,'thread-a',data),attachmentFile:async id=>{const a=await loadAttachment(root,'thread-a',id);return {...await readPresentedFile(root,a.path),name:a.name};}
+  upload:data=>saveAttachment(root,'thread-a',data),attachmentFile:async id=>{const a=await loadAttachment(root,'thread-a',id);return {...await readPresentedFile(root,a.path),name:a.name};},
+  attachmentSource:async id=>{const a=await loadAttachment(root,'thread-a',id);return {name:a.name,path:path.join(root,a.path),size:a.size,contentType:a.contentType};}
  })});
  try{
   const launch=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=launch.headers.get('set-cookie').split(';')[0],headers={cookie,'x-k-request':'1','content-type':'application/json'};
@@ -57,5 +112,48 @@ test('large attachments cross the real HTTP upload, compact preview and full dow
   const unauth=await fetch(app.origin+'/api/upload',{method:'POST',headers:{'content-type':'application/json','x-k-request':'1'},body:'{}'});assert.equal(unauth.status,403);
   const crossOrigin=await fetch(app.origin+'/api/upload',{method:'POST',headers:{...headers,origin:'https://untrusted.example'},body:'{}'});assert.equal(crossOrigin.status,403);
   const other=await fetch(app.origin+'/api/metadata',{method:'POST',headers,body:JSON.stringify({text:'x'.repeat(65536)})});assert.equal(other.status,400);assert.match((await other.json()).error,/請求過大/);
+ }finally{await app.close();}
+});
+
+test('binary HTTP upload checks local auth, CSRF and origin before streaming and stores without a JSON body',async()=>{
+ const root=await fixture();let reached=0;
+ const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{threadId:'thread-a'},close:async()=>{},
+  uploadStream:(data,stream)=>{reached++;return saveAttachmentStream(root,data.threadId,{name:data.name,stream});}
+ }),claudeLoginFactory:()=>({close:async()=>{}}),codexLoginFactory:()=>({close:async()=>{}}),geminiLoginFactory:()=>({close:async()=>{}}),localDictationFactory:()=>({close:async()=>{},transcribe:async()=>({})})});
+ try{
+  const boot=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=boot.headers.get('set-cookie').split(';')[0];
+  const bytes=Buffer.from('raw binary fixture\0\xff');
+  const headers={cookie,'x-k-request':'1','x-k-command':randomUUID(),'x-k-thread-id':'thread-a','x-k-file-name':encodeURIComponent('flight.LRF'),'content-type':'application/octet-stream'};
+  const unauth=await fetch(app.origin+'/api/upload',{method:'POST',headers:{...headers,cookie:''},body:bytes});assert.equal(unauth.status,403);assert.equal(reached,0);
+  const noCsrf=await fetch(app.origin+'/api/upload',{method:'POST',headers:{...headers,'x-k-request':''},body:bytes});assert.equal(noCsrf.status,403);assert.equal(reached,0);
+  const crossOrigin=await fetch(app.origin+'/api/upload',{method:'POST',headers:{...headers,origin:'https://attacker.example'},body:bytes});assert.equal(crossOrigin.status,403);assert.equal(reached,0);
+  const uploaded=await fetch(app.origin+'/api/upload',{method:'POST',headers,body:bytes});assert.equal(uploaded.status,200);const record=await uploaded.json();
+  assert.equal(reached,1);assert.equal(record.name,'flight.LRF');assert.equal(record.kind,'document');assert.deepEqual(await readFile(path.join(root,record.path)),bytes);
+ }finally{await app.close();}
+});
+
+test('HTTP stream upload is stored and downloaded by path with matching full-file hash',async()=>{
+ const root=await fixture(),chunk=Buffer.alloc(1024*1024,0x73),byteCount=16*1024*1024+123,expectedHash=createHash('sha256');
+ for(let left=byteCount;left>0;){const size=Math.min(left,chunk.length);expectedHash.update(size===chunk.length?chunk:chunk.subarray(0,size));left-=size;}
+ const expected=expectedHash.digest('hex');
+ const app=await startDesktop({root,port:0,controllerFactory:()=>({state:{threadId:'thread-stream'},close:async()=>{},
+  uploadStream:(data,stream)=>saveAttachmentStream(root,data.threadId,{name:data.name,stream}),
+  attachmentSource:(id,context)=>sessionAttachmentSource(root,[],context.threadId,id)
+ }),claudeLoginFactory:()=>({close:async()=>{}}),codexLoginFactory:()=>({close:async()=>{}}),geminiLoginFactory:()=>({close:async()=>{}}),localDictationFactory:()=>({close:async()=>{},transcribe:async()=>({})})});
+ try{
+  const boot=await fetch(app.createLaunchUrl(),{redirect:'manual'}),cookie=boot.headers.get('set-cookie').split(';')[0];
+  const headers={cookie,'x-k-request':'1','x-k-command':randomUUID(),'x-k-thread-id':'thread-stream','x-k-file-name':encodeURIComponent('medium.LRF'),'content-type':'application/octet-stream','content-length':String(byteCount)};
+  const req=http.request(new URL('/api/upload',app.origin),{method:'POST',headers}),uploadReply=new Promise((resolve,reject)=>{req.on('response',res=>{let body='';res.setEncoding('utf8');res.on('data',part=>body+=part);res.on('end',()=>resolve({status:res.statusCode,body}));});req.on('error',reject);});
+  async function* input(){for(let left=byteCount;left>0;){const size=Math.min(left,chunk.length);yield size===chunk.length?chunk:chunk.subarray(0,size);left-=size;}}
+  await pipeline(Readable.from(input()),req);const uploaded=await uploadReply;assert.equal(uploaded.status,200,uploaded.body);const record=JSON.parse(uploaded.body);
+  assert.equal(record.name,'medium.LRF');assert.equal(record.threadId,'thread-stream');assert.equal(record.size,byteCount);
+  const stored=createHash('sha256');let storedBytes=0;for await(const part of createReadStream(path.join(root,record.path))){storedBytes+=part.length;stored.update(part);}
+  assert.equal(storedBytes,byteCount);assert.equal(stored.digest('hex'),expected);
+  const download=await fetch(`${app.origin}/api/attachment?id=${record.id}&threadId=thread-stream&download=1`,{headers:{cookie}});
+  assert.equal(download.status,200);assert.equal(download.headers.get('content-length'),String(byteCount));assert.match(download.headers.get('content-disposition'),/filename\*=UTF-8''medium.LRF/);
+  assert.equal(download.headers.get('content-type'),'application/octet-stream');const received=createHash('sha256');let receivedBytes=0;
+  for await(const part of download.body){receivedBytes+=part.length;received.update(part);}
+  assert.equal(receivedBytes,byteCount);assert.equal(received.digest('hex'),expected);
+  assert.equal((await fetch(`${app.origin}/api/attachment?id=${record.id}&threadId=wrong-thread&download=1`,{headers:{cookie}})).status,400);
  }finally{await app.close();}
 });

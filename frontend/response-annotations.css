@@ -1,6 +1,6 @@
 .response-quotes{position:relative;display:flex;align-items:center;min-height:0}
 .response-quotes-chip{min-height:28px;padding:3px 10px;border:1px solid var(--k-line);border-radius:999px;background:var(--k-sunken);color:var(--k-ink-2);font:inherit;font-size:var(--k-text-xs);cursor:pointer}
-.response-quotes-list{position:absolute;z-index:20;left:0;bottom:calc(100% + 8px);display:grid;gap:8px;width:min(360px,calc(100vw - 32px));max-height:min(45vh,320px);overflow:auto;padding:10px;border:1px solid var(--k-line);border-radius:var(--k-radius-md);background:var(--k-raised);box-shadow:var(--k-shadow-2)}
+.response-quotes-list{display:grid;gap:8px;width:min(360px,calc(100vw - 32px));max-height:min(45vh,320px);overflow:auto;padding:10px;border:1px solid var(--k-line);border-radius:var(--k-radius-md);background:var(--k-raised);box-shadow:var(--k-shadow-2)}
 .response-quote-draft{display:grid;gap:6px;min-width:0;padding:8px;border:1px solid var(--k-line);border-radius:var(--k-radius-sm);background:var(--k-sunken)}
 .response-quote-draft-head{display:flex;align-items:center;justify-content:space-between;color:var(--k-ink-3);font-size:var(--k-text-xs)}
 .response-quote-draft-head button,.quote-voice-controls button{display:inline-flex;align-items:center;justify-content:center;min-width:28px;min-height:28px;padding:4px;border:1px solid var(--k-line);border-radius:var(--k-radius-sm);background:transparent;color:inherit;cursor:pointer}
