@@ -203,3 +203,13 @@ node scripts/configure-remote.mjs --root '<相同 state root>' --revoke
 - 真正 Opus 首查 `bb4e4d0d-109f-418f-aecc-7fa0dc91b9c8` 指出測試可能誤過：持久化原生 ID 未必反映第二輪 CLI 回傳，以及 marker 可能被工具讀檔。已直接記錄真 CLI 事件流的 conversation ID，要求兩輪回傳同一 ID，並要求兩輪工具紀錄均為0；未修改產品 controller。
 - 真正 Opus 補查 `dcc991cf-133f-4c6a-bb32-8ff88723cb83` 無 P1/P2。主代理核對測試沒有傳 accounts、原生 chunk 仍送原 parser、第二輪 prompt 沒有 marker。複查未執行實測；Gemini 必須在正式 K 停止後才跑。證據 `.runtime/mobile-connect/opus-native-gemini*/`。
 - 以上是候選準備，不是 Gemini 實測通過、正式接入完成或 GitHub 發布。主畫面安裝、實際鍵盤／檔案選取等仍照第7節保留驗收邊界。
+
+### 依本人要求準備完成後暫停
+
+本人最新要求：「你這邊準備好就先停，等那邊更新完我再來開你這更新」。這取代接續套用的安排：本輪不再執行 Gemini 原生測試、正式停止／重開／部署或 push，等本人再次要求繼續。
+
+- 手機程式候選已固定 **`4522f2472919484cf85fb43b7eac5e436b86426d`**，分支 `codex/mobile-remote-20261006`；以正式 d88d148 為基底，不含另一批尚在更新的變更。
+- 由該 commit 的 Git archive 建立乾淨準備目錄 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\prepare-mobile-4522f24-20261006`。實體複製本機既有相依（不是 junction、未 npm install／升級），UI／擴充／啟動器建置通過；乾淨候選完整 **850/850**（35.93秒）。證據 `.runtime/mobile-connect/prepared-release.json`、`prepare-dependencies.txt`、`clean-*.txt`。`activated=false`。
+- 暫停前只讀確認三個假房間全部 idle、無待確認，保存測試狀態；核對 PID 32120 的 node 腳本及 loopback 54832 所屬後停止本輪假資料服務，確認 listener 已關。未停止正式 K、未改 Tailscale Serve／服務或本人登入。手機測試網址此時暫無後端，不應把暫停後的連線錯誤當成產品回歸。證據 `phone-state-before-pause.json`、`pause-result.json`。
+- **恢復時必先核對另一邊更新後的正式 commit 與差異，再整合本批手機改動並重驗。不得直接拿這份舊基底準備目錄覆蓋新版正式 K。** 再完成 Gemini 同原生 session 實測與剩餘實機驗收，才可依本人恢復授權安排正式接入。
+- 此段是文件收尾；不因文件 commit 較新而宣稱程式已重建或部署。沒有變更原工作樹、推送、搬取原生憑證或操作正式翻譯目標。
