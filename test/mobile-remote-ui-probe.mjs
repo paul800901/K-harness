@@ -11,7 +11,7 @@ import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
 
 const out=path.resolve('.runtime/mobile-remote');await mkdir(out,{recursive:true});
-const root=await mkdtemp(path.join(out,'ui-')),key=randomBytes(32).toString('hex'),remotePort=Number(process.env.K_TEST_REMOTE_PORT??54832),httpsPort=Number(process.env.K_TEST_HTTPS_PORT??54833),origin=`https://paulus.mobile.test.ts.net:${httpsPort}`;
+const root=await mkdtemp(path.join(out,'ui-')),key=randomBytes(32).toString('hex'),remotePort=Number(process.env.K_TEST_REMOTE_PORT??54838),httpsPort=Number(process.env.K_TEST_HTTPS_PORT??54839),origin=`https://paulus.mobile.test.ts.net:${httpsPort}`;
 await mkdir(path.join(root,'.local'));await writeFile(path.join(root,'.local/remote-access.json'),JSON.stringify({origin,login:'test-owner@example.invalid',keyHash:remoteKeyHash(key),port:remotePort}));
 const models=[['gpt-6-luna','GPT-6 Luna','codex'],['claude-opus-5-5','Claude Opus 5.5','claude'],['gemini-3.8-flash','Gemini 3.8 Flash','gemini']].map(([model,displayName,provider])=>({model,displayName,provider,available:true,inputModalities:['text'],supportedReasoningEfforts:[{reasoningEffort:'low'}],defaultReasoningEffort:'low'}));
 const rooms=new Map(),uploads=new Map(),calls=[],errors=[];let emit,current,id=0;
@@ -34,6 +34,7 @@ const controller={concurrentConversations:true,get state(){return {...current,wo
 };
 const service=()=>({status:async()=>({available:true,auth:{loggedIn:true,authMethod:'claude.ai',apiProvider:'firstParty',subscriptionType:'max'}}),close:async()=>{}});
 const app=await startDesktop({root,port:0,controllerFactory:({onChange})=>{emit=onChange;return controller;},claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{}})});
+assert.equal(app.remoteOrigin,origin,'test remote listener must start; never proxy to an existing service');
 let dropNextSendResponse=false;const sendTransports=[];
 const proxy=https.createServer({key:await readFile(path.join(out,'test-key.pem')),cert:await readFile(path.join(out,'test-cert.pem'))},(req,res)=>{
  if(req.url==='/api/send')sendTransports.push({command:req.headers['x-k-command']});
@@ -52,7 +53,7 @@ try{
  await page.goto(origin);const connectStarted=Date.now();await page.getByLabel('K 存取金鑰').fill(key);await page.getByRole('button',{name:'連接 K',exact:true}).click();
  await page.getByText('正在同步電腦 K',{exact:true}).waitFor({timeout:20000});
  assert.equal(await page.getByText('後端斷線 · 無法確認工作狀態',{exact:true}).count(),0);
- await page.getByText('電腦 K 已連線',{exact:true}).waitFor({timeout:20000});const slowConnectMs=Date.now()-connectStarted;
+ await page.getByText('已連線',{exact:true}).waitFor({timeout:20000});const slowConnectMs=Date.now()-connectStarted;
  assert(slowConnectMs<30000,'large history must connect on a 1 Mbps read stream within 30 seconds');
  await slow.send('Network.emulateNetworkConditions',{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
  await noOverflow(page);await screenshot('mobile-chat');
@@ -72,15 +73,18 @@ try{
  desktop=await browser.newPage({viewport:{width:1440,height:1000}});await desktop.goto(app.createLaunchUrl());await desktop.getByRole('textbox',{name:'工作訊息',exact:true}).waitFor();
  // Preserve the newer Codex reasoning/Fast picker when integrating mobile layout.
  await page.setViewportSize({width:360,height:440});
+ await page.getByRole('button',{name:'對話設定',exact:true}).click();
  await page.getByRole('button',{name:'推理程度與速度',exact:true}).click();
  const reasoning=page.getByRole('dialog',{name:'推理程度與速度設定',exact:true});await reasoning.waitFor();
  const reasoningBox=await reasoning.boundingBox();assert(reasoningBox.x>=0&&reasoningBox.y>=0&&reasoningBox.x+reasoningBox.width<=360&&reasoningBox.y+reasoningBox.height<=440,'reasoning popup outside mobile viewport');
  assert.equal(await page.getByRole('switch',{name:'原生加速',exact:true}).isChecked(),false);
  await noOverflow(page);await screenshot('mobile-codex-reasoning');
  await reasoning.getByRole('combobox',{name:'推理程度',exact:true}).selectOption('low');await reasoning.waitFor({state:'hidden'});
+ await page.getByRole('dialog',{name:'對話設定',exact:true}).getByRole('button',{name:'完成',exact:true}).click();
+ await page.setViewportSize({width:360,height:740});
  await page.locator('.header-actions .worker-activity').click();
  const workers=page.getByRole('dialog',{name:'子代理狀態',exact:true});await workers.waitFor();await workers.getByRole('heading',{name:'另一個聊天室',exact:true}).waitFor();
- const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=440,'worker popup outside mobile viewport');
+ const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker popup outside mobile viewport');
  await workers.getByText(/久未回報不等於已卡死/).waitFor();await noOverflow(page);await screenshot('mobile-worker-status');
  await page.getByRole('button',{name:'關閉子代理狀態',exact:true}).click();await workers.waitFor({state:'hidden'});
  assert.equal(await page.getByRole('button',{name:'開始聽寫',exact:true}).count(),0);await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();
@@ -104,40 +108,40 @@ try{
  current.messages.push({id:'streaming',role:'assistant',text:'串流第一段',partial:true,createdAt:new Date().toISOString()});emit();await page.getByText('串流第一段',{exact:true}).waitFor();
  current.messages.at(-1).text+='，第二段';emit();await page.getByText('串流第一段，第二段',{exact:true}).waitFor();
  await composer().fill('待送訊息');await page.getByRole('button',{name:'送出訊息（加入待送）',exact:true}).click();await page.locator('.queued-message').waitFor();assert.equal(current.queuedMessages.length,1);await screenshot('mobile-queue');current.queuedMessages=[];emit();
- current.questions=[{id:'approval-1',kind:'approval',title:'測試核准',text:'只操作假資料',canAccept:true}];emit();await page.getByRole('button',{name:'只核准這一次',exact:true}).click();assert.equal(calls.at(-1).op,'answer');assert.equal(calls.at(-1).accept,true);
- current.questions=[{id:'approval-2',kind:'approval',title:'測試拒絕',text:'拒絕假操作',canAccept:true}];emit();await page.getByRole('button',{name:'拒絕',exact:true}).click();assert.equal(calls.at(-1).accept,false);
- current.questions=[{id:'question-1',kind:'question',questions:[{id:'answer-1',question:'選哪個？',options:['甲','乙']}]}];emit();await page.locator('.claude-question select').selectOption('甲');await page.getByRole('button',{name:'送出回答',exact:true}).click();assert.equal(calls.at(-1).answers['answer-1'],'甲');
- await page.getByRole('button',{name:'停止工作',exact:true}).click();assert.equal(current.busy,false);
+ current.questions=[{id:'approval-1',kind:'approval',title:'測試核准',text:'只操作假資料',canAccept:true}];emit();await page.getByRole('button',{name:'只核准這一次',exact:true}).click();await page.getByRole('button',{name:'只核准這一次',exact:true}).waitFor({state:'hidden'});assert.equal(calls.at(-1).op,'answer');assert.equal(calls.at(-1).accept,true);
+ current.questions=[{id:'approval-2',kind:'approval',title:'測試拒絕',text:'拒絕假操作',canAccept:true}];emit();await page.getByRole('button',{name:'拒絕',exact:true}).click();await page.getByRole('button',{name:'拒絕',exact:true}).waitFor({state:'hidden'});assert.equal(calls.at(-1).accept,false);
+ current.questions=[{id:'question-1',kind:'question',questions:[{id:'answer-1',question:'選哪個？',options:['甲','乙']}]}];emit();await page.locator('.claude-question select').selectOption('甲');await page.getByRole('button',{name:'送出回答',exact:true}).click();await page.getByRole('button',{name:'送出回答',exact:true}).waitFor({state:'hidden'});assert.equal(calls.at(-1).answers['answer-1'],'甲');
+ await page.getByRole('button',{name:'停止工作',exact:true}).click();await page.getByRole('button',{name:'停止工作',exact:true}).waitFor({state:'hidden'});assert.equal(current.busy,false);
  const download=page.waitForEvent('download');await page.getByRole('link',{name:'下載附件 手機附件.txt',exact:true}).click();assert.equal((await download).suggestedFilename(),'手機附件.txt');
  current.artifacts=['result.txt'];emit();await wait(150);assert(await page.locator('.app').evaluate(el=>el.classList.contains('inspector-hidden')),'artifacts must not auto-cover mobile chat');
  await page.getByRole('button',{name:'切換工具與成果面板',exact:true}).click();await page.getByRole('dialog',{name:'成果與工作面板'}).waitFor();await screenshot('mobile-results');
  current.status='completed';current.artifacts=[...current.artifacts];emit();await wait(150);assert(!await page.locator('.app').evaluate(el=>el.classList.contains('inspector-hidden')),'status must not dismiss the open results');
- await context.setOffline(true);await context.setOffline(false);await page.getByText('電腦 K 已連線',{exact:true}).waitFor();assert(!await page.locator('.app').evaluate(el=>el.classList.contains('inspector-hidden')),'snapshot must not dismiss the open results');
+ await context.setOffline(true);await context.setOffline(false);await page.getByText('已連線',{exact:true}).waitFor();assert(!await page.locator('.app').evaluate(el=>el.classList.contains('inspector-hidden')),'snapshot must not dismiss the open results');
  await page.locator('.mobile-backdrop').evaluate(el=>el.click());current.artifacts=[...current.artifacts];emit();await wait(150);assert(await page.locator('.app').evaluate(el=>el.classList.contains('inspector-hidden')),'backdrop close must survive snapshot/status');
  const artifact=await page.evaluate(async threadId=>{const r=await fetch(`/api/artifact?path=result.txt&threadId=${threadId}&download=1`);return r.text();},current.threadId);assert.equal(artifact,'REMOTE_DOWNLOAD_OK');
  // Work survives a closed page and a network change; only current snapshot comes back.
  await composer().fill('關頁後繼續');await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();const sends=calls.filter(c=>c.op==='send').length,roomId=current.threadId;
  await page.close();assert.equal(current.busy,true);current.messages.push({id:'background-done',role:'assistant',text:'電腦已在背景完成',createdAt:new Date().toISOString()});current.busy=false;current.status='completed';emit();
  page=await context.newPage();page.setDefaultTimeout(12000);page.on('pageerror',e=>errors.push(e.message));await page.goto(origin);await page.getByText('電腦已在背景完成',{exact:true}).waitFor();assert.equal(current.threadId,roomId);assert.equal(calls.filter(c=>c.op==='send').length,sends);
- await context.setOffline(true);await page.getByText('電腦 K 狀態待確認',{exact:true}).waitFor();await context.setOffline(false);await page.getByText('電腦 K 已連線',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,sends);
+ await context.setOffline(true);await page.getByText('電腦 K 狀態待確認',{exact:true}).waitFor();await context.setOffline(false);await page.getByText('已連線',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,sends);
  await composer().fill('保留草稿不送出');await page.setViewportSize({width:360,height:440});await composer().focus();await noOverflow(page);const box=await composer().boundingBox();assert(box.y+box.height<=440);await screenshot('mobile-keyboard-height');
  await page.setViewportSize({width:412,height:915});await screenshot('mobile-restored');
  current.messages.push({id:'long-code',role:'assistant',text:Array.from({length:50},(_,i)=>'長回覆第 '+i+' 段').join('\n\n')+'\n\n'+String.fromCharCode(96).repeat(3)+'js\n'+('long_code_'.repeat(70))+'\n'+String.fromCharCode(96).repeat(3),createdAt:new Date().toISOString()});emit();await page.locator('.markdown pre').last().waitFor();await noOverflow(page);assert(await page.locator('.viewport').evaluate(el=>el.scrollHeight>el.clientHeight));assert(await page.locator('.markdown pre').last().evaluate(el=>el.scrollWidth>el.clientWidth));await screenshot('mobile-long-code');
  const desktopSendCount=calls.filter(c=>c.op==='send').length;await desktop.getByRole('textbox',{name:'工作訊息',exact:true}).fill('桌面沿用原本送出');await desktop.getByRole('button',{name:'送出訊息',exact:true}).click();await desktop.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,desktopSendCount+1);await desktop.getByRole('button',{name:'停止工作',exact:true}).click();await desktop.screenshot({path:path.join(out,'desktop-regression.png')});
  // Server accepted the command but its HTTP response was lost: show unknown, never resend.
  const beforeUnknown=calls.filter(c=>c.op==='send').length;dropNextSendResponse=true;await composer().fill('伺服器已接收但回應遺失');await page.getByRole('button',{name:'送出訊息',exact:true}).click();await page.getByText('操作結果未確認；沒有自動重送。請重新連線讀回後再決定。',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);assert(current.messages.some(m=>m.text==='伺服器已接收但回應遺失'));assert.equal(sendTransports.at(-1).command,sendTransports.at(-2).command,'browser transport retry retains request ID');await screenshot('mobile-unknown-result');
- await page.reload();await page.getByText('電腦 K 已連線',{exact:true}).waitFor();await composer().fill('');await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);await page.getByRole('button',{name:'停止工作',exact:true}).click();
+ await page.reload();await page.getByText('已連線',{exact:true}).waitFor();await composer().fill('');await page.getByRole('button',{name:'停止工作',exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);await page.getByRole('button',{name:'停止工作',exact:true}).click();
  // An expired login must be distinguished from transport loss without navigation or replay.
  const beforeExpired=calls.length;await composer().fill('登入失效仍保留的草稿');
  await context.clearCookies();await context.setOffline(true);await context.setOffline(false);
- await page.getByText(/手機登入已失效（例如電腦 K 已重新啟動）/).waitFor();
+ await page.getByText(/手機登入已失效（可能已登出、逾期或被電腦端撤銷）/).waitFor();
  assert.equal(await composer().inputValue(),'登入失效仍保留的草稿');assert.equal(calls.length,beforeExpired);
  await page.setViewportSize({width:360,height:640});await noOverflow(page);
  const reconnect=page.getByRole('button',{name:'重新登入',exact:true}),reconnectBox=await reconnect.boundingBox();
  assert(reconnectBox.width>200&&reconnectBox.height<90,'reconnect action must not wrap into a narrow vertical column');
  await screenshot('mobile-expired-login');await reconnect.click();await page.getByLabel('K 存取金鑰').waitFor();
  await page.getByLabel('K 存取金鑰').fill(key);await page.getByRole('button',{name:'連接 K',exact:true}).click();
- await page.getByText('電腦 K 已連線',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);
+ await page.getByText('已連線',{exact:true}).waitFor();assert.equal(calls.filter(c=>c.op==='send').length,beforeUnknown+1);
  assert.deepEqual(errors,[]);await writeFile(path.join(out,'ui-result.json'),JSON.stringify({passed:true,evidence:'real HTTPS proxy and desktop-server, synthetic Tailscale identity and native controllers',viewport:[412,915],slowConnectMs,historyTools:5000,slowNetworkMbps:1,lazyExactReads:true,keyboardLikeViewport:[360,440],codexReasoningPopup:reasoningBox,fastRemainedDefault:true,rooms:rooms.size,mobileSendCount:sends+1,unknownAcceptedSendCount:1,sendTransports,totalSendCount:calls.filter(c=>c.op==='send').length,calls,manifest,errors},null,2));console.log(JSON.stringify({passed:true,rooms:rooms.size,sendCount:sends}));
 }catch(error){if(page&&!page.isClosed())await page.screenshot({path:path.join(out,'ui-failure.png')});await writeFile(path.join(out,'ui-failure.json'),JSON.stringify({error:error.stack,errors,calls},null,2));throw error;}
 finally{await browser?.close();proxy.closeAllConnections();await new Promise(r=>proxy.close(r));await app.close();}

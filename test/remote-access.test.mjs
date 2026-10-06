@@ -232,3 +232,30 @@ test('malformed remote config and an occupied remote port leave local bootstrap 
  const busyApp=await startLocal(busyRoot);t.after(()=>busyApp.close());
  await verifyLocal(busyApp);
 });
+
+test('remembered phone HTTP restart, durable no-replay, storage failure and disable revoke',async t=>{
+ const {readFile,rename}=await import('node:fs/promises');
+ const base=path.resolve('.runtime/mobile-remote-tests');await mkdir(base,{recursive:true});
+ const root=await mkdtemp(path.join(base,'remember-http-'));await mkdir(path.join(root,'.local'));
+ const remotePort=await freePort(),origin='https://remember.test.ts.net',login='fake@example.test',key='fake-key';
+ const file=path.join(root,'.local/remote-access.json'),store=path.join(root,'.local/remote-sessions.json');
+ const config={enabled:true,origin,login,port:remotePort,keyHash:remoteKeyHash(key)};await writeFile(file,JSON.stringify(config));
+ let sends=0;const controller={state:{threadId:'fake'},send:async()=>{sends++;return{ok:true};},close:async()=>{}};
+ const start=()=>startDesktop({root,executable:'fake',port:0,controllerFactory:()=>controller,claudeLoginFactory:service,codexLoginFactory:service,geminiLoginFactory:service,localDictationFactory:()=>({close:async()=>{}})});
+ let app=await start();t.after(()=>app.close());
+ const headers={host:new URL(origin).host,'tailscale-user-login':login,origin,'x-k-request':'1','content-type':'application/json'};
+ const url=route=>`http://127.0.0.1:${remotePort}${route}`;
+ const signed=await request(url('/api/remote/login'),{method:'POST',headers,body:{key}});assert.equal(signed.status,200);
+ headers.cookie=signed.headers.get('set-cookie').split(';')[0];
+ const commandId='http-restart-command';assert.equal((await request(url('/api/send'),{method:'POST',headers,body:{threadId:'fake',text:'fake'},commandId})).status,200);assert.equal(sends,1);
+ await app.close();app=await start();assert.equal((await request(url('/api/state'),{headers})).status,200);
+ assert.equal((await request(url('/api/send'),{method:'POST',headers,body:{threadId:'fake',text:'fake'},commandId})).status,409);assert.equal(sends,1);
+ await app.close();const saved=JSON.parse(await readFile(store,'utf8'));saved.sessions[0].expires-=2*24*60*60*1000;await writeFile(store,JSON.stringify(saved));app=await start();
+ // Load without authenticating, so the aged session is not renewed before the failure.
+ assert.equal((await request(url('/api/state'),{headers:{...headers,cookie:''}})).status,403);await rename(store,store+'.held');await mkdir(store);
+ const failed=await request(url('/api/send'),{method:'POST',headers,body:{threadId:'fake',text:'not sent'}});assert.equal(failed.status,503);assert.equal(sends,1);assert.doesNotMatch(await failed.text(),/EPERM|EISDIR|Users|remote-sessions/);
+ const readable=await request(url('/api/state'),{headers});assert.equal(readable.status,200,'read-only state remains available when renewal cannot persist');assert.equal(readable.headers.get('set-cookie'),null,'failed renewal does not claim a renewed cookie');
+ await app.close();await rename(store,store+'.failed-target');await rename(store+'.held',store);
+ await writeFile(file,JSON.stringify({...config,enabled:false}));app=await start();assert.equal(app.remoteOrigin,null);await app.close();
+ await writeFile(file,JSON.stringify(config));app=await start();assert.equal((await request(url('/api/state'),{headers})).status,403,'disable at startup permanently revokes remembered login');
+});

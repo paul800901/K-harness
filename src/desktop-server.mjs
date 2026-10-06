@@ -12,12 +12,13 @@ import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 import {remoteStateEvent} from '../shared/remote-state.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
-import {readRemoteConfig,createRemoteAccess,remoteRouteAllowed,remoteLoginHtml,remoteLoginJs,remoteLoginCss} from './remote-access.mjs';
+import {readRemoteConfig,clearRemoteSessions,createRemoteAccess,remoteRouteAllowed,remoteLoginHtml,remoteLoginJs,remoteLoginCss} from './remote-access.mjs';
 
 export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const remoteFile=path.join(root,'.local','remote-access.json');
  let remoteConfig=null,remoteError=null;
  try{remoteConfig=await readRemoteConfig(remoteFile);}catch(error){remoteError=error.message;}
+ if(!remoteConfig)await clearRemoteSessions(remoteFile);
  const remote=remoteConfig?createRemoteAccess(remoteFile,remoteConfig):null;
  let remoteServer;
  const cookie=randomBytes(32).toString('hex'),clients=new Set(),remoteClients=new WeakSet(),stateListeners=new Set(),stateStream=createStateStream();let scheduled;
@@ -98,11 +99,12 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    const url=new URL(req.url,requestOrigin);requestPath=url.pathname;
    const authenticated=isRemote?await remote.authorized(req,remoteIdentity):cookieMatches(req);
    if(isRemote){
+    if(authenticated&&url.pathname!=='/api/remote/logout'){try{const refreshed=await remote.refresh(req);if(refreshed)res.setHeader('Set-Cookie',refreshed);}catch(error){console.error('[remote session renewal]',error.message);}}
     res.setHeader('Strict-Transport-Security','max-age=31536000');
     if(req.method==='POST'&&url.pathname==='/api/remote/login'){
      if(req.headers.origin!==requestOrigin||req.headers['x-k-request']!=='1'||!req.headers['content-type']?.startsWith('application/json'))return json(403,{error:'Explicit same-origin request required'});
      let body='';for await(const chunk of req){body+=chunk;if(Buffer.byteLength(body)>1024)return json(413,{error:'Request too large'});}
-     const session=remote.login(JSON.parse(body).key,remoteIdentity);
+     const session=await remote.login(JSON.parse(body).key,remoteIdentity);
      if(!session)return json(403,{error:'Remote access denied'});
      res.setHeader('Set-Cookie',session);return json(200,{ok:true});
     }
@@ -111,7 +113,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     }
     if(req.method==='GET'&&url.pathname==='/'&&!authenticated){res.setHeader('Content-Type','text/html; charset=utf-8');return res.end(remoteLoginHtml);}
     if(req.method==='POST'&&(req.headers.origin!==requestOrigin||req.headers['x-k-request']!=='1'))return json(403,{error:'Explicit same-origin request required'});
-    if(req.method==='POST'&&url.pathname==='/api/remote/logout'&&authenticated){res.setHeader('Set-Cookie',remote.logout(req));return json(200,{ok:true});}
+    if(req.method==='POST'&&url.pathname==='/api/remote/logout'&&authenticated){res.setHeader('Set-Cookie',await remote.logout(req));return json(200,{ok:true});}
     if(url.pathname.startsWith('/api/')&&!remoteRouteAllowed(req.method,url.pathname))return json(403,{error:'此操作只在電腦端提供。'});
     if(['/bootstrap','/health'].includes(url.pathname))return json(403,{error:'Local entry only'});
    }
@@ -132,12 +134,12 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     res.writeHead(200,{'Content-Type':`${type}; charset=utf-8`});return res.end(body);
    }
    if(!authenticated)return json(403,{error:isRemote?'遠端授權已失效，請重新登入。':'請從桌面啟動 K。',...(isRemote?{code:'K_REMOTE_AUTH_REQUIRED'}:{})});
-   if(isRemote&&req.method==='POST')remote.acceptCommand(req);
+   if(isRemote&&req.method==='POST')await remote.acceptCommand(req);
    if(req.headers.origin&&req.headers.origin!==requestOrigin)return json(403,{error:'Cross-origin request denied'});
  if(req.method==='GET'&&url.pathname==='/api/events'){
     if(scheduled){clearTimeout(scheduled);scheduled=null;broadcast(stateStream.update(publicState()));}
     res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});const snapshot=stateStream.snapshot(publicState());res.write(`data: ${JSON.stringify(isRemote?remoteStateEvent(snapshot):snapshot)}\n\n`);clients.add(res);if(isRemote)remoteClients.add(res);
-    const heartbeat=setInterval(async()=>{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
+    const heartbeat=setInterval(async()=>{try{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');}catch(error){console.error('[remote heartbeat]',error.message);clients.delete(res);res.end();}},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
    if(req.method==='GET'&&url.pathname==='/api/gemini/accounts')return json(200,geminiAccounts?await geminiAccounts.list():{enabled:false,activeAccountId:null,busy:false,loginPending:false,accounts:[]});
