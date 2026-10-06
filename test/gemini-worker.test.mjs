@@ -116,7 +116,7 @@ for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves exec
  const fake=fakeSpawn(),worker=make(fake);const result=await worker.run({task:'bounded',effort});
  assert.equal(result.status,'completed');assert.equal(result.acceptance,'not-reviewed');assert.deepEqual(result.outputFiles,[]);assert.match(result.outputFilesNote,/無法取得/);
  const launch=fake.calls[1];assert.equal(launch.exe,path.resolve(root,'original-local','agy/bin/agy.exe'));assert.equal(launch.options.cwd,workspace);assert.equal(launch.options.shell,false);assert.equal(launch.options.windowsHide,true);assert.equal(launch.options.stdio[0],'ignore');
- assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'600s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
+ assert.equal(launch.args[launch.args.indexOf('--model')+1],`gemini-3.8-flash-${effort}`);assert.equal(launch.args[launch.args.indexOf('--output-format')+1],'stream-json');assert.equal(launch.args[launch.args.indexOf('--print-timeout')+1],'0s');assert.equal(launch.args.includes('--dangerously-skip-permissions'),false);
  assert.match(launch.args[1],/不得超過主代理的授權/);assert.match(launch.args[1],/不得再委派子代理、啟動背景服務/);assert.match(launch.args[1],/不能跑指令/);assert.match(launch.args[1],/<DELEGATED_TASK>\nbounded\n<\/DELEGATED_TASK>/);
  assert.equal(launch.options.env.USERPROFILE,worker.home);assert.equal(launch.options.env.HOME,worker.home);assert.equal(launch.options.env.LOCALAPPDATA,undefined);assert.ok(launch.args[launch.args.indexOf('--log-file')+1].startsWith(worker.home+path.sep));
  assert.equal(launch.options.env.AGY_CLI_DISABLE_AUTO_UPDATE,'true');
@@ -333,4 +333,67 @@ test('bridge activity is display-only; waiting inspections neither rerun nor set
   assert.equal(runs,1);finish();await new Promise(r=>setTimeout(r,30));
   assert.equal((await bridge.inspect({requestId:'flash'})).settled,true);
  }finally{finish();await bridge.close();}
+});
+
+test('default Flash survives ten minutes and a quiet day without killing or replaying',async t=>{
+ const fake=fakeSpawn(null),kills=[],updates=[];let started;
+ const ready=new Promise(resolve=>started=resolve);
+ const worker=make({spawnImpl:(...args)=>{
+  if(args[1][0]==='-p')t.mock.timers.enable({apis:['setTimeout']});
+  return fake.spawnImpl(...args);
+ }},{killTree:async pid=>{kills.push(pid);fake.children.at(-1).emit('close',1);}});
+ let settled=false;
+ const run=worker.run({task:'long synthetic task',effort:'low',onStart:started,onActivity:a=>updates.push(a)}).then(r=>{settled=true;return r;});
+ await ready;
+ try{
+  const child=fake.children.at(-1);
+  child.stdout.write(JSON.stringify({event:'step_update',step_update:{step_index:1,text_delta:'still working'}})+'\n');
+  const count=updates.length;
+  t.mock.timers.tick(601000);await Promise.resolve();
+  assert.equal(settled,false);assert.deepEqual(kills,[]);
+  t.mock.timers.tick(86400000);await Promise.resolve();
+  assert.equal(settled,false);assert.deepEqual(kills,[]);assert.equal(updates.length,count);
+  child.stdout.write(success('finished after long work'));child.emit('close',0);
+  assert.equal((await run).status,'completed');
+  assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,1);
+ }finally{t.mock.timers.reset();}
+});
+
+test('unlimited Flash still bounds model-catalog lookup separately',async t=>{
+ const fake=fakeSpawn(null),kills=[];
+ const worker=make({spawnImpl:(...args)=>{
+  t.mock.timers.enable({apis:['setTimeout']});
+  // No catalog response; no model turn has started.
+  const child=new EventEmitter();Object.assign(child,{pid:43210,stdout:new PassThrough(),stderr:new PassThrough()});
+  fake.calls.push(args);fake.children.push(child);return child;
+ }},{killTree:async pid=>{kills.push(pid);fake.children[0].emit('close',1);}});
+ // Preparation does real filesystem I/O before the fake query is launched.
+ const pending=worker.models();
+ while(!fake.children.length)await new Promise(r=>setImmediate(r));
+ try{
+  t.mock.timers.tick(30001);
+  await assert.rejects(pending,/K 模型目錄查詢期限已到；未啟動模型工作/);
+  assert.deepEqual(kills,[43210]);assert.equal(fake.calls.length,1);
+ }finally{t.mock.timers.reset();}
+});
+
+test('Flash parses more than eight MiB of stream without a duplicate stdout size cutoff',async()=>{
+ const fake=fakeSpawn(null),kills=[];let started;
+ const ready=new Promise(resolve=>started=resolve);
+ const worker=make(fake,{killTree:async pid=>{kills.push(pid);fake.children.at(-1).emit('close',1);}});
+ const run=worker.run({task:'large synthetic stream',effort:'low',onStart:started});await ready;
+ const child=fake.children.at(-1),chunk=Buffer.from('{"event":"ping"}\n'.repeat(10000));
+ for(let n=0;n<60;n++)child.stdout.write(chunk);
+ assert.ok(chunk.length*60>8*1024*1024);assert.deepEqual(kills,[]);
+ child.stdout.write(success('complete'));child.emit('close',0);
+ assert.equal((await run).output,'complete');
+});
+
+test('failure and missing git metadata never claim no files or network timeout',()=>{
+ const result=geminiOutcome({}, {code:1,reason:'timeout'});
+ assert.equal(result.status,'failed');assert.equal(result.settled,true);
+ assert.match(result.error,/K 指定的等待時限/);assert.match(result.error,/不是網路或額度/);
+ const files=geminiOutputFiles(null,null,workspace);
+ assert.deepEqual(files.outputFiles,[]);assert.match(files.outputFilesNote,/清單未知，不代表沒有輸出/);
+ assert.match(files.outputFilesNote,/先讀回任務指定檔案/);
 });

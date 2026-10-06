@@ -37,7 +37,8 @@ export function geminiModelsFrom(names){
 }
 
 /** K stores presentation only. agy owns execution, native history and compression. */
-export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,accounts,onChange=()=>{},timeoutMs=600000,browserConfig=async()=>null,closeBrowser=async()=>{}}={}){
+export function createGeminiController({root,geminiExecutable:executable,env=process.env,run=geminiProcess,killTree=killGeminiTree,loginFactory=createGeminiLogin,accounts,onChange=()=>{},timeoutMs=0,browserConfig=async()=>null,closeBrowser=async()=>{}}={}){
+ if(!Number.isFinite(timeoutMs)||timeoutMs<0)throw Error('Gemini timeoutMs 無效。');
  const login=loginFactory({cwd:root,executable,env}),binary=geminiExecutable(env,executable);
  let usagePending=null,usageAttemptAt=0;
  const state={provider:'gemini',status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:['text'],workspace:root,accessMode:'workspace-write',workerPolicy:normalizeWorkerPolicy(),title:'',effort:null,efforts:[],lastUsedModel:null,modelChanges:[],messages:[],tools:[],artifacts:[],workers:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,busy:false,error:null,browserAccess:{enabled:false,networkAccess:false},capabilities:{steer:false,goal:true,compact:false,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false,nativeFork:false},progress:{plan:[],explanation:null,compaction:'native',compactions:null,compactionsComplete:false,tokenUsage:null},usage:{gemini:quota}};
@@ -182,7 +183,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     record.nativeStarted=true;await save();current.abort.signal.throwIfAborted();launched=true;
     current.done=(async()=>{
      try{
-      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:!goalObjective,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
+      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:false,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
       if(outcome.output)ensureAssistant().text=goalConfirmed?outcome.output.replace(/<!-- GOAL_COMPLETE -->/g,'').trim():outcome.output;
       if(goalObjective)state.goal={...state.goal,status:outcome.settled===false?'unknown':outcome.status==='cancelled'?'interrupted':outcome.status!=='completed'?'failed':goalConfirmed&&outcome.output.includes('<!-- GOAL_COMPLETE -->')?'complete':'ended'};
       if(outcome.settled===false){unresolvedPid=current.pid;state.status='uncertain';}else state.status=outcome.status==='cancelled'?'interrupted':outcome.status;

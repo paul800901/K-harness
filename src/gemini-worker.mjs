@@ -117,7 +117,7 @@ export function geminiOutcome({result,toolErrors=[],deniedTools=[]}, {code,stder
   const output=typeof result?.response==='string'?result.response:'';
   const base={output,toolErrors,deniedTools};
   if(cleanupError)return {...base,status:'unresolved',settled:false,error:cleanupError};
-  if(reason)return {...base,status:reason==='cancelled'?'cancelled':'failed',settled:true,error:reason};
+  if(reason)return {...base,status:reason==='cancelled'?'cancelled':'failed',settled:true,error:reason==='timeout'?'K 指定的等待時限已到，已停止程序；不是網路或額度耗盡的證據。可能已有檔案成果，須先讀回，不得直接重做。':reason};
   const diagnostic=`${errorText(result?.error)}\n${stderr}`;
   let error;
   if(/no output produced/iu.test(diagnostic))error='agy no output produced（headless 無法核准工具）。';
@@ -135,7 +135,7 @@ export async function killGeminiTree(pid,{execImpl=exec,platform=process.platfor
   else process.kill(-pid,'SIGKILL');
 }
 
-/** Bounded subprocess; cancellation waits for the tree kill and pipe closure. */
+/** Queries may have a deadline; model turns pass 0. Cancellation waits for tree kill and pipe closure. */
 export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,maxStdout=8*1024*1024,maxStderr=128*1024,captureOutput=true,spawnImpl=spawn,killTree=killGeminiTree,onStart=()=>{},onChunk=()=>{}}) {
   if(signal?.aborted)return Promise.resolve({code:null,stdout:'',stderr:'',reason:'cancelled'});
   return new Promise((resolve,reject)=>{
@@ -180,7 +180,7 @@ export async function geminiGitStatus(workspace) {
   }catch{return null;}
 }
 export function geminiOutputFiles(before,after,workspace) {
-  if(!before||!after)return {outputFiles:[],outputFilesNote:'無法取得工作區 git status 差異（非 git repo 或查詢失敗）。'};
+  if(!before||!after)return {outputFiles:[],outputFilesNote:'無法取得工作區 git status 差異（非 git repo 或查詢失敗）；成果清單未知，不代表沒有輸出。即使工單失敗或取消，也須先讀回任務指定檔案，確認未完成範圍，不能據此重做。'};
   const outputFiles=[];
   for(const [name,status] of after){
     const relative=path.relative(workspace,path.resolve(workspace,name));
@@ -189,8 +189,8 @@ export function geminiOutputFiles(before,after,workspace) {
   return {outputFiles,outputFilesNote:'git status 前後差異；無法歸因並行寫入，亦無法辨認原本已 dirty 且狀態相同的內容變更。'};
 }
 
-export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=600000,gitStatus=geminiGitStatus,accounts,browserSession}={}) {
-  if(!Number.isFinite(timeoutMs)||timeoutMs<=0)throw Error('Flash timeoutMs 無效。');
+export function createGeminiWorker({root,workspace,accessMode='workspace-write',executable,env=process.env,profileRoot=path.join(root,'agent-home','gemini'),spawnImpl=spawn,killTree=killGeminiTree,timeoutMs=0,gitStatus=geminiGitStatus,accounts,browserSession}={}) {
+  if(!Number.isFinite(timeoutMs)||timeoutMs<0)throw Error('Flash timeoutMs 無效。');
   const profile=geminiProfile(workspace,accessMode),home=path.join(profileRoot,profile);
   // Resolve before HOME/USERPROFILE overrides. Never discover through a shell.
   const binary=geminiExecutable(env,executable);
@@ -210,10 +210,11 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
       // This one shared initialization belongs to the worker, not the first
       // caller's AbortSignal. Cancelling a task must not cancel another task's
       // catalog lookup; cancelled runs wait for this bounded lookup, then stop.
-      const result=await geminiProcess(binary,['models'],{cwd:workspace,env:childEnv,timeoutMs:Math.min(timeoutMs,30000),spawnImpl,killTree});
+      const result=await geminiProcess(binary,['models'],{cwd:workspace,env:childEnv,timeoutMs:30000,spawnImpl,killTree});
       if(result.code!==0||result.reason||result.cleanupError){
         const failure=geminiOutcome({}, {...result,stderr:`${result.stdout}\n${result.stderr}`});
-        throw Object.assign(Error(`agy models 無法取得：${failure.error} 未換用其他供應商。`),{settled:!result.cleanupError});
+        const message=result.reason==='timeout'&&!result.cleanupError?'K 模型目錄查詢期限已到；未啟動模型工作。':failure.error;
+        throw Object.assign(Error(`agy models 無法取得：${message} 未換用其他供應商。`),{settled:!result.cleanupError});
       }
       const names=new Set(result.stdout.split(/\r?\n/u).map(line=>line.trim().split(/\s/u)[0]).filter(Boolean));
       if(!names.size)throw Error('agy models 清單為空。');
@@ -238,9 +239,11 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     await prepare(runHome,server);
     const before=await gitStatus(workspace),telemetry={},activity=createWorkActivity(telemetry);
     const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);});
-    const args=['-p',geminiInstruction(task,accessMode,server),'--model',nativeModel,'--output-format','stream-json','--print-timeout',`${Math.max(1,Math.ceil(timeoutMs/1000))}s`,'--log-file',path.join(runHome,`${runId}.log`),'--disable-slash-commands'];
+    const args=['-p',geminiInstruction(task,accessMode,server),'--model',nativeModel,'--output-format','stream-json','--print-timeout',`${Math.ceil(timeoutMs/1000)}s`,'--log-file',path.join(runHome,`${runId}.log`),'--disable-slash-commands'];
     if(accessMode==='danger-full-access')args.push('--dangerously-skip-permissions');
-    const result=await geminiProcess(binary,args,{cwd:workspace,env:geminiEnvironment(env,runHome),signal,timeoutMs,spawnImpl,killTree,onStart:pid=>{activity.begin();onStart?.(pid);onActivity(telemetry.activity);},onChunk:chunk=>parser.write(chunk)});
+    // Native turns finish themselves; duration/quiet activity are display-only.
+    // Parse the stream without also accumulating a size-limited stdout copy.
+    const result=await geminiProcess(binary,args,{cwd:workspace,env:geminiEnvironment(env,runHome),signal,timeoutMs,captureOutput:false,spawnImpl,killTree,onStart:pid=>{activity.begin();onStart?.(pid);onActivity(telemetry.activity);},onChunk:chunk=>parser.write(chunk)});
     const parsed=parser.end();
     return {...geminiOutcome(parsed,result),...geminiOutputFiles(before,await gitStatus(workspace),workspace),acceptance:'not-reviewed',nativeModel,profile,exitCode:result.code};
     }finally{

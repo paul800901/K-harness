@@ -24,6 +24,18 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('ordinary Gemini main turns wait for native completion without duration or stdout-copy limits',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({model:'gemini-3.8-flash',effort:'low'});
+  await f.controller.send({text:'long task'});await finish(f.controller);
+  assert.equal(f.calls.length,1);
+  const {args,params}=f.calls[0];
+  assert.equal(args[args.indexOf('--print-timeout')+1],'0s');
+  assert.equal(params.timeoutMs,0);assert.equal(params.captureOutput,false);
+  assert.equal(f.controller.state.status,'completed');
+ }finally{await f.controller.close();}
+});
+
 test('Gemini work telemetry follows actual stream steps rather than process start or quota reads',async()=>{
  let emit,done;const f=await fixture({run:async(binary,args,params)=>{params.onStart(12345);emit=e=>params.onChunk(Buffer.from(JSON.stringify(e)+'\n'));return new Promise(resolve=>{done=()=>{emit({event:'result',result:{conversation_id:'123e4567-e89b-42d3-a456-426614174000',status:'SUCCESS',response:'fake'}});resolve({code:0,stderr:''});};});}});
  try{
