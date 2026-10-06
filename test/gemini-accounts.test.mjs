@@ -6,7 +6,7 @@ import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 
 const base=path.resolve('.runtime/tests');
-const A='a'.repeat(32),B='b'.repeat(32),C='c'.repeat(32);
+const A='a'.repeat(32),B='b'.repeat(32),C='c'.repeat(32),D='d'.repeat(32),E='e'.repeat(32);
 const email='same@example.test';
 const future=Date.parse('2026-10-10T00:00:00Z')/1000;
 async function fixture({enabled=true,identity=null,statusFor=()=>authStatus(),root,clock=()=>Date.parse('2026-10-03T12:00:00Z')}={}){
@@ -144,12 +144,34 @@ test('either official quota window can select another worker account exactly onc
  });
 });
 
-test('an explicit exhausted account never falls back to another account',async()=>{
- const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?0:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
+test('a worker explicit account binding cannot bypass handoff from an exhausted current account',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'ready',windows:[{remainingPercent:current?.accountId===A?0:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
  await f.accounts.activate({accountId:A});f.calls.activate.length=0;
- let invoked=0;await assert.rejects(f.accounts.run({accountId:A,worker:true},async()=>{invoked++;}),/額度已用完/u);
- assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[]);
+ let invoked=0;const result=await f.accounts.run({accountId:A,worker:true},async()=>{invoked++;return {settled:true};});
+ assert.equal(invoked,1);assert.equal(result.accountId,B);assert.deepEqual(f.calls.activate,[B]);
+});
+
+test('worker explicit account cannot skip Fourth to Fifth to First and never replays the task',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const spent=new Set([D]);
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:spent.has(current.accountId)?0:40,resetsAt:future}],checkedAt:new Date(now).toISOString()})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email:`${id[0]}@example.test`};await f.accounts.capture();}
+ await f.accounts.activate({accountId:D});f.calls.activate.length=0;let invoked=0;
+ const fifth=await f.accounts.run({accountId:A,worker:true},async()=>{invoked++;return {settled:true};});
+ assert.equal(fifth.accountId,E);assert.equal(invoked,1);assert.deepEqual(f.calls.activate,[E]);
+ spent.add(E);spent.delete(D);now+=61000;f.calls.activate.length=0;
+ const first=await f.accounts.run({accountId:A,worker:true},async()=>{invoked++;return {settled:true};});
+ assert.equal(first.accountId,A);assert.equal(invoked,2);assert.deepEqual(f.calls.activate,[A]);
+});
+
+test('a stale or unknown next account is queried and not assumed available',async()=>{
+ const f=await fixture({identity:{accountId:A,email},statusFor:current=>current.accountId===B
+  ?{auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota:{status:'unavailable',windows:[]},reason:'quota unavailable'}
+  :authStatus({status:'ready',windows:[{remainingPercent:current.accountId===A?0:40,resetsAt:future}]})});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:C,email};await f.accounts.capture();
+ await f.accounts.activate({accountId:A});let invoked=0;f.calls.activate.length=0;
+ await assert.rejects(f.accounts.run({accountId:C,worker:true},async()=>{invoked++;}),/尚無官方目前額度資料/u);
+ assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
 });
 
 test('worker stays on one account and never rotates for unknown or failed quota reports',async t=>{
@@ -167,7 +189,7 @@ test('worker stays on one account and never rotates for unknown or failed quota 
   if(scenario==='timeout'){failed=true;await f.accounts.refresh();}
   if(scenario!=='timeout'){
    for(let i=0;i<2;i++){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();}
-  }else await assert.rejects(f.accounts.acquire({worker:true}),/額度已用完/u);
+  }else await assert.rejects(f.accounts.acquire({worker:true}),/未開始工作/u);
   assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).busy,false);
  });
 });
@@ -275,16 +297,16 @@ test('cancel without a previous identity leaves a completed official login intac
 });
 
 test('selecting a cached exhausted account does not activate it before rejection',async()=>{
- const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?0:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'ready',windows:[{remainingPercent:current?.accountId===A?0:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();f.calls.activate.length=0;
- await assert.rejects(f.accounts.run({accountId:A,worker:true},async()=>{}),/額度已用完/u);
+ await assert.rejects(f.accounts.run({accountId:A},async()=>{}),/額度已用完/u);
  assert.deepEqual(f.calls.activate,[]);
 });
 
 test('selecting a cached signed-out account does not activate it before rejection',async()=>{
  const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>({auth:{status:current?.accountId===A?'signed-out':'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota:{status:'available',windows:[{remainingPercent:70,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'}})});
  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();f.calls.activate.length=0;
- await assert.rejects(f.accounts.run({accountId:A,worker:true},async()=>{}),/登入/u);
+ await assert.rejects(f.accounts.run({accountId:A},async()=>{}),/登入/u);
  assert.deepEqual(f.calls.activate,[]);
 });
 
@@ -392,6 +414,27 @@ test('simultaneous same-account starts share the identity without false switchin
  assert.deepEqual(leases.map(l=>l.accountId),[A,A,A]);assert.equal((await f.accounts.list()).busy,true);
  await leases[0].release();await leases[1].release();assert.equal((await f.accounts.list()).busy,true);
  await leases[2].release();assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('manual account activation waits for a background quota refresh instead of reporting busy',async()=>{
+ let resume,statusStarted;let defer=false;
+ const f=await fixture({identity:{accountId:A,email},statusFor:()=>defer?new Promise(resolve=>{resume=()=>{defer=false;resolve(authStatus());};statusStarted();}):authStatus()});
+ await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
+ defer=true;const started=new Promise(resolve=>{statusStarted=resolve;});const refresh=f.accounts.refresh();await started;
+ let activated=false;const activation=f.accounts.activate({accountId:A}).then(value=>{activated=true;return value;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(activated,false);
+ resume();await Promise.all([refresh,activation]);assert.equal(activated,true);assert.equal((await f.accounts.list()).activeAccountId,A);
+});
+
+test('next account with no usable official windows is not assumed available',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
+ f.login.status=async()=>authStatus({status:'ready',windows:f.current.accountId===A?[{remainingPercent:0,resetsAt:future}]:[]});
+ await f.accounts.refresh();await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/);assert.deepEqual(f.calls.activate,[A,B]);
+});
+test('fresh positive balance after a past reset remains usable for the next saved account',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
+ f.login.status=async()=>authStatus({status:'ready',windows:[{remainingPercent:f.current.accountId===A?0:100,resetsAt:f.current.accountId===A?future:1}]});
+ await f.accounts.refresh();const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();
 });
 
 test('temporary quota failure preserves only prior verified login and does not require login or switch accounts',async()=>{

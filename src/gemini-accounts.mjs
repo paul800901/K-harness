@@ -18,7 +18,9 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  const find=id=>data.accounts.find(row=>row.id===id);
  const stamp=()=>new Date(clock()).toISOString();
  const queryAge=row=>clock()-Math.max(Date.parse(row?.lastQueryAt??'')||0,Date.parse(row?.auth?.checkedAt??'')||0);
- const exhausted=row=>row?.quota?.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
+ const quotaCurrent=row=>['ready','available'].includes(row?.quota?.status)&&queryAge(row)<60000;
+ const cachedExhausted=row=>row?.quota?.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
+ const exhausted=row=>quotaCurrent(row)&&row.quota.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
  function publicRow(row){
   const quota=clone(row.quota??unknown());
   if(quota.windows?.length&&(row.id!==data.activeAccountId||clock()-Date.parse(quota.checkedAt??'')>=60000))quota.status='stale';
@@ -27,8 +29,9 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,checking:!!refreshPending,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
  const authFailure=row=>row.auth?.status==='signed-out'?'此 Gemini 帳號需重新確認登入，未開始工作。':`${row.auth?.reason??'目前無法確認 Gemini 帳號狀態；尚無證據需要重新登入。'} 未開始工作。`;
  function assertEnabled(){if(!enabled)throw Error('本候選尚未允許真實 Gemini 帳號管理。');}
- async function exclusive(fn){
-  await load();if(changing||running)throw Error('Gemini 正在工作或處理登入，請等全部 Gemini 工作停止後再操作。');
+ async function exclusive(fn,{waitForRefresh=false}={}){
+  await load();if(waitForRefresh&&refreshPending)await refreshPending.catch(()=>{});
+  if(changing||running)throw Error('Gemini 正在工作或處理登入，請等全部 Gemini 工作停止後再操作。');
   changing=true;onChange();let result;try{result=await fn();}finally{changing=false;onChange();}
   return result?.accounts?{...result,busy:running>0||data.uncertain}:result;
  }
@@ -93,7 +96,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(previous)await activate(previous,{restoring:true});else data.activeAccountId=null;
    data.loginPending=null;await save();return snapshot();
   });},
-  async activate({accountId}){assertEnabled();return exclusive(async()=>{requireIdleLogin();await activate(accountId);return snapshot();});},
+  async activate({accountId}){assertEnabled();return exclusive(async()=>{requireIdleLogin();await activate(accountId);return snapshot();},{waitForRefresh:true});},
   async refresh(){
    await load();if(!data.accounts.length&&!data.loginPending&&!data.uncertain)return snapshot();assertEnabled();
    if(refreshPending)return refreshPending;
@@ -129,16 +132,33 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
      if(unboundHistory)throw Error('此舊 Gemini 對話沒有帳號綁定，請以新對話交接；未跨帳號讀取原生歷史。');
      if(!chosen&&!accountId)throw Error('目前 Antigravity 登入未加入 K，請先保存目前登入或選擇已加入帳號。');
      let target=accountId??chosen.id;
-     if(worker&&!accountId){
+     if(worker){
+      if(!chosen)throw Error('目前 Antigravity 登入未加入 K，未開始工人工作。');
+      if(accountId&&!find(accountId))throw Error('Gemini 帳號選擇無效，未開始工作。');
       // Refresh before selecting: either official quota window may require a
       // handoff, but an old/failed lookup must not rotate subscription logins.
       if(!running&&(chosen.auth?.status!=='authenticated'||queryAge(chosen)>=60000))await query(chosen);
       if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
-      if(chosen.quota?.status==='ready'&&exhausted(chosen)){
+      if(exhausted(chosen)){
+       if(running)throw Error('目前 Gemini 工作尚未結束，不能交接帳號；未送出本工作。');
        const index=data.accounts.findIndex(row=>row.id===chosen.id);
        const next=[...data.accounts.slice(index+1),...data.accounts.slice(0,index)];
-       target=next.find(row=>row.auth?.status!=='signed-out'&&!exhausted(row))?.id??target;
+       let found=false;
+       for(const row of next){
+        await activate(row.id);
+        chosen=find(row.id);target=row.id;
+        if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
+        // A fresh positive official balance is usable even if its last reset
+        // timestamp is in the past (for example an unused, full account).
+        const available=chosen.quota?.windows?.length>0&&chosen.quota.windows.every(w=>Number.isFinite(w.remainingPercent)&&w.remainingPercent>0);
+        if(!quotaCurrent(chosen)||!available&&!exhausted(chosen))throw Error('下一個 Gemini 帳號尚無官方目前額度資料，未開始工作；請刷新確認後再試。');
+        if(!exhausted(chosen)){found=true;break;}
+       }
+       if(!found)throw Error('Gemini 依序帳號皆已無可用額度，未開始工作。');
+      }else if(accountId&&accountId!==chosen.id){
+       throw Error('目前 Gemini 帳號尚未確認額度耗盡，工人不得跳過順序切換帳號；未送出本工作。');
       }
+      if(!quotaCurrent(chosen)&&cachedExhausted(chosen))throw Error('目前帳號的耗盡狀態已過期且無法向官方重新確認，未開始工作或切換帳號。');
      }
      if(target!==chosen?.id){
       const targetRow=find(target);

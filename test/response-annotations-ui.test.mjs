@@ -18,7 +18,8 @@ test('selection toolbar reuses assistant-ui Root and does not wrap or hide messa
 
 test('only complete assistant response text is marked quote-selectable; user and worker messages are excluded',()=>{
   assert.match(main,/data-aui-quote-selectable=\{quoteable\?'true':'false'\}/);
-  assert.match(main,/className="message user-message" data-aui-quote-selectable="false"/);
+  assert.match(main,/className=\{`message user-message\$\{isCapacityContinuation\?' capacity-continuation':''\}`\} data-aui-quote-selectable="false"/);
+  assert.match(main,/className="capacity-model-change-note" role="note" data-aui-quote-selectable="false"/);
   assert.match(main,/className="message worker-event" data-aui-quote-selectable="false"/);
   assert.match(main,/source\?\.role!=='assistant'\|\|source\.partial\|\|source\.streaming/);
 });

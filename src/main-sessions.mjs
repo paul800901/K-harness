@@ -12,7 +12,7 @@ let lastSaveOrder=0;
 const saves=new Map();
 const validId=id=>typeof id==='string'&&/^[a-zA-Z0-9_-]{1,128}$/u.test(id);
 const normalizeCodexSession=value=>value&&validId(value.nativeThreadId)&&typeof value.hasSubmitted==='boolean'?{nativeThreadId:value.nativeThreadId,hasSubmitted:value.hasSubmitted}:null;
-const normalizeModelChanges=changes=>Array.isArray(changes)?changes.filter(change=>change&&typeof change.turnId==='string'&&change.turnId.length>0&&validMainModel(change.fromModel)&&validMainModel(change.toModel)&&typeof change.at==='string').map(({turnId,fromModel,toModel,at})=>({turnId,fromModel,toModel,at})):[];
+const normalizeModelChanges=changes=>Array.isArray(changes)?changes.filter(change=>change&&typeof change.turnId==='string'&&change.turnId.length>0&&validMainModel(change.fromModel)&&validMainModel(change.toModel)&&typeof change.at==='string').map(({turnId,fromModel,toModel,at,reason,fromEffort,toEffort,sourceTurnId})=>({turnId,fromModel,toModel,at,...(reason==='capacity'?{reason,fromEffort:typeof fromEffort==='string'?fromEffort:null,toEffort:'medium',sourceTurnId:typeof sourceTurnId==='string'?sourceTurnId:null}:{})})):[];
 const validWorkerRequestId=id=>typeof id==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id)&&id!=='.'&&id!=='..';
 const normalizeWorkerNotifications=value=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).filter(([id,status])=>validWorkerRequestId(id)&&status==='delivery-attempted')):{};
 export function saveMainSession(root,record,{rejectedCodexSubmission=false}={}){
