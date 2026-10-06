@@ -3,6 +3,16 @@ import {WebSpeechDictationAdapter} from '@assistant-ui/react';
 import {createDictationSession} from './dictation-session.mjs';
 import {createNativeDictationSession} from './native-dictation.mjs';
 
+// Only stopped, in-flight main-composer transcripts outlive their room's view.
+// Audio stays in the existing request; this is not a retry or a recording queue.
+const backgroundTranscriptions=new Map(),backgroundNotices=new Map();
+function cancelBackgroundTranscriptions(){
+ for(const [key,entry] of backgroundTranscriptions){
+  if(entry.view)entry.view.cancel();
+  else{backgroundTranscriptions.delete(key);entry.session.cancel();backgroundNotices.set(key,'已取消這段聽寫，原草稿保留。');}
+ }
+}
+
 // Capture stays in memory. Native audio is sent only to K's local transcription endpoint.
 function paintWaveform(canvas,levels){
  if(!canvas)return;
@@ -13,7 +23,7 @@ function paintWaveform(canvas,levels){
  levels.forEach((level,i)=>{const h=Math.max(2,level*height);ctx.fillRect(i*width/levels.length,(height-h)/2,2,h);});
 }
 
-export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessionKey}){
+export function useVoiceComposer({onResult,onBackgroundResult,disabled,onActiveChange=()=>{},sessionKey}){
  const [phase,setPhaseState]=useState('idle'),[notice,setNotice]=useState(''),[consent,setConsent]=useState(false);
  const canvas=useRef(null),job=useRef(null),callback=useRef(onResult),activity=useRef(onActiveChange),scope=useRef(sessionKey);callback.current=onResult;activity.current=onActiveChange;scope.current=sessionKey;
  const remote=typeof document!=='undefined'&&document.documentElement.dataset.kRemote==='true';
@@ -22,19 +32,54 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
  const consentKey='k-browser-dictation-consent';
  const setPhase=next=>{setPhaseState(next);activity.current?.(next!=='idle');};
  const release=entry=>{cancelAnimationFrame(entry.frame);entry.stream?.getTracks().forEach(track=>track.stop());entry.context?.close().catch(()=>{});entry.stream=null;entry.context=null;};
- const cancel=()=>{const entry=job.current;if(!entry)return;job.current=null;entry.session?.cancel();release(entry);setPhase('idle');setNotice('已取消這段聽寫，原草稿保留。');};
+ const cancel=()=>{const entry=job.current;if(!entry)return;job.current=null;entry.view=null;if(backgroundTranscriptions.get(entry.scope)===entry)backgroundTranscriptions.delete(entry.scope);entry.session?.cancel();release(entry);setPhase('idle');setNotice('已取消這段聽寫，原草稿保留。');};
+ const attach=entry=>{entry.view={cancel,
+  state:next=>{if(job.current===entry&&entry.scope===scope.current)setPhase(next);},
+  notice:message=>{entry.notice=message;if(job.current===entry&&entry.scope===scope.current)setNotice(message);},
+  finish:(result,error)=>{
+   if(job.current!==entry||entry.scope!==scope.current)return false;
+   job.current=null;setPhase('idle');
+   if(error)setNotice(`${error} 未送出；原草稿保留。`);
+   else if(!result.text.trim())setNotice('沒有辨識到文字，未送出訊息。');
+   else{callback.current(remote||entry.wasDetached?{...result,send:false}:result);if(entry.hitLimit)setNotice('已達 5 分鐘上限；辨識已完成。');}
+   return true;
+  },
+ };};
+ const finishNative=(entry,result,error)=>{
+  if(backgroundTranscriptions.get(entry.scope)===entry)backgroundTranscriptions.delete(entry.scope);
+  const view=entry.view;entry.view=null;release(entry);
+  if(view?.finish(result,error))return;
+  if(!entry.backgroundResult)return;
+  if(error)backgroundNotices.set(entry.scope,`${error} 未送出；原草稿保留。`);
+  else if(!result.text.trim())backgroundNotices.set(entry.scope,'沒有辨識到文字，未送出訊息。');
+  else entry.backgroundResult({...result,send:false});
+ };
  const cancelRef=useRef(cancel);cancelRef.current=cancel;
  useEffect(()=>{
   if(!desktop)return;
-  return window.kBrowser.onWindowHidden(()=>cancelRef.current());
+  return window.kBrowser.onWindowHidden(()=>{cancelBackgroundTranscriptions();cancelRef.current();});
  },[desktop]);
  useEffect(()=>{
   if(!remote)return;
-  const hidden=()=>{if(document.hidden)cancelRef.current();};
+  const hidden=()=>{if(document.hidden){cancelBackgroundTranscriptions();cancelRef.current();}};
   document.addEventListener('visibilitychange',hidden);
   return()=>document.removeEventListener('visibilitychange',hidden);
  },[remote]);
- useEffect(()=>()=>{const entry=job.current;job.current=null;if(entry){entry.session?.cancel();release(entry);}activity.current?.(false);},[sessionKey]);
+ useEffect(()=>{
+  const pending=onBackgroundResult?backgroundTranscriptions.get(sessionKey):null;
+  if(pending){job.current=pending;attach(pending);setPhase(pending.session.getState());setNotice(pending.notice??'轉錄完成後會留在此聊天室草稿，不會自動送出。');}
+  if(onBackgroundResult&&backgroundNotices.has(sessionKey)){setNotice(backgroundNotices.get(sessionKey));backgroundNotices.delete(sessionKey);}
+  return()=>{
+   const entry=job.current;job.current=null;
+   if(entry){
+    entry.view=null;
+    if(entry.backgroundResult&&entry.session?.getState()==='transcribing'){
+     entry.wasDetached=true;backgroundTranscriptions.set(entry.scope,entry);
+    }else{entry.session?.cancel();release(entry);}
+   }
+   activity.current?.(false);
+  };
+ },[sessionKey]);
  const start=async()=>{
   if(disabled||job.current)return;
   if(!native&&sessionStorage.getItem(consentKey)!=='yes'){
@@ -44,9 +89,8 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
    if(typeof navigator==='undefined'||typeof navigator.mediaDevices?.getUserMedia!=='function'){
     setNotice('目前無法存取此裝置的麥克風；原草稿保留。');activity.current?.(false);return;
    }
-   const entry={scope:scope.current,levels:Array(70).fill(0)};job.current=entry;setPhase('starting');setNotice('');
+   const entry={scope:scope.current,levels:Array(70).fill(0),backgroundResult:onBackgroundResult};job.current=entry;attach(entry);setPhase('starting');setNotice('');
    const current=()=>job.current===entry&&entry.scope===scope.current;
-   const finish=()=>{if(job.current!==entry)return false;const sameScope=entry.scope===scope.current;job.current=null;release(entry);setPhase('idle');return sameScope;};
    entry.session=createNativeDictationSession({
      ...(remote?{createAudioContext:()=>new AudioContext()}:{ }),
     requestTranscription:async(audioBase64,signal)=>{
@@ -55,11 +99,11 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
      if(!response.ok)throw new Error(payload?.error||'本機語音辨識失敗。');
      return payload;
     },
-    onState:state=>{if(current())setPhase(state);},
+    onState:state=>entry.view?.state(state),
     onLevel:level=>{if(current()){entry.levels.shift();entry.levels.push(Math.min(1,level*5));}},
-    onLimit:()=>{if(current()){entry.hitLimit=true;setNotice('已達 5 分鐘上限，正在轉錄；完成後不會自動送出。');}},
-    onResult:result=>{if(!finish())return;if(!result.text.trim()){setNotice('沒有辨識到文字，未送出訊息。');return;}callback.current(remote?{...result,send:false}:result);if(entry.hitLimit)setNotice('已達 5 分鐘上限；辨識已完成。');},
-    onError:message=>{if(!finish())return;setNotice(`${message} 未送出；原草稿保留。`);},
+    onLimit:()=>{entry.hitLimit=true;entry.view?.notice('已達 5 分鐘上限，正在轉錄；完成後不會自動送出。');},
+    onResult:result=>finishNative(entry,result),
+    onError:message=>finishNative(entry,null,message),
    });
    void entry.session.start().then(()=>{
     const draw=()=>{if(job.current!==entry||entry.session.getState()!=='recording')return;paintWaveform(canvas.current,entry.levels);entry.frame=requestAnimationFrame(draw);};
@@ -93,7 +137,7 @@ export function useVoiceComposer({onResult,disabled,onActiveChange=()=>{},sessio
   }catch{if(job.current===entry){job.current=null;entry.session?.cancel();release(entry);setPhase('idle');setNotice('無法啟動收音或辨識。請檢查麥克風權限、裝置與瀏覽器支援；原草稿保留。');}}
  };
  const stop=send=>job.current?.session?.stop(send);
- return {phase,notice,canvas,start,stop,cancel,consent,native,consentKey,decline:()=>setConsent(false),accept:()=>{sessionStorage.setItem(consentKey,'yes');setConsent(false);void start();},active:phase!=='idle'};
+ return {phase,notice,canvas,start,stop,cancel,consent,native,consentKey,canSendOnCompletion:!job.current?.wasDetached,decline:()=>setConsent(false),accept:()=>{sessionStorage.setItem(consentKey,'yes');setConsent(false);void start();},active:phase!=='idle'};
 }
 
 export function VoiceWaveform({voice}){

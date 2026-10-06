@@ -24,6 +24,9 @@ test('trusted owner window-hidden signal is subscribed by native voice and cance
   assert.match(preload, /ipcRenderer\.on\('k-native-window-hidden',listener\)/u);
   assert.match(preload, /return\(\)=>ipcRenderer\.removeListener\('k-native-window-hidden',listener\)/u);
   assert.match(composer, /if\(!desktop\)return/u);
-  assert.match(composer, /window\.kBrowser\.onWindowHidden\(\(\)=>cancelRef\.current\(\)\)/u);
-  assert.match(composer, /const cancel=\(\)=>\{const entry=job\.current;if\(!entry\)return;job\.current=null;entry\.session\?\.cancel\(\)/u);
+  assert.match(composer, /window\.kBrowser\.onWindowHidden\(\(\)=>\{cancelBackgroundTranscriptions\(\);cancelRef\.current\(\);\}\)/u);
+  const cancel=composer.slice(composer.indexOf(' const cancel=()=>'),composer.indexOf(' const attach='));
+  assert.match(cancel, /job\.current=null/u);
+  assert.match(cancel, /entry\.session\?\.cancel\(\)/u);
+  assert.match(cancel, /backgroundTranscriptions\.delete\(entry\.scope\)/u);
 });
