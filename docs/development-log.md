@@ -316,3 +316,7 @@
 - 2026-10-01 Git 交付已正式套用：508/508、中文新路徑原生啟閉、正式 health=native、GitHub tag `k-r3-git-20261001` 推送及重新 clone 讀回完成；完整失敗／修復／跨機限制見 [工程紀錄](git-install-update-20261001.md)。
 
 - 2026-10-03：Antigravity CLI Flash worker 停在階段 0；空 home 仍沿用登入，固定 Windows home 的工作區 deny／plan 不能限制內外寫檔。僅調查文件與 5 次 live 證據、529/529 回歸；未接入或部署，見 [antigravity-worker-20261003](antigravity-worker-20261003.md)。
+
+## 2026-10-07 南區三項診斷後修正候選（未部署）
+
+- 詳見 [k-fixes-candidate-20261007.md](k-fixes-candidate-20261007.md)：候選程式 c894221，連結左／右鍵、N profile獨立路由、限量Codex診斷；最終963/963、真正Opus5.5兩輪；SQLite根因仍未知，三真profile未驗收。依使用者要求先停，不部署／重啟／停止工作／push。
