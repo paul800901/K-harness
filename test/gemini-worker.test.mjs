@@ -122,10 +122,20 @@ test('Gemini profile hashes canonical workspace and access mode; settings keep e
  assert.throws(()=>geminiProfile('relative','read-only'));assert.throws(()=>geminiSettings(workspace,'unknown'));
 });
 test('Gemini environment forwards only OS basics and the private home; removes every credential and K variable',()=>{
- const source=Object.fromEntries(['SystemRoot','WINDIR','TEMP','TMP','Path','GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_APPLICATION_CREDENTIALS','ANTHROPIC_API_KEY','OPENAI_API_KEY','CODEX_HOME','CLAUDE_CONFIG_DIR','K_MCP_TOKEN','MCP_SERVER','APPDATA','LOCALAPPDATA','NODE_OPTIONS','USERPROFILE','HOME'].map(k=>[k,'private']));
+ const source=Object.fromEntries(['SystemRoot','WINDIR','TEMP','TMP','Path','PathExt','GEMINI_API_KEY','GOOGLE_API_KEY','GOOGLE_GENAI_USE_VERTEXAI','GOOGLE_APPLICATION_CREDENTIALS','ANTHROPIC_API_KEY','OPENAI_API_KEY','CODEX_HOME','CLAUDE_CONFIG_DIR','K_MCP_TOKEN','MCP_SERVER','APPDATA','LOCALAPPDATA','NODE_OPTIONS','USERPROFILE','HOME'].map(k=>[k,'private']));
  source.AGY_CLI_DISABLE_AUTO_UPDATE='false';
- assert.deepEqual(geminiEnvironment(source,'k-home'),{SystemRoot:'private',WINDIR:'private',TEMP:'private',TMP:'private',Path:'private',USERPROFILE:'k-home',HOME:'k-home',AGY_CLI_DISABLE_AUTO_UPDATE:'true'});
+ assert.deepEqual(geminiEnvironment(source,'k-home'),{SystemRoot:'private',WINDIR:'private',TEMP:'private',TMP:'private',Path:'private',PathExt:'private',USERPROFILE:'k-home',HOME:'k-home',AGY_CLI_DISABLE_AUTO_UPDATE:'true'});
  assert.equal(source.AGY_CLI_DISABLE_AUTO_UPDATE,'false'); // K child only; never alter the caller/global environment.
+});
+test('Windows Gemini environment preserves real command streams, files and failure status through PowerShell',{skip:process.platform!=='win32'},async()=>{
+ const directory=path.join(root,'command 中文 space');await mkdir(directory,{recursive:true});
+ const script=path.join(directory,'probe.mjs'),target=path.join(directory,'result.txt');
+ await writeFile(script,"import {writeFileSync} from 'node:fs';console.log('K_STDOUT');console.error('K_STDERR');writeFileSync(process.argv[2],'中文','utf8');process.exit(7);\n");
+ const quote=value=>"'"+value.replaceAll("'","''")+"'";
+ const command=`& ${quote(process.execPath)} ${quote(script)} ${quote(target)}; exit $LASTEXITCODE`;
+ const result=await geminiProcess(path.join(process.env.SystemRoot,'System32/WindowsPowerShell/v1.0/powershell.exe'),['-NoProfile','-NonInteractive','-Command',command],{cwd:directory,env:geminiEnvironment(process.env,path.join(root,'command-home')),timeoutMs:30000});
+ assert.equal(result.code,7);assert.match(result.stdout,/K_STDOUT/);assert.match(result.stderr,/K_STDERR/);
+ assert.equal(await readFile(target,'utf8'),'中文');assert.equal(result.cleanupError,undefined);
 });
 for(const effort of ['low','medium','high'])test(`Gemini ${effort} resolves executable before overrides, caches catalog, isolates settings/logs and closes stdin`,async()=>{
  const fake=fakeSpawn(),worker=make(fake);const result=await worker.run({task:'bounded',effort});

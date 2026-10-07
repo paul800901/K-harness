@@ -62,7 +62,9 @@ export function geminiEnvironment(source, home) {
   // A whitelist also excludes all provider keys, K homes, MCP, hooks and Node
   // injection variables. Never read/copy credentials or inherit provider config.
   const env={};
-  for(const [key,value] of Object.entries(source))if(/^(SystemRoot|WINDIR|TEMP|TMP|PATH)$/iu.test(key))env[key]=value;
+  // Local PS 5.1/7 probes without PATHEXT lost .exe streams and exit status,
+  // while file side effects appeared after the command had returned.
+  for(const [key,value] of Object.entries(source))if(/^(SystemRoot|WINDIR|TEMP|TMP|PATH|PATHEXT)$/iu.test(key))env[key]=value;
   // The native background updater can open a Windows terminal even in print mode.
   return {...env,USERPROFILE:home,HOME:home,AGY_CLI_DISABLE_AUTO_UPDATE:'true'};
 }
