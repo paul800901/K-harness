@@ -217,7 +217,9 @@ function App(){
  useEffect(()=>{try{localStorage.setItem('k-sidebar-manual-order',JSON.stringify(manualOrder));}catch{}},[manualOrder]);
 
  const upload=async files=>{
-  if(!state.threadId||busy||!online||['connecting','offline','error','uncertain','stopping'].includes(state.status)){setError('請先連線並開啟對話後加入附件。');return;}
+  if(!files.length)return;
+  // The phone picker may return before SSE resumes; HTTP validates the upload.
+  if(!state.threadId||busy||['connecting','offline','error','uncertain','stopping'].includes(state.status)){setError('請先連線並開啟對話後加入附件。');return;}
   const threadId=state.threadId;
   for(const file of files){
    const uploadId=crypto.randomUUID(),abortController=new AbortController();
