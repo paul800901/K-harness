@@ -327,3 +327,8 @@
 ## 2026-10-08 手機所有附件選檔返回修復候選（未更新正式版）
 
 - [手機附件 picker 候選修復、Opus 減法複查及等待更新](mobile-attachment-picker-20261008.md)：候選程式 `2073a6bbee0d81e1412988f5c6ad4859503ac50e`；只移除 SSE online 的上傳假前提並處理空清單。採真正 Opus 5.5 建議刪除多餘 picker ref；10 格式原始 bytes、13 個 UI 案例、964/964 回歸及既有 2/2、3/3 probe 通過。不冒稱手機／真模型實機驗收。使用者要求等翻譯結束，**未部署、未重啟、未 push**；正式仍 `4a6c482f2df01e1b31216cffc9ec7a98088bdee9`。
+
+
+## 2026-10-08 三原生核心附件相容候選（未部署、等待本人）
+
+- [三核心附件交付、真核心矩陣及 Opus 最終討論](attachment-native-compat-20261008.md)：候選程式 `972963e12a4fa35b7e32a089490c17a57434be80`，基於手機 picker 候選。只刪 Gemini 自製圖片閘門、補 Claude 擷取 warning；真正 Opus 5.5 最後複查無阻擋、無過度工程化。117/117、965/965、UI 13/13、build 通過；首次 browser race 失敗保留。GPT／Claude／Gemini 真核心能力差異、Claude 原生計畫報告及 unknown Gemini／真手機未驗證事項均明列；原檔 bytes 正確。正式仍 `4a6c482f2df01e1b31216cffc9ec7a98088bdee9`，**未部署、未重啟、未停止翻譯、未 push，停止等待**。
