@@ -4,7 +4,9 @@
 
 **先選已驗收的 Git 版本，再安裝或更新，不直接追最新版分支。** `origin/main` 用來取得已發布的來源；實際 `-Ref` 指定工程紀錄中的完整 commit SHA，或已核對對應 SHA 的版本標記。AI 先查 [最新工程索引](development-log.md)，區分正式程式版本與後續純文件版本，再執行。
 
-截至 2026-10-04 20:02，南區已驗收程式為 **`k-gemini-media-20261004`**，遠端標記對應 `4b8029624549175f1df3c12422aafe1bf9407e34`，見 [Gemini 多模態與部署紀錄](gemini-capabilities-20261004.md)；這是目前基準，不是永遠固定使用此版。東區尚未更新。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動。
+截至 2026-10-07，南區最新已驗收程式為 **`e068ffa4dcc7d0da57e73d72a98111e925975fe4`**，已部署、正式讀回並推 GitHub；見[協調全流程收尾](worker-coordination-reconciliation-20261007.md)。後續文件提交不是程式部署版本；東區仍待當地更新。
+
+以下保留舊版標記範例：截至 2026-10-04 20:02，南區已驗收程式為 **`k-gemini-media-20261004`**，遠端標記對應 `4b8029624549175f1df3c12422aafe1bf9407e34`，見 [Gemini 多模態與部署紀錄](gemini-capabilities-20261004.md)；這是當時基準，不是目前程式版本。東區尚未更新。Gemini 仍需在該機安裝官方 Antigravity CLI 並由本人登入，Git 不帶入其他電腦的登入、對話或語音設定。Chrome 助手分開設定，舊版本標記保留不動。
 
 ## K 開發與發布 SOP
 
@@ -23,7 +25,7 @@
 
 ## 首次安裝
 
-K 程式由私人儲存庫 `https://github.com/paul800901/K-harness` 取得；新電腦需先以本人 GitHub 帳號取得存取權。使用乾淨 clone，不把目前開發機整個資料夾複製過去。
+K 程式由既有儲存庫 `https://github.com/paul800901/K-harness` 取得；2026-10-07 實查為公開，且本人另行允許本批公開推送。上方 SOP 的私人描述保留原決策背景，但不得據此把私人執行資料上傳。使用乾淨 clone，不把目前開發機整個資料夾複製過去。
 
 ```powershell
 git clone https://github.com/paul800901/K-harness.git
