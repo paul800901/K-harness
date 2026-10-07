@@ -13,7 +13,7 @@ async function fixture(reply){
  const server=new WebSocketServer({host:'127.0.0.1',port:0});await once(server,'listening');
  const token='a'.repeat(64),calls=[];
  server.on('connection',(socket,req)=>{assert.equal(req.headers.authorization,`Bearer ${token}`);assert.equal(req.headers.origin,undefined);socket.on('message',data=>{const m=JSON.parse(data);calls.push(m);reply?.(socket,m);});});
- await writeFile(descriptorPath,JSON.stringify({version:1,endpoint:`ws://127.0.0.1:${server.address().port}/connect`,token}));
+ await writeFile(descriptorPath,JSON.stringify({version:2,profileId:'a'.repeat(32),endpoint:`ws://127.0.0.1:${server.address().port}/connect`,token}));
  return {descriptorPath,calls,close:async()=>{for(const s of server.clients)s.terminate();await new Promise(r=>server.close(r));}};
 }
 test('native opener sends exactly one authenticated request and correlates its acknowledgement',async()=>{
@@ -31,6 +31,6 @@ test('native opener rejects a response for another request',async()=>{
 test('native opener rejects missing and non-loopback descriptors without network access',async()=>{
  const dir=await mkdtemp(path.join(os.tmpdir(),'k-native-invalid-')),descriptorPath=path.join(dir,'link.json');
  await assert.rejects(openChromeConnectPageViaNative({descriptorPath},'fixture'),/手動開啟/);
- await writeFile(descriptorPath,JSON.stringify({version:1,endpoint:'ws://example.com:80/connect',token:'a'.repeat(64)}));
+ await writeFile(descriptorPath,JSON.stringify({version:2,profileId:'a'.repeat(32),endpoint:'ws://example.com:80/connect',token:'a'.repeat(64)}));
  await assert.rejects(openChromeConnectPageViaNative({descriptorPath},'fixture'),/無效/);
 });

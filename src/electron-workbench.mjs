@@ -75,11 +75,16 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
  window.setMenu(null);
  const owner=new WebContentsView({webPreferences:{sandbox:true,contextIsolation:true,nodeIntegration:false,backgroundThrottling:false,partition:'k-trusted-owner',preload:fileURLToPath(new URL('./electron-owner-preload.cjs',import.meta.url))}});
  owner.webContents.on('dom-ready',()=>{owner.webContents.setBackgroundThrottling(false);focusNotifier?.notify();});
- owner.webContents.on('context-menu',(_event,{isEditable,selectionText,editFlags})=>{
-  const items=isEditable
+ owner.webContents.on('context-menu',(event,{isEditable,selectionText,editFlags,linkURL})=>{
+  const items=[];
+  try{
+   if(typeof linkURL==='string'&&['http:','https:'].includes(new URL(linkURL).protocol))items.push({label:'複製連結網址',click:()=>electron.clipboard.writeText(linkURL)});
+  }catch{}
+  const editItems=isEditable
    ? [['undo','復原','canUndo'],['redo','重做','canRedo'],['cut','剪下','canCut'],['copy','複製','canCopy'],['paste','貼上','canPaste'],['selectAll','全選','canSelectAll']]
    : selectionText?[['copy','複製','canCopy']]:[];
-  if(items.length)electron.Menu.buildFromTemplate(items.map(([action,label,flag])=>({label,enabled:editFlags[flag],click:()=>owner.webContents[action]()}))).popup({window});
+  items.push(...editItems.map(([action,label,flag])=>({label,enabled:editFlags[flag],click:()=>owner.webContents[action]()})));
+  if(items.length){event.preventDefault();electron.Menu.buildFromTemplate(items).popup({window});}
  });
  window.contentView.addChildView(owner);
  let services,closed=false,closing=false,closePromise=null,taskbarAttention=null;

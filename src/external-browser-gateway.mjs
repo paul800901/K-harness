@@ -7,7 +7,8 @@ import {pipeline} from 'node:stream/promises';
 import {createBrowserOwnerGateway} from './browser-owner-gateway.mjs';
 
 const MODES=new Set(['regular','incognito']);
-const browserSessionTool={name:'browser_session',description:'Select the isolated regular or incognito external Chrome session before using browser tools. Switching is refused while a browser operation is active or human control is enabled. No automatic fallback is performed.',inputSchema:{type:'object',properties:{mode:{type:'string',enum:['regular','incognito'],description:'External Chrome mode to select.'}},required:['mode'],additionalProperties:false}};
+const browserSessionTool={name:'browser_session',description:'Select external Chrome mode and profileId before browser tools. Use browser_profiles to discover connected profile identities. A Chrome profile is NOT a Google account; verify the website account before account-specific work. Tabs are only the assistant-managed group, not all profile tabs. Multiple profiles require an explicit target; existing sessions stay pinned, without fallback.',inputSchema:{type:'object',properties:{mode:{type:'string',enum:['regular','incognito'],description:'External Chrome mode to select.'},profileId:{type:'string',pattern:'^[a-f0-9]{32}$',description:'Stable local Chrome profile identity from browser_profiles.'}},required:['mode'],additionalProperties:false}};
+const browserProfilesTool={name:'browser_profiles',description:'List K Chrome profile IDs and current native connection/mode capabilities on demand. Does not read account data, open tabs, reconnect or select a profile.',inputSchema:{type:'object',properties:{},additionalProperties:false}};
 
 function bearerMatches(header,token){
   if(typeof header!=='string'||!header.startsWith('Bearer '))return false;
@@ -41,25 +42,28 @@ async function makeDir(parent,name){
  * Chrome context. The provider sees only this gateway's loopback token; child
  * owner tokens and profile paths remain inside the trusted K process.
  */
-export async function createExternalBrowserGateway({directory,profile,onControlChange=()=>{},launchExternalContext,childGatewayFactory=createBrowserOwnerGateway,toolTimeoutMs=120000}){
+export async function createExternalBrowserGateway({directory,profile,onControlChange=()=>{},launchExternalContext,listExternalProfiles,childGatewayFactory=createBrowserOwnerGateway,toolTimeoutMs=120000}){
   if(!path.isAbsolute(directory??'')||!path.isAbsolute(profile??''))throw Error('Absolute external browser directories are required.');
   if(!Number.isInteger(toolTimeoutMs)||toolTimeoutMs<1)throw Error('A positive tool timeout is required.');
   const outputRoot=await realpath(directory),profileRoot=await realpath(profile);
   const children=new Map(),pendingIds=new Set(),activeCalls=new Map(),initializedChildren=new WeakSet();let selected=null,closing=false,closePromise,host,outerInitialized=null,inFlight=0,dispatch=Promise.resolve();
   const token=randomBytes(32).toString('hex');
+  let selectedProfileId=null;
+  const childKey=(mode,profileId)=>profileId?`${mode}-${profileId}`:mode;
   const queue=fn=>{const next=dispatch.then(fn,fn);dispatch=next.catch(()=>{});return next;};
-  async function child(mode){
-    if(children.has(mode))return children.get(mode);
+  async function child(mode,profileId=null){
+    const key=childKey(mode,profileId);
+    if(children.has(key))return children.get(key);
     const opening=(async()=>{
-      const childDirectory=await makeDir(outputRoot,`external-${mode}`),childProfile=await makeDir(profileRoot,`external-${mode}`);
-      const gateway=await childGatewayFactory({directory:childDirectory,profile:childProfile,onControlChange:(...args)=>onControlChange(...args),...(launchExternalContext?{launchContext:(...args)=>launchExternalContext({mode,profile:childProfile,...(args[1]??{})})}:{})});
+      const childDirectory=await makeDir(outputRoot,`external-${key}`),childProfile=await makeDir(profileRoot,`external-${key}`);
+      const gateway=await childGatewayFactory({directory:childDirectory,profile:childProfile,onControlChange:(...args)=>onControlChange(...args),...(launchExternalContext?{launchContext:(...args)=>launchExternalContext({mode,profileId,profile:childProfile,...(args[1]??{})})}:{})});
       return gateway;
     })();
-    children.set(mode,opening);
-    try{const value=await opening;children.set(mode,value);return value;}
-    catch(error){if(children.get(mode)===opening)children.delete(mode);throw error;}
+    children.set(key,opening);
+    try{const value=await opening;children.set(key,value);return value;}
+    catch(error){if(children.get(key)===opening)children.delete(key);throw error;}
   }
-  function current(){return selected?children.get(selected):null;}
+  function current(){return selected?children.get(childKey(selected,selectedProfileId)):null;}
   async function childInitialize(gateway,signal){
     if(!outerInitialized||initializedChildren.has(gateway))return;
     const config=gateway.aiMcpServer;
@@ -109,26 +113,42 @@ export async function createExternalBrowserGateway({directory,profile,onControlC
           if(message.result?.tools){
             message.result.tools=message.result.tools.map(tool=>({...tool,description:cleanDescription(tool.description)}));
             if(!message.result.tools.some(tool=>tool.name==='browser_session'))message.result.tools.push(browserSessionTool);
+            if(listExternalProfiles)message.result.tools.push(browserProfilesTool);
           }
           return pack(proxied,message);
         }
+        if(reqMessage.method==='tools/call'&&reqMessage.params?.name==='browser_profiles'&&listExternalProfiles){
+          try{
+            const profiles=await listExternalProfiles();
+            return jsonResponse({jsonrpc:'2.0',id:reqMessage.id,result:{content:[{type:'text',text:JSON.stringify({profiles})}]}});
+          }catch{return jsonResponse(toolError(reqMessage.id,'K Chrome 設定檔清單暫時無法讀取；沒有選擇或啟動其他瀏覽器。'));}
+        }
         if(reqMessage.method==='tools/call'&&reqMessage.params?.name==='browser_session'){
           const mode=reqMessage.params?.arguments?.mode;
+          const requestedProfileId=reqMessage.params?.arguments?.profileId;
           if(!MODES.has(mode))return jsonResponse(rpcError(reqMessage.id,-32602,'Choose mode regular or incognito.'));
+          if(requestedProfileId!==undefined&&(!listExternalProfiles||typeof requestedProfileId!=='string'||!/^[a-f0-9]{32}$/.test(requestedProfileId)))return jsonResponse(rpcError(reqMessage.id,-32602,'Choose a valid profileId from browser_profiles.'));
+          let targetProfileId=requestedProfileId??selectedProfileId;
           const gateway=current();
           if(gateway){
             const state=await gateway.getState();
             if(state.recoveryRequired)return jsonResponse(toolError(reqMessage.id,'瀏覽器連線已中止。請重新開啟對話以重新連線；先前操作不會自動重送。'));
             if(inFlight||state.busy)return jsonResponse(toolError(reqMessage.id,'Cannot switch browser mode while a browser operation is active.'));
             if(state.mode==='human')return jsonResponse(toolError(reqMessage.id,'Cannot switch browser mode while human control is enabled.'));
-            if(mode===selected)return jsonResponse({jsonrpc:'2.0',id:reqMessage.id,result:{content:[{type:'text',text:`External Chrome ${mode} mode is already selected.`}]}});
+            if(mode===selected&&targetProfileId===selectedProfileId)return jsonResponse({jsonrpc:'2.0',id:reqMessage.id,result:{content:[{type:'text',text:`External Chrome ${mode} mode is already selected.${selectedProfileId?` profileId=${selectedProfileId}`:''}`}]}});
           }
           // A failed explicit selection must not leave the previous mode as
           // an implicit fallback target.
-          selected=null;
+          selected=null;selectedProfileId=null;
           let target;
           try{
-            target=await child(mode);await childInitialize(target,controller.signal);
+            if(listExternalProfiles){
+              const profiles=await listExternalProfiles(),online=profiles.filter(p=>p.connected);
+              if(!targetProfileId){if(online.length!==1)throw Error('Use browser_profiles and specify profileId; no unique connected profile.');targetProfileId=online[0].profileId;}
+              const chosen=profiles.find(p=>p.profileId===targetProfileId&&p.connected);
+              if(!chosen||!chosen.modes.includes(mode))throw Error('The requested Chrome profile or mode is unavailable.');
+            }
+            target=await child(mode,targetProfileId);await childInitialize(target,controller.signal);
             // Make browser_session mean an actually connected session, rather
             // than merely remembering a preference. This uses the SDK's
             // harmless state read and never falls back to another mode.
@@ -136,10 +156,10 @@ export async function createExternalBrowserGateway({directory,profile,onControlC
             const detail=warm.error?.message??(warm.result?.isError?warm.result.content?.find(item=>item.type==='text')?.text:null);
             if(warm.error||warm.result?.isError)throw Error(detail||'External browser session did not become ready.');
           }
-          catch(error){selected=null;if(target){await target.close().catch(()=>{});if(children.get(mode)===target)children.delete(mode);}return jsonResponse(toolError(reqMessage.id,`Could not open external Chrome ${mode} mode: ${String(error?.message??'session startup failed').slice(0,300)}. No fallback was selected.`));}
-          selected=mode;
-          onControlChange({type:'external-browser-mode',mode});
-          return jsonResponse({jsonrpc:'2.0',id:reqMessage.id,result:{content:[{type:'text',text:`Selected external Chrome ${mode} mode.`}]}});
+          catch(error){selected=null;selectedProfileId=null;if(target){await target.close().catch(()=>{});const key=childKey(mode,targetProfileId);if(children.get(key)===target)children.delete(key);}return jsonResponse(toolError(reqMessage.id,`Could not open external Chrome ${mode} mode: ${String(error?.message??'session startup failed').slice(0,300)}. No fallback was selected.`));}
+          selected=mode;selectedProfileId=targetProfileId;
+          onControlChange({type:'external-browser-mode',mode,...(selectedProfileId?{profileId:selectedProfileId}:{})});
+          return jsonResponse({jsonrpc:'2.0',id:reqMessage.id,result:{content:[{type:'text',text:`Selected external Chrome ${mode} mode.${selectedProfileId?` profileId=${selectedProfileId}`:''}`}]}});
         }
         const gateway=current();
         if(reqMessage.method==='tools/call'&&!gateway)return jsonResponse(toolError(reqMessage.id,'Select browser_session mode regular or incognito before using browser tools.'));
@@ -182,10 +202,10 @@ export async function createExternalBrowserGateway({directory,profile,onControlC
       if(!gateway){if(route==='/state')return Response.json({available:false,busy:false,mode:'ai',external:true,browserMode:null});if(route==='/action')return Response.json({available:false,busy:false,mode:'ai',external:true,browserMode:null,error:'Select an external browser mode first.'},{status:409});throw Error('Select an external browser mode first.');}
       const response=await gateway.humanRequest(route,body);
       if(route!=='/state'&&route!=='/action'||!response.headers.get('content-type')?.includes('application/json'))return response;
-      const state=await response.clone().json(),headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json; charset=utf-8');return Response.json({...state,external:true,browserMode:selected},{status:response.status,headers});
+      const state=await response.clone().json(),headers=new Headers(response.headers);headers.delete('content-length');headers.set('content-type','application/json; charset=utf-8');return Response.json({...state,external:true,browserMode:selected,...(selectedProfileId?{profileId:selectedProfileId}:{})},{status:response.status,headers});
     },
-    async getState(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=await gateway.getState();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected};},
-    getControlSnapshot(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=gateway.getControlSnapshot();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected};},
+    async getState(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=await gateway.getState();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected,...(selectedProfileId?{profileId:selectedProfileId}:{})};},
+    getControlSnapshot(){const gateway=current();if(!gateway)return {available:false,busy:inFlight>0,mode:'ai',external:true,selectedMode:null,browserMode:null};const state=gateway.getControlSnapshot();return {...state,busy:state.busy||inFlight>0,external:true,selectedMode:selected,browserMode:selected,...(selectedProfileId?{profileId:selectedProfileId}:{})};},
     close,
   };
 }

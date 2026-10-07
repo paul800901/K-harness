@@ -1,14 +1,15 @@
 {
   "manifest_version": 3,
   "name": "K 瀏覽器助手",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "讓 K 在專用 Chrome 的一般或無痕新分頁執行你交代的工作。",
   "permissions": [
     "debugger",
     "activeTab",
     "tabs",
     "tabGroups",
-    "nativeMessaging"
+    "nativeMessaging",
+    "storage"
   ],
   "host_permissions": [
     "<all_urls>"

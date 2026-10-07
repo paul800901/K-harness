@@ -1,7 +1,7 @@
 const hiddenEngineeringKinds=new Set(['status','deprecationNotice','configWarning','windowsWorldWritableWarning','windowsSandboxReadiness','windowsSandboxSetupCompleted']);
 
 export function visibleNativeNotices(notices=[],displayedError=null) {
- const visible=notices.filter(notice=>!hiddenEngineeringKinds.has(notice.kind)&&!(notice.kind==='worker-completion'&&notice.level==='info')&&!(notice.kind==='nativeError'&&notice.message===displayedError)&&!(notice.willRetry&&notice.resolved)&&!(notice.kind==='warning'&&/^Falling back from WebSockets to HTTPS transport\b/.test(notice.message)));
+ const visible=notices.filter(notice=>!hiddenEngineeringKinds.has(notice.kind)&&!(notice.kind==='worker-completion'&&notice.level==='info')&&!(notice.kind==='nativeError'&&notice.message===displayedError)&&!(notice.willRetry&&notice.resolved)&&!(notice.kind==='warning'&&notice.message==="Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics.")&&!(notice.kind==='warning'&&/^Falling back from WebSockets to HTTPS transport\b/.test(notice.message)));
  // Keep raw records intact. Only the latest update of each retry episode is shown.
  return visible.filter((notice,index)=>!notice.willRetry||!visible.slice(index+1).some(next=>next.willRetry&&next.retryKey===notice.retryKey&&next.turnId===notice.turnId));
 }

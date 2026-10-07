@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile} from 'node:fs/promises';
+import {mkdtemp,mkdir,readFile,stat} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import {PassThrough,Writable} from 'node:stream';
@@ -19,7 +19,7 @@ const connectUrl=()=>{
  url.searchParams.set('protocolVersion','2');url.searchParams.set('mode','regular');url.searchParams.set('newTab','true');
  return url.toString();
 };
-const waitFor=async predicate=>{for(let i=0;i<100;i++){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error('Timed out waiting for fixture state.');};
+const waitFor=async predicate=>{for(let i=0;i<100;i++){if(await predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error('Timed out waiting for fixture state.');};
 
 test('native host framing handles fragmented and consecutive length-prefixed JSON messages',()=>{
  const decoder=new NativeMessageDecoder();
@@ -93,7 +93,9 @@ test('host records descriptor-write failure separately from parent failures',asy
  await mkdir(profileDirectory,{recursive:true});await mkdir(path.dirname(diagnosticPath),{recursive:true});
  const config={extensionId:K_EXTENSION_ID,profileDirectory,descriptorPath};
  const stdin=new PassThrough(),stdout=new Writable({write(_chunk,_encoding,callback){callback();}});
- await assert.rejects(startNativeHost({config,stdin,stdout,verifyParent:async()=>true,diagnosticPath}),/ENOENT/);
+ const host=await startNativeHost({config,stdin,stdout,verifyParent:async()=>true,diagnosticPath});
+ stdin.write(encodeNativeMessage({type:'profileHello',profileId:'a'.repeat(32),incognitoAllowed:true}));
+ await host.done;
  const diagnostic=JSON.parse(await readFile(diagnosticPath,'utf8'));
  assert.equal(diagnostic.stage,'descriptor_write');
  assert.equal(diagnostic.errorCode,'descriptor_write_failed');
@@ -127,7 +129,7 @@ test('WebSocket authorization requires loopback, exact Host, no Origin and const
  assert.equal(isAuthorizedUpgrade({...request,headers:{...request.headers,authorization:'Bearer '+'d'.repeat(64)}},'127.0.0.1:1234','c'.repeat(64)),false);
 });
 
-test('host exposes only the authenticated openConnectPage relay and marks its descriptor disconnected on stdin EOF',async()=>{
+test('host exposes only the authenticated openConnectPage relay and stops without rewriting its profile slot on stdin EOF',async()=>{
  const root=await mkdtemp(path.join(os.tmpdir(),'k-browser-native-host-'));
  const profileDirectory=path.join(root,'chrome-profile'),descriptorPath=path.join(root,'private','descriptor.json');
  await mkdir(profileDirectory,{recursive:true});await mkdir(path.dirname(descriptorPath),{recursive:true});
@@ -135,10 +137,13 @@ test('host exposes only the authenticated openConnectPage relay and marks its de
  const stdout=new Writable({write(chunk,_encoding,callback){try{nativeMessages.push(...decoder.push(Buffer.from(chunk)));callback();}catch(error){callback(error);}}});
  const config={extensionId:K_EXTENSION_ID,profileDirectory,descriptorPath};
  let checked;
- const host=await startNativeHost({config,stdin,stdout,verifyParent:async info=>{checked=info;return true;},requestTimeoutMs:1000});
- const descriptor=JSON.parse(await readFile(descriptorPath,'utf8'));
+ const host=await startNativeHost({config,stdin,stdout,verifyParent:async info=>{checked=info;return true;},requestTimeoutMs:1000,diagnosticPath:path.join(root,'diagnostic.json')});
+ stdin.write(encodeNativeMessage({type:'profileHello',profileId:'a'.repeat(32),incognitoAllowed:true}));
+ const profileDescriptor=descriptorPath+'.'+('a'.repeat(32))+'.json';
+ await waitFor(async()=>{try{await stat(profileDescriptor);return true;}catch{return false;}});
+ const descriptor=JSON.parse(await readFile(profileDescriptor,'utf8'));
  assert.deepEqual(checked,{pid:process.pid,profileDirectory});
- assert.deepEqual(Object.keys(descriptor).sort(),['endpoint','pid','token','version']);
+ assert.deepEqual(Object.keys(descriptor).sort(),['endpoint','incognitoAllowed','pid','profileId','token','version']);
  assert.match(descriptor.token,/^[a-f0-9]{64}$/);
  assert.equal(descriptor.endpoint,host.endpoint);
  const owner=new WebSocket(host.endpoint,{headers:{Authorization:`Bearer ${host.token}`}});
@@ -152,6 +157,6 @@ test('host exposes only the authenticated openConnectPage relay and marks its de
  const [rejectedBody]=await rejected;assert.deepEqual(JSON.parse(rejectedBody.toString()),{id:'fixture-2',ok:false,error:'Unsupported request.'});
  assert.equal(nativeMessages.length,1,'unsupported owner command never reaches Chrome extension');
  stdin.end();await host.done;
- const disconnected=JSON.parse(await readFile(descriptorPath,'utf8'));
- assert.deepEqual(disconnected,{version:1,connected:false,pid:process.pid});
+ const after=JSON.parse(await readFile(profileDescriptor,'utf8'));
+ assert.deepEqual(after,descriptor,'shutdown never overwrites a newer profile instance');
 });
