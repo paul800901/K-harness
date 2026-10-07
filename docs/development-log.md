@@ -322,3 +322,8 @@
 ## 2026-10-07 南區三項診斷後修正候選（未部署）
 
 - 詳見 [k-fixes-candidate-20261007.md](k-fixes-candidate-20261007.md)：候選程式 c894221，連結左／右鍵、N profile獨立路由、限量Codex診斷；最終963/963、真正Opus5.5兩輪；SQLite根因仍未知，三真profile未驗收。依使用者要求先停，不部署／重啟／停止工作／push。
+
+
+## 2026-10-08 手機所有附件選檔返回修復候選（未更新正式版）
+
+- [手機附件 picker 候選修復、Opus 減法複查及等待更新](mobile-attachment-picker-20261008.md)：候選程式 `2073a6bbee0d81e1412988f5c6ad4859503ac50e`；只移除 SSE online 的上傳假前提並處理空清單。採真正 Opus 5.5 建議刪除多餘 picker ref；10 格式原始 bytes、13 個 UI 案例、964/964 回歸及既有 2/2、3/3 probe 通過。不冒稱手機／真模型實機驗收。使用者要求等翻譯結束，**未部署、未重啟、未 push**；正式仍 `4a6c482f2df01e1b31216cffc9ec7a98088bdee9`。
