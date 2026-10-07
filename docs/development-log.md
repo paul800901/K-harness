@@ -332,3 +332,8 @@
 ## 2026-10-08 三原生核心附件相容候選（未部署、等待本人）
 
 - [三核心附件交付、真核心矩陣及 Opus 最終討論](attachment-native-compat-20261008.md)：候選程式 `972963e12a4fa35b7e32a089490c17a57434be80`，基於手機 picker 候選。只刪 Gemini 自製圖片閘門、補 Claude 擷取 warning；真正 Opus 5.5 最後複查無阻擋、無過度工程化。117/117、965/965、UI 13/13、build 通過；首次 browser race 失敗保留。GPT／Claude／Gemini 真核心能力差異、Claude 原生計畫報告及 unknown Gemini／真手機未驗證事項均明列；原檔 bytes 正確。正式仍 `4a6c482f2df01e1b31216cffc9ec7a98088bdee9`，**未部署、未重啟、未停止翻譯、未 push，停止等待**。
+
+
+## 2026-10-08 原生子代理終止後結果驗收候選（未部署）
+
+- [原生 child 終止／拒絕喚醒及真 Opus 5.5 複查](native-terminal-wakeup-20261008.md)：固定程式 bd6556467ffd4e2f365f8b0ba228f9cfb662855f，與手機／三核心附件候選同一分支。查明通知存在但 idle parent 未接續，沿用結果佇列與原生 toolOutput；真 Sol/Luna 拒絕假資料自動驗收2父回合／1通知、983/983最終回歸、UI13/13/build通過。失敗與已知 reconnect/bridge/父非completed限制保留，真 Opus三輪無阻擋。跨App不加bridge；正式仍4a6c482，未部署／重啟／停止翻譯／push，停止等本人。
