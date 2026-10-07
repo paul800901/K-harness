@@ -562,6 +562,18 @@ test('text attachments use UTF-8 byte threshold and workspace Read paths in plan
   }
  }finally{await f.controller.close();}
 });
+test('Claude preserves PDF extraction warnings in native attachment context',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({accessMode:'claude-plan'});
+  const doc=await f.controller.upload({threadId,name:'broken.pdf',base64:Buffer.from('synthetic invalid PDF').toString('base64')});
+  assert.ok(doc.warning);
+  await f.controller.send({text:'report extraction limitations',attachmentIds:[doc.id]});
+  const context=f.host.startCalls.at(-1)[1].text;
+  assert.ok(context.includes(`warning="${doc.warning.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"`));
+  assert.ok(context.includes(`originalPath="${path.resolve(f.root,doc.path)}"`));
+  assert.equal((await readFile(path.join(f.root,doc.path),'utf8')),'synthetic invalid PDF');
+ }finally{await f.controller.close();}
+});
 test('Claude gives generic media original file path without reading it into the native prompt',async()=>{
  const f=await fixture();try{
   const {threadId}=await f.controller.open({});const media=await f.controller.upload({threadId,name:'synthetic.m4a',base64:Buffer.from([0,1,2,3,255]).toString('base64')});

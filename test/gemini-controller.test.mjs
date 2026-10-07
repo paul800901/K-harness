@@ -168,7 +168,7 @@ test('Gemini login failure remains on Gemini and does not replay a turn with unk
  try{await c.open({model:'gemini-3.8-flash'});await c.send({text:'hello'});await finish(c);assert.equal(c.state.status,'failed');assert.match(c.state.error,/未登入/);assert.equal(c.state.provider,'gemini');await assert.rejects(c.send({text:'again'}),/原生對話 ID/);assert.equal(calls,1);}finally{await c.close();}
 });
 
-test('Gemini accepts image formats verified with native view_file and injects only validated paths',async()=>{
+test('Gemini hands scoped image paths to native tools without guessing unknown model capability',async()=>{
  const f=await fixture(),c=f.controller;
  try{
   const {threadId}=await c.open({model:'gemini-3.8-flash'});
@@ -188,7 +188,10 @@ test('Gemini accepts image formats verified with native view_file and injects on
   assert.ok(!(await readFile(path.join(f.root,'agent-home/gemini/main',next.threadId,'.gemini/config/rules/k-model-roles.md'),'utf8')).includes(GEMINI_MEDIA_GUIDANCE));
   await assert.rejects(c.send({text:'wrong thread',attachmentIds:[images[0].id]}),/其他對話/);assert.equal(f.calls.length,1);
   const unsupported=await c.upload({threadId:next.threadId,name:'test.webp',base64:Buffer.from('another synthetic image').toString('base64')});
-  await assert.rejects(c.send({text:'unsupported model',attachmentIds:[unsupported.id]}),/尚未驗證這種附件/);assert.equal(f.calls.length,1);
+  await c.send({text:'let native tools determine support',attachmentIds:[unsupported.id]});await finish(c);assert.equal(f.calls.length,2);
+  const unknownPrompt=f.calls[1].args[f.calls[1].args.indexOf('-p')+1];
+  assert.ok(unknownPrompt.includes(path.resolve(f.root,unsupported.path).replaceAll('\\','\\\\')));
+  assert.ok(unknownPrompt.includes('不代表模型已驗證可直接處理此模態'));
  }finally{await c.close();}
 });
 
