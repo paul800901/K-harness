@@ -34,6 +34,8 @@
 
 ## 發布與未驗證事項
 
-目前為已實作、來源驗證及真 Opus 複查通過；固定候選、正式部署與 GitHub 狀態另在本節追加。正式 K 當時仍執行，不強制停止，已請本人工作結束後「離開並停止 K」。
+固定程式版本為 `c7bb4cedf390fa0e0d9a828b8138b5f4458f3856`，來源工作樹 `D:\K-harness\.runtime\chat-links-20261007\source`（分支 `codex/chat-links-20261007`）。Git archive 的乾淨候選在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\prepare-chat-links-c7bb4ce`；現有實體依賴複製，UI／擴充／啟動器建置成功，乾淨候選完整 **951/951**（123,841.5945 ms），同一真 Electron 點擊 probe **5/5** 再次通過。來源與候選產品模組已核對同一固定 Git 版本，不使用未提交程式。
+
+17:40（臺灣時間）讀回正式兩個監聽埠仍由 Electron PID 22700 持有，正式設定版本仍 `e068ffa`。未取得停止證明，**尚未部署／重啟／push**，不以候選成功冒稱使用者現用 K 已修；已請本人工作結束後「離開並停止 K」。後續只有確認停止、保留程式退版、套用固定候選及正式讀回後，才依既有 SOP 發布。工程文件收尾提交不是另一個程式候選，不需重跑相同產品測試。
 
 Electron probe 攔截 OS opener，尚未證明 Windows 真正開啟預設瀏覽器，未操作圖片中的 Ads 授權、接收器或原授權 URL。Google 登入／驗證仍由本人處理。本批不更換帳號、不恢復目標、不重派工人；東區不動。
