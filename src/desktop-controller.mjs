@@ -30,7 +30,8 @@ function codexInput(text,attachments=[]){
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
- const activity=createWorkActivity(state),childActivities=new Map();
+ const activity=createWorkActivity(state),childActivities=new Map(),nativeTerminals=new Map();
+ const clearNativeResults=()=>{nativeTerminals.clear();for(const [id,row] of flashQueue)if(row.provider==='codex')flashQueue.delete(id);for(const child of childActivities.values())delete child.epoch;};
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
@@ -102,7 +103,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const [oldId,metadata]=matches[0];transferTiming('messages',oldId,id);return metadata;
  };
  let settlingWorkers=0;
- const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying||state.goalPending===true||!!capacityTask;onChange(state);};
+ const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying||nativeTerminals.size>0||state.goalPending===true||!!capacityTask;onChange(state);};
  const persistFlashNotifications=async()=>{
   if(!state.threadId)return;
   const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);
@@ -202,7 +203,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!opening&&!closing&&!stopping){
     let child=childActivities.get(p.threadId);
     if(!child){const holder={};child={holder,activity:createWorkActivity(holder)};childActivities.set(p.threadId,child);}
-    if(e.method==='turn/started'){child.turnId=p.turn?.id;child.ended=false;}
+    if(e.method==='turn/started'){child.turnId=p.turn?.id;child.ended=false;if(!stopRequested&&state.goal?.status!=='paused')child.epoch=requestEpoch;}
+    if(e.method==='turn/completed'&&child.turnId===p.turn?.id&&child.epoch===requestEpoch&&!stopRequested&&state.goal?.status!=='paused'&&['completed','failed','interrupted'].includes(p.turn.status)){
+     const terminal={provider:'codex',requestId:`codex:${p.threadId}`,threadId:p.threadId,turnId:p.turn.id,status:p.turn.status==='interrupted'?'cancelled':p.turn.status,epoch:requestEpoch};
+     if(!flashNotifications[workerNoticeKey(terminal)])nativeTerminals.set(workerNoticeKey(terminal),terminal);
+    }
     if(!child.ended&&(!child.turnId||!p.turnId||child.turnId===p.turnId)){
      const previous=child.holder.activity;codexWorkActivity(child.activity,e);
      if(child.holder.activity!==previous){const row=state.workers.find(w=>w.threadId===p.threadId);if(row)row.activity=child.holder.activity;changed();}
@@ -210,7 +215,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(e.method==='turn/completed'&&(!child.turnId||child.turnId===p.turn?.id))child.ended=true;
    }
    if(e.method==='turn/completed'){clearQuestions(q=>q.threadId===p.threadId&&q.turnId===p.turn.id);changed();}
-   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method))void workers().catch(()=>{});
+   if(['turn/started','turn/completed','thread/status/changed'].includes(e.method))void workers().then(()=>deliverFlashResults()).catch(()=>{});
    return;
   }
   if(e.method==='turn/completed'&&capacityHandled.has(p.turn?.id))return;
@@ -247,7 +252,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    else state.tools.push({id:p.itemId,name:'檔案變更',status:'running',details:structuredClone(changes),output:'',patchChanges:changes,turnId:p.turnId,groupId:turnGroupId(p.turnId)});
    changed();return;
   }
-  if(e.method==='thread/goal/updated'){state.goal=p.goal;if(turnId&&p.goal?.status==='active')turnGoal=structuredClone(p.goal);state.goalError=null;changed();return;}
+  if(e.method==='thread/goal/updated'){state.goal=p.goal;if(p.goal?.status==='paused')clearNativeResults();if(turnId&&p.goal?.status==='active')turnGoal=structuredClone(p.goal);state.goalError=null;changed();return;}
   if(e.method==='thread/goal/cleared'){state.goal=null;state.goalError=null;changed();return;}
   if(e.method==='turn/plan/updated'){state.progress.plan=p.plan??[];state.progress.explanation=p.explanation??null;changed();return;}
   if(e.method==='thread/tokenUsage/updated'){state.progress.tokenUsage=p.tokenUsage??null;changed();return;}
@@ -407,7 +412,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  }
  async function workers(stop=false){
   if(!host||!state.threadId)return [];
-  const active=host,read=++workerRead,threadId=state.threadId,epoch=viewEpoch;const observed=[...items.values()];
+  const active=host,read=++workerRead,threadId=state.threadId,epoch=viewEpoch,noticeEpoch=requestEpoch;const observed=[...items.values()];
   const result=await checkNativeWorkers(active,threadId,collectNativeWorkerIds(observed),{stop});
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
   const flash=flashBridge?await flashBridge.list():[];
@@ -416,7 +421,17 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   // A delayed read must not replace a newer completion; callers still receive
   // their full result, including Flash, for existing stop/idle checks.
   if(read===workerRead){state.workers=rows;syncArtifacts();changed();}
-  return rows;
+  // Only live, armed child terminals can request acceptance; history reads cannot.
+  if(read===workerRead&&!stopRequested&&!opening&&!stopping&&!closing&&noticeEpoch===requestEpoch&&state.goal?.status!=='paused'){
+   for(const [key,terminal] of nativeTerminals){
+    nativeTerminals.delete(key);
+    if(terminal.epoch!==requestEpoch||flashNotifications[key])continue;
+    const row=result.find(w=>w.threadId===terminal.threadId);
+    if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status){flashQueue.set(row.requestId,{...row,epoch:requestEpoch});queueMicrotask(()=>void deliverFlashResults());}
+    else addNotice('warning','原生子代理已送出終止事件，但來源或最後回合讀回未確認；未自動接續或重送。','worker-attention');
+   }
+  }
+  changed();return rows;
  }
  const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
  const recordFlash=record=>{
@@ -462,7 +477,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }});return flashGateway;
  }
  async function closeFlashBridge(){
-  if(flashDeliveryUncertain&&flashDeliveryUncertain===state.threadId)throw new Error('Flash 完成通知狀態未確認；請先按停止，讀回原生回合後再切換。');
+  if(flashDeliveryUncertain&&flashDeliveryUncertain===state.threadId)throw new Error('子代理完成通知狀態未確認；請先按停止，讀回原生回合後再切換。');
   if(flashBridgeInit)await flashBridgeInit;
   if(flashBridge){
    const records=await flashBridge.list();
@@ -476,7 +491,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   const bridge=flashBridge;
   if(bridge)await bridge.close();
-  flashBridge=null;flashBridgeInit=null;flashArmed.clear();flashQueue.clear();
+  flashBridge=null;flashBridgeInit=null;flashArmed.clear();flashQueue.clear();clearNativeResults();
  }
  async function closeFlashGateway(){
   await closeFlashBridge();
@@ -484,29 +499,30 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   flashGateway=null;
  }
  async function deliverFlashResults(){
-  if(flashNotifying||capacityTask||!host||state.busy||opening||closing||stopping||state.status!=='completed'||!flashQueue.size)return;
-  for(const [id,record] of flashQueue)if(!workerNoticeCurrent(record,state.workers.find(w=>w.provider==='gemini'&&w.requestId===id)))flashQueue.delete(id);
+  if(flashNotifying||capacityTask||!host||state.busy||turnId||submission||state.goalPending||opening||closing||stopping||state.status!=='completed'||!flashQueue.size)return;
+  for(const [id,record] of flashQueue)if(record.provider==='codex'&&(record.epoch!==requestEpoch||stopRequested||state.goal?.status==='paused')||!workerNoticeCurrent(record,state.workers.find(w=>w.provider===record.provider&&w.requestId===id)))flashQueue.delete(id);
   if(!flashQueue.size)return;
   flashNotifying=true;state.busy=true;state.status='working';activity.begin();
   const active=host,parent=state.threadId,batch=[...flashQueue.values()];flashQueue.clear();for(const record of batch)if(record.settled)flashArmed.delete(record.requestId);
   let attempted=false,completed=false;
   try{
-   const results=await Promise.all(batch.map(lunaResult));
+   const native=batch.some(record=>record.provider==='codex');
+   const results=await Promise.all(batch.map(record=>record.provider==='codex'?{provider:'codex',threadId:record.threadId,turnId:record.turnId,status:record.status}:lunaResult(record)));
    if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
    for(const record of batch)flashNotifications[workerNoticeKey(record)]='delivery-attempted';
    await persistFlashNotifications();
    if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
-   const text=workerNoticeText(batch)+JSON.stringify(results);
+   const text=workerNoticeText(batch)+(native?'原生子代理終止不等於交付成功（failed／cancelled 也不是成功）。請用原生工具與實際成果獨立核對；已處理就不要重做，不要重送或重派原工作，也不要自行換模型、權限或帳號。原生最終訊息由核心保存，必要時用原生工具讀回；以下只含識別碼與狀態。\n':'')+JSON.stringify(results);
    await markSubmitted();
    attempted=true;
-   const delivery=startNativeTurn(active,{threadId:parent,model:state.model,...(state.effort?{effort:state.effort}:{}),serviceTier:state.serviceTier,input:[],toolOutput:{name:'gemini_start',namespace:null,output:text},...turnPermissions(state.accessMode,state.workspace)});
+   const delivery=startNativeTurn(active,{threadId:parent,model:state.model,...(state.effort?{effort:state.effort}:{}),serviceTier:state.serviceTier,input:[],...(native?{turnTrigger:'subagent'}:{}),toolOutput:{name:native?'k_native_subagent_terminal':'gemini_start',namespace:null,output:text},...turnPermissions(state.accessMode,state.workspace)});
    submission=delivery;
    const result=await delivery;
    completed=true;turnId=result?.turn?.id??null;
    const attention=batch.some(record=>!record.settled);
-   state.tools.push({id:`flash-completion:${batch.map(workerNoticeKey).join(':')}`,name:attention?'Flash 子代理狀態待確認':'Flash 子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(turnId?{turnId}:{})});
-   addNotice('info',attention?'子代理狀態待確認已交給主代理判斷；尚未確認完成或停止。':'Flash 子代理結果已交給 Codex 主代理驗收。',attention?'worker-attention':'worker-completion',turnId);
-   if(turnId){state.busy=true;state.status='working';}else{flashDeliveryUncertain=parent;state.busy=false;state.status='uncertain';state.error='Flash 完成通知送出狀態未確認；未重送。';}
+   state.tools.push({id:`flash-completion:${batch.map(workerNoticeKey).join(':')}`,name:attention?'子代理狀態待確認':native?'原生子代理終止':'Flash 子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(turnId?{turnId}:{})});
+   addNotice('info',attention?'子代理狀態待確認已交給主代理判斷；尚未確認完成或停止。':native?'原生子代理終止已交給主代理核對；不代表交付成功。':'Flash 子代理結果已交給 Codex 主代理驗收。',attention?'worker-attention':'worker-completion',turnId);
+   if(turnId){state.busy=true;state.status='working';}else{flashDeliveryUncertain=parent;state.busy=false;state.status='uncertain';state.error='子代理完成通知送出狀態未確認；未重送。';}
    await persistFlashNotifications();
    if(submission===delivery)submission=null;
   }catch(error){
@@ -522,9 +538,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(attempted&&!completed)flashDeliveryUncertain=parent;
    if(host===active&&parent===state.threadId&&!stopping&&!closing){
     state.busy=false;
-    if(attempted&&!completed){state.status='uncertain';state.error=`Flash 完成通知未確認；未重送工作或通知：${error.message}`;}
-    else if(!attempted){for(const record of batch)delete flashNotifications[workerNoticeKey(record)];state.status='completed';state.error=`Flash 通知準備失敗，尚未送出；請查詢原工作：${error.message}`;}
-    else{flashDeliveryUncertain=parent;state.status='uncertain';state.error=`Flash 通知已送出，但結果保存失敗；不重送：${error.message}`;}
+    if(attempted&&!completed){state.status='uncertain';state.error=`子代理完成通知未確認；未重送工作或通知：${error.message}`;}
+    else if(!attempted){for(const record of batch)delete flashNotifications[workerNoticeKey(record)];state.status='completed';state.error=`子代理通知準備失敗，尚未送出；請查詢原工作：${error.message}`;}
+    else{flashDeliveryUncertain=parent;state.status='uncertain';state.error=`子代理通知已送出，但結果保存失敗；不重送：${error.message}`;}
    }
   }finally{flashNotifying=false;changed();}
  }
@@ -548,7 +564,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  async function stop(){
   if(opening&&openAbort){openAbort.abort(new DOMException('已取消連線。','AbortError'));await openDone;return {cancelled:true};}
   if(opening||stopping)throw new Error('正在連線或停止，請稍候。');
-  stopping=true;stopRequested=true;requestEpoch++;
+  stopping=true;stopRequested=true;requestEpoch++;clearNativeResults();
   try{clearQuestions();if(submission)await submission;if(capacityTask)await capacityTask;await pauseNativeGoal();if(!turnId)await reconcileUncertainFlashTurn();if(turnId){stoppedTurnId=turnId;await host.request('turn/interrupt',{threadId:state.threadId,turnId});}
    if(host&&state.threadId){const terminals=await stopThreadTerminals(host,state.threadId);for(const terminal of terminals){const t=state.tools.find(t=>t.id===terminal.itemId);if(t)t.status='interrupted';}}
    const children=await workers(true);if(children.some(w=>w.provider==='codex'&&!w.settled))throw new Error('子代理尚未確認停止。');
@@ -585,9 +601,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     task=active.request(refresh?'thread/goal/get':clear?'thread/goal/clear':'thread/goal/set',{threadId,...(!refresh&&!clear?{...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status}),...(tokenBudget===undefined?{}:{tokenBudget})}:{})});submission=task;
     const result=await task;
     if(host!==active||state.threadId!==threadId)throw Error('原對話已變更；目標操作未重送。');
-    state.goal=clear?null:result.goal??null;return {goal:state.goal};
+    state.goal=clear?null:result.goal??null;if(state.goal?.status==='paused')clearNativeResults();return {goal:state.goal};
    }catch(error){if(host===active&&state.threadId===threadId&&(task||epoch===requestEpoch))state.goalError=error.message;throw error;}
-   finally{if(submission===task)submission=null;if(host===active&&state.threadId===threadId){state.goalPending=false;changed();}}
+   finally{if(submission===task)submission=null;if(host===active&&state.threadId===threadId){state.goalPending=false;changed();void deliverFlashResults();}}
   }
  return {
   state, sessions:()=>listMainSessions(root),workers,stop,usage,
@@ -768,7 +784,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      state.previousWorkspaces=relocation?.previousWorkspaces??saved?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??saved?.previousArtifacts??[];
      compactionIds=new Set();clearQuestions();turnId=null;items.clear();childActivities.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
      uiTiming=nextUiTiming;activeGroupId=null;reasoningParts.clear();fileChangePatches.clear();state.notices=[];state.reasoning=[];state.turnDiffs=[];state.sandboxReadiness=null;state.parentThreadId=saved?.parentThreadId??null;state.parentTitle=saved?.parentTitle??null;
-     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();
+     state.workerPolicy=policy;state.accessMode=access;state.effort=effort??null;state.serviceTier=selectedServiceTier;state.fastTier=fastServiceTier(selected);state.workspace=workspace;state.browserAccess={enabled:false,networkAccess:false};flashNotifications=structuredClone(saved?.workerNotifications??{});flashArmed.clear();flashQueue.clear();clearNativeResults();
      const priorHasUser=(prior?.thread.turns??[]).some(turn=>(turn.items??[]).some(item=>item.type==='userMessage'));
      state.lastUsedModel=saved?.lastUsedModel??(priorHasUser?saved?.model??null:null);state.modelChanges=[...(saved?.modelChanges??[])];
      for(const turn of prior?.thread.turns??[])for(const i of turn.items??[]){
@@ -888,7 +904,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected)state.busy=false;state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
     {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
-   }finally{finishSubmission();submission=null;changed();}
+   }finally{finishSubmission();submission=null;changed();void deliverFlashResults();}
   },
   async steer({text,attachmentIds=[]}){
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的修正內容。');

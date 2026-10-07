@@ -55,6 +55,6 @@ test('idle or notLoaded settles only explicit completed, interrupted, or failed 
  ]){
   const host={async request(_method,p){return {thread:{id:p.threadId,parentThreadId:'parent',status:{type:threadStatus},turns:[{id:'child-turn',status:turnStatus}]}};}};
   const [result]=await checkNativeWorkers(host,'parent',['child']);
-  assert.equal(result.status,expected);assert.equal(result.settled,true);
+  assert.equal(result.status,expected);assert.equal(result.settled,true);assert.equal(result.turnId,'child-turn');
  }
 });
