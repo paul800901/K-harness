@@ -153,6 +153,29 @@ test('settled Flash result returned to the model is disarmed and not re-notified
  }finally{await f.c.close();}
 });
 
+for(const status of ['failed','unresolved'])test(`unsettled ${status} Flash observation gets one status notice before its final completion`,async()=>{
+ const f=await fixture();try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'fake parent work'});
+  const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:`${status}-notice`,model:'gemini-3.8-flash',effort:'low',task:'fake worker'});
+  const record=f.workerRecords.get(`${status}-notice`);record.status=status;record.settled=false;
+  f.bridgeOptions[0].onChange(record);f.bridgeOptions[0].onChange(record);
+  f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
+  const outputs=()=>f.calls.filter(call=>call.method==='turn/start'&&call.params.toolOutput);
+  for(let i=0;i<100&&outputs().length<1;i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(outputs().length,1);assert.match(outputs()[0].params.toolOutput.output,/K 子代理狀態通知/);
+  assert.match(outputs()[0].params.toolOutput.output,/不是完成通知/);assert.doesNotMatch(outputs()[0].params.toolOutput.output,/K 工人完成通知/);
+  assert.equal(f.c.state.notices.at(-1).kind,'worker-attention');
+  f.bridgeOptions[0].onChange(record);f.bridgeOptions[0].onChange(record);
+  f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-2',status:'completed'}}});
+  await new Promise(resolve=>setTimeout(resolve,30));assert.equal(outputs().length,1,'repeated unknown status does not wake Codex again');
+  record.status='completed';record.settled=true;record.output='fake done';f.bridgeOptions[0].onChange(record);
+  for(let i=0;i<100&&outputs().length<2;i++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(outputs().length,2);assert.match(outputs()[1].params.toolOutput.output,/K 工人完成通知/);
+  assert.equal(f.c.state.notices.at(-1).kind,'worker-completion');
+  f.bridgeOptions[0].onChange(record);await new Promise(resolve=>setTimeout(resolve,30));assert.equal(outputs().length,2,'settled completion is delivered exactly once');
+ }finally{await f.c.close();}
+});
+
 test('stop waits for an in-flight completion toolOutput, then interrupts its confirmed native turn',async()=>{
  const f=await fixture({delayToolOutput:true});try{
   await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'先做一回合'});
@@ -241,7 +264,7 @@ test('quiet Flash notification is delivered once, leaves completion armed, and d
   f.bridgeOptions[0].onChange(record);
   f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
   await f.toolOutputSent;await new Promise(r=>setTimeout(r,30));
-  assert.match(f.calls.find(x=>x.params?.toolOutput)?.params.toolOutput.output,/久無活動不等於卡死/);
+  assert.match(f.calls.find(x=>x.params?.toolOutput)?.params.toolOutput.output,/久無活動也不等於卡死/);
   f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-2',status:'completed'}}});
   for(let i=0;i<3;i++)f.bridgeOptions[0].onChange(record);
   await new Promise(r=>setTimeout(r,30));

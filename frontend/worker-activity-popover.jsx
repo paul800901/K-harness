@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {workerStatus,workerHealth,workerEnded,pendingWorkerSummary} from './work-status.mjs';
+import {workerStatus,workerHealth,workerEnded,workerReconciled,pendingWorkerSummary} from './work-status.mjs';
 import './worker-activity-popover.css';
 import {useAnchoredPopover} from './anchored-popover.jsx';
 
@@ -22,13 +22,14 @@ function WorkerRow({row,online,now}){const health=workerHealth(row,online,now);c
   {row.confirmationReason&&<><dt>待確認原因</dt><dd>{row.confirmationReason}</dd></>}
   {row.status==='unresolved'&&!row.confirmationReason&&!row.error&&<><dt>待確認原因</dt><dd>原生狀態未提供原因</dd></>}
   {row.error&&<><dt>錯誤</dt><dd>{row.error}</dd></>}
+  {row.reconciliation&&<><dt>主代理查核註記</dt><dd>{row.reconciliation.summary}</dd><dt>查核依據與限制</dt><dd>{row.reconciliation.evidence}</dd><dt>註記時間</dt><dd>{timestamp(row.reconciliation.reviewedAt)}（非完成或停止證明）</dd></>}
   {row.workerConnection==='failed'&&<><dt>連線</dt><dd>子代理狀態讀回失敗</dd></>}
  </dl></details>
 </article>;}
 
 export function WorkerActivityPopover({activity,details,online=true,compact=false}){
  const menu=useAnchoredPopover({width:380});
- const rows=Array.isArray(details)?details:[],hasPending=rows.some(row=>!workerEnded(row));
+ const rows=Array.isArray(details)?details:[],hasPending=rows.some(row=>!workerEnded(row)&&!workerReconciled(row));
  const [now,setNow]=useState(Date.now);
  useEffect(()=>{if(!hasPending)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[hasPending]);
  const clock=Math.max(now,Date.now()),summary=pendingWorkerSummary(rows,online,clock);
@@ -46,7 +47,8 @@ export function WorkerActivityPopover({activity,details,online=true,compact=fals
    {!!summary.quiet&&<p className="worker-popover-note">久未回報不等於已卡死；展開明細可看最後活動。狀態查詢不會刷新活動時間，也不會自動重派。</p>}
    {groups.map(group=><section className="worker-popover-room" key={group.id}>
     <h3>{group.title}</h3>
-    {group.rows.filter(row=>!workerEnded(row)).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-active-${index}`} row={row} online={online} now={clock}/>)}
+    {group.rows.filter(row=>!workerEnded(row)&&!workerReconciled(row)).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-active-${index}`} row={row} online={online} now={clock}/>)}
+    {!!group.rows.filter(workerReconciled).length&&<details className="worker-popover-ended"><summary>已核對的舊工單 {group.rows.filter(workerReconciled).length} 個</summary>{group.rows.filter(workerReconciled).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-reconciled-${index}`} row={row} online={online} now={clock}/>)}</details>}
     {!!group.rows.filter(row=>workerEnded(row)).length&&<details className="worker-popover-ended"><summary>已結束 {group.rows.filter(row=>workerEnded(row)).length} 個</summary>{group.rows.filter(row=>workerEnded(row)).map((row,index)=><WorkerRow key={row.requestId??`${group.id}-ended-${index}`} row={row} online={online} now={clock}/>)}</details>}
    </section>)}
    {!groups.length&&<p className="worker-popover-note">目前沒有可列出的子代理明細；計數仍依原生狀態顯示，不推定為已停止。</p>}

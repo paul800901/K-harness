@@ -5,10 +5,13 @@ const age=(at,now)=>Number.isFinite(at)?Math.max(0,now-at):null;
 const terminalWorkers=['completed','failed','cancelled','canceled','stopped','interrupted','ended'];
 const statusLabel={running:'執行中',starting:'準備中',pending:'等待中',completed:'已完成',failed:'失敗',cancelled:'已取消',canceled:'已取消',stopped:'已停止',interrupted:'已中斷',ended:'已結束，結果未知'};
 export const workerEnded=worker=>worker.settled===true||worker.settled!==false&&terminalWorkers.includes(worker.status);
+// A main-agent handling note is separate from native execution settlement.
+export const workerReconciled=worker=>!workerEnded(worker)&&worker.executionUnowned===true&&!!worker.reconciliation?.reviewedAt;
 export const currentWorkers=state=>Array.isArray(state.workerDetails)?state.workerDetails.filter(w=>w.conversationId===state.threadId):(state.workers??[]).filter(w=>w.kind!=='command');
 const eventTime=value=>typeof value==='number'?value:Date.parse(value??'');
 export function workerHealth(worker,online=true,now=Date.now()){
  if(workerEnded(worker))return {kind:worker.status==='failed'?'danger':'muted',text:statusLabel[worker.status]??'已結束，結果未知'};
+ if(workerReconciled(worker))return {kind:'muted',unknown:true,text:'已留查核註記 · 原執行結果仍未知'};
  if(worker.executionUnowned===true)return {kind:'warning',unknown:true,historicalUnconfirmed:true,text:'舊工單結果待確認 · 重啟後無法確認執行結果'};
  if(!online||worker.workerConnection==='failed'||!['running','starting','pending'].includes(worker.status))return {kind:'warning',unknown:true,text:worker.status==='failed'?'失敗 · 停止尚待確認':'狀態待確認'};
  if(worker.confirmationReason)return {kind:'confirmation',text:'等待核准／回答'};
@@ -19,7 +22,7 @@ export function workerHealth(worker,online=true,now=Date.now()){
  return {kind:'running',text:`${phase??statusLabel[worker.status]} · ${Number.isFinite(last)?`最近活動 ${formatElapsed(age(last,now))}前`:'尚無活動時間回報'}`};
 }
 export function pendingWorkerSummary(rows,online=true,now=Date.now()){
- const pending=rows.filter(w=>!workerEnded(w)&&w.executionUnowned!==true),historicalUnconfirmed=rows.filter(w=>!workerEnded(w)&&w.executionUnowned===true),health=pending.map(w=>workerHealth(w,online,now));
+ const pending=rows.filter(w=>!workerEnded(w)&&w.executionUnowned!==true),historicalUnconfirmed=rows.filter(w=>!workerEnded(w)&&w.executionUnowned===true&&!workerReconciled(w)),health=pending.map(w=>workerHealth(w,online,now));
  return {count:pending.length,unknown:health.filter(h=>h.unknown).length,quiet:health.filter(h=>h.quiet).length,historicalUnconfirmed:historicalUnconfirmed.length};
 }
 export function workStatus(state,online=true,now=Date.now()) {

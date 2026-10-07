@@ -62,6 +62,15 @@ test('worker count keeps known running jobs visible alongside unknowns without c
 test('unowned Gemini history is visible but never counted as current work or reported stopped',()=>{
  const old={conversationId:'a',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
  const live={conversationId:'a',provider:'codex',status:'running',settled:false};
+ const note={summary:'人工查核註記：原結果仍未知。',evidence:'假資料依據；不證明完成或停止。',reviewedAt:'2026-10-07T01:02:03.000Z'};
+ const reviewed={...old,reconciliation:note};
+ const ownedWithNote={conversationId:'a',provider:'codex',status:'unresolved',settled:false,executionUnowned:false,reconciliation:note};
+ assert.equal(workerEnded(reviewed),false);
+ assert.equal(reviewed.status,'unresolved');
+ assert.deepEqual(reviewed.reconciliation,note);
+ assert.equal(workerHealth(reviewed,true,1000).text,'已留查核註記 · 原執行結果仍未知');
+ assert.equal(pendingWorkerSummary([reviewed],true,1000).historicalUnconfirmed,0,'noted unowned history leaves historical confirmation count');
+ assert.deepEqual(pendingWorkerSummary([reviewed,ownedWithNote],true,1000),{count:1,unknown:1,quiet:0,historicalUnconfirmed:0},'a note does not hide or settle a worker that is still owned');
  const oldHealth=workerHealth(old,true,1000);
  assert.equal(oldHealth.historicalUnconfirmed,true);
  assert.match(oldHealth.text,/舊工單結果待確認/);

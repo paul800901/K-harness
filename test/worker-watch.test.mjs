@@ -1,8 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createWorkerWatch,workerNoticeCurrent,workerNoticeKey} from '../src/worker-watch.mjs';
+import {createWorkerWatch,workerNeedsAttention,workerNoticeCurrent,workerNoticeKey,workerNoticeText} from '../src/worker-watch.mjs';
 
 const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
+test('unsettled failure and unresolved records use status-notice identity, not completion identity',()=>{
+ for(const status of ['failed','unresolved']){
+  const queued={requestId:'job',status,settled:false};
+  assert.equal(workerNeedsAttention(queued),true);
+  assert.equal(workerNoticeKey(queued),'unconfirmed:job');
+  assert.match(workerNoticeText([queued]),/不是完成通知/);
+  assert.equal(workerNoticeKey({...queued,status:'completed',settled:true}),'job');
+  assert.equal(workerNoticeText([{...queued,status:'completed',settled:true}]).includes('狀態通知'),false);
+ }
+});
+test('stale unknown notices are suppressed when the current record settled, became unowned, or disappeared',()=>{
+ const queued={requestId:'job',status:'unresolved',settled:false};
+ assert.equal(workerNoticeCurrent(queued,{...queued}),true);
+ assert.equal(workerNoticeCurrent(queued,{...queued,status:'completed',settled:true}),false);
+ assert.equal(workerNoticeCurrent(queued,{...queued,executionUnowned:true}),false);
+ assert.equal(workerNoticeCurrent(queued,undefined),false);
+});
 function setup(t){
  t.mock.timers.enable({apis:['setTimeout']});
  let now=0,reads=0;const notices=[],records=new Map();

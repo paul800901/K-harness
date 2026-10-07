@@ -18,7 +18,8 @@ const clone = value => structuredClone(value);
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  if(record.executionUnowned===true)result.task=record.task;
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
   result.outputFiles=record.outputFiles??[];
@@ -92,7 +93,7 @@ function extractThread(thread, workspace, record) {
     record.status = 'failed'; record.settled = true;
   } else if (!latest && record.cancelRequested && ['idle','notLoaded'].includes(thread?.status?.type)) {
     record.status = 'cancelled'; record.settled = true;
-  } else if (['idle', 'notLoaded'].includes(thread?.status?.type)) {
+  } else if (['idle', 'notLoaded'].includes(thread?.status?.type) && latest?.status === 'completed') {
     record.status = 'completed'; record.settled = true;
   } else {
     record.status = 'unresolved'; record.settled = false;
@@ -122,10 +123,13 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     for(const wake of waiters.get(record.requestId)??[])wake();
     try { onChange(clone(record)); } catch {}
   };
-  const persist = record => {
+  const persist = (record,patch) => {
     const prior=persistTails.get(record.requestId)??Promise.resolve();
     const next=prior.catch(()=>{}).then(async()=>{
-      await atomicWrite(path.join(directory,`${record.requestId}.json`),JSON.stringify(record,null,2));
+      await atomicWrite(path.join(directory,`${record.requestId}.json`),JSON.stringify({...record,...patch},null,2));
+      // Publish a handling note only after its durable write, including when an
+      // inspect is queued concurrently. A failed save must not clear attention.
+      if(patch)Object.assign(record,patch);
     });
     persistTails.set(record.requestId,next);
     void next.finally(()=>{if(persistTails.get(record.requestId)===next)persistTails.delete(record.requestId);}).catch(()=>{});
@@ -356,6 +360,22 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     operations.set(requestId,operation);return operation;
     }
   }
+  async function reconcile({requestId,summary,evidence}) {
+    if(!safeId(requestId))throw new Error('requestId 格式無效。');
+    if(typeof summary!=='string'||!summary.trim()||summary.trim().length>2000||typeof evidence!=='string'||!evidence.trim()||evidence.trim().length>4000)throw new Error('請提供查核結論（1–2000 字）與實際核對證據及仍未知事項（1–4000 字）。');
+    if(closed||closing||operations.has(requestId))throw new Error('工作正在操作或關閉；未寫入查核註記。');
+    const operation=(async()=>{
+      const record=await load(requestId);
+      if(!record||record.provider!=='gemini'||record.executionUnowned!==true||record.settled!==false||ownedRequests.has(requestId)||geminiRuns.has(requestId))throw new Error('只能核對本對話重啟後失去執行歸屬的 Gemini 舊工單；不能代替停止或完成。');
+      const note={summary:summary.trim(),evidence:evidence.trim()};
+      if(record.reconciliation?.summary===note.summary&&record.reconciliation?.evidence===note.evidence)return clone(record);
+      await persist(record,{reconciliation:{...note,reviewedAt:new Date().toISOString()}});
+      changed(record);
+      return clone(record);
+    })();
+    operations.set(requestId,operation);
+    try{return await operation;}finally{if(operations.get(requestId)===operation)operations.delete(requestId);}
+  }
   async function cancel({requestId}) {
     watch.forget(requestId);
     const current = await inspect({requestId});
@@ -441,7 +461,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     return Promise.all([...ids].map(requestId => refresh?inspect({requestId}):load(requestId)));
   }
   return {
-    start, inspect, cancel, workerPolicy:clone(defaults),
+    start, inspect, cancel, reconcile, workerPolicy:clone(defaults),
     accounts:()=>geminiOptions.accounts?.refreshAll()??{enabled:false,accounts:[]},
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');

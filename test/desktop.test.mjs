@@ -225,6 +225,37 @@ test('desktop attachment scope and restored display survive reopen without expos
  }finally{await f.c.close();}
 });
 
+test('Codex direct send is blocked while a native goal is pending or submitted',async()=>{
+ const f=await fixture();let releaseGoal,goalRequested;
+ const requested=new Promise(resolve=>{goalRequested=resolve;}),held=new Promise(resolve=>{releaseGoal=resolve;});
+ const original=f.host.request;f.host.request=async(method,p)=>{
+  if(method==='thread/goal/set'){f.calls.push({method,p});goalRequested();await held;return {goal:{threadId:p.threadId,objective:p.objective,status:'active'}};}
+  return original(method,p);
+ };
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  const setting=f.c.goal({objective:'synthetic held goal'});await requested;
+  assert.equal(f.c.state.goalPending,true);
+  await assert.rejects(f.c.send({text:'must wait for goal'}),error=>error.notSent===true&&/等待目前工作結束/.test(error.message));
+  f.c.state.goalPending=false;
+  await assert.rejects(f.c.send({text:'submission also blocks'}),error=>error.notSent===true&&/等待目前工作結束/.test(error.message));
+  assert.equal(f.calls.filter(x=>x.method==='turn/start').length,0);
+  releaseGoal();await setting;
+ }finally{releaseGoal();await f.c.close();}
+});
+
+test('Codex rechecks goal state after reopening a thread for a permission change',async()=>{
+ const f=await fixture();
+ try{
+  await f.c.open({model:'gpt-6-astra'});
+  const turnStarts=()=>f.calls.filter(x=>x.method==='turn/start').length;
+  const before=turnStarts(),open=f.c.open.bind(f.c);
+  f.c.open=async options=>{const result=await open(options);f.c.state.goalPending=true;return result;};
+  await assert.rejects(f.c.send({text:'must not send after goal starts',accessMode:'read-only'}),error=>error.notSent===true&&/權限切換後對話狀態已改變/.test(error.message));
+  assert.equal(turnStarts(),before,'permission reopen must not bypass the goal guard');
+ }finally{await f.c.close();}
+});
+
 test('unrecognized and extraction-failed attachments reach Codex by original path with warnings',async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});

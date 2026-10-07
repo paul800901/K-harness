@@ -89,6 +89,50 @@ test('restart inspection reads native thread and never resends a turn',async()=>
   await bridge.close();
 });
 
+test('idle and unloaded inspections require an explicit terminal latest turn',async()=>{
+  for(const variant of [
+    {threadStatus:'idle',turns:[]},
+    {threadStatus:'notLoaded',turns:[]},
+    {threadStatus:'idle',turns:[{id:'turn-1',status:'queued',items:[]}]},
+    {threadStatus:'notLoaded',turns:[{id:'turn-1',status:'unknown',items:[]}]},
+  ]){
+    const {bridge,fixture}=await make();
+    try{
+      const started=await bridge.start({requestId:`inspect-${randomUUID()}`,task:'synthetic task'});
+      const original=fixture.host.request;
+      fixture.host.request=async(method,p)=>method==='thread/read'
+        ?{thread:{id:p.threadId,parentThreadId:started.parentId,cwd:workspace,status:{type:variant.threadStatus},turns:variant.turns}}
+        :original(method,p);
+      const record=await bridge.inspect({requestId:started.requestId});
+      assert.equal(record.status,'unresolved',JSON.stringify(variant));
+      assert.equal(record.settled,false,JSON.stringify(variant));
+      assert.equal(record.error,undefined,'an incomplete but correctly scoped read is unknown, not a read failure');
+      assert.equal(fixture.calls.filter(call=>call.method==='turn/start').length,1,'inspection never starts another turn');
+      fixture.host.request=original;
+    }finally{await bridge.close();}
+  }
+});
+
+test('idle and unloaded inspections preserve explicit terminal latest-turn states',async()=>{
+  for(const [threadStatus,turnStatus,expected] of [
+    ['idle','completed','completed'],['notLoaded','completed','completed'],
+    ['idle','failed','failed'],['notLoaded','interrupted','cancelled'],
+  ]){
+    const {bridge,fixture}=await make();
+    try{
+      const started=await bridge.start({requestId:`terminal-${randomUUID()}`,task:'synthetic task'});
+      const original=fixture.host.request;
+      fixture.host.request=async(method,p)=>method==='thread/read'
+        ?{thread:{id:p.threadId,parentThreadId:started.parentId,cwd:workspace,status:{type:threadStatus},turns:[{id:started.turnId,status:turnStatus,items:[]}]}}
+        :original(method,p);
+      const record=await bridge.inspect({requestId:started.requestId});
+      assert.equal(record.status,expected);assert.equal(record.settled,true);
+      assert.equal(fixture.calls.filter(call=>call.method==='turn/start').length,1,'inspection never starts another turn');
+      fixture.host.request=original;
+    }finally{await bridge.close();}
+  }
+});
+
 test('start/cancel race does not start a turn after cancellation is requested',async()=>{
   let release;const gate=new Promise(resolve=>release=resolve);let entered;
   const enteredPromise=new Promise(resolve=>entered=resolve);

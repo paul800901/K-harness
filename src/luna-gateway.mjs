@@ -50,13 +50,14 @@ function createMcpServer(bridge,{geminiOnly=false,editGoal,resumeGoal}={}) {
     }
   });
   server.registerTool(`${prefix}_list`,{
-    description:`List unfinished K ${geminiOnly?'Gemini Flash':'Sol, Luna and Gemini Flash'} worker records for THIS conversation to find requestIds, including old unresolved jobs after restart. Use this when K shows waiting or unconfirmed workers but the requestId is unknown. K Gemini workers are NOT in Codex list_agents. No Chrome/browser is needed. These are last-known records, not proof that a process is alive; executionUnowned means this K instance does not own that execution, NOT completion or confirmed stop. Use ${prefix}_inspect with a returned requestId for details. Does not start, cancel, replay, acknowledge results or switch accounts.`,
+    description:`List unfinished K ${geminiOnly?'Gemini Flash':'Sol, Luna and Gemini Flash'} worker records for THIS conversation to find requestIds, including old unresolved jobs after restart. Use this when K shows waiting or unconfirmed workers but the requestId is unknown. K Gemini workers are NOT in Codex list_agents. No Chrome/browser is needed. These are last-known records, not proof that a process is alive; executionUnowned means this K instance does not own that execution, NOT completion or confirmed stop. Use ${prefix}_inspect with a returned requestId for the original task and details. Records with reconciliation already have a main-agent handling note; do not repeatedly investigate them without new evidence. A note is NOT native completion or stop proof. Does not start, cancel, replay, acknowledge results or switch accounts.`,
     inputSchema:z.strictObject({}),annotations:{readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false},
   },async()=>{
     try{
       const rows=await bridge.list(false);
       const workers=rows.filter(record=>record&&!record.settled&&(!geminiOnly||record.provider==='gemini')).map(record=>({
         ...Object.fromEntries(['requestId','provider','model','status','settled','executionUnowned','startedAt','lastActivityAt','lastReadAt'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]])),
+        ...(record.reconciliation?{reconciliation:{summary:record.reconciliation.summary,reviewedAt:record.reconciliation.reviewedAt}}:{}),
         ...(typeof record.error==='string'?{error:record.error.slice(0,500)}:{}),
       }));
       const value={workers};
@@ -70,6 +71,17 @@ function createMcpServer(bridge,{geminiOnly=false,editGoal,resumeGoal}={}) {
     args=>bridge.wait(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
   register(`${prefix}_inspect`,`Read existing worker state, last genuine activity, pending approval, non-destructive inspection and known partial output references without starting or replaying work. If requestId is unknown, first use ${prefix}_list; Codex list_agents is not the K Gemini worker list. No Chrome/browser is needed. K checks prolonged silence in the runtime and sends one attention notice per quiet episode; absence of output is not proof of a dead worker. Do not repeatedly poll. Inspect existing files before any explicitly authorized recovery.`,idSchema,
     args=>bridge.inspect(args),{readOnlyHint:true,idempotentHint:true,openWorldHint:false});
+  if(bridge.reconcile)server.registerTool(`${prefix}_reconcile`,{
+    description:`Record or correct this main agent's handling conclusion for an executionUnowned, unsettled Gemini historical job in THIS conversation. First use ${prefix}_inspect to read the original task, then inspect actual task files and relevant follow-up records with existing tools. Supply a concise summary and evidence naming what you actually checked and what remains unknown; an empty outputFiles array is not proof of no output, and a later review is not delivery acceptance. This moves the old job out of outstanding attention, but NEVER changes execution status, settled, acceptance or original evidence. It is NOT proof of completion or stop, cannot authorize handoff/replay or account switching, and does not start work or resume the goal. Identical calls are idempotent; a corrected conclusion replaces only the handling note, never original execution evidence. Failed checks must be reported as unchecked, not successful verification. Do not ask the user to manage requestIds or repeatedly poll the same historical job.`,
+    inputSchema:z.strictObject({requestId,summary:z.string().trim().min(1).max(2000),evidence:z.string().trim().min(1).max(4000)}),
+    annotations:{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false},
+  },async args=>{
+    try{
+      const value=await lunaResult(await bridge.reconcile(args));
+      // A handling note is not a worker completion acknowledgement.
+      return {structuredContent:value,content:[{type:'text',text:JSON.stringify(value)}]};
+    }catch(error){return {isError:true,content:[{type:'text',text:String(error?.message??error)+' Inspect the same requestId; do not replay work.'}]};}
+  });
   register(`${prefix}_cancel`,'Request cancellation of an existing worker task and read back its native state.',idSchema,
     args=>bridge.cancel(args),{readOnlyHint:false,destructiveHint:false,idempotentHint:true,openWorldHint:false});
   return server;

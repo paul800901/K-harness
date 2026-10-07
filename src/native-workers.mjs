@@ -24,7 +24,10 @@ export async function checkNativeWorkers(host,parentThreadId,ids,{stop=false}={}
    const metadata={lastReadAt,...(typeof thread.model==='string'?{model:thread.model}:{}),...(typeof thread.agentNickname==='string'?{agentNickname:thread.agentNickname}:{}),...(typeof thread.name==='string'?{name:thread.name}:{})};
    const last=thread.turns?.at(-1);
    if(thread.status?.type==='active'||last?.status==='inProgress')return {...result,...metadata,lastReadAt,status:'running'};
-   if(['idle','notLoaded'].includes(thread.status?.type))return {...result,...metadata,lastReadAt,status:last?.status==='interrupted'?'cancelled':last?.status==='failed'?'failed':'completed',settled:true};
+   if(['idle','notLoaded'].includes(thread.status?.type)){
+    if(['completed','interrupted','failed'].includes(last?.status))return {...result,...metadata,lastReadAt,status:last.status==='interrupted'?'cancelled':last.status,settled:true};
+    return {...result,...metadata,lastReadAt,error:'原生子代理最後回合狀態未確認。'};
+   }
    return {...result,...metadata,lastReadAt};
   }catch{return {...result,...(lastReadAt?{lastReadAt}:{}),error:'原生子代理狀態讀回失敗。'};}
  }));

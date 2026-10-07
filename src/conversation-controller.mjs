@@ -27,7 +27,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    uncertain||=disconnected;
    for(const worker of s.workers??[]){
     if(worker.kind==='command'||worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status))continue;
-    if(worker.executionUnowned===true){historicalUnconfirmed++;continue;}
+    if(worker.executionUnowned===true){if(!worker.reconciliation?.reviewedAt)historicalUnconfirmed++;continue;}
     if(disconnected||!['running','starting','pending'].includes(worker.status)){unconfirmed++;uncertain=true;}
     else if(worker.status==='running')running++;
    }
@@ -56,6 +56,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      status:unresolved?'unresolved':worker.status??(ended?'ended':'unknown'),
      settled:worker.settled===true||ended,
      ...(worker.executionUnowned===true?{executionUnowned:true}:{}),
+     ...(worker.reconciliation?{reconciliation:worker.reconciliation}:{}),
      lastActivityAt:worker.lastActivityAt??worker.activity?.lastEventAt,lastReadAt:worker.lastReadAt??worker.readAt,
      activity:worker.activity,startedAt:worker.startedAt,inspection:worker.inspection,lastToolName:worker.lastToolName??worker.activity?.lastToolName,
      error:safeError(worker.error)??safeError(activityTool?.error),

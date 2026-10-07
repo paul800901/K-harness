@@ -1,5 +1,5 @@
 import {createWorkActivity,claudeWorkActivity} from './work-activity.mjs';
-import {workerNoticeKey,workerNoticeCurrent,workerNoticeText} from './worker-watch.mjs';
+import {workerNoticeKey,workerNoticeCurrent,workerNoticeText,workerNeedsAttention} from './worker-watch.mjs';
 import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
@@ -167,7 +167,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     notifying=true;state.busy=true;activity.begin();state.status='working';
     const active=host,parent=state.threadId;
     const batch=[...workerQueue.values()];workerQueue.clear();
-    for(const record of batch)if(!record.inspection||record.settled)workerArmed.delete(record.requestId);
+    for(const record of batch)if(record.settled)workerArmed.delete(record.requestId);
     let sendAttempted=false,sendCompleted=false;
     try{
       const results=await Promise.all(batch.map(lunaResult));
@@ -178,7 +178,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
       const text=workerNoticeText(batch)+JSON.stringify(results);
       const event=appendMessage('user',text,`luna-completion-${batch.map(workerNoticeKey).join('-')}`);
-      event.kind='worker-completion';event.summary=`${batch.every(r=>r.provider==='codex')?'Codex':'K'} 子代理${batch.some(r=>!r.settled&&r.inspection)?'狀態待確認':'工作完成'}：${batch.map(r=>r.requestId).join('、')}`;
+      event.kind='worker-completion';event.summary=`${batch.every(r=>r.provider==='codex')?'Codex':'K'} 子代理${batch.some(r=>!r.settled)?'狀態待確認':'工作完成'}：${batch.map(r=>r.requestId).join('、')}`;
       sendAttempted=true;
       await active.start([{type:'text',text}]);
       sendCompleted=true;
@@ -209,7 +209,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     }
     if(state.artifacts.length!==before)void saveCurrent().catch(()=>{});
     const queued=workerQueue.get(record.requestId);if(queued&&!workerNoticeCurrent(queued,record))workerQueue.delete(record.requestId);
-    if(workerArmed.has(record.requestId)&&!workerNotifications[workerNoticeKey(record)]&&(record.settled||record.status==='failed'||record.inspection)&&!stopping&&!closing&&!opening){
+    if(workerArmed.has(record.requestId)&&!workerNotifications[workerNoticeKey(record)]&&(record.settled||workerNeedsAttention(record))&&!stopping&&!closing&&!opening){
       workerQueue.set(record.requestId,clone(record));scheduleWorkers();
     }
     changed();
@@ -466,10 +466,11 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       workerPolicy:state.workerPolicy,
       async start(args){workerArmed.add(args.requestId);return (await ensureBridge()).start(args);},
       inspect:args=>ensureBridge().then(value=>value.inspect(args)),
+      reconcile:args=>ensureBridge().then(value=>value.reconcile(args)),
       wait:args=>ensureBridge().then(value=>value.wait(args)),
       async cancel(args){disarm(args.requestId);return (await ensureBridge()).cancel(args);},
       // The gateway acknowledges only after the model-facing result is prepared successfully.
-      resultReady(args,result){if(result?.settled)disarm(args.requestId);else if(result?.inspection){workerNotifications[workerNoticeKey(result)]='delivery-attempted';const queued=workerQueue.get(args.requestId);if(queued&&workerNoticeKey(queued)===workerNoticeKey(result))workerQueue.delete(args.requestId);void saveCurrent().catch(()=>{});}},
+      resultReady(args,result){if(result?.settled)disarm(args.requestId);else if(workerNeedsAttention(result??{})){workerNotifications[workerNoticeKey(result)]='delivery-attempted';const queued=workerQueue.get(args.requestId);if(queued&&workerNoticeKey(queued)===workerNoticeKey(result))workerQueue.delete(args.requestId);void saveCurrent().catch(()=>{});}},
       list:args=>ensureBridge().then(value=>value.list(args)),
       accounts:()=>ensureBridge().then(value=>value.accounts()),
       async close(){const value=bridgeInstance??(bridgeInitPromise?await bridgeInitPromise.catch(()=>null):null);if(value){await value.close();if(bridgeInstance===value)bridgeInstance=null;}}

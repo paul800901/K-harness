@@ -27,6 +27,22 @@ test('child settling alone never completes the earlier waiting main message',()=
  a.observe(working());a.observe(completed('a',{workers:[{status:'completed',settled:true}]}));
  assert.equal(a.state.sequence,1);
 });
+test('unowned history does not block main completion, while owned unresolved work still does',()=>{
+ const historical=[
+  {status:'unresolved',settled:false,executionUnowned:true},
+  {status:'unresolved',settled:false,executionUnowned:true,reconciliation:{summary:'checked',evidence:'still unknown',reviewedAt:'2026-10-07T01:02:03.000Z'}},
+ ];
+ const onlyHistory=createCompletionAttention();onlyHistory.observe(working());onlyHistory.observe(completed('a',{workers:historical}));
+ assert.equal(onlyHistory.state.sequence,1,'annotated and unannotated unowned history does not block the main completion notice');
+ assert.equal(historical[0].settled,false);assert.equal(historical[0].status,'unresolved');
+ assert.equal(historical[1].settled,false);assert.equal(historical[1].status,'unresolved','a reconciliation note is not native settlement');
+
+ const mixed=createCompletionAttention(),owned={status:'unresolved',settled:false};
+ mixed.observe(working());mixed.observe(completed('a',{workers:[...historical,owned]}));
+ assert.equal(mixed.state.sequence,0,'owned unresolved work remains a blocker alongside old rows');
+ mixed.observe(working());mixed.observe(completed('a',{workers:historical}));
+ assert.equal(mixed.state.sequence,1,'after the owned work no longer blocks, the remaining history does not suppress completion');
+});
 test('deferred final worker check cannot publish stale worker state or premature completion',()=>{
  const a=createCompletionAttention();a.observe(working());
  a.observe(completed('a',{completionPending:true,workers:[{status:'running',settled:false}]}));

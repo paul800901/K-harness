@@ -631,13 +631,20 @@ for(const method of ['start','wait','inspect','cancel'])test(`manual ${method} s
   f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,1);
  }finally{await f.controller.close();}
 });
-test('unresolved observation does not consume final completion notification',async()=>{
+for(const status of ['failed','unresolved'])test(`${status} observation is a separate status notice and does not consume final completion`,async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'later',task:'bounded'});
-  const r={parentId:f.controller.state.threadId,requestId:'later',settled:false,status:'unresolved'};
-  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,1);
-  f.bridgeOptions.onChange({...r,settled:true,status:'completed',output:'done'});await waitFor(()=>f.host.startCalls.length===2);assert.equal(f.host.startCalls.length,2);
-  assert.equal(f.controller.state.messages.at(-1).kind,'worker-completion');
+  const r={parentId:f.controller.state.threadId,requestId:'later',settled:false,status};
+  f.bridgeOptions.onChange(r);f.bridgeOptions.onChange(r);
+  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
+  const attention=f.host.startCalls[1][0].text;assert.match(attention,/K 子代理狀態通知/);assert.match(attention,/不是完成通知/);assert.doesNotMatch(attention,/K 工人完成通知/);
+  assert.match(f.controller.state.messages.at(-1).summary,/狀態待確認/);assert.doesNotMatch(f.controller.state.messages.at(-1).summary,/工作完成/);
+  f.hostOptions.onMessage({type:'result',is_error:false});
+  f.bridgeOptions.onChange(r);f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,2,'repeated unknown observation uses the same status notice key');
+  const settled={...r,settled:true,status:'completed',output:'done'};
+  f.bridgeOptions.onChange(settled);await waitFor(()=>f.host.startCalls.length===3);
+  assert.match(f.host.startCalls[2][0].text,/K 工人完成通知/);assert.doesNotMatch(f.host.startCalls[2][0].text,/K 子代理狀態通知/);
+  f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onChange(settled);await tick();assert.equal(f.host.startCalls.length,3,'final completion is delivered once');
  }finally{await f.controller.close();}
 });
 test('pre-send result preparation failure keeps conversation usable without replay',async()=>{
@@ -1195,7 +1202,7 @@ for(const provider of ['gemini','codex'])test(`${provider} quiet notice wakes Cl
   await f.controller.open({});await f.controller.send({text:'synthetic long work'});await f.gatewayOptions.bridge.start({requestId:'quiet',task:'bounded'});
   const record={provider,parentId:f.controller.state.threadId,requestId:'quiet',status:'running',settled:false,inspection:{noticeId:'quiet-one',checkedAt:1000,lastActivityAt:0}};
   f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
-  assert.match(f.host.startCalls[1][0].text,/久無活動不等於卡死/);
+  assert.match(f.host.startCalls[1][0].text,/久無活動也不等於卡死/);
   f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,2);
   record.settled=true;record.status='completed';delete record.inspection;record.output='done';f.bridgeOptions.onChange(record);await waitFor(()=>f.host.startCalls.length===3);
   assert.match(f.host.startCalls[2][0].text,/工人完成通知/);

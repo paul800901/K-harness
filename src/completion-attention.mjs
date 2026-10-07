@@ -15,8 +15,8 @@ export function createCompletionAttention(){
    if(['failed','interrupted','stopping','offline','error','uncertain'].includes(state.status)){run.armed=false;return;}
    if(state.status!=='completed'||state.busy)return;
    if(state.completionPending||state.goalError||['starting','active','unknown'].includes(state.goal?.status))return;
-   const waiting=(state.workers??[]).some(w=>w.settled===false||
-    (w.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(w.status)));
+   const waiting=(state.workers??[]).some(w=>w.executionUnowned!==true&&(w.settled===false||
+    (w.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(w.status))));
    if(waiting){run.waitingForMain=true;return;}
    // A child settling is not the parent's final response. Wait for the parent
    // to resume and finish rather than announce its earlier waiting message.

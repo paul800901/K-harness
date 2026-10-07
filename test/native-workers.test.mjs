@@ -33,3 +33,28 @@ test('an interrupt acknowledgement does not falsely claim a child has stopped',a
  const [result]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
  assert.equal(result.status,'running');assert.equal(result.settled,false);
 });
+test('idle or notLoaded without an explicit terminal latest turn remains unresolved',async()=>{
+ for(const variant of [
+  {threadStatus:'idle',turns:[]},
+  {threadStatus:'notLoaded',turns:[]},
+  {threadStatus:'idle',turns:[{id:'child-turn',status:'queued'}]},
+  {threadStatus:'notLoaded',turns:[{id:'child-turn',status:'unknown'}]},
+ ]){
+  const calls=[];
+  const host={async request(method,p){calls.push({method,p});if(method==='thread/backgroundTerminals/list')return {data:[]};return {thread:{id:p.threadId,parentThreadId:'parent',status:{type:variant.threadStatus},turns:variant.turns}};}};
+  const [result]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
+  assert.equal(result.status,'unresolved',JSON.stringify(variant));assert.equal(result.settled,false,JSON.stringify(variant));
+  assert.equal(result.error,'原生子代理最後回合狀態未確認。');
+  assert.equal(calls.some(call=>call.method==='turn/interrupt'),false,'no explicit inProgress turn means no interrupt or stop claim');
+ }
+});
+test('idle or notLoaded settles only explicit completed, interrupted, or failed latest turns',async()=>{
+ for(const [threadStatus,turnStatus,expected] of [
+  ['idle','completed','completed'],['notLoaded','completed','completed'],
+  ['idle','interrupted','cancelled'],['notLoaded','failed','failed'],
+ ]){
+  const host={async request(_method,p){return {thread:{id:p.threadId,parentThreadId:'parent',status:{type:threadStatus},turns:[{id:'child-turn',status:turnStatus}]}};}};
+  const [result]=await checkNativeWorkers(host,'parent',['child']);
+  assert.equal(result.status,expected);assert.equal(result.settled,true);
+ }
+});

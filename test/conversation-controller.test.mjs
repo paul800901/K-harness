@@ -94,14 +94,18 @@ test('seven live workers remain counted even when another room has unconfirmed w
 test('unowned historical work remains unresolved but is separate from current execution and waiting',async()=>{
  const f=await fixture(),c=f.controller;try{
   const a=await c.open({model:codexModel}),source=f.room(a.threadId);
-  source.state.workers=[{requestId:'old',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true},
-   {requestId:'live',provider:'gemini',status:'running',settled:false},{requestId:'unknown',provider:'gemini',status:'unresolved',settled:false},
+  const note={summary:'人工查核註記：原結果仍未知。',evidence:'假資料依據；不證明完成或停止。',reviewedAt:'2026-10-07T01:02:03.000Z'};
+  source.state.workers=[{requestId:'old',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true,reconciliation:note},
+   {requestId:'old-unreviewed',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true},
+   {requestId:'live',provider:'gemini',status:'running',settled:false},{requestId:'unknown',provider:'gemini',status:'unresolved',settled:false,reconciliation:note},
    {requestId:'ended',status:'completed',settled:true,executionUnowned:true}];source.notify();
   assert.deepEqual(c.state.workerActivity,{running:1,uncertain:true,unconfirmed:1,historicalUnconfirmed:1});
-  const old=c.state.workerDetails.find(row=>row.requestId==='old');assert.equal(old.executionUnowned,true);assert.equal(old.settled,false);assert.equal(old.status,'unresolved');
+  const old=c.state.workerDetails.find(row=>row.requestId==='old');assert.equal(old.executionUnowned,true);assert.equal(old.settled,false);assert.equal(old.status,'unresolved');assert.deepEqual(old.reconciliation,note);
+  const unreviewed=c.state.workerDetails.find(row=>row.requestId==='old-unreviewed');assert.equal(unreviewed.status,'unresolved');assert.equal(unreviewed.reconciliation,undefined);
+  const ownedWithNote=c.state.workerDetails.find(row=>row.requestId==='unknown');assert.equal(ownedWithNote.status,'unresolved');assert.equal(ownedWithNote.settled,false);assert.deepEqual(ownedWithNote.reconciliation,note);
   source.state.workers=source.state.workers.filter(row=>row.requestId==='old');source.notify();
-  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0,historicalUnconfirmed:1});
-  source.state.status='offline';source.notify();assert.equal(c.state.workerActivity.historicalUnconfirmed,1);
+  assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0});
+  source.state.status='offline';source.notify();assert.equal(c.state.workerActivity.historicalUnconfirmed,undefined);
   assert.equal(source.calls.some(([name])=>['workers','stop','send'].includes(name)),false,'Projection neither polls nor stops/replays work');
  }finally{await c.close();}
 });

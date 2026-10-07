@@ -108,11 +108,31 @@ test('queue exposes Luna as the reason pending messages cannot drain',async()=>{
   active.state.workers=[{settled:false,status:'running'}];
   try{
     await queue.enqueue({text:'wait for worker'});
-    assert.equal(queue.state.queueWaitingReason,'等待 Luna 完成');
+    assert.equal(queue.state.queueWaitingReason,'等待子代理完成');
     active.state.workers[0].settled=true;active.state.workers[0].status='completed';active.state.status='completed';queue.schedule();
     await until(()=>active.calls.length===1);
     assert.equal(queue.state.queueWaitingReason,null);
   }finally{await queue.close();}
+});
+
+test('historical unowned Gemini records do not block queued work, while owned unresolved workers still do',async()=>{
+ const base=await root(),active=controller({status:'completed'}),queue=queueFor(base,active);await queue.load('queue-session');
+ active.state.workers=[{requestId:'old-gemini',provider:'gemini',executionUnowned:true,settled:false,status:'unresolved'}];
+ try{
+  await queue.enqueue({text:'new work despite historical unknown'});
+  await until(()=>active.calls.length===1);
+  assert.deepEqual(active.calls,[['send','new work despite historical unknown']]);
+  assert.equal(queue.state.queueWaitingReason,null);
+
+  active.state.workers.push({requestId:'current-worker',provider:'gemini',executionUnowned:false,settled:false,status:'unresolved'});
+  await queue.enqueue({text:'wait for owned worker'});
+  assert.equal(queue.state.queueWaitingReason,'等待子代理完成');
+  await new Promise(resolve=>setTimeout(resolve,150));
+  assert.equal(active.calls.length,1,'an owned unresolved worker still holds the queue');
+  active.state.workers[1].settled=true;active.state.workers[1].status='completed';queue.schedule();
+  await until(()=>active.calls.length===2);
+  assert.deepEqual(active.calls,[['send','new work despite historical unknown'],['send','wait for owned worker']]);
+ }finally{await queue.close();}
 });
 
 test('editing holds a queued message and keeps FIFO, identity and attachments on save',async()=>{
@@ -166,6 +186,22 @@ test('sending and uncertain inputs cannot be edited or replayed',async()=>{
  }finally{await queue.close();}
 });
 
+test('a controller-confirmed not-sent result stays queued while ordinary send errors remain uncertain',async()=>{
+ const base=await root(),active=controller({status:'completed',send:async()=>({sent:false})}),queue=queueFor(base,active);let uncertainQueue;await queue.load('queue-session');
+ try{
+  const stopped=await queue.enqueue({text:'confirmed not sent'});await until(()=>queue.state.queuedMessages[0]?.status==='queued'&&queue.state.queuePaused);
+  assert.equal(queue.state.queuedMessages[0].id,stopped.id);
+  assert.equal(queue.state.queuedMessages[0].status,'queued');
+  assert.equal(queue.state.queuePaused,true);
+
+  const uncertainController=controller({status:'completed',send:async()=>{throw Error('transport unknown');}});uncertainController.state.threadId='second-session';uncertainQueue=queueFor(base,uncertainController);await uncertainQueue.load('second-session');
+  const unknown=await uncertainQueue.enqueue({text:'unknown outcome'});await until(()=>uncertainQueue.state.queuedMessages[0]?.status==='uncertain'&&uncertainQueue.state.queuePaused);
+  assert.equal(uncertainQueue.state.queuedMessages[0].id,unknown.id);
+  assert.equal(uncertainQueue.state.queuedMessages[0].status,'uncertain');
+  assert.equal(uncertainQueue.state.queuePaused,true);
+ }finally{await queue.close();await uncertainQueue?.close();}
+});
+
 test('edit validation does not lose the original or bypass the editing step',async()=>{
  const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
  try{
@@ -208,6 +244,27 @@ test('failed edit persistence restores the held original and never dispatches it
 test('queue waits for native goal continuation and pending goal commands',async()=>{
  const base=await root(),active=controller(),queue=queueFor(base,active);await queue.load('queue-session');
  try{active.state.capabilities={goalContinuesWhileIdle:true};active.state.goal={status:'active'};await queue.enqueue({text:'after goal'});await new Promise(r=>setTimeout(r,150));assert.equal(active.calls.length,0);active.state.goal=null;active.state.goalPending=true;queue.schedule();await new Promise(r=>setTimeout(r,150));assert.equal(active.calls.length,0);active.state.goalPending=false;queue.schedule();await until(()=>active.calls.length===1);}finally{await queue.close();}
+});
+
+for(const change of ['goalPending','busy'])test(`queue rechecks ${change} after persisting sending state and keeps pre-dispatch row queued`,async t=>{
+ const base=await root(),active=controller({status:'completed'}),queue=queueFor(base,active);await queue.load('queue-session');
+ const target=path.join(base,'.runtime/input-queues/queue-session.json'),rename=fs.rename;let release,entered,writes=0;
+ const held=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+ const mock=t.mock.method(fs,'rename',async(from,to)=>{if(to===target&&++writes===2){entered();await held;}return rename(from,to);});syncBuiltinESMExports();
+ try{
+  await queue.enqueue({text:'must remain queued'});await started;
+  if(change==='goalPending')active.state.goalPending=true;
+  else{active.state.busy=true;active.state.status='working';}
+  release();
+  await until(()=>queue.state.queuedMessages[0]?.status==='queued'&&queue.state.queuePaused);
+  assert.deepEqual(active.calls,[],'the core must not be called after readiness changes');
+  assert.equal(queue.state.queuedMessages[0].status,'queued','pre-dispatch failure is not uncertain');
+  assert.equal(queue.state.queuePaused,true,'resume remains an explicit user action');
+  if(change==='goalPending')active.state.goalPending=false;
+  else{active.state.busy=false;active.state.status='completed';}
+  await queue.action({action:'resume'});await until(()=>active.calls.length===1);
+  assert.deepEqual(active.calls,[['send','must remain queued']]);
+ }finally{release();mock.mock.restore();syncBuiltinESMExports();await queue.close();}
 });
 
 test('idle native Claude goal allows the next explicit queued input to continue',async()=>{
