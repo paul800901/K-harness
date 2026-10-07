@@ -1,12 +1,11 @@
 import {fileURLToPath} from 'node:url';
-import {officialClaudeLoginUrl} from '../shared/claude-login-url.mjs';
-import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 import {createTaskbarAttentionController,createWindowFocusNotifier} from './taskbar-attention.mjs';
 
-export function createSubscriptionLoginWindowHandler(openExternal){
+export function createExternalLinkWindowHandler(openExternal){
  return ({url})=>{
-  const official=officialClaudeLoginUrl(url)||officialCodexLoginUrl(url);
-  if(official)void openExternal(official).catch(()=>{});
+  // Web links use the system browser, without a K-specific site allowlist.
+  // Never turn a Markdown destination into an arbitrary OS protocol launch.
+  try{if(['http:','https:'].includes(new URL(url).protocol))void openExternal(url).catch(()=>{});}catch{}
   return {action:'deny'};
  };
 }
@@ -103,7 +102,7 @@ export async function createElectronWorkbench({electron,servicesFactory,browserG
   ownerSession.setPermissionRequestHandler(permissionHandlers.request);
   ownerSession.setPermissionCheckHandler(permissionHandlers.check);
   ownerSession.setDisplayMediaRequestHandler(permissionHandlers.display);
-  owner.webContents.setWindowOpenHandler(createSubscriptionLoginWindowHandler(url=>electron.shell.openExternal(url)));
+  owner.webContents.setWindowOpenHandler(createExternalLinkWindowHandler(url=>electron.shell.openExternal(url)));
   owner.webContents.on('will-navigate',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   owner.webContents.on('will-redirect',(event,url)=>{if(new URL(url).origin!==services.app.origin)event.preventDefault();});
   await owner.webContents.loadURL(services.app.createLaunchUrl());
