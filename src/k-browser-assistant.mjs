@@ -2,7 +2,7 @@ import {readFile,mkdir,realpath,stat} from 'node:fs/promises';
 import path from 'node:path';
 import {createExternalBrowserGateway} from './external-browser-gateway.mjs';
 import {createChromeExtensionContext} from './chrome-extension-context.mjs';
-import {openChromeConnectPageViaNative} from './chrome-native-connection.mjs';
+import {openChromeConnectPageViaNative,listChromeProfiles,readChromeProfileDescriptor} from './chrome-native-connection.mjs';
 
 // Trusted owner configuration only, never a model-supplied endpoint or profile.
 export async function loadKBrowserAssistant({vault}){
@@ -14,7 +14,12 @@ export async function loadKBrowserAssistant({vault}){
  await mkdir(userDataDir,{recursive:true});
  if((await realpath(userDataDir)).toLowerCase()!==userDataDir.toLowerCase())throw Error('Chrome profile cannot redirect outside the owner vault.');
  // User input elsewhere on the computer is not a browser stop command.
- return options=>createExternalBrowserGateway({...options,launchExternalContext:({mode})=>
-  createChromeExtensionContext({mode,extensionId:config.extensionId,openConnectPage:url=>openChromeConnectPageViaNative({descriptorPath:path.join(root,'k-browser-native-link.json')},url)})});
+ const descriptorPath=path.join(root,'k-browser-native-link.json');
+ return options=>createExternalBrowserGateway({...options,listExternalProfiles:()=>listChromeProfiles({descriptorPath}),launchExternalContext:async({mode,profileId})=>{
+  // Snapshot one native instance for this context. A different worker starting
+  // later cannot silently retarget an already selected session.
+  const descriptor=await readChromeProfileDescriptor({descriptorPath,profileId});
+  return createChromeExtensionContext({mode,extensionId:config.extensionId,openConnectPage:url=>openChromeConnectPageViaNative({descriptor},url)});
+ }});
 }
 

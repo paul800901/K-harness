@@ -1,5 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import {createCodexHostDiagnostics} from './codex-host-diagnostics.mjs';
 
 // Codex validates the transport even for disabled MCP entries. A bare
 // {enabled:false} only worked when an older home supplied the missing command.
@@ -14,6 +15,8 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
   signal?.throwIfAborted();
   let abortClose;
   const child = spawnImpl(executable, ['app-server','--stdio','-c','check_for_update_on_startup=false'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const diagnostics=createCodexHostDiagnostics({home:env?.CODEX_HOME,pid:child.pid,executable});
+  child.stderr.on('data',diagnostics.stderr);
   child.stderr.resume();
   const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false;
   const startup = new Map(); const startupWaiters = new Set();
@@ -60,7 +63,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
           else send({id:message.id,result});
         }).catch(()=>{if(serverRequests.delete(message.id)&&!stopped)send({id:message.id,error:{code:-32603,message:'K request handler failed; permission not granted.'}});});
       }
-      else onEvent(message);
+      else { diagnostics.warning(message); onEvent(message); }
       return;
     }
     const p = pending.get(message.id); if (!p) return;

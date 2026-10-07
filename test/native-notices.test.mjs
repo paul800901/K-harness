@@ -73,3 +73,12 @@ test('unknown native notices and other providers retain their complete original 
  const message="You've hit your session limit · resets 5:30pm (Asia/Taipei)";
  assert.equal(nativeNotices.localizeNativeNotice(message,'codex'),message);
 });
+
+
+test('diagnostic SQLite warning stays in raw records, not the everyday notice banner',()=>{
+ const record={id:'logs',kind:'warning',message:"Codex couldn't save diagnostic logs to its local database. Use /feedback with logs included before closing Codex, or run `codex doctor` for diagnostics."};
+ const failure={id:'task',kind:'warning',message:'Could not save conversation history'};
+ const notices=[record,failure],before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices),[failure]);
+ assert.deepEqual(notices,before);
+});

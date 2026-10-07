@@ -25,7 +25,7 @@ async function fixture(settings={}){
   await mkdir(directory);await mkdir(profile);
   const servers=[],created=[],launched=[];
   async function childFactory(childOptions){
-    const mode=path.basename(childOptions.profile).replace('external-','');created.push({mode,options:childOptions});let human=false,busy=false;
+    const childName=path.basename(childOptions.profile).replace('external-',''),mode=childName.split('-')[0];created.push({mode,options:childOptions});let human=false,busy=false;
     const secret=`child-secret-${mode}`;
     const server=createServer(async(req,res)=>{
       const chunks=[];for await(const chunk of req)chunks.push(chunk);const m=JSON.parse(Buffer.concat(chunks));
@@ -41,7 +41,7 @@ async function fixture(settings={}){
       if(m.method==='tools/call'&&m.params.name==='hold'){
         busy=true;await new Promise(resolve=>setTimeout(resolve,120));busy=false;return reply({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:'finished'}]}});
       }
-      if(m.method==='tools/call')return reply({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:`${mode}:${m.params.name}`}]}});
+      if(m.method==='tools/call')return reply({jsonrpc:'2.0',id:m.id,result:{content:[{type:'text',text:`${childName}:${m.params.name}`}]}});
       return reply({jsonrpc:'2.0',id:m.id,result:{}});
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));servers.push(server);
@@ -49,7 +49,7 @@ async function fixture(settings={}){
     const gateway={aiMcpServer:{type:'http',url:`http://127.0.0.1:${port}/mcp`,headers:{Authorization:`Bearer ${secret}`}},async getState(){return {available:true,busy,mode:human?'human':'ai'};},getControlSnapshot(){return {available:true,busy,mode:human?'human':'ai'};},async humanRequest(){return new Response('{}');},async ownerPresentation(){return {}},async close(){created.at(-1).gatewayClosed=true;await new Promise(resolve=>server.close(resolve));},setHuman(value){human=value;}};
     created.at(-1).gateway=gateway;return gateway;
   }
-  const gateway=await createExternalBrowserGateway({directory,profile,childGatewayFactory:childFactory,launchExternalContext:async options=>{launched.push(options);return {};}});
+  const gateway=await createExternalBrowserGateway({directory,profile,childGatewayFactory:childFactory,...(settings.profiles?{listExternalProfiles:async()=>structuredClone(settings.profiles)}:{}),launchExternalContext:async options=>{launched.push(options);return {};}});
   const send=(message)=>fetch(gateway.aiMcpServer.url,{method:'POST',headers:{...gateway.aiMcpServer.headers,'Content-Type':'application/json',Accept:'application/json, text/event-stream'},body:JSON.stringify(message)});
   const call=(id,name,args={})=>send({jsonrpc:'2.0',id,method:'tools/call',params:{name,arguments:args}}).then(read);
   return {root,directory,profile,gateway,servers,created,launched,send,call};
@@ -143,5 +143,26 @@ test('disconnected browser selection reports recovery rather than human takeover
   f.created[0].gateway.getState=async()=>({available:false,busy:false,mode:'human',recoveryRequired:true});
   const reply=await f.call(2,'browser_session',{mode:'regular'});
   assert.equal(reply.result.isError,true);assert.match(reply.result.content[0].text,/連線已中止/);assert.match(reply.result.content[0].text,/不會自動重送/);
+ }finally{await closeFixture(f);}
+});
+
+test('profiles are discoverable on demand, ambiguous selection fails and four targets stay distinct and pinned',async()=>{
+ const ids=['a','b','c','d'].map(c=>c.repeat(32));
+ const profiles=ids.map(profileId=>({profileId,connected:true,modes:['regular','incognito']}));
+ const f=await fixture({profiles});
+ try{
+  const listing=await f.call(1,'browser_profiles');assert.equal(JSON.parse(listing.result.content[0].text).profiles.length,4);assert.equal(f.created.length,0);
+  assert.equal((await f.call(2,'browser_session',{mode:'regular'})).result.isError,true);assert.equal(f.created.length,0);
+  for(let i=0;i<4;i++){
+   const selected=await f.call(10+i*2,'browser_session',{mode:'regular',profileId:ids[i]});assert.match(selected.result.content[0].text,new RegExp(ids[i]));
+   assert.match(JSON.stringify(await f.call(11+i*2,'browser_evaluate')),new RegExp(`regular-${ids[i]}:browser_evaluate`));
+   assert.equal(f.launched.at(-1).profileId,ids[i]);assert.equal((await f.gateway.getState()).profileId,ids[i]);
+  }
+  profiles.push({profileId:'e'.repeat(32),connected:true,modes:['regular']});
+  assert.match(JSON.stringify(await f.call(30,'browser_session',{mode:'regular'})),new RegExp(ids[3]));
+  assert.equal(f.created.length,4,'new registration cannot silently retarget a working session');
+  const failed=await f.call(31,'browser_session',{mode:'regular',profileId:'f'.repeat(32)});assert.equal(failed.result.isError,true);assert.equal((await f.gateway.getState()).selectedMode,null);
+  assert.equal((await f.call(32,'browser_evaluate')).result.isError,true,'failed explicit selection leaves no prior implicit fallback');
+  assert.ok((await f.call(33,'browser_session',{mode:'regular',profileId:'../../secret'})).error);
  }finally{await closeFixture(f);}
 });

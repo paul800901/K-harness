@@ -20,15 +20,17 @@ function event() {
 function mockChrome({ windows = [], incognitoAllowed = true } = {}) {
   const ports = [];
   let port;
-  const calls = { hosts: [], tabs: [], windows: [], windowQueries: [] };
+  const stored = {};
+  const calls = { hellos: [], hosts: [], tabs: [], windows: [], windowQueries: [] };
   const chrome = {
+    storage: {local:{async get(){return stored;},async set(value){Object.assign(stored,value);}}},
     runtime: {
       id: 'abcdefghijklmnopabcdefghijklmnop',
       getURL: path => `chrome-extension://abcdefghijklmnopabcdefghijklmnop/${path}`,
       onStartup: event(),
       connectNative(host) {
         calls.hosts.push(host);
-        const next = { onMessage: event(), onDisconnect: event(), messages: [], postMessage(message) { this.messages.push(message); } };
+        const next = { onMessage: event(), onDisconnect: event(), messages: [], postMessage(message) { if(message.type==='profileHello')calls.hellos.push(message);else this.messages.push(message); } };
         ports.push(next);
         port ??= next;
         return next;
@@ -166,4 +168,26 @@ test('browser startup reconnects only when the native port is absent', async () 
   assert.deepEqual(mock.calls.hosts, [K_NATIVE_HOST, K_NATIVE_HOST]);
   mock.chrome.runtime.onStartup.emit();
   assert.deepEqual(mock.calls.hosts, [K_NATIVE_HOST, K_NATIVE_HOST], 'an existing port must not be duplicated');
+});
+
+
+test('one local identity persists across worker recreation, different profiles have different identities',async()=>{
+ const {NativeConnection}=await nativeConnectionModule();
+ const a=mockChrome(),b=mockChrome({incognitoAllowed:false});
+ new NativeConnection(a.chrome);new NativeConnection(b.chrome);
+ await waitFor(()=>a.calls.hellos.length===1&&b.calls.hellos.length===1);
+ assert.match(a.calls.hellos[0].profileId,/^[a-f0-9]{32}$/);
+ assert.notEqual(a.calls.hellos[0].profileId,b.calls.hellos[0].profileId);
+ assert.equal(b.calls.hellos[0].incognitoAllowed,false);
+ new NativeConnection(a.chrome);
+ await waitFor(()=>a.calls.hellos.length===2);
+ assert.equal(a.calls.hellos[0].profileId,a.calls.hellos[1].profileId);
+});
+
+test('failed local storage identity is not cached forever; explicit reconnect can register after recovery',async()=>{
+ const {NativeConnection}=await nativeConnectionModule();const mock=mockChrome();let fail=true;
+ const get=mock.chrome.storage.local.get;mock.chrome.storage.local.get=async(...args)=>{if(fail)throw Error('fake local storage unavailable');return get(...args);};
+ const connection=new NativeConnection(mock.chrome);await new Promise(r=>setTimeout(r,20));assert.equal(mock.calls.hellos.length,0);
+ mock.port.onDisconnect.emit();fail=false;connection.reconnect();await waitFor(()=>mock.calls.hellos.length===1);
+ assert.match(mock.calls.hellos[0].profileId,/^[a-f0-9]{32}$/);assert.equal(mock.calls.hosts.length,2);
 });

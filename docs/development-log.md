@@ -1,6 +1,8 @@
 # K 最新工程交接索引
 
+- 2026-10-07：[Gemini 與聊天室／Chrome／Codex 修正合併驗證](gemini-k-fixes-integration-20261007.md)：兩聊天協調先套用而保持 K 關閉，再整合；合併工作樹 964/964、真 Electron 隱藏連結／複製假資料回合及真正 Opus 5.5 整合複查通過。固定候選、正式套用與真 profile 收尾狀態另見本紀錄，不將測試當成正式成功。
 - 2026-10-07：[Gemini 指令輸出消失與 PATHEXT 修正](gemini-command-pathext-20261007.md)：重現 PS5.1／7 缺少 PATHEXT 時丟失输出／退出碼、假檔延遲出現；共用 Gemini 主／工人 env 僅補回 PATHEXT，不擴權或改其他供應商。真 Flash 指令及工作區 Skill 假資料讀回、定向52/52、低並行全套951/951、真正Opus中途與收尾複查通過。預設並行一項既有時序測試不穩、Skill／窗口證據界線保留；候選尚未正式套用或push，不中止現有工作。
+- 2026-10-07：[聊天室網頁超連結修復](chat-links-20261007.md)：移除 K 自加的官方登入網站限定，一般 HTTP/S 連結原樣交預設瀏覽器；不增核准／設定。舊版真 Electron 點擊重現失敗，修後5/5、定向8/8、來源與固定候選各951/951及真正Opus複查通過；程式c7bb4ce已準備，正式仍e068ffa且執行中，未部署／重啟／push。等待本人停止 K，實際瀏覽器與發布界線見紀錄。
 
 - 2026-10-07：[子代理協調全流程與舊工單收尾](worker-coordination-reconciliation-20261007.md)：對照 Codex／OpenCode 公開程式與 Claude 官方文件；補主代理查核註記、歷史不阻塞、原生終態嚴格讀回、未知通知不吃掉後續完成。合成 gateway／UI／真正 Luna 實測、來源950/950及真正Opus三輪複查完成；另修排隊保存時目標競態及未送出誤標未知。南區已部署e068ffa並正常重開；來源／固定候選各950/950、79產物與真私人HTTPS兩尺寸讀回、380筆原工單不變驗證通過。42,311保留檔一致、五帳號與手機登入保留；程式已推目前公開庫精確讀回，未恢復／重派工作，東區不動。
 
@@ -316,3 +318,7 @@
 - 2026-10-01 Git 交付已正式套用：508/508、中文新路徑原生啟閉、正式 health=native、GitHub tag `k-r3-git-20261001` 推送及重新 clone 讀回完成；完整失敗／修復／跨機限制見 [工程紀錄](git-install-update-20261001.md)。
 
 - 2026-10-03：Antigravity CLI Flash worker 停在階段 0；空 home 仍沿用登入，固定 Windows home 的工作區 deny／plan 不能限制內外寫檔。僅調查文件與 5 次 live 證據、529/529 回歸；未接入或部署，見 [antigravity-worker-20261003](antigravity-worker-20261003.md)。
+
+## 2026-10-07 南區三項診斷後修正候選（未部署）
+
+- 詳見 [k-fixes-candidate-20261007.md](k-fixes-candidate-20261007.md)：候選程式 c894221，連結左／右鍵、N profile獨立路由、限量Codex診斷；最終963/963、真正Opus5.5兩輪；SQLite根因仍未知，三真profile未驗收。依使用者要求先停，不部署／重啟／停止工作／push。

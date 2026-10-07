@@ -148,18 +148,17 @@ async function writeDiagnostic(diagnosticPath,startedAt,{stage,errorCode=null}){
  }catch{}
 }
 
-async function writeDescriptor(config,descriptor){
+export async function writeDescriptor(config,descriptor,{isClosing=()=>false}={}){
+ if(isClosing())return false;
  const info=await stat(path.dirname(config.descriptorPath));if(!info.isDirectory())throw new Error('Descriptor directory is invalid.');
  try{const current=await lstat(config.descriptorPath);if(current.isSymbolicLink()||!current.isFile())throw new Error('Descriptor target is unsafe.');}catch(error){if(error.code!=='ENOENT')throw error;}
  const temporary=`${config.descriptorPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
- await writeFile(temporary,JSON.stringify(descriptor),{flag:'wx',mode:0o600});await rename(temporary,config.descriptorPath);
+ await writeFile(temporary,JSON.stringify(descriptor),{flag:'wx',mode:0o600});
+ if(isClosing())return false;
+ await rename(temporary,config.descriptorPath);return true;
 }
 
-async function markDescriptorDisconnected(config,token,pid){
- try{const current=JSON.parse(await readFile(config.descriptorPath,'utf8'));if(current?.token===token&&current?.pid===pid)await writeDescriptor(config,{version:1,connected:false,pid});}catch{}
-}
-
-export async function startNativeHost({config,stdin=process.stdin,stdout=process.stdout,verifyParent,checkParent=inspectChromeParent,requestTimeoutMs=REQUEST_TIMEOUT_MS,diagnosticPath=DEFAULT_DIAGNOSTIC_PATH,startedAt=process.hrtime.bigint()}={}){
+export async function startNativeHost({config,stdin=process.stdin,stdout=process.stdout,verifyParent,checkParent=inspectChromeParent,requestTimeoutMs=REQUEST_TIMEOUT_MS,diagnosticPath=DEFAULT_DIAGNOSTIC_PATH,startedAt=process.hrtime.bigint(),writeDescriptorImpl=writeDescriptor}={}){
  const safeConfig=validateHostConfig(config);
  await writeDiagnostic(diagnosticPath,startedAt,{stage:'config_loaded'});
  let parentResult;
@@ -174,17 +173,21 @@ export async function startNativeHost({config,stdin=process.stdin,stdout=process
  const token=randomBytes(32).toString('hex'),pending=new Map(),clients=new Set(),decoder=new NativeMessageDecoder();
  const httpServer=createServer((_req,res)=>res.writeHead(404).end());
  const wsServer=new WebSocketServer({noServer:true,maxPayload:MAX_WEBSOCKET_MESSAGE_BYTES});
- let closing=false,descriptorWritten=false,doneResolve;
+ let closing=false,profileId=null,incognitoAllowed=false,registering=false,doneResolve,helloTimer;
  const done=new Promise(resolve=>{doneResolve=resolve;});
  const expectedHostForPort=port=>`127.0.0.1:${port}`;
  const replyToOwner=(ws,message)=>{if(ws.readyState===1)ws.send(JSON.stringify(message));};
  const rejectPendingForSocket=ws=>{for(const [id,item] of pending){if(item.ws===ws){clearTimeout(item.timer);pending.delete(id);}}};
  function receiveOwnerMessage(ws,raw){
   let message;try{message=JSON.parse(raw.toString());}catch{replyToOwner(ws,{id:null,ok:false,error:'Invalid request.'});return;}
+  if(message?.type==='status'&&Object.keys(message).sort().join(',')==='id,type'&&typeof message.id==='string'){
+   replyToOwner(ws,{id:message.id,ok:!!profileId,profileId,incognitoAllowed});return;
+  }
   if(!message||typeof message!=='object'||Array.isArray(message)||Object.keys(message).sort().join(',')!=='id,type,url'||typeof message.id!=='string'||!/^[A-Za-z0-9_-]{1,128}$/.test(message.id)||message.type!=='openConnectPage'){
    replyToOwner(ws,{id:typeof message?.id==='string'?message.id:null,ok:false,error:'Unsupported request.'});return;
   }
   let url;try{url=validateConnectUrl(message.url,safeConfig.extensionId);}catch{replyToOwner(ws,{id:message.id,ok:false,error:'Connect URL rejected.'});return;}
+  if(!profileId||new URL(url).searchParams.get('mode')==='incognito'&&!incognitoAllowed){replyToOwner(ws,{id:message.id,ok:false,error:'Profile or mode unavailable.'});return;}
   if(pending.has(message.id)){replyToOwner(ws,{id:message.id,ok:false,error:'Request id is already active.'});return;}
   const timer=setTimeout(()=>{const item=pending.get(message.id);if(!item)return;pending.delete(message.id);replyToOwner(item.ws,{id:message.id,ok:false,error:'Extension response timed out.'});},requestTimeoutMs);
   pending.set(message.id,{ws,timer});
@@ -196,6 +199,20 @@ export async function startNativeHost({config,stdin=process.stdin,stdout=process
   await new Promise((resolve,reject)=>{stdout.once('drain',resolve);stdout.once('error',reject);});
  }
  function receiveNativeMessage(message){
+  if(closing)return;
+  if(message?.type==='profileHello'){
+   if(profileId||registering||Object.keys(message).sort().join(',')!=='incognitoAllowed,profileId,type'||!/^[a-f0-9]{32}$/.test(message.profileId??'')||typeof message.incognitoAllowed!=='boolean'){void stop();return;}
+   clearTimeout(helloTimer);
+   registering=true;profileId=message.profileId;incognitoAllowed=message.incognitoAllowed;
+   const port=httpServer.address().port;
+   const profileConfig={...safeConfig,descriptorPath:`${safeConfig.descriptorPath}.${profileId}.json`};
+   void (async()=>{
+    const published=await writeDescriptorImpl(profileConfig,{version:2,profileId,incognitoAllowed,endpoint:`ws://127.0.0.1:${port}/connect`,token,pid:process.pid},{isClosing:()=>closing});
+    if(!published||closing)return;
+    await writeDiagnostic(`${diagnosticPath}.${profileId}.json`,startedAt,{stage:'ready'});
+   })().catch(async()=>{if(closing)return;await writeDiagnostic(diagnosticPath,startedAt,{stage:'descriptor_write',errorCode:'descriptor_write_failed'});await stop();});
+   return;
+  }
   if(!message||typeof message!=='object'||Array.isArray(message)||typeof message.id!=='string'||typeof message.ok!=='boolean')return;
   const item=pending.get(message.id);if(!item)return;
   pending.delete(message.id);clearTimeout(item.timer);
@@ -203,12 +220,14 @@ export async function startNativeHost({config,stdin=process.stdin,stdout=process
   else replyToOwner(item.ws,{id:message.id,ok:false,error:typeof message.error==='string'?message.error.slice(0,512):'Extension rejected the request.'});
  }
  const stop=async()=>{
-  if(closing)return done;closing=true;
+  if(closing)return done;closing=true;clearTimeout(helloTimer);
   for(const [id,item] of pending){clearTimeout(item.timer);replyToOwner(item.ws,{id,ok:false,error:'Native host disconnected.'});}
   pending.clear();for(const ws of clients)ws.terminate();
   await new Promise(resolve=>{try{wsServer.close(()=>resolve());}catch{resolve();}});
   await new Promise(resolve=>{if(!httpServer.listening)return resolve();httpServer.close(()=>resolve());});
-  if(descriptorWritten)await markDescriptorDisconnected(safeConfig,token,process.pid);
+  // Do not write on shutdown: a newer instance may already own this profile's
+  // slot. On-demand authenticated status distinguishes a stale slot from live.
+  stdin.destroy?.();
   doneResolve();return done;
  };
  httpServer.on('upgrade',(request,socket,head)=>{
@@ -228,10 +247,8 @@ export async function startNativeHost({config,stdin=process.stdin,stdout=process
  try{
   await new Promise((resolve,reject)=>{httpServer.once('error',reject);httpServer.listen(0,'127.0.0.1',resolve);});
   const address=httpServer.address();if(!address||address.address!=='127.0.0.1')throw new Error('Loopback listener was not established.');
-  const descriptor={version:1,endpoint:`ws://127.0.0.1:${address.port}/connect`,token,pid:process.pid};
-  startupStage='descriptor_write';
-  await writeDescriptor(safeConfig,descriptor);descriptorWritten=true;
-  await writeDiagnostic(diagnosticPath,startedAt,{stage:'ready'});
+  await writeDiagnostic(diagnosticPath,startedAt,{stage:'awaiting_profile'});
+  helloTimer=setTimeout(()=>{void stop();},requestTimeoutMs);
   stdin.on('data',chunk=>{try{for(const message of decoder.push(chunk))receiveNativeMessage(message);}catch{void stop();}});
   stdin.once('end',()=>{void stop();});stdin.once('error',()=>{void stop();});stdout.once('error',()=>{void stop();});
  }catch(error){await writeDiagnostic(diagnosticPath,startedAt,{stage:startupStage,errorCode:startupStage==='descriptor_write'?'descriptor_write_failed':'host_start_failed'});await stop();throw error;}

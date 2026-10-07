@@ -31,11 +31,25 @@ type ChromeApi = {
   tabs: {
     create(options: { url: string; active: boolean; windowId: number }): Promise<unknown>;
   };
+  storage: { local: { get(key: string): Promise<Record<string, unknown>>; set(value: Record<string, unknown>): Promise<void> } };
 };
 
 export class NativeConnection {
   private _chrome: ChromeApi;
   private _port?: NativePort;
+  private _profileId?: Promise<string>;
+
+  private _identity(): Promise<string> {
+    // local (not sync) belongs to this Chrome subprofile, not a Google login.
+    return this._profileId ??= (async () => {
+      const stored = (await this._chrome.storage.local.get('kProfileId')).kProfileId;
+      if (typeof stored === 'string' && /^[a-f0-9]{32}$/.test(stored))
+        return stored;
+      const id = crypto.randomUUID().replaceAll('-', '');
+      await this._chrome.storage.local.set({ kProfileId: id });
+      return id;
+    })().catch(error => { this._profileId = undefined; throw error; });
+  }
 
   constructor(chromeApi: ChromeApi = chrome) {
     this._chrome = chromeApi;
@@ -57,6 +71,11 @@ export class NativeConnection {
       return;
     }
     this._port = port;
+    void this._identity().then(async profileId => {
+      const incognitoAllowed = await this._chrome.extension.isAllowedIncognitoAccess();
+      if (this._port === port)
+        this._reply(port, { type: 'profileHello', profileId, incognitoAllowed });
+    }).catch(() => { console.warn('K browser profile registration failed.'); });
     port.onMessage.addListener(message => { void this._handleMessage(port, message); });
     port.onDisconnect.addListener(() => {
       if (this._port === port)
