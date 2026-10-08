@@ -717,7 +717,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const {content,attachmentRecords}=await claudeInput(text,attachmentIds,state);
       if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('附件檢查期間回合已結束或對話已切換；未立即送入。');
       const record=appendMessage('user',text);record.attachments=attachmentRecords;currentTurnId=record.id;record.source='steer';record.delivery='queued';nativePending.add(record.id);changed();
-      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');await active.start(content,{uuid:record.id});await saveCurrent(record.createdAt);return {steered:true,delivery:record.delivery};}
+      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');await active.start(content,{uuid:record.id});void saveCurrent(record.createdAt).catch(()=>{});return {steered:true,delivery:record.delivery};}
       catch(error){nativePending.delete(record.id);record.delivery='uncertain';state.error='立即送入狀態未確認；未重送。';await saveCurrent().catch(()=>{});throw error;}
       finally{changed();}
     },

@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,mkdir,writeFile} from 'node:fs/promises';
+import fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -48,6 +50,21 @@ test('direct work permissions are workspace-scoped, persisted, and may switch ba
   assert.equal(turn.sandboxPolicy.type,'workspaceWrite');assert.deepEqual(turn.sandboxPolicy.writableRoots,[f.root]);assert.equal(turn.sandboxPolicy.networkAccess,false);
   assert.equal((await f.c.sessions()).sessions[0].accessMode,'workspace-write');
  }finally{await f.c.close();}
+});
+
+test('Codex accepted steering stays accepted if its activity save fails',async t=>{
+ const f=await fixture();let armed=false;let failed;const failure=new Promise(resolve=>{failed=resolve;});
+ const originalRename=fs.rename;let mocked;let accepted=0;
+ try{
+  await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'initial fake work'});
+  const originalRequest=f.host.request;f.host.request=async(method,p)=>{if(method==='turn/steer'){accepted++;armed=true;return {turnId:p.expectedTurnId};}return originalRequest(method,p);};
+  mocked=t.mock.method(fs,'rename',async(from,to)=>{if(armed&&String(to).endsWith('test-thread-current.json')){armed=false;failed();throw Object.assign(new Error('fake activity disk failure'),{code:'EIO'});}return originalRename(from,to);});syncBuiltinESMExports();
+  assert.deepEqual(await f.c.steer({text:'accepted fake correction'}),{steered:true,turnId:'turn-1'});
+  await failure;await new Promise(setImmediate);
+  assert.equal(accepted,1);assert.equal(f.c.state.messages.at(-1).text,'accepted fake correction');
+  assert.equal(f.calls.filter(call=>call.method==='turn/start').length,1);assert.equal(f.c.state.busy,true);
+  assert.match(f.c.state.error,/活動時間保存失敗/);
+ }finally{mocked?.mock.restore();syncBuiltinESMExports();await f.c.close();}
 });
 
 test('unloaded native thread gets a safe readback explanation without starting or changing the K record',async()=>{

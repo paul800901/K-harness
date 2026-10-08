@@ -857,7 +857,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const result=await activeHost.request('turn/steer',{threadId,expectedTurnId:expected,input});
     if(result.turnId!==expected)throw new Error('修正未套用到目前回合；未自動重送。');
     message(attempt.itemId??'steer:'+randomUUID(),'user',acceptedText,attachments,expected,attempt.itemId?'native':'steer');changed();
-    await saveMainSessionActivity(root,threadId,new Date().toISOString());
+    void saveMainSessionActivity(root,threadId,new Date().toISOString()).catch(error=>{state.error=`對話活動時間保存失敗：${error.message}`;changed();});
     return {steered:true,turnId:expected};
    }finally{if(pendingSteer===attempt)pendingSteer=null;}
   },

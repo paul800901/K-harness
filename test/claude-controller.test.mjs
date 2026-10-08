@@ -71,6 +71,26 @@ test('Claude sends and steers more than eight scoped attachments without expandi
  }finally{await f.controller.close();}
 });
 
+test('Claude accepted steering stays accepted if its activity save fails',async t=>{
+ const f=await fixture();let armed=false;let failed;const failure=new Promise(resolve=>{failed=resolve;});
+ const originalRename=fs.rename;let mocked;
+ try{
+  await f.controller.open({});await f.controller.send({text:'initial fake work'});
+  const originalStart=f.host.start.bind(f.host);f.host.start=async(...args)=>{await originalStart(...args);armed=true;};
+  mocked=t.mock.method(fs,'rename',async(from,to)=>{if(armed&&String(to).includes('claude-sessions')){armed=false;failed();throw Object.assign(new Error('fake activity disk failure'),{code:'EIO'});}return originalRename(from,to);});syncBuiltinESMExports();
+  assert.equal((await f.controller.steer({text:'accepted fake correction'})).steered,true);
+  await failure;await new Promise(setImmediate);
+  const message=f.controller.state.messages.at(-1);assert.notEqual(message.delivery,'uncertain');
+  assert.equal(f.host.startCalls.length,2);assert.equal(f.controller.state.busy,true);
+  assert.match(f.controller.state.error,/投影保存失敗/);
+  f.hostOptions.onMessage({type:'user',uuid:message.id,isReplay:true,message:{content:f.host.startCalls[1]}});
+  assert.equal(message.delivery,'received');assert.equal(f.host.startCalls.length,2);
+  mocked.mock.restore();syncBuiltinESMExports();mocked=null;
+  const recovered=observeAtomicWrite(t,path.join(f.root,'.runtime/main-sessions',`${f.controller.state.threadId}-current.json`),()=>true);
+  f.hostOptions.onMessage({type:'result',is_error:false,result:'fake completed'});await recovered;await new Promise(setImmediate);
+ }finally{mocked?.mock.restore();syncBuiltinESMExports();await f.controller.close();}
+});
+
 test('Claude attachment steering rejects a foreign conversation before native delivery',async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'active'});
