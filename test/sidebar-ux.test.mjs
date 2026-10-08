@@ -30,7 +30,7 @@ test('cold history becomes readable before connection while native work and cont
   await f.select('A');const a=f.owners.find(o=>o.state.threadId==='A');a.state.busy=true;a.state.status='working';
   f.gates.set('B',deferred());const opening=f.select('B');await until(()=>f.c.state.historyReady);
   assert.equal(f.c.state.threadId,'B');assert.equal(f.c.state.status,'connecting');assert.deepEqual(f.c.state.messages.map(m=>m.text),['History B']);
-  assert.deepEqual(f.c.state.questions,[]);assert.deepEqual(f.c.state.artifacts,[]);assert.deepEqual(f.c.state.capabilities,{});assert.equal(f.c.state.goalError,'原生目標尚未讀回。');
+  assert.deepEqual(f.c.state.questions,[]);assert.deepEqual(f.c.state.artifacts,[]);assert.deepEqual(f.c.state.capabilities,{});assert.equal(f.c.state.goalError,'原生目標尚未讀回。');assert.equal(f.c.state.turnError,null);
   assert.equal(a.state.busy,true);assert.equal(a.closed,0);await assert.rejects(f.c.send({threadId:'B',text:'wrong'}),/已開啟/);
   assert.equal(f.calls.some(([m])=>m==='send'),false);f.gates.get('B').resolve();await opening;assert.equal(f.c.state.status,'ready');assert.equal(f.c.state.connectionOpening,false);
  }finally{await f.c.close();}
