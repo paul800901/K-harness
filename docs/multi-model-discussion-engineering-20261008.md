@@ -70,3 +70,15 @@ Codex小差異第三輪真正 Opus session533527c5-6a86-4f71-8c7a-1ab25b0118ae�
 - **2026-10-08 07:07:30 UTC正式讀回**：47831仍Listen（PID27960），正式版本c5d605d146e10080502fbec61a8f0c2a8b114af3。本批没有強制停止、交換runtime、啟動新正式版、恢復／重派任務、動登入或對話。不是已部署；目前候選ready，需本人在正式K「離開並停止」後再確認無程序與新正式版本變化，保留當時版本再套用／讀回。
 - 無正式退版操作／位置，本批尚未交換；既有previous位置屬前批，不冒稱本批備份。東區未更新。公開GitHub push問題已詢問，尚無本輪公開發布授權，未push、未移動main/tag。
 - 此後文件收尾commit只補實際證據與狀態，正式程式要用上方完整固定 SHA，不把文件較新當程式已重部署。
+
+## 已套用南區正式 K（2026-10-08，取代上方待更新階段）
+本人本輪明確表示「我的K已经关掉，你现在可以更新了」。依該授權執行一次正式交換，不再以先前仍開著的快照當現況。
+- 部署前本機確認47831無Listen、K launcher／node／electron／原生模型程序0；原正式版本仍c5d605d，沒有覆盖另一批新版。固定候選596/596再次逐位元核對一致、physical node_modules無junction；prepared／trusted-runtime／releases的實體絕對路徑確認都在本次K runtime根內。
+- 使用既有 scripts/install-runtime.mjs 的 activateRuntime 一次交換，**正式程式 a693ba44a2715e490dda039d72b24f6a5fd4a35a**。没有重新安裝相依、升級核心／改全域或切計費，也不把文件收尾commit當程式版本。
+- 可退回程式位置：**D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791444459727**；保留原runtime、launcher.exe、Start-K-Desktop.ps1、settings.json（原c5d605d）。這是程式退版，不是對話資料快照／還原。
+- 交換前後65檔（main session headers、Gemini帳號清單、projects、Codex config、selected-cores）hash差異0，原node／語音設定值不變。state vault、原生登入家目錄、Chrome profiles留原位，沒有讀取／搬取登入憑證。沒有恢復、續跑或重送暫停／未知工作。
+- 正常由 Start-K-Desktop.ps1 啟動；2026-10-08 07:28:56 UTC正式health200/deployment:native，workspace仍原private-state，.local/runtime.json完整SHA及previous讀回一致。兩個當次正式JS/CSS資產HTTP200／hash與正式disk一致，live JS含平行比較／交叉審查／多人討論。
+- 本次正式讀回没有繞過登入：未帶會話的/及/api/state都是403，符合原授權邊界。第一次只讀驗證helper誤要求未登入/回200，改helper依實際403契約讀取disk index對應的公開asset；沒有改產品權限、重新部署或重送工作。首次helper的退出assertion與說明保留 first-readback-assumption.txt。
+- **驗收界線**：本次正式驗證是程式／啟動／health／live資產／原權限保護；未自動開新正式聊天室、沒有借取Electron cookie去做登入後UI／三模型互答。真三模式／三模型／停止及desktop/mobile UI仍以上方已驗收固定候選證據為準；本人Android實機未重測。
+- deployment-preflight.json、deployment-start.json、deployment-activation.json、deployment-preserved.json、formal-live-readback.json在D:\K-harness\.runtime\multi-model-discussion-build-20261008。原clean候選證據隨程式目錄現在在trusted-runtime\.runtime\discussion-evidence；來源原生測試收據仍在managed worktree。没有刪除／清理其他資料。
+- **本次完成南區正式套用、正常重啟與上述正式讀回。** GitHub未push、未移動main/tag；東區未更新。僅補部署文件時不再次交換正式程式或重啟K。
