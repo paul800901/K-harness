@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkActivity,codexWorkActivity,claudeWorkActivity,geminiWorkActivity} from '../src/work-activity.mjs';
-import {workStatus,workerStatus,workerHealth,workerEnded,pendingWorkerSummary,QUIET_WORK_MS} from '../frontend/work-status.mjs';
+import {workStatus,workerHealth,workerEnded,pendingWorkerSummary,QUIET_WORK_MS} from '../frontend/work-status.mjs';
 
 function fixture(){let now=1000;const state={busy:true,status:'working'},activity=createWorkActivity(state,()=>now);activity.begin();return {state,activity,tick(ms=1000){now+=ms;return now;},get now(){return now;}};}
 test('time passing and status reads never masquerade as fresh native activity',()=>{
@@ -48,15 +48,6 @@ test('connection, retry, user confirmation and terminal states override a generi
  assert.match(workStatus({...f.state,status:'offline'},true,f.now).text,/核心已斷線/);
  assert.equal(workStatus({...f.state,busy:false,status:'completed'},true,f.now),null);
  assert.match(workStatus({...f.state,busy:false,status:'failed'},true,f.now).text,/工作失敗/);
-});
-test('worker count keeps known running jobs visible alongside unknowns without claiming a total',()=>{
- assert.equal(workerStatus({running:7,uncertain:true,unconfirmed:2}),'子代理已確認執行中：7 · 待確認：2');
- assert.equal(workerStatus({running:7,uncertain:true,unconfirmed:0}),'子代理已確認執行中：7 · 部分連線待確認');
- assert.equal(workerStatus({running:7,uncertain:false}),'子代理執行中：7');
- assert.equal(workerStatus({running:0,uncertain:false,historicalUnconfirmed:2}),'子代理執行中：0 · 舊工單結果待確認：2');
- assert.equal(workerStatus({running:3,uncertain:true,unconfirmed:1,historicalUnconfirmed:2}),'子代理已確認執行中：3 · 待確認：1 · 舊工單結果待確認：2');
- assert.equal(workerStatus({running:3,historicalUnconfirmed:2},false),'子代理：狀態待確認 · 舊工單結果待確認：2');
- assert.equal(workerStatus({running:7},false),'子代理：狀態待確認');
 });
 
 test('unowned Gemini history is visible but never counted as current work or reported stopped',()=>{

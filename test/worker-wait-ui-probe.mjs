@@ -4,7 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {chromium} from 'playwright';
 import {preview} from 'vite';
-const out=path.resolve('.runtime/long-work-observation-20261006/ui');await mkdir(out,{recursive:true});
+const out=path.resolve('.runtime/core-catalog-audit-20261008/wait-ui');await mkdir(out,{recursive:true});
 const server=await preview({preview:{host:'127.0.0.1',port:5196,strictPort:true}}),errors=[],results=[];let browser;
 try{
  browser=await chromium.launch({headless:true,executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe'});
@@ -30,15 +30,15 @@ try{
   await panel.getByText('久無活動檢查',{exact:true}).waitFor();await panel.getByText('view_file',{exact:true}).waitFor();
   await panel.getByText(/不能據此判定卡死/).waitFor();
   const overflow=await panel.evaluate(e=>{const r=e.getBoundingClientRect();return{left:r.left,right:r.right,inner:innerWidth,overflow:e.scrollWidth>e.clientWidth+1};});assert(overflow.left>=0&&overflow.right<=overflow.inner&&!overflow.overflow,JSON.stringify(overflow));
-  await panel.getByText('已結束 1 個',{exact:true}).click();await panel.locator('[data-status="danger"]').filter({hasText:'失敗'}).waitFor();
+  assert.equal(await panel.getByText('假資料：已失敗工單',{exact:true}).count(),0);assert.equal(await panel.locator('.worker-popover-row').count(),2);
   await page.screenshot({path:path.join(out,`${width}-${scale}-quiet.png`)});
   const fresh={...base,workerDetails:details.map(w=>w.requestId==='flash-1'?{...w,activity:{...w.activity,lastEventAt:now+300000}}:w)};
   await page.evaluate(s=>window.testState(s),fresh);await panel.getByText('等待工具回報 · 最近活動 0 秒前',{exact:true}).waitFor();
   assert(!(await footer.textContent()).includes('久未回報'));
-  await page.evaluate(()=>window.testDisconnect());await panel.getByText('後端斷線，以下僅為最後保留的狀態；目前執行狀態未知。').waitFor();
+  await page.evaluate(()=>window.testDisconnect());await panel.getByText('連線未確認，以下僅為最後保留的狀態；目前執行狀態未知。').waitFor();
   await page.keyboard.press('Escape');await panel.waitFor({state:'detached'});
-  await page.evaluate(s=>window.testState({...s,threadId:'room-b',workerDetails:s.workerDetails}),base);await header.waitFor({state:'detached'});assert.equal(await footer.count(),0,'another room is not waiting on these workers');
-  await page.evaluate(s=>window.testState({...s,status:'failed',workers:[],workerDetails:[]}),base);await header.filter({hasText:'工作失敗'}).waitFor();assert.equal(await footer.count(),0,'no duplicate idle terminal indicator');
+  await page.evaluate(s=>window.testState({...s,threadId:'room-b',workerDetails:s.workerDetails}),base);await header.waitFor({state:'detached'});await footer.waitFor({state:'detached'});assert.equal(await footer.count(),0,'another room is not waiting on these workers');
+  await page.evaluate(s=>window.testState({...s,status:'failed',workers:[],workerDetails:[]}),base);if(width>=700)await header.filter({hasText:'工作失敗'}).waitFor();assert.equal(await footer.count(),0,'no duplicate idle terminal indicator');
   await page.evaluate(s=>window.testState({...s,workers:[],workerDetails:[],completionPending:true,goalPending:true}),base);await footer.filter({hasText:'等待結果交接'}).waitFor();assert(!(await footer.textContent()).includes('子代理'));
   assert.equal(requests.includes('POST'),false,'no inference, stop or replay from any clock or view action');
   results.push({width,height,scale,theme,passed:true,noPost:true});await page.close();

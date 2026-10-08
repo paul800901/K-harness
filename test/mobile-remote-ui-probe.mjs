@@ -88,7 +88,7 @@ try{
  await page.getByRole('dialog',{name:'對話設定',exact:true}).getByRole('button',{name:'完成',exact:true}).click();
  await page.setViewportSize({width:360,height:740});
  await page.locator('.header-actions .worker-activity').click();
- const workers=page.getByRole('dialog',{name:'子代理狀態',exact:true});await workers.waitFor();await workers.getByRole('heading',{name:'另一個聊天室',exact:true}).waitFor();
+ const workers=page.getByRole('dialog',{name:'子代理狀態',exact:true});await workers.waitFor();await workers.getByText('本聊天室的子代理',{exact:true}).waitFor();assert.equal(await workers.getByText('另一個聊天室',{exact:true}).count(),0);assert.equal(await workers.locator('.worker-popover-row').count(),1);
  const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker popup outside mobile viewport');
  await workers.getByText(/久未回報不等於已卡死/).waitFor();await noOverflow(page);await screenshot('mobile-worker-status');
  await page.getByRole('button',{name:'關閉子代理狀態',exact:true}).click();await workers.waitFor({state:'hidden'});

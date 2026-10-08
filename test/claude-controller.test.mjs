@@ -1241,3 +1241,14 @@ test('Claude native progress ignores elapsed pulses; full background snapshot is
   assert.equal(f.host.startCalls.length,1,'native notifications remain the native core responsibility, no duplicate K wake');
  }finally{await f.controller.close();}
 });
+
+for(const [model,levels] of [['claude-haiku-4-5-20251001',[]],['claude-opus-4-6',['low','medium','high','max']],['claude-future-effort',['ultra']]])test(model+' keeps model-native efforts across init and a host restart',async()=>{
+ const f=await fixture({models:[{model,displayName:model,provider:'claude',supportedReasoningEfforts:levels.map(reasoningEffort=>({reasoningEffort}))}]});
+ try{
+  await f.controller.open({model});assert.deepEqual(f.controller.state.efforts,levels);
+  f.hostOptions.onMessage({type:'system',subtype:'init',tools:['Read']});assert.deepEqual(f.controller.state.efforts,levels);
+  await f.controller.send({text:'fake scoped restart',accessMode:'claude-plan'});
+  f.hostOptions.onMessage({type:'system',subtype:'init',tools:['Read']});assert.deepEqual(f.controller.state.efforts,levels);
+  assert.equal(f.hostOptions.model,model);assert.equal(f.controller.state.effort,null);
+ }finally{await f.controller.close();}
+});

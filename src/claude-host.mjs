@@ -69,8 +69,8 @@ export function nativeCapabilitiesFrom(value = {}) {
   const names = items => Array.isArray(items) ? items.map(item => typeof item === 'string' ? item : item && typeof item.name === 'string' ? item.name : null).filter(Boolean) : [];
   return {
     tools:names(value.tools), commands:names(value.slash_commands ?? value.commands),
-    models:claudeModelsFrom(value.models).map(item=>item.model), agents:names(value.agents), skills:names(value.skills), mcpServers:names(value.mcp_servers),
-    permissionModes:[...CLAUDE_ACCESS_MODES], efforts:CLAUDE_REASONING_EFFORTS,
+    models:claudeModelsFrom(value.models??[]).map(item=>item.model), agents:names(value.agents), skills:names(value.skills), mcpServers:names(value.mcp_servers),
+    permissionModes:[...CLAUDE_ACCESS_MODES],
   };
 }
 
@@ -81,7 +81,7 @@ export function claudeModelsFrom(rows){
  for(const row of rows){
   if(row.hidden===true)continue;
   const model=row.value?.startsWith('claude-')?row.value:row.resolvedModel;
-  if(!model)continue;
+  if(!model||model.startsWith('claude-fable-'))continue;
   models.set(model,{model,displayName:row.displayName??model,description:row.description,provider:'claude',inputModalities:['text','image'],supportedReasoningEfforts:(row.supportedEffortLevels??[]).map(reasoningEffort=>({reasoningEffort}))});
  }
  return [...models.values()];
@@ -276,6 +276,7 @@ async function terminateChild(child) {
  * This is async so auth is verified before creating a model process.
  */
 export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, model=CLAUDE_MODEL, workspaceInstructions='', signal, onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
+  if(/^(?:claude-)?fable(?:-|$)/u.test(model))throw Error('Fable 可能使用額外計費，未經授權已停用；未換模。');
   const spec = normalizeCommandSpec(commandSpec ?? await resolveClaudeCommand({env:sourceEnv}));
   const env=sanitizedEnv(sourceEnv);
   const preflight = await inspectClaude({ commandSpec: spec, cwd, env:sourceEnv, captureImpl, signal });

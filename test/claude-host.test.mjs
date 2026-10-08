@@ -5,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 await mkdir(base,{recursive:true});
 import path from 'node:path';
-import { CLAUDE_MODEL, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
+import { CLAUDE_MODEL, claudeModelsFrom, nativeCapabilitiesFrom, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
 async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }, models) {
@@ -201,4 +201,13 @@ test('Claude goal command confirms matching native lifecycle, never ordinary ass
  } else if (msg.type === 'user' && init && !asked) {`);
  await writeFile(fake.file,code);const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,sessionId:id});
  try{assert.equal(await host.goal('test objective'),'Goal set: test objective');}finally{await host.close();}
+});
+
+// A public model listing is not consent to additional usage-credit billing.
+test('Fable is excluded from K selection and direct launches stop before any subprocess',async()=>{
+ const rows=[{value:'fable',resolvedModel:'claude-fable-5-1'},{value:'claude-fable-5'},{value:'haiku',resolvedModel:'claude-haiku-5-5',supportedEffortLevels:['low']}];
+ assert.deepEqual(claudeModelsFrom(rows).map(m=>m.model),['claude-haiku-5-5']);
+ for(const model of ['fable','claude-fable-5','claude-fable-5-1'])await assert.rejects(openClaudeHost({model,captureImpl:()=>{throw Error('preflight must not start');},spawnImpl:()=>{throw Error('spawn must not start');}}),/Fable.*額外計費.*未換模/);
+ assert.deepEqual(nativeCapabilitiesFrom({}).models,[]);
+ assert.equal(Object.hasOwn(nativeCapabilitiesFrom({}), 'efforts'),false);
 });

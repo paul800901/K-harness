@@ -44,10 +44,3 @@ export function workStatus(state,online=true,now=Date.now()) {
  const detail=stale?`已 ${formatElapsed(quiet)}無新活動回報`:freshness;
  return {kind:stale||!a?'warning':'running',text:`${phase}${wait} · ${detail}${a?.phase==='worker'&&pendingText?` · ${pendingText}`:''}`};
 }
-
-export function workerStatus(activity,online=true) {
- if(!activity)return '子代理：狀態待確認';
- if(!online)return `子代理：狀態待確認${activity.historicalUnconfirmed?` · 舊工單結果待確認：${activity.historicalUnconfirmed}`:''}`;
- const current=activity.uncertain?`子代理已確認執行中：${activity.running} · ${activity.unconfirmed?`待確認：${activity.unconfirmed}`:'部分連線待確認'}`:`子代理執行中：${activity.running}`;
- return `${current}${activity.historicalUnconfirmed?` · 舊工單結果待確認：${activity.historicalUnconfirmed}`:''}`;
-}

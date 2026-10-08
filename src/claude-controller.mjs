@@ -323,7 +323,6 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     if(state.busy&&!stopping&&!closing)claudeWorkActivity(activity,message);
     if(message?.type==='system'&&message?.subtype==='init') {
       state.nativeCapabilities=nativeCapabilitiesFrom(message);
-      state.efforts=[...state.nativeCapabilities.efforts];
     } else if(message?.type==='system'&&message?.subtype==='task_started'&&message.task_type==='local_agent') {
       if(!message.isReplay&&!stopping&&!closing&&!['interrupted','offline','uncertain'].includes(state.status)){
         let worker=state.workers.find(w=>w.provider==='claude-native'&&w.requestId===message.tool_use_id);
