@@ -15,13 +15,13 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const discussions=new Map();
  const discussion=controller=>discussions.get(controller.state.threadId);
  const projected=controller=>{const s=controller.state,d=discussion(controller),ds=d?.state;return {...s,messages:d?d.project(s.messages??[]):s.messages,discussion:ds,
-  ...(d?.busy?{busy:true,status:ds.status==='stopping'?'stopping':'working'}:{}),...(ds?.error?{discussionError:ds.error}:{})};};
+  ...(d?.busy?{busy:true,status:ds.status==='stopping'?'stopping':'working'}:{})};};
  const loadDiscussion=async controller=>{
   const id=controller.state.threadId;if(!id||discussions.has(id))return;
   const d=discussionFactory({root,threadId:id,executable:options.executable,...discussionOptions,...(discussionSessionFactory?{sessionFactory:discussionSessionFactory}:{}),onChange(){attention.observe(projected(rooms.get(id)??controller));onChange();}});
   await d.load();discussions.set(id,d);
  };
- const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.state?.status==='uncertain')throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
+ const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.held)throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
  const openedOrder=new Map();let openSequence=0;
  let pendingOpen;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
@@ -96,7 +96,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
  const safelyIdle=async (controller,allowFailed=false)=>{
-  if(discussion(controller)?.busy||discussion(controller)?.state?.status==='uncertain')return false;
+  if(discussion(controller)?.busy||discussion(controller)?.held)return false;
   const idleStatuses=allowFailed?['ready','completed','interrupted','failed']:['ready','completed','interrupted'];
   const s=controller.state;
   if(!s.threadId||s.busy||s.goalPending||(s.capabilities?.goalContinuesWhileIdle&&(s.goalError||['active','unknown'].includes(s.goal?.status)))||s.questions?.length||s.queuedMessages?.length||
@@ -190,7 +190,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    try{
     controller=target(data);previousId=controller.state.threadId;
     noDiscussion(controller);
-    if(discussion(controller)?.messages.some(m=>m.id===data.messageId))throw Error('這則是共用討論紀錄，不是單一原生分支點；請明確交接到新對話。');
+    if(discussion(controller)?.messages.some(m=>m.id===data.messageId))throw Error('這則是共用討論紀錄，不是單一原生分支點；請從一般回覆建立分支。');
     if(controller!==active)throw Error('請先切回要分支的聊天室。');
     locked.add(controller);
     // Native fork requires a settled source. The existing adapter enforces that
@@ -236,7 +236,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      if(controller.state.busy||rows.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)))throw Error('背景子代理工作尚未結束，不能刪除。');
      await controller.close();rooms.delete(id);controllers.delete(controller);
     }
-    return await deleteArchived({root,threadIds:data.threadIds,confirmed:data.confirmed,currentThreadId:active.state.threadId});
+    const result=await deleteArchived({root,threadIds:data.threadIds,confirmed:data.confirmed,currentThreadId:active.state.threadId});for(const id of result.deletedIds)discussions.delete(id);return result;
    }finally{for(const controller of held)locked.delete(controller);focusDone();}
   },
   directories(parent){return active.directories(parent);},
@@ -267,8 +267,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   await loadDiscussion(controller);
   const catalog=(await api.models()).models;
   const choose=choice=>{const model=catalog.find(m=>m.model===choice.model&&m.available!==false);if(!model)throw Error('參與模型目前不在可用原生清單，未換模。');
-   const effort=choice.effort||model.defaultReasoningEffort||null,efforts=(model.supportedReasoningEfforts??[]).map(x=>typeof x==='string'?x:x.reasoningEffort);
-   if(effort&&!efforts.includes(effort))throw Error('參與模型不支援所選推理程度。');return {...model,effort};};
+    const effort=choice.effort||model.defaultReasoningEffort||null,efforts=(model.supportedReasoningEfforts??[]).map(x=>typeof x==='string'?x:x.reasoningEffort);
+    if(effort&&!efforts.includes(effort))throw Error('參與模型不支援所選推理程度。');return {model:model.model,displayName:model.displayName,effort,...(model.nativeModels?{nativeModels:model.nativeModels}:{})};};
   if(!Array.isArray(data.participants)||data.participants.length<2)throw Error('請選擇至少兩個參與者。');
   const participants=data.participants.map((p,i)=>({...choose(p),id:`p${i+1}`}));
   const facilitator={...choose({model:s.model,effort:s.effort}),id:'host'};
@@ -280,20 +280,20 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   }finally{locked.delete(controller);}
  };
  api.discussionMessage=data=>{const c=target(data);if(!discussion(c))throw Error('這個聊天室沒有進行中的討論。');return discussion(c).interject(data);};
- api.discussionStop=data=>{const c=target(data);return discussion(c)?.stop()??Promise.resolve({stopped:true});};
+
  for(const method of ['send','steer','queue','goal','answer','upload','selectModel','review','fuzzyFileSearch'])api[method]=data=>target(data)[method](data);
- for(const method of ['send','steer','queue','goal','selectModel','review']){const original=api[method];api[method]=data=>{noDiscussion(target(data));return original(data);};}
+ for(const method of ['steer','queue','goal','selectModel','review']){const original=api[method];api[method]=data=>{noDiscussion(target(data));return original(data);};}
  api.send=async data=>{
   const c=target(data);noDiscussion(c);const d=discussion(c);
   if(!d)return c.send(data);
   locked.add(c);let handoff;
-  try{handoff=await d.handoff(data.text);return await c.send({...data,text:handoff.text});}
+  try{handoff=await d.handoff(data.text);const result=await c.send({...data,text:handoff.text});if(result.sent===false&&!result.queued)await handoff.rejected?.();return result;}
   catch(error){if(error.notSent===true)await handoff?.rejected?.();throw error;}
   finally{locked.delete(c);}
  };
  api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
  const compact=api.compact;api.compact=data=>{noDiscussion(target(data));return compact(data);};
- api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}const c=target(data);if(discussion(c)?.busy)return discussion(c).stop();return c.stop();};
+ api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
  return api;
 }

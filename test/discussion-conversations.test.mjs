@@ -10,14 +10,14 @@ import {remoteRouteAllowed} from '../src/remote-access.mjs';
 const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const models=[{model:'gpt-6.1-sol',displayName:'Sol',provider:'codex'},{model:'claude-opus-5-5',displayName:'Opus',provider:'claude'},{model:'gemini-3.8-flash',displayName:'Flash',provider:'gemini'}].map(m=>({...m,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}]}));
 async function fixture({hold=false}={}){
- await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'discussion-rooms-'));let seq=0,answerPending;
+ await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'discussion-rooms-'));let seq=0;const answerPending=new Set();
  const owners=[],calls=[];
  const factory=({onChange})=>{
   const state={status:'idle',workspace:root,messages:[],workers:[],questions:[],queuedMessages:[],busy:false,usage:{},model:'gpt-6.1-sol',effort:'medium',accessMode:'workspace-write'};
   const c={state,closed:0,sent:[],async models(){return {models};},async selectWorkspace({path}){state.workspace=path;},async open(data){state.threadId=data.threadId??`room-${++seq}`;state.model=data.model;state.status='ready';await saveMainSession(root,state);onChange();return {threadId:state.threadId};},async workers(){return [];},async send(data){c.sent.push(data);state.messages.push({id:`native-${c.sent.length}`,role:'user',text:data.text});return {sent:true};},async stop(){state.busy=false;return {stopped:true};},async close(){c.closed++;},async metadata(data){await saveMainSession(root,{...state,...data});return data;},async selectModel(data){state.model=data.model;return data;}};owners.push(c);return c;
  };
  const c=createConversationController({root,sessionFactory:factory,discussionSessionFactory:async({selection,onIdentity})=>{
-  await onIdentity({nativeSessionId:`discussion-${selection.id}`});return {async ask(prompt){calls.push({id:selection.id,prompt});if(selection.id==='host')return prompt.startsWith('你是多模型討論背景整理者')?'{"background":"需求與修正"}':'{"action":"finish","summary":"共識、分歧與未知都有保留。"}';if(hold)await new Promise((resolve,reject)=>{answerPending=reject;});return `${selection.model} 原始答案`;},async close(){answerPending?.(Error('stopped'));}};
+  await onIdentity({nativeSessionId:`discussion-${selection.id}`});return {async ask(prompt){calls.push({id:selection.id,prompt});if(selection.id==='host')return prompt.startsWith('你是多模型討論背景整理者')?'{"background":"需求與修正"}':'{"action":"finish","summary":"共識、分歧與未知都有保留。"}';if(hold)await new Promise((resolve,reject)=>{answerPending.add(reject);});return `${selection.model} 原始答案`;},async close(){for(const reject of answerPending)reject(Error('stopped'));answerPending.clear();}};
  }});
  const a=await c.open({model:'gpt-6.1-sol'}),owner=owners.find(o=>o.state.threadId===a.threadId);
  const start=data=>c.discussionStart({...a,mode:'meeting',text:'議題',participants:[{model:'gpt-6.1-sol'},{model:'claude-opus-5-5',effort:'high'}],...data});
@@ -25,8 +25,9 @@ async function fixture({hold=false}={}){
 }
 const settled=async f=>{while(f.c.state.discussion?.busy)await new Promise(r=>setTimeout(r,5));};
 
-test('all three discussion routes are available to the paired phone without expanding login or administration',()=>{
- for(const op of ['start','message','stop'])assert.equal(remoteRouteAllowed('POST',`/api/discussion/${op}`),true);
+test('discussion entry and interjection are available to the paired phone; the existing stop route is reused',()=>{
+ for(const op of ['start','message'])assert.equal(remoteRouteAllowed('POST',`/api/discussion/${op}`),true);
+ assert.equal(remoteRouteAllowed('POST','/api/stop'),true);assert.equal(remoteRouteAllowed('POST','/api/discussion/stop'),false);
  assert.equal(remoteRouteAllowed('POST','/api/discussion/login'),false);
 });
 
@@ -53,4 +54,23 @@ test('model effort choices come from the actual catalog, with no hard-coded tier
 
 test('an active native goal, queue, or approval prevents a new meeting without stopping or replaying it',async()=>{
  const f=await fixture();try{for(const extra of [{busy:true},{questions:[{id:'approval'}]},{queuedMessages:[{text:'waiting'}]},{capabilities:{goalContinuesWhileIdle:true},goal:{status:'active'}}]){const prior=structuredClone(f.owner.state);Object.assign(f.owner.state,extra);await assert.rejects(f.start(),/原工作/);Object.assign(f.owner.state,prior);for(const key of Object.keys(extra))if(!Object.hasOwn(prior,key))delete f.owner.state[key];}assert.equal(f.calls.length,0);}finally{await f.c.close();}
+});
+
+test('a confirmed not-sent result restores the handoff, while unknown failures do not replay it',async()=>{
+ const f=await fixture();try{
+  await f.start();await settled(f);const send=f.owner.send;f.owner.send=async()=>({sent:false});await f.c.send({...f.a,text:'已確認未送出'});f.owner.send=send;
+  await f.c.send({...f.a,text:'新的一則指示'});assert.match(f.owner.sent.at(-1).text,/K 多模型討論交接/);
+ }finally{await f.c.close();}
+});
+
+test('a meeting in A survives navigation and idle reclamation; stopping A does not stop or submit to B',async()=>{
+ const f=await fixture({hold:true});try{
+  await f.start();while(f.calls.filter(c=>c.id!=='host').length<2)await new Promise(r=>setTimeout(r,5));
+  for(let i=0;i<5;i++)await f.c.open({model:'gpt-6.1-sol'});
+  const b=f.c.state.threadId;assert.notEqual(b,f.a.threadId);assert.equal(f.owner.closed,0);assert(f.c.state.conversationActivity.some(row=>row.threadId===f.a.threadId&&row.busy));
+  assert.throws(()=>f.c.compact(f.a),/討論/);await assert.rejects(f.c.metadata({...f.a,archived:true}),/討論/);
+  await f.c.discussionMessage({...f.a,text:'給 A 的補充',target:'p2'});await f.c.stop(f.a);
+  assert.equal(f.c.state.threadId,b);assert.equal(f.c.state.busy,false);assert.equal(f.owners.find(o=>o.state.threadId===b).sent.length,0);
+  await f.c.open({...f.a,model:'gpt-6.1-sol'});assert.equal(f.c.state.discussion.status,'interrupted');assert(f.c.state.messages.some(m=>m.text==='給 A 的補充'));
+ }finally{await f.c.close();}
 });

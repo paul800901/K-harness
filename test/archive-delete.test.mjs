@@ -92,6 +92,13 @@ test('a recycle-bin failure restores each source to its original K path',async()
  assert.ok(JSON.parse(await readFile(path.join(f.runtime,staging,'K-restore-manifest.json'),'utf8')).files.length===4);
 });
 
+test('archived discussion originals join the existing recoverable bundle; native provider homes stay intact',async()=>{
+ const f=await fixture();await f.add('discussion-room');const directory=path.join(f.runtime,'discussions');await mkdir(directory);await writeFile(path.join(directory,'discussion-room.json'),'{"original":"fake model opinions"}');
+ const nativeHome=path.join(f.root,'agent-home/gemini/discussion/fake-native');await mkdir(nativeHome,{recursive:true});await writeFile(path.join(nativeHome,'fake.log'),'native history');let manifest;
+ const result=await deleteArchived({root:f.root,threadIds:['discussion-room'],confirmed:true,recycler:async bundle=>{manifest=JSON.parse(await readFile(path.join(bundle,'K-restore-manifest.json'),'utf8'));await rename(bundle,path.join(f.runtime,'test-recycle-bin'));}});
+ assert.deepEqual(result.deletedIds,['discussion-room']);assert(manifest.files.some(f=>f.originalPath===path.join('discussions','discussion-room.json')));await assert.rejects(lstat(path.join(directory,'discussion-room.json')),{code:'ENOENT'});assert.equal(await readFile(path.join(nativeHome,'fake.log'),'utf8'),'native history');
+});
+
 test('a recycler that returns success without moving staging is not reported as deletion',async()=>{
  const f=await fixture();await f.add('still_here');
  const result=await deleteArchived({root:f.root,threadIds:['still_here'],confirmed:true,recycler:async()=>{}});

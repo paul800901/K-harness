@@ -183,7 +183,7 @@ export function createUnifiedController(options){
   if(changing&&['upload','uploadStream','steer','goal','compact','answer'].includes(name))throw new Error('正在切換對話，請稍候。');
   return active[name](...args);
  };
- api.send=async data=>{if(changing)throw Error('正在切換對話。');if(active.state.busy||queue.state.queuedMessages.length)return queue.enqueue(data);return active.send(data);};
+ api.send=async data=>{if(changing)throw Object.assign(Error('正在切換對話。'),{notSent:true});if(active.state.busy||queue.state.queuedMessages.length)return queue.enqueue(data);return active.send(data);};
  api.queue=async data=>{if(changing)throw Error('正在切換對話。');return queue.action(data);};
  api.stop=async()=>{await queue.pause();return active.stop();};
  api.selectWorkspace=async data=>{if(changing||queue.sending)throw Error('正在切換或送出，請稍候。');changing=true;try{const result=await active.selectWorkspace(data);await queue.load(null);return result;}finally{changing=false;}};

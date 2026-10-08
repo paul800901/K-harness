@@ -137,6 +137,8 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async attachmentSource(id,context={}){if(context.threadId&&context.threadId!==state.threadId)throw new Error('聊天室已切換，請回到原對話下載附件。');return sessionAttachmentSource(state.workspace,state.previousWorkspaces,state.threadId,id);},
   async artifact(name){if(!state.artifacts.includes(name))throw Error('只開啟本對話已記錄的成果。');return sessionArtifact(state.workspace,state.previousWorkspaces,name);},
   async send({text,attachmentIds=[],accessMode,effort,permissionConfirmed=false}={},goalObjective=null){
+   let attempted=false;
+   try{
    idle();if(!record||!['ready','completed','failed','interrupted'].includes(state.status))throw Error('請先開啟 Gemini 對話。');
    if(record.nativeStarted&&!nativeId(record.nativeSessionId))throw Error('前次送出後沒有原生對話 ID；請先查明，不會重送或另開原生對話。');
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('請輸入 1–32000 字元的訊息。');
@@ -182,7 +184,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
      const usage=event.result?.usage??step?.usage;if(Number.isFinite(usage?.total_tokens))state.progress.tokenUsage={last:{totalTokens:usage.total_tokens,inputTokens:usage.input_tokens,outputTokens:usage.output_tokens}};
      changed();
     });
-    record.nativeStarted=true;await save();current.abort.signal.throwIfAborted();launched=true;
+    record.nativeStarted=true;await save();current.abort.signal.throwIfAborted();launched=true;attempted=true;
     current.done=(async()=>{
      try{
       const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:false,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
@@ -202,6 +204,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     })();
     return {sent:true};
    }catch(error){if(!launched){if(goalObjective&&state.goal?.objective===goalObjective)state.goal.status='failed';await accountLease?.release();if(!record.nativeSessionId){record.nativeStarted=false;await save().catch(()=>{});}state.busy=false;state.status=current.abort.signal.aborted?'interrupted':'failed';state.error=error.message;turn=null;finish();changed();}throw error;}
+   }catch(error){if(!attempted)error.notSent=true;throw error;}
   },
   async stop(){const current=turn;current?.abort.abort();if(current)await current.settled;if(unresolvedPid){await killTree(unresolvedPid);unresolvedPid=null;state.status='interrupted';state.error=null;}await resetBrowser();if(current&&state.status!=='uncertain')state.status='interrupted';changed();return {stopped:true};},
   async close(){await api.stop();await persist;state.status='offline';changed();},

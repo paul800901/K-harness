@@ -700,3 +700,16 @@ test('native child activity survives status reads while its parent stays idle an
   assert.equal(f.calls.filter(c=>c.method==='turn/start').length,before);
  }finally{ended=true;await f.c.close();}
 });
+
+
+test('Codex confirms pre-dispatch rejection while attempted delivery stays unknown',async()=>{
+ const f=await fixture();try{
+  await assert.rejects(f.c.send({text:'fake'}),e=>e.notSent===true);
+  await f.c.open({model:'gpt-6-astra'});
+  await assert.rejects(f.c.send({text:''}),e=>e.notSent===true);
+  await assert.rejects(f.c.send({text:'fake',attachmentIds:['missing']}),e=>e.notSent===true);
+  const request=f.host.request;f.host.request=async(method,p)=>{if(method==='turn/start')throw Error('unknown native delivery');return request(method,p);};
+  await assert.rejects(f.c.send({text:'fake'}),e=>e.notSent!==true);
+  assert.equal(f.c.state.status,'uncertain');
+ }finally{await f.c.close();}
+});

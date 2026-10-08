@@ -17,7 +17,7 @@ async function fixture({decisions=[{action:'finish',summary:'共識：目標清�
   return {async ask(prompt,{onText=()=>{}}={}){
    calls.push({id,prompt});signal.throwIfAborted();
    const response=id==='host'?prompt.startsWith('你是多模型討論背景整理者')?JSON.stringify({background:'使用者修正後的背景與需求，未把舊模型結論當真值。'}):JSON.stringify(decisions.shift()):`${selection.displayName} 的獨立意見`;
-   const output=answer?await answer({id,prompt,response}):response;onText(output);return output;
+   const raw=answer?await answer({id,prompt,response}):response;const output=id==='host'&&prompt.includes('平行比較直接整理')?JSON.parse(raw).summary:raw;onText(output);return output;
   },async close(){if(closeFailure)throw Error('未確認停止');}};
  };
  const d=createDiscussionController({root,threadId:'room',sessionFactory:factory});await d.load();
@@ -71,7 +71,7 @@ test('a normal interjection is kept verbatim for AI arrangement, not forced into
  const gate=deferred(),ready=deferred();let n=0;
  const f=await fixture({decisions:[{action:'finish',summary:'stale'},{action:'speak',speakers:['p1'],prompt:'只需 Sol 回應使用者的新限制'},{action:'finish',summary:'回應完成，有分歧保留'}],answer:async({id,prompt,response})=>{if(id==='host'&&prompt.startsWith('你是主持人')&&++n===1){ready.resolve();await gate.promise;}return response;}});
  await f.start();await ready.promise;await f.d.interject({text:'新的重要限制原文'});gate.resolve();await f.d.settled();
- assert.ok(f.calls.filter(c=>c.id==='host').at(-1).prompt.includes('新的重要限制原文'));assert.equal(f.calls.filter(c=>c.id==='p2').length,1);
+ assert.equal(f.calls.filter(c=>c.id==='host').filter(c=>c.prompt.includes('新的重要限制原文')).length,1);assert.equal(f.calls.filter(c=>c.id==='p2').length,1);
 });
 
 test('participant failure preserves independent peer output and blocks dependent rounds; no replacement or replay',async()=>{
@@ -86,7 +86,7 @@ test('malformed host output ends visibly without retrying or silently switching 
 });
 
 test('failed session teardown is uncertain, never completed or silently restarted',async()=>{
- const f=await fixture({closeFailure:true});await f.start();await f.d.settled();assert.equal(f.d.state.status,'uncertain');await assert.rejects(f.start(),/狀態待確認/);
+ const f=await fixture({closeFailure:true});await f.start();await f.d.settled();assert.equal(f.d.state.status,'uncertain');await assert.rejects(f.start(),/停止待確認/);
 });
 
 test('same-room start is reserved before asynchronous persistence, preventing two hosts',async()=>{
@@ -104,13 +104,44 @@ test('ordinary continuation gets an explicit, once-attempted handoff with all or
  assert.equal((await f.d.handoff('下一題')).text,'下一題');await handoff.rejected();assert.match((await f.d.handoff('已確認未送出，改送')).text,/新增討論原文/);
 });
 
+test('handoff retains the full native prompt but displays only the real user instruction in the human chat',async()=>{
+ const f=await fixture();await f.start();await f.d.settled();const handoff=await f.d.handoff('繼續評估，不實作');
+ const native=[{id:'old',role:'assistant',text:'原回覆'},{id:'handoff',role:'user',text:handoff.text}];
+ const shown=f.d.project(native).at(-1);assert.equal(shown.displayText,'繼續評估，不實作');assert.equal(shown.discussionHandoff,true);assert.equal(native.at(-1).text,handoff.text);
+ const reopened=createDiscussionController({root:f.root,threadId:'room'});await reopened.load();assert.equal(reopened.project(native).at(-1).displayText,'繼續評估，不實作');
+});
+
+test('new untargeted facts in parallel comparison reach everyone independently without cross-review',async()=>{
+ const gate=deferred(),ready=deferred();let n=0;const f=await fixture({decisions:[{action:'finish',summary:'stale'},{action:'finish',summary:'新限制後的獨立比較'}],answer:async({id,prompt,response})=>{if(id==='host'&&prompt.startsWith('你是主持人')&&++n===1){ready.resolve();await gate.promise;}return response;}});
+ await f.start({mode:'parallel'});await ready.promise;await f.d.interject({text:'新增限制：優先可追溯性'});gate.resolve();await f.d.settled();
+ for(const id of ['p1','p2']){const calls=f.calls.filter(c=>c.id===id);assert.equal(calls.length,2);assert(calls[1].prompt.includes('新增限制：優先可追溯性'));assert(!calls[1].prompt.includes('獨立意見'));}
+ assert.equal(f.d.state.status,'completed');
+});
+
 test('interrupted persisted run reads back uncertain without opening sessions or replaying work',async()=>{
  const f=await fixture();await f.start();await f.d.settled();const file=path.join(f.root,'.runtime/discussions/room.json'),record=JSON.parse(await readFile(file,'utf8'));record.runs.at(-1).status='working';await writeFile(file,JSON.stringify(record));
  let opened=0;const reopened=createDiscussionController({root:f.root,threadId:'room',sessionFactory:()=>{opened++;}});await reopened.load();assert.equal(reopened.state.status,'uncertain');assert.equal(opened,0);await assert.rejects(reopened.stop(),/不能冒稱/);
+ assert.equal(reopened.held,false);
+ const next=createDiscussionController({root:f.root,threadId:'room',sessionFactory:async({selection})=>({async ask(prompt){return selection.id==='host'?prompt.startsWith('你是多模型討論背景整理者')?'{"background":"這是新的議題"}':'{"action":"finish","summary":"新討論已整理"}':'新答案';},async close(){}})});await next.load();await next.start({mode:'meeting',text:'明確新的議題，不續跑舊工作',participants,facilitator:{...participants[0],id:'host'},workspace:f.root});await next.settled();assert.equal(next.state.status,'completed');assert.equal(JSON.parse(await readFile(file,'utf8')).runs[0].status,'uncertain');
+});
+
+test('continued native sessions get new messages only, never repeatedly copied long attachments',async()=>{
+ const f=await fixture({decisions:[{action:'speak',speakers:['p2'],prompt:'Opus 回應 Sol'},{action:'speak',speakers:['p1'],prompt:'Sol 澄清'},{action:'finish',summary:'整理'}]});
+ await f.start({attachments:[{name:'fake.txt',text:'LONG_UNIQUE_ATTACHMENT'}]});await f.d.settled();
+ for(const id of ['p1','p2']){const turns=f.calls.filter(c=>c.id===id);assert(turns[0].prompt.includes('LONG_UNIQUE_ATTACHMENT'));assert(!turns[1].prompt.includes('LONG_UNIQUE_ATTACHMENT'));assert(turns[1].prompt.includes('新增原文'));}
+ const host=f.calls.filter(c=>c.id==='host');assert(host[0].prompt.includes('LONG_UNIQUE_ATTACHMENT'));assert(host.slice(1).every(c=>!c.prompt.includes('LONG_UNIQUE_ATTACHMENT')));
+ assert.equal(f.d.state.status,'completed');
 });
 
 test('stop waits for all already opened sessions and cancels unsent scheduling',async()=>{
  const waiting=deferred(),started=deferred();const f=await fixture();let closes=0;
  const d=createDiscussionController({root:f.root,threadId:'stop-room',sessionFactory:async({selection,signal})=>({async ask(){if(selection.id==='host')return '{"background":"假資料"}';started.resolve();return waiting.promise;},async close(){closes++;waiting.reject(Error('native stopped'));}})});
  await d.load();await d.start({mode:'meeting',text:'測試停止',participants,facilitator:{...participants[0],id:'host'},workspace:f.root});await started.promise;const stopped=await d.stop();assert.equal(stopped.stopped,true);assert.equal(d.state.status,'interrupted');assert.ok(closes>=3);assert.equal(d.messages.some(m=>m.summary),false);
+});
+
+
+test('a confirmed rejected handoff still displays the actual user text if native history retained the failed attempt',async()=>{
+ const f=await fixture();await f.start();await f.d.settled();const h=await f.d.handoff('只談取捨');await h.rejected();
+ assert.equal(f.d.project([{id:'failed-user',role:'user',text:h.text}]).find(m=>m.id==='failed-user').displayText,'只談取捨');
+ assert.match((await f.d.handoff('明確新指示')).text,/新增討論原文/);
 });

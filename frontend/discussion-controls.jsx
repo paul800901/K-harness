@@ -17,6 +17,7 @@ export function DiscussionControls({state,models=[],config,onChange,loadModels,o
  const [expanded,setExpanded]=useState(false);
  const [catalogError,setCatalogError]=useState('');
  const d=state.discussion,running=d?.busy;
+ useEffect(()=>{if(running)setExpanded(false);},[running]);
  const available=models.filter(m=>m.available!==false&&m.hidden!==true);
  const defaults=[{model:state.model,effort:state.effort??''},{model:available.find(m=>modelProvider(m.model)!==modelProvider(state.model))?.model??available.find(m=>m.model!==state.model)?.model??'',effort:''}];
  const participants=config.participants?.length?config.participants:defaults;

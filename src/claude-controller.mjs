@@ -641,6 +641,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       finally{opening=false;openAbort=null;finishOpen();changed();}
     },
     async send({text,attachmentIds=[],accessMode,effort}={}){
+      let attempted=false;
+      try{
       if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的訊息。');
       // A confirmed stop closes the native process, not the conversation.
       // Only a new explicit send reconnects it; uncertain/offline sends are never replayed.
@@ -672,12 +674,14 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
           watchHost(host);
         }
         await enqueuePersist(async()=>{const record=await currentRecord();if(record){record.nativeStarted=true;record.compactions=compactionSnapshot();await saveRecord(root,record);}});
+        attempted=true;
         try {await hostAtSend.start(content,{uuid:sentMessage.id});}catch(error){state.status='uncertain';state.error='訊息送出狀態未確認，未自動重送。請先重開原對話查明。';throw error;}
         if(!state.title) state.title=text.trim().slice(0,40);
         await saveCurrent();
         return {sent:true};
       } catch(error) {if(!['uncertain','offline'].includes(state.status)){state.busy=false;state.status='ready';}throw error;}
       finally{changed();}
+      }catch(error){if(!attempted)error.notSent=true;throw error;}
     },
     async answer({id,accept,answers}){
       const item=pending.get(id);if(!item)throw new Error('核准請求已失效或已回答。');

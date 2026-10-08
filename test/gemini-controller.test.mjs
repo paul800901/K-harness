@@ -255,3 +255,16 @@ for(const confirmed of [true,false])test(`Gemini goal completion requires native
 test('Gemini cannot silently turn an edit-only request into new work',async()=>{
  const f=await fixture();try{await f.controller.open({model:'gemini-3.8-flash'});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.calls.length,0);}finally{await f.controller.close();}
 });
+
+
+test('Gemini confirms pre-dispatch rejection without replaying an attempted native turn',async()=>{
+ const f=await fixture();try{
+  await assert.rejects(f.controller.send({text:'fake'}),e=>e.notSent===true);
+  await f.controller.open({model:'gemini-3.8-flash',effort:'low'});
+  await assert.rejects(f.controller.send({text:''}),e=>e.notSent===true);
+  await assert.rejects(f.controller.send({text:'fake',attachmentIds:['missing']}),e=>e.notSent===true);
+  assert.equal(f.calls.length,0);
+  assert.deepEqual(await f.controller.send({text:'fake'}),{sent:true});await finish(f.controller);
+  assert.equal(f.calls.length,1);
+ }finally{await f.controller.close();}
+});

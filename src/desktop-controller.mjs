@@ -870,8 +870,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },
   async send({text,attachmentIds=[],effort,accessMode,permissionConfirmed}){
+   let attempted=false;
+   try{
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的訊息。');
-   if(!host||opening||closing||stopping||state.busy||state.goalPending||submission||!['ready','completed','interrupted','failed'].includes(state.status)){const error=new Error('請先開啟對話，或等待目前工作結束。');error.notSent=true;throw error;}
+   if(!host||opening||closing||stopping||state.busy||state.goalPending||submission||!['ready','completed','interrupted','failed'].includes(state.status)){throw new Error('請先開啟對話，或等待目前工作結束。');}
    // Flash is optional. Its connection state is shown separately and must not
    // block direct Codex work or native GPT subagents.
    if(!Array.isArray(attachmentIds)||attachmentIds.some(id=>typeof id!=='string'))throw new Error('附件格式無效。');
@@ -882,7 +884,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // MCP server configuration is applied at thread start/resume, not turn/start.
    // Reopen the same native thread with the selected mode so read-only really
    // removes browser tools; thread history stays native and is never replayed.
-   if(access!==state.accessMode){const expectedThreadId=state.threadId;await this.open({threadId:expectedThreadId,model:state.model,effort:turnEffort,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy,accessMode:access,permissionConfirmed});if(!host||opening||closing||stopping||state.busy||state.goalPending||submission||state.threadId!==expectedThreadId||!['ready','completed','interrupted','failed'].includes(state.status)){const error=new Error('權限切換後對話狀態已改變；未送出訊息。');error.notSent=true;throw error;}}
+   if(access!==state.accessMode){const expectedThreadId=state.threadId;await this.open({threadId:expectedThreadId,model:state.model,effort:turnEffort,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy,accessMode:access,permissionConfirmed});if(!host||opening||closing||stopping||state.busy||state.goalPending||submission||state.threadId!==expectedThreadId||!['ready','completed','interrupted','failed'].includes(state.status)){throw new Error('權限切換後對話狀態已改變；未送出訊息。');}}
    // Reserve before async attachment validation, so concurrent requests cannot double-send.
    state.busy=true;activity.begin();stopRequested=false;const attachments=[];let finishSubmission;
    submission=new Promise(resolve=>{finishSubmission=resolve;});
@@ -897,16 +899,18 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     let wasPrepared=false;
     try{
      wasPrepared=await markSubmitted();
+     attempted=true;
      const result=await startNativeTurn(host,{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),serviceTier:state.serviceTier,input,...turnPermissions(access,state.workspace)});
      const sentTurnId=result.turn.id;message(sentMessage.id,'user',text,attachments,sentTurnId);
      if(state.busy&&!capacityHandled.has(sentTurnId))turnId=sentTurnId;
      if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges=[...state.modelChanges,{turnId:sentTurnId,fromModel:state.lastUsedModel,toModel:state.model,at:new Date().toISOString()}];
      state.lastUsedModel=state.model;state.effort=turnEffort??null;state.accessMode=access;
     }
-    catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected)state.busy=false;state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
+    catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected){state.busy=false;e.notSent=true;}state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
     {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
    }finally{finishSubmission();submission=null;changed();void deliverFlashResults();}
+   }catch(error){if(!attempted)error.notSent=true;throw error;}
   },
   async steer({text,attachmentIds=[]}){
    if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的修正內容。');

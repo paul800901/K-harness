@@ -1280,3 +1280,16 @@ for(const [model,levels] of [['claude-haiku-4-5-20251001',[]],['claude-opus-4-6'
   assert.equal(f.hostOptions.model,model);assert.equal(f.controller.state.effort,null);
  }finally{await f.controller.close();}
 });
+
+
+test('Claude confirms pre-dispatch rejection, but never labels an attempted native send as unsent',async()=>{
+ const f=await fixture();try{
+  await assert.rejects(f.controller.send({text:'fake'}),e=>e.notSent===true);
+  await f.controller.open({});
+  await assert.rejects(f.controller.send({text:''}),e=>e.notSent===true);
+  await assert.rejects(f.controller.send({text:'fake',attachmentIds:['missing']}),e=>e.notSent===true);
+  f.host.start=async()=>{throw Error('unknown native delivery');};
+  await assert.rejects(f.controller.send({text:'fake'}),e=>e.notSent!==true);
+  assert.equal(f.controller.state.status,'uncertain');
+ }finally{await f.controller.close();}
+});
