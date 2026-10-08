@@ -23,16 +23,16 @@ export function workerHealth(worker,online=true,now=Date.now()){
 }
 export function pendingWorkerSummary(rows,online=true,now=Date.now()){
  const pending=rows.filter(w=>!workerEnded(w)&&w.executionUnowned!==true),historicalUnconfirmed=rows.filter(w=>!workerEnded(w)&&w.executionUnowned===true&&!workerReconciled(w)),health=pending.map(w=>workerHealth(w,online,now));
- return {count:pending.length,unknown:health.filter(h=>h.unknown).length,quiet:health.filter(h=>h.quiet).length,historicalUnconfirmed:historicalUnconfirmed.length};
+ return {count:pending.length,unknown:health.filter(h=>h.unknown).length,quiet:health.filter(h=>h.quiet).length,confirmation:health.filter(h=>h.kind==='confirmation').length,healthy:health.filter(h=>h.kind==='running').length,historicalUnconfirmed:historicalUnconfirmed.length};
 }
 export function workStatus(state,online=true,now=Date.now()) {
  if(!online)return {kind:'danger',text:'後端斷線 · 無法確認工作狀態'};
  const children=pendingWorkerSummary(currentWorkers(state),online,now);
- const pendingText=[children.count?`等待子代理：${children.count} 個${children.unknown?` · 待確認：${children.unknown}`:''}${children.quiet?` · 久未回報：${children.quiet}（是否卡住待確認）`:''}`:'',children.historicalUnconfirmed?`舊工單結果待確認：${children.historicalUnconfirmed} 個`:''].filter(Boolean).join(' · ');
+ const pendingText=[children.count?children.healthy===children.count?`子代理仍在工作：${children.count} 個`:`子代理未結束：${children.count} 個${children.confirmation?` · 等待核准：${children.confirmation}`:''}${children.unknown?` · 待確認：${children.unknown}`:''}${children.quiet?` · 久未回報：${children.quiet}（是否卡住待確認）`:''}`:'',children.historicalUnconfirmed?`舊工單結果待確認：${children.historicalUnconfirmed} 個`:''].filter(Boolean).join(' · ');
  const terminal={offline:'核心已斷線',error:'連線失敗',failed:'工作失敗',uncertain:'工作狀態待確認',connecting:'正在載入對話…',stopping:'正在停止背景工作…',interrupted:'已停止'};
  if(terminal[state.status])return {kind:['connecting','stopping','interrupted'].includes(state.status)?'muted':state.status==='uncertain'?'warning':'danger',text:terminal[state.status]+(pendingText?` · ${pendingText}`:'')};
  if(state.questions?.length)return {kind:'confirmation',text:'等待你的確認'};
- if(!state.busy&&state.status!=='working')return pendingText?{kind:children.unknown||children.quiet||children.historicalUnconfirmed?'warning':'waiting',text:`主代理待命 · ${pendingText}`} : state.completionPending?{kind:'waiting',text:'等待結果交接'}:null;
+ if(!state.busy&&state.status!=='working')return pendingText?{kind:children.unknown||children.quiet||children.confirmation||children.historicalUnconfirmed?'warning':'waiting',text:children.count===1&&children.healthy===1&&!children.historicalUnconfirmed?'子代理仍在工作 · 主代理待命':`主代理待命 · ${pendingText}`} : state.completionPending?{kind:'waiting',text:'等待結果交接'}:null;
  const a=state.activity,recent=age(a?.lastEventAt,now),waiting=age(a?.phaseSince,now);
  const freshness=recent===null?'尚無核心活動回報':`最近活動 ${formatElapsed(recent)}前`;
  const retry=(state.notices??[]).findLast(n=>n.willRetry&&!n.resolved);

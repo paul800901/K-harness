@@ -19,7 +19,7 @@ try{
   const shows=async(text)=>{await header.filter({hasText:text}).waitFor();assert.equal(await header.textContent(),text);};
   await page.goto('http://127.0.0.1:5197');await shows('執行中 · 最近活動 8 秒前');
   assert.equal(await footer.textContent(),'執行中 · 最近活動 8 秒前');
-  assert.equal(await page.locator('.worker-activity').textContent(),'子代理已確認執行中：7 · 待確認：2');
+  assert.equal(await page.locator('.worker-activity-zero').textContent(),'無未結束的子代理','aggregate counters do not replace native per-worker rows');
   await page.locator('.turn-process summary').filter({hasText:'已耗時 2 小時'}).waitFor();
   // No SSE or backend update: the local timer must expose silence, not refresh it.
   await page.evaluate(now=>window.testNow=now+300000,now);await shows('工作尚未結束 · 已 5 分 8 秒無新活動回報');
@@ -40,7 +40,7 @@ try{
   await update({...base,busy:false,status:'completed'});await header.waitFor({state:'detached'});assert.equal(await footer.count(),0);
   await update({...base,busy:false,status:'offline'});await shows('核心已斷線');
   await page.evaluate(()=>window.testDisconnect());await shows('後端斷線 · 無法確認工作狀態');
-  assert.equal(await page.locator('.worker-activity').textContent(),'子代理：狀態待確認');
+  assert.equal(await page.locator('.worker-activity').textContent(),'子代理 · 狀態待確認');
   assert.equal(requests.includes('POST'),false,'display clocks and status changes must not send/stop/replay');
   results.push({width,scale,theme,passed:true,checks:['real-event recency','time-only silence warning','explicit wait duration','partial worker count','no pulse','hour/day elapsed','no overflow','dismissed retry remains status','room switch preserves recency','confirmation','completed/connection state','no POST']});await page.close();
  }

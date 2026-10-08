@@ -26,7 +26,7 @@ export function createWorkerWatch({inspect,publish,now=Date.now,quietMs=300000})
     const inspection={
       noticeId:`quiet-${createHash('sha256').update(JSON.stringify([result.parentId,entry.id,result.status==='unresolved'?'unresolved':'quiet',result.toolErrors??[],result.deniedTools??[]])).digest('hex')}`,
       checkedAt:now(),lastActivityAt:entry.progress,statusObserved:result.status,
-      source:result.provider==='gemini'?'K-owned agy run':'native thread/read',
+      source:result.provider==='gemini'?'K-owned agy run':result.provider==='claude'?'K-owned Claude stream':'native thread/read',
       reason:result.status==='unresolved'?'久無新活動，原生執行狀態無法確認；未停止或重送。':result.provider==='gemini'?'久無新活動，本機 agy 執行尚未結束，無法確認遠端模型是否仍在工作；未停止或重送。':'久無新活動，查詢仍未結束；不能據此判定卡死，未停止或重送。',
     };
     // One quiet notice per job, not one model wake for every long command.

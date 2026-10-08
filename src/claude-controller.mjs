@@ -6,7 +6,7 @@ import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {randomUUID} from 'node:crypto';
 import {openClaudeHost, claudeQuota, claudeModelsFrom, CLAUDE_MODEL, CLAUDE_ACCESS_MODES, normalizeClaudeAccessMode, claudePermissionMode, nativeCapabilitiesFrom} from './claude-host.mjs';
-import {normalizeWorkerPolicy} from './worker-policy.mjs';
+import {normalizeWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
 import {createLunaBridge, lunaResult} from './luna-bridge.mjs';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
 import {sessionAttachment,sessionAttachmentSource,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
@@ -78,7 +78,8 @@ async function claudeInput(text,attachmentIds,{workspace,previousWorkspaces,thre
 }
 
 /** Claude Code subscription-backed desktop controller. K stores a UI projection only; native Claude owns transcript history. */
-export function createClaudeController({root, executable, commandSpec, hostFactory=openClaudeHost, bridgeFactory=createLunaBridge, gatewayFactory, onChange=()=>{}, browserConfig=async()=>null, closeBrowser=async()=>{}}) {
+export function createClaudeController({root, executable, commandSpec, hostFactory=openClaudeHost, bridgeFactory=createLunaBridge, gatewayFactory, workerCatalog, onChange=()=>{}, browserConfig=async()=>null, closeBrowser=async()=>{}}) {
+  let workerInstructions='';
   const state = {status:'idle',threadId:null,model:CLAUDE_MODEL,modelDisplayName:'Claude Opus 5.5',inputModalities:['text','image'],workerPolicy:normalizeWorkerPolicy(),accessMode:'claude-manual',browserAccess:{enabled:false,networkAccess:false},nativeCapabilities:{tools:[],commands:[],models:[],agents:[],skills:[],mcpServers:[],permissionModes:[...CLAUDE_ACCESS_MODES]},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,capabilities:{steer:true,goal:false,compact:true,fileSearch:false,review:false,turnDiffs:false,reasoningSummary:false},provider:'claude'};
   state.usage={claude:{status:'unavailable',auth:null,checkedAt:null,rateLimitStatus:null,extraUsageDisabled:null},codex:{status:'not-checked'}};
   let host=null, hostEffort=null, bridge=null, bridgeInstance=null, bridgeInitPromise=null, gateway=null, opening=false, closing=false, stopping=false, restartingHost=false, activeGeneration=0, persistChain=Promise.resolve(), persistError=null;
@@ -421,6 +422,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   }
 
   function codexApproval(request,item) {
+    if(request.method==='k/claude/requestApproval'&&(request.params?.parentId!==state.threadId||opening||closing||stopping))return undefined;
     const approval=approvalRequest(request,item);
     if(!approval) return undefined;
     const id=randomUUID();
@@ -442,7 +444,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         await active.cancel({requestId:record.requestId});
         const waited=await active.wait({requestId:record.requestId,timeoutMs:10000});
         const verified=await active.inspect({requestId:record.requestId});
-        if(!waited?.settled||!verified?.settled)throw new Error(`${record.provider==='gemini'?'Flash':'Codex'} 子代理 ${record.requestId} 的停止狀態未確認。`);
+        if(!waited?.settled||!verified?.settled)throw new Error(`子代理 ${record.requestId} 的停止狀態未確認。`);
       }
     }
     const oldGateway=gateway,oldBridge=bridge;
@@ -453,6 +455,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   }
 
   async function configureGateway() {
+    if(workerCatalog)workerInstructions=workerPolicyConfig(state.workerPolicy,{models:(await workerCatalog()).models,geminiGateway:true,claudeGateway:true,provider:'claude'}).developer_instructions;
     const permissionMode=claudePermissionMode(state.accessMode);
     const workerMode=permissionMode==='bypassPermissions'?'danger-full-access':permissionMode==='plan'?'read-only':'workspace-write';
     const ensureBridge=()=>{
@@ -608,7 +611,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         await configureGateway();
         const mcpConfig=await nativeMcpConfig(id);
         signal.throwIfAborted();
-        const candidate=await hostFactory({commandSpec,model,signal,cwd:state.workspace,workspaceInstructions:workspaceGuidance(state),sessionId:id,resume:!!(threadId&&saved.nativeStarted===true),...(source?{forkFrom:source.nativeSessionId}:{}),mcpConfig,accessMode:state.accessMode,effort:state.effort,onMessage:message=>{if(!signal.aborted)onClaudeMessage(message);},onPermission:askPermission});
+        const candidate=await hostFactory({commandSpec,model,signal,cwd:state.workspace,workspaceInstructions:workspaceGuidance(state)+'\n'+workerInstructions,sessionId:id,resume:!!(threadId&&saved.nativeStarted===true),...(source?{forkFrom:source.nativeSessionId}:{}),mcpConfig,accessMode:state.accessMode,effort:state.effort,onMessage:message=>{if(!signal.aborted)onClaudeMessage(message);},onPermission:askPermission});
         if(signal.aborted){await candidate.close();throw signal.reason;}host=candidate;
         const selected=(host.models??claudeModelsFrom()).find(row=>row.model===model);
         if(!selected)throw Error('目前帳號未提供指定 Claude 模型。');
@@ -661,7 +664,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
           const accessChanged=nextAccessMode!==state.accessMode;
           if(accessChanged){state.browserAccess={enabled:false,networkAccess:false};await persistAccessMode(nextAccessMode);await closeWorkers();await configureGateway();}
           const recordBeforeRestart=await currentRecord();
-          try {const mcpConfig=await nativeMcpConfig(nativeId(state.threadId),nextAccessMode);host=await hostFactory({commandSpec,model:state.model,cwd:state.workspace,workspaceInstructions:workspaceGuidance(state),sessionId:nativeId(state.threadId),resume:recordBeforeRestart?.nativeStarted===true,mcpConfig,accessMode:nextAccessMode,effort:nextEffort,onMessage:onClaudeMessage,onPermission:askPermission});state.browserAccess={enabled:!!mcpConfig?.mcpServers?.k_browser,networkAccess:!!mcpConfig?.mcpServers?.k_browser,sessionKey:browserSessionKey(mcpConfig?.mcpServers?.k_browser)};}
+          try {const mcpConfig=await nativeMcpConfig(nativeId(state.threadId),nextAccessMode);host=await hostFactory({commandSpec,model:state.model,cwd:state.workspace,workspaceInstructions:workspaceGuidance(state)+'\n'+workerInstructions,sessionId:nativeId(state.threadId),resume:recordBeforeRestart?.nativeStarted===true,mcpConfig,accessMode:nextAccessMode,effort:nextEffort,onMessage:onClaudeMessage,onPermission:askPermission});state.browserAccess={enabled:!!mcpConfig?.mcpServers?.k_browser,networkAccess:!!mcpConfig?.mcpServers?.k_browser,sessionKey:browserSessionKey(mcpConfig?.mcpServers?.k_browser)};}
           catch(error){state.browserAccess={enabled:false,networkAccess:false};state.busy=false;state.status='offline';state.error=`Claude 權限／推理設定已更新，但原對話重開失敗；沒有送出訊息，也未自動改回舊設定：${error.message}`;throw error;}
           hostEffort=state.effort;state.nativeCapabilities=clone(host.nativeCapabilities??state.nativeCapabilities);
           state.effort=nextEffort;hostEffort=nextEffort;
@@ -689,11 +692,11 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         }
         nativeQuestionReply={behavior:'allow',updatedInput:{...input,answers:normalized}};
       }
-      if(!item.approval&&!item.nativeQuestion&&typeof accept!=='boolean')throw new Error('核准狀態無效。');
+      let reply=nativeQuestionReply;
+      if(item.approval){if(typeof accept!=='boolean')throw new Error('核准狀態無效。');reply=item.approval.reply(accept);}
+      else if(!item.nativeQuestion){if(typeof accept!=='boolean')throw new Error('核准狀態無效。');reply=accept?{behavior:'allow',updatedInput:item.details?.input??{}}:{behavior:'deny',message:'使用者拒絕此工具呼叫。'};}
       pending.delete(id);state.questions=state.questions.filter(q=>q.id!==id);
-      if(item.approval){item.resolve(item.approval.reply(accept));}
-      else if(item.nativeQuestion)item.resolve(nativeQuestionReply);
-      else {if(typeof accept!=='boolean')throw new Error('核准狀態無效。');item.resolve(accept?{behavior:'allow',updatedInput:item.details?.input??{}}:{behavior:'deny',message:'使用者拒絕此工具呼叫。'});}
+      item.resolve(reply);
       changed();return {answered:true};
     },
     stop,

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {MODEL_ROLE_GUIDANCE,normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from '../src/worker-policy.mjs';
-const models=[{model:'gpt-6.1-sol',supportedReasoningEfforts:['low','medium','high','xhigh','max','ultra'].map(reasoningEffort=>({reasoningEffort}))},{model:'gpt-6-luna',supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort}))}];
+import {availableWorkerModels,MODEL_ROLE_GUIDANCE,normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from '../src/worker-policy.mjs';
+const gptModels=[{model:'gpt-6.1-sol',supportedReasoningEfforts:['low','medium','high','xhigh','max','ultra'].map(reasoningEffort=>({reasoningEffort}))},{model:'gpt-6-luna',supportedReasoningEfforts:['low','medium','high','xhigh','max'].map(reasoningEffort=>({reasoningEffort}))}];
+const models=[...gptModels,{model:'gemini-3.8-flash',supportedReasoningEfforts:['low','medium','high'].map(reasoningEffort=>({reasoningEffort}))},{model:'claude-opus-5-5',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'claude-haiku-4-5',supportedReasoningEfforts:[]}];
 
 test('user model roles reach Codex instructions without changing manual defaults or granting new capabilities',()=>{
  for(const policy of [undefined,{model:'gpt-6.1-sol',effort:'high'},{model:'gemini-3.8-flash',effort:'low'}]){
@@ -32,72 +33,56 @@ test('user model roles reach Codex instructions without changing manual defaults
  assert.match(MODEL_ROLE_GUIDANCE,/不同帳號不並行/);
 });
 
-test('new worker policy defaults to AI auto while saved explicit preferences remain intact',()=>{
+
+test('new worker policy defaults to AI auto and preserves explicit and null native settings',()=>{
  assert.deepEqual(normalizeWorkerPolicy(),{model:'auto',effort:'auto'});
  assert.deepEqual(normalizeWorkerPolicy({model:'gpt-6-luna',effort:'high'}),{model:'gpt-6-luna',effort:'high'});
- assert.deepEqual(normalizeWorkerPolicy({model:'gpt-6.1-sol'}),{model:'gpt-6.1-sol',effort:'high'});
- assert.equal(normalizeWorkerPolicy({model:'retired-model'}).model,'retired-model');
+ assert.deepEqual(normalizeWorkerPolicy({model:'claude-haiku-4-5',effort:null}),{model:'claude-haiku-4-5',effort:null});
+ assert.equal(normalizeWorkerPolicy({model:'new-model'}).effort,null);
  assert.deepEqual(validateWorkerPolicy(undefined,[]),{model:'auto',effort:'auto'});
- assert.throws(()=>validateWorkerPolicy({model:'retired-model',effort:'high'},[]),/未自動換模/);
+ assert.throws(()=>validateWorkerPolicy({model:'retired',effort:'high'},[]),/未自動換模/);
  assert.throws(()=>validateWorkerPolicy({model:'auto',effort:'high'},models),/必須同時/);
  assert.throws(()=>validateWorkerPolicy({model:'gpt-6-luna',effort:'auto'},models),/必須同時/);
 });
-
-test('Codex auto policy delegates model and effort selection to the main AI, without native fixed defaults',()=>{
- const config=workerPolicyConfig(undefined,{baseInstructions:'Keep existing authority.',models});
- assert.deepEqual(config.agents,{enabled:true});
- assert.match(config.developer_instructions,/^Keep existing authority\./);
- assert.match(config.developer_instructions,/choose gpt-6\.1-sol or gpt-6-luna/);
- assert.match(config.developer_instructions,/Pass both choices explicitly/);
+test('worker choices follow every native catalog model, route and effort rather than a fixed list',()=>{
+ const rows=[...models,{model:'gpt-future-native',supportedReasoningEfforts:[{reasoningEffort:'new-effort'}]},{model:'claude-future-native',supportedReasoningEfforts:[]},{model:'gemini-future',supportedReasoningEfforts:[{reasoningEffort:'max'}]},{model:'gpt-hidden',hidden:true},{model:'claude-fable-5-1'},{model:'gpt-unavailable',available:false},{model:'alpaca-5-5'}];
+ assert.deepEqual(availableWorkerModels(rows).map(row=>row.model),['gpt-6.1-sol','gpt-6-luna','gpt-future-native']);
+ const routes={geminiGateway:true,claudeGateway:true};
+ assert.deepEqual(availableWorkerModels(rows,{...routes,provider:'gemini'}),[]);
+ assert.equal(availableWorkerModels(rows,routes).length,8);
+ for(const policy of [{model:'gpt-future-native',effort:'new-effort'},{model:'claude-future-native',effort:null},{model:'gemini-future',effort:'max'}])assert.deepEqual(validateWorkerPolicy(policy,rows,routes),policy);
+ for(const model of ['gpt-hidden','claude-fable-5-1','gpt-unavailable','alpaca-5-5'])assert.throws(()=>validateWorkerPolicy({model,effort:null},rows,routes),/未自動換模/);
+});
+test('auto leaves native GPT defaults unset and supplies the complete routed model/effort catalog',()=>{
+ const config=workerPolicyConfig(undefined,{baseInstructions:'Keep authority.',models,geminiGateway:true,claudeGateway:true});
+ assert.deepEqual(config.agents,{enabled:true});assert.match(config.developer_instructions,/^Keep authority/);
+ for(const row of models)assert(config.developer_instructions.includes(row.model));
  assert.match(config.developer_instructions,/not a K heuristic, failure fallback, or automatic retry/);
- assert.match(config.developer_instructions,/gpt-6-luna: low, medium, high, xhigh, max/);
- assert.match(config.developer_instructions,/Never switch credentials, models, providers or billing routes/);
- assert.equal(config.agents.default_subagent_model,undefined);
- assert.equal(config.agents.default_subagent_reasoning_effort,undefined);
+ assert.match(config.developer_instructions,/native default \(null\)/);
+ assert.match(config.developer_instructions,/k_gemini \/ gemini_start/);
+ assert.match(config.developer_instructions,/主代理／子代理是工作角色/);
+ assert.match(config.developer_instructions,/不保證總 Token/);
 });
-
-test('explicit manual defaults remain configured and can still be overridden task by task',()=>{
- const config=workerPolicyConfig({model:'gpt-6.1-sol',effort:'ultra'},{models});
- assert.deepEqual(config.agents,{enabled:true,default_subagent_model:'gpt-6.1-sol',default_subagent_reasoning_effort:'ultra'});
- assert.match(config.developer_instructions,/Default native subagent: gpt-6\.1-sol, reasoning effort ultra/);
- assert.throws(()=>workerPolicyConfig({model:'gpt-6-astra',effort:'high'},{models}),/未自動換模/);
-});
-
-test('Sol and Luna accept every advertised effort; unsupported selections are rejected',()=>{
- for(const row of models)for(const {reasoningEffort:effort} of row.supportedReasoningEfforts){
-  const policy=validateWorkerPolicy({model:row.model,effort},models),config=workerPolicyConfig(policy,{models});
-  assert.equal(config.agents.default_subagent_model,row.model);assert.equal(config.agents.default_subagent_reasoning_effort,effort);
- }
+test('manual priority keeps GPT native defaults and never advertises discretionary overrides',()=>{
+ const policy={model:'gpt-6.1-sol',effort:'ultra'},config=workerPolicyConfig(policy,{models});
+ assert.deepEqual(config.agents,{enabled:true,default_subagent_model:policy.model,default_subagent_reasoning_effort:policy.effort});
+ assert.match(config.developer_instructions,/Honor this manual choice/);
+ assert.doesNotMatch(config.developer_instructions,/You may choose|more appropriate;/);
+ for(const row of gptModels)for(const {reasoningEffort:effort} of row.supportedReasoningEfforts)assert.equal(workerPolicyConfig({model:row.model,effort},{models}).agents.default_subagent_reasoning_effort,effort);
  assert.throws(()=>validateWorkerPolicy({model:'gpt-6-luna',effort:'ultra'},models),/不支援/);
- assert.throws(()=>validateWorkerPolicy({model:'gpt-6.1-sol',effort:'imaginary'},models),/不支援/);
 });
-
-test('Gemini Flash is accepted only with an explicitly enabled gateway and never becomes a native GPT default',()=>{
- for(const effort of ['low','medium','high']){
-  const policy={model:'gemini-3.8-flash',effort};
+test('non-GPT workers require routes and never become native GPT defaults',()=>{
+ for(const policy of [{model:'gemini-3.8-flash',effort:'low'},{model:'claude-opus-5-5',effort:'high'},{model:'claude-haiku-4-5',effort:null}]){
   assert.throws(()=>validateWorkerPolicy(policy,models),/gateway/);
-  assert.deepEqual(validateWorkerPolicy(policy,models,{geminiGateway:true}),policy);
-  const config=workerPolicyConfig(policy,{models,geminiGateway:true});
-  assert.deepEqual(config.agents,{enabled:true});
-  assert.equal(config.agents.default_subagent_model,undefined);
-  assert.match(config.developer_instructions,/k_gemini/);
-  assert.match(config.developer_instructions,/gemini_start、gemini_list、gemini_inspect、gemini_wait、gemini_cancel、gemini_accounts/);
-  assert.match(config.developer_instructions,/accountId\/handoffFrom/);
-  assert.match(config.developer_instructions,/inspect the original result first/);
-  assert.match(config.developer_instructions,/Do not replay unknown failures/);
-  assert.match(config.developer_instructions,/do not change GPT accounts or subscription/);
-  assert.throws(()=>validateWorkerPolicy(policy,models),/gateway/);
+  assert.deepEqual(workerPolicyConfig(policy,{models,geminiGateway:true,claudeGateway:true}).agents,{enabled:true});
  }
- assert.throws(()=>validateWorkerPolicy({model:'gemini-3.8-flash',effort:'xhigh'},models,{geminiGateway:true}),/low、medium 或 high/);
+ assert.throws(()=>validateWorkerPolicy({model:'gemini-3.8-flash',effort:'xhigh'},models,{geminiGateway:true}),/不支援/);
+ assert.throws(()=>validateWorkerPolicy({model:'claude-haiku-4-5',effort:'high'},models,{claudeGateway:true}),/不支援/);
+ assert.throws(()=>validateWorkerPolicy({model:'claude-opus-5-5',effort:null},models,{claudeGateway:true}),/不支援/);
 });
-
-test('Codex auto policy exposes Flash only when its Gemini gateway is enabled',()=>{
- const config=workerPolicyConfig(undefined,{models,geminiGateway:true});
- assert.match(config.developer_instructions,/gpt-6\.1-sol or gpt-6-luna or gemini-3\.8-flash/);
- assert.match(config.developer_instructions,/For Flash, use low, medium, or high/);
- assert.match(config.developer_instructions,/k_gemini/);
- const legacy=workerPolicyConfig(undefined,{models});
- assert.doesNotMatch(legacy.developer_instructions,/gemini-3\.8-flash/);
- assert.doesNotMatch(legacy.developer_instructions,/k_gemini|For Flash/u);
- assert.throws(()=>workerPolicyConfig({model:'gemini-3.8-flash',effort:'high'},{models}),/gateway/);
+test('Claude uses the same manual selection through its existing K gateway',()=>{
+ const config=workerPolicyConfig({model:'claude-opus-5-5',effort:'high'},{models,provider:'claude',claudeGateway:true,geminiGateway:true});
+ assert.match(config.developer_instructions,/k_luna \/ luna_start/);
+ assert.match(config.developer_instructions,/native Claude Agent remains available for explicitly requested native work/);
+ assert.match(config.developer_instructions,/Honor this manual choice/);
 });

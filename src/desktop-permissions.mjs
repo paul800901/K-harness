@@ -32,6 +32,13 @@ export function threadPermissions(mode,workspace) {
 // request, never a remembered command prefix, network rule or session grant.
 export function approvalRequest(message,item) {
  const p=message.params??{}, method=message.method;
+ if(method==='k/claude/requestApproval'){
+  const input=p.input??{},write=['Write','Edit','MultiEdit','NotebookEdit'].includes(p.toolName);
+  const content=write?(p.toolName==='Write'?input.content:input.new_string??input.new_source):true;
+  const canAccept=content!==undefined&&content!==null;
+  return {title:'Claude 子代理需要操作核准',text:`原生工具：${p.toolName}`,details:{toolName:p.toolName,input,scope:'只核准這一次'},canAccept,acceptLabel:'只核准這一次',
+   reply:accept=>{if(accept&&!canAccept)throw Error('缺少實際變更內容，不能核准。');return accept?{behavior:'allow',updatedInput:input}:{behavior:'deny',message:'使用者拒絕這項操作。'};},cancel:()=>({behavior:'deny',message:'工作已停止或未核准。'})};
+ }
  if(method==='mcpServer/elicitation/request'&&p.mode==='form'&&p._meta?.codex_approval_kind==='mcp_tool_call'&&!Object.keys(p.requestedSchema?.properties??{}).length){
   return {title:'外部工具需要核准',text:p.message,details:p._meta.tool_params,server:p.serverName,acceptLabel:'只核准這一次',canAccept:true,
    reply:accept=>({action:accept?'accept':'decline',content:accept?{}:null}),cancel:()=>({action:'cancel',content:null})};

@@ -1,6 +1,6 @@
 import React,{useEffect,useRef,useState,useId} from 'react';
 import {Check,ChevronDown,RefreshCw} from 'lucide-react';
-import {WORKER_MODELS,GEMINI_WORKER_MODELS,GEMINI_WORKER_EFFORTS,normalizeWorkerPolicy} from '../src/worker-policy.mjs';
+import {availableWorkerModels,normalizeWorkerPolicy} from '../src/worker-policy.mjs';
 import {PermissionPicker} from './permission-picker.jsx';
 import {AccountConnections} from './account-connections.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
@@ -10,7 +10,6 @@ import {ReasoningPicker,effortName} from './reasoning-picker.jsx';
 export {effortName};
 const remoteClient=document.documentElement.dataset.kRemote==='true';
 const displayModel=model=>model?.displayName||model?.model||'選擇模型';
-const workerOrder=[...GEMINI_WORKER_MODELS,...WORKER_MODELS];
 const modelProvider=model=>model?.provider??providerOf(model?.model);
 const providerLabel=provider=>({claude:'Claude',codex:'GPT',gemini:'Gemini'})[provider];
 const providerDefaultPermission=provider=>provider==='claude'?'claude-manual':'workspace-write';
@@ -55,6 +54,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const [models,setModels]=useState([]),[provider,setProvider]=useState(mode==='switch'?modelProvider({model:currentModel}):'codex'),[model,setModel]=useState(''),[effort,setEffort]=useState(undefined),[loading,setLoading]=useState(true),[error,setError]=useState(''),[revision,setRevision]=useState(0);
  const [accountStatus,setAccountStatus]=useState({});
  useEffect(()=>{if(!remoteClient)return;let live=true;fetch('/api/claude/auth').then(async response=>{if(!response.ok)throw Error('auth unavailable');return response.json();}).then(claude=>{if(live)setAccountStatus({claude});}).catch(()=>{if(live)setAccountStatus({claude:{available:false}});});return()=>{live=false;};},[]);
+ const [catalogClaudeGateway,setCatalogClaudeGateway]=useState(false);
  const [catalogGeminiGateway,setCatalogGeminiGateway]=useState(geminiGateway===true);
  const [workerPolicy,setWorkerPolicy]=useState(()=>normalizeWorkerPolicy(currentWorkerPolicy));
  const [accessMode,setAccessMode]=useState('workspace-write'),[permissionConfirmed,setPermissionConfirmed]=useState(false);
@@ -65,6 +65,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
   try{
    const catalog=await loadModels(),list=catalog.models??[];
    setCatalogGeminiGateway(catalog.geminiGateway===undefined?geminiGateway===true:catalog.geminiGateway===true);
+   setCatalogClaudeGateway(catalog.claudeGateway===true);
    setModels(list);onCatalog(list,catalog.warnings??[]);setError('');setLoading(false);
    if(kind==='codex'){
     const currentProvider=modelProvider({model:currentModel}),choices=mode==='switch'?list.filter(item=>modelProvider(item)===currentProvider):list;
@@ -79,6 +80,7 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
    if(cancelled)return;
    const {models:list,warnings=[]}=catalog;
    setCatalogGeminiGateway(catalog.geminiGateway===undefined?geminiGateway===true:catalog.geminiGateway===true);
+   setCatalogClaudeGateway(catalog.claudeGateway===true);
    const supported=list;
    setModels(supported);onCatalog(list,warnings);
    const currentProvider=modelProvider({model:currentModel});
@@ -100,10 +102,9 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
  const claudeVerified=claudeStatus?.available===true&&auth?.loggedIn===true&&auth?.authMethod==='claude.ai'&&auth?.apiProvider==='firstParty'&&['pro','max','team','enterprise'].includes(auth?.subscriptionType);
  const isAvailable=item=>item?.available!==false&&(modelProvider(item)!=='claude'||claudeVerified);
  const supportedEfforts=selected?.supportedReasoningEfforts??[];
- const workerModels=models.filter(item=>WORKER_MODELS.includes(item.model)||((provider==='claude'||(provider==='codex'&&catalogGeminiGateway))&&GEMINI_WORKER_MODELS.includes(item.model))).sort((a,b)=>workerOrder.indexOf(a.model)-workerOrder.indexOf(b.model));
- const canOfferFlash=workerModels.some(item=>GEMINI_WORKER_MODELS.includes(item.model));
- const invalidWorker=provider==='codex'&&GEMINI_WORKER_MODELS.includes(workerPolicy.model)&&(!catalogGeminiGateway||!canOfferFlash);
- const workerEfforts=GEMINI_WORKER_MODELS.includes(workerPolicy.model)?GEMINI_WORKER_EFFORTS.map(reasoningEffort=>({reasoningEffort})):workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
+ const workerModels=availableWorkerModels(models,{provider,geminiGateway:provider==='claude'||catalogGeminiGateway,claudeGateway:catalogClaudeGateway});
+ const invalidWorker=provider!=='gemini'&&workerPolicy.model!=='auto'&&!workerModels.some(item=>item.model===workerPolicy.model);
+ const workerEfforts=workerModels.find(item=>item.model===workerPolicy.model)?.supportedReasoningEfforts??[];
  const inheritedEffort=mode==='switch'&&supportedEfforts.some(item=>item.reasoningEffort===currentEffort)?currentEffort:selected?.defaultReasoningEffort;
  const visibleModels=models.filter(item=>modelProvider(item)===provider);
 
@@ -153,13 +154,13 @@ export function ModelPicker({currentModel,currentEffort,currentWorkerPolicy,mode
    {mode==='switch'?<>
     {hasHistory&&model!==currentModel?<p className="model-switch-warning" role="note">中途切換模型可能影響接續品質，上下文也可能自動壓縮。原對話與檔案保留，但不保證所有細節都能無損接續。需要完全獨立的工作時，可另開新對話。</p>:<p className="model-routing-note">從下一則訊息開始使用；不會立即執行工作。</p>}
    </>:provider==='gemini'?null:<details className="worker-settings">
-    <summary aria-label="子代理設定"><span>子代理</span><span>{workerPolicy.model==='auto'?'AI 自動選擇':`${displayModel(workerModels.find(item=>item.model===workerPolicy.model)??{model:workerPolicy.model})} · ${effortName[workerPolicy.effort]??workerPolicy.effort}`}<ChevronDown size={14}/></span></summary><div className="worker-settings-body">
-    <label><span>預設模型</span><select aria-label="子代理模型" value={workerPolicy.model} disabled={disabled} onChange={event=>{const model=workerModels.find(item=>item.model===event.target.value);setWorkerPolicy(model?{model:model.model,effort:model.defaultReasoningEffort??'high'}:{model:'auto',effort:'auto'});}}>
-     <option value="auto">AI 自動選擇</option>{workerPolicy.model!=='auto'&&!workerModels.some(item=>item.model===workerPolicy.model)&&<option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>}{workerModels.map(item=><option key={item.model} value={item.model}>{displayModel(item)}</option>)}
+    <summary aria-label="子代理設定"><span>子代理</span><span>{workerPolicy.model==='auto'?'AI 自動選擇':`${displayModel(workerModels.find(item=>item.model===workerPolicy.model)??{model:workerPolicy.model})} · ${effortName[workerPolicy.effort]??workerPolicy.effort??'模型原生預設'}`}<ChevronDown size={14}/></span></summary><div className="worker-settings-body">
+    <label><span>預設模型</span><select aria-label="子代理模型" value={workerPolicy.model} disabled={disabled} onChange={event=>{const model=workerModels.find(item=>item.model===event.target.value),efforts=model?.supportedReasoningEfforts??[];setWorkerPolicy(model?{model:model.model,effort:efforts.some(item=>item.reasoningEffort===model.defaultReasoningEffort)?model.defaultReasoningEffort:efforts.find(item=>item.reasoningEffort==='high')?.reasoningEffort??efforts[0]?.reasoningEffort??null}:{model:'auto',effort:'auto'});}}>
+     <option value="auto">AI 自動選擇</option>{workerPolicy.model!=='auto'&&!workerModels.some(item=>item.model===workerPolicy.model)&&<option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>}{['codex','claude','gemini'].map(group=>{const rows=workerModels.filter(item=>modelProvider(item)===group);return rows.length?<optgroup key={group} label={providerLabel(group)}>{rows.map(item=><option key={item.model} value={item.model} disabled={!isAvailable(item)}>{displayModel(item)}</option>)}</optgroup>:null;})}
     </select></label>
-    {workerPolicy.model!=='auto'&&<label><span>預設推理程度</span><select aria-label="子代理推理程度" value={workerPolicy.effort} disabled={disabled||!workerEfforts.length} onChange={event=>setWorkerPolicy(current=>({...current,effort:event.target.value}))}>
-     {!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort}>{effortName[workerPolicy.effort]??workerPolicy.effort}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
-    </select></label>}{invalidWorker&&<p role="alert" className="step-hint">Flash 子代理目前未由目錄確認可用；請為 GPT 選擇 Sol、Luna 或 AI 自動選擇。</p>}</div></details>}
+    {workerPolicy.model!=='auto'&&<label><span>預設推理程度</span><select aria-label="子代理推理程度" value={workerPolicy.effort??''} disabled={disabled||!workerEfforts.length} onChange={event=>setWorkerPolicy(current=>({...current,effort:event.target.value||null}))}>
+     {!workerEfforts.length&&workerPolicy.effort==null?<option value="">模型原生預設</option>:!workerEfforts.some(item=>item.reasoningEffort===workerPolicy.effort)&&<option value={workerPolicy.effort??''}>{effortName[workerPolicy.effort]??workerPolicy.effort??'模型預設'}（目錄未提供）</option>}{workerEfforts.map(item=><option key={item.reasoningEffort} value={item.reasoningEffort}>{effortName[item.reasoningEffort]??item.reasoningEffort}</option>)}
+    </select></label>}{invalidWorker&&<p role="alert" className="step-hint">指定子代理目前不可用；設定未自動改換。</p>}</div></details>}
   </>}
   <div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button type="button" className="primary" disabled={disabled||loading||!!error||invalidWorker||!selected||!isAvailable(selected)||(mode==='switch'&&modelProvider(selected)!==switchProvider)} onClick={()=>onCreate({model,...(mode==='switch'?{confirmed:hasHistory&&model!==currentModel}:{accessMode:permissionForSubmit,permissionConfirmed,workerPolicy,...(selectedProvider==='codex'?{serviceTier:selectedServiceTier}:{})}),...(effort===undefined?{}:{effort:effort===null&&provider==='codex'?(selected.defaultReasoningEffort??null):effort})})}>{mode==='switch'?(hasHistory&&model!==currentModel?'確認切換':'套用模型'):'建立對話'}</button></div>
  </div>;

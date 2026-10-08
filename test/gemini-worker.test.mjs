@@ -7,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {createGeminiWorker,geminiSettings,geminiEnvironment,geminiProfile,geminiStream,geminiOutcome,geminiProcess,geminiOutputFiles,killGeminiTree,geminiInstruction,GEMINI_BROWSER_GUIDANCE} from '../src/gemini-worker.mjs';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
-import {workerPolicyConfig,GEMINI_WORKER_MODELS,WORKER_MODELS} from '../src/worker-policy.mjs';
+import {workerPolicyConfig,availableWorkerModels} from '../src/worker-policy.mjs';
 
 const root=path.resolve('.runtime','gemini-tests',randomUUID()),workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
 test('browser guidance teaches current tool parameters only when the browser is connected',()=>{
@@ -42,6 +42,18 @@ function fakeSpawn(answer=success('done'),models=modelList) {
  return {spawnImpl,calls,children};
 }
 const make=(fake,options={})=>createGeminiWorker({root,workspace,accessMode:'read-only',env:{LOCALAPPDATA:path.join(root,'original-local'),Path:'fake-path',SystemRoot:'C:/Windows',OPENAI_API_KEY:'do-not-forward',NODE_OPTIONS:'do-not-forward'},spawnImpl:fake.spawnImpl,gitStatus:async()=>null,...options});
+
+test('all Gemini families and exact efforts dispatch from the native catalog without a Flash allowlist',async()=>{
+ for(const [model,effort] of [['gemini-3.1-pro','low'],['gemini-3.1-pro','high'],['gemini-3.7-flash','medium'],['gemini-future','native-effort']]){
+  const native=`${model}-${effort}`,fake=fakeSpawn(success('native family done'),native+'\tNative model');
+  const result=await make(fake).run({task:'bounded fake task',model,effort});
+  assert.equal(result.status,'completed');const args=fake.calls.find(call=>call.args[0]==='-p').args;
+  assert.equal(args[args.indexOf('--model')+1],native);
+ }
+ const fake=fakeSpawn(success('must not run'),'gemini-3.1-pro-low\tPro\ngemini-3.1-pro-high\tPro');
+ await assert.rejects(make(fake).run({task:'bounded fake task',model:'gemini-3.1-pro',effort:'medium'}),/目前不可用/);
+ assert.equal(fake.calls.some(call=>call.args[0]==='-p'),false);
+});
 
 function browserFixture({server=true,closeError=false}={}){
  const sessions=[];
@@ -161,7 +173,7 @@ test('Gemini danger mode alone passes skip; workspace-write runs without skip un
 test('Gemini rejects absent native model and invalid effort without a model turn or substitute',async()=>{
  const fake=fakeSpawn(undefined,'gemini-3.8-flash-high\tFlash');
  await assert.rejects(make(fake).run({task:'fake',effort:'low'}),/目前不可用/);assert.equal(fake.calls.length,1);
- for(const effort of ['auto','ultra',undefined])await assert.rejects(make(fake).run({task:'fake',effort}),/low\|medium\|high/);
+ for(const effort of ['auto','ultra',undefined])await assert.rejects(make(fake).run({task:'fake',effort}),/原生模型與推理程度|目前不可用/);
 });
 test('NDJSON handles UTF-8 chunks, last result, bounded unique denied tools and unrelated tool errors',()=>{
  const parser=geminiStream();const events=[];
@@ -272,7 +284,7 @@ test('Gemini init failure does not disable Codex; no fallback call',async()=>{
  await bridge.close();
 });
 test('Codex native agents config excludes Gemini even if the catalog advertises it',()=>{
- assert.deepEqual(GEMINI_WORKER_MODELS,['gemini-3.8-flash']);assert.equal(WORKER_MODELS.includes('gemini-3.8-flash'),false);
+ assert.deepEqual(availableWorkerModels([{model:'gpt-6-luna'},{model:'gemini-3.8-flash'}]).map(row=>row.model),['gpt-6-luna']);
  const models=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'gemini-3.8-flash'}];assert.equal(JSON.stringify(workerPolicyConfig(undefined,{models}).agents).includes('gemini'),false);
  assert.throws(()=>workerPolicyConfig({model:'gemini-3.8-flash',effort:'low'},{models}),/未自動換模/);
 });
@@ -349,7 +361,7 @@ test('Flash-only bridge never opens a Codex worker host and refuses GPT dispatch
   geminiFactory:()=>({run:async()=>{runs++;return {provider:'gemini',status:'completed',settled:true,output:'done'};}})});
  try{
   assert.equal(hosts,0);
-  await assert.rejects(bridge.start({requestId:'gpt',task:'bounded',model:'gpt-6-luna',effort:'high'}),/只提供 Gemini Flash/);
+  await assert.rejects(bridge.start({requestId:'gpt',task:'bounded',model:'gpt-6-luna',effort:'high'}),/只提供 Gemini 或 Claude/);
   await bridge.start({...args,requestId:'flash-only'});
   const result=await bridge.wait({requestId:'flash-only',timeoutMs:2000});assert.equal(result.status,'completed');
   assert.equal(hosts,0);assert.equal(runs,1);

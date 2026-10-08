@@ -133,18 +133,18 @@ test('MCP start forwards both worker choices and an explicit effort to the bridg
   await post(config.url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'workers',version:'1'}}});
   const listed=await body(await post(config.url,token,{jsonrpc:'2.0',id:2,method:'tools/list'}));
   const start=listed.result.tools.find(t=>t.name==='luna_start');
-  assert.deepEqual(start.inputSchema.properties.model.enum,['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']);
+  assert.equal(start.inputSchema.properties.model.type,'string');assert.equal(start.inputSchema.properties.model.enum,undefined);
   assert.match(start.description,/Flash 是使用者優先的一般工人/);assert.match(start.description,/不限機械性工作/);assert.match(start.description,/不能跑指令/);
   assert.match(start.description,/Sol 寫碼後必須交真正的 Opus 5\.5 審核/);
   assert.match(start.description,/Luna 僅用於規則遵守要求極高的小任務/);
-  let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash']){
+  let id=3;for(const model of ['gpt-6.1-sol','gpt-6-luna','gemini-3.8-flash','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5','gpt-future-native','gemini-future-native']){
    const args={requestId:model,task:'fake task',model,effort:'low'};
    const result=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:args}}));
    assert.notEqual(result.result.isError,true);assert.deepEqual(calls.at(-1),args);assert.equal(result.result.structuredContent.model,model);assert.equal(result.result.structuredContent.effort,'low');
   }
-  for(const effort of ['ultra','xhigh','auto']){
+  for(const effort of [123,{},[]]){
    const bad=await body(await post(config.url,token,{jsonrpc:'2.0',id:id++,method:'tools/call',params:{name:'luna_start',arguments:{requestId:'bad',task:'fake',model:'gemini-3.8-flash',effort}}}));
-   assert.equal(bad.result.isError,true);assert.equal(calls.length,3);
+   assert.equal(bad.result.isError,true);assert.equal(calls.length,8);
   }
  }finally{await gateway.close();}
 });
@@ -178,10 +178,10 @@ test('Codex Flash gateway exposes only Gemini tools and forwards account handoff
   assert.match(accountGuidance,/Five-hour exhaustion permits a handoff without waiting/);
   assert.match(accountGuidance,/next available account in saved order/);
   const info=await call(2,'gemini_accounts',{});assert.match(info.result.content[0].text,/fake@example.test/);
-  const args={requestId:'remaining',task:'only remaining',effort:'low',accountId:'b'.repeat(32),handoffFrom:'previous'};
+  const args={requestId:'remaining',task:'only remaining',model:'gemini-3.8-flash',effort:'low',accountId:'b'.repeat(32),handoffFrom:'previous'};
   const result=await call(3,'gemini_start',args);assert.equal(result.result.structuredContent.accountId,args.accountId);
   assert.deepEqual(calls,[{...args,model:'gemini-3.8-flash'}]);
-  for(const override of [{model:'gpt-6-luna'},{effort:'ultra'},{effort:undefined}]){
+  for(const override of [{model:'gpt-6-luna'},{effort:123},{model:3}]){
    const bad=await call(4,'gemini_start',{...args,...override});assert.equal(bad.result.isError,true);
   }
   const wrong=await call(5,'luna_start',args);assert.ok(wrong.error||wrong.result?.isError);

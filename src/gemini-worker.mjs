@@ -8,7 +8,6 @@ import {realpathSync} from 'node:fs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {geminiProjectMcp} from './gemini-project-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
-import {GEMINI_WORKER_MODELS, GEMINI_WORKER_EFFORTS} from './worker-policy.mjs';
 
 const exec = promisify(execFile);
 
@@ -226,9 +225,9 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     return new Set(await catalog);
   }
   const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{},onDiagnostic=()=>{}}={}) {
-    if(!GEMINI_WORKER_MODELS.includes(model)||!GEMINI_WORKER_EFFORTS.includes(effort))throw Error('Flash 只接受 gemini-3.8-flash 與 low|medium|high；未換模。');
+    if(!/^gemini-[\w.-]+$/u.test(model)||effort==='auto'||effort!==null&&typeof effort!=='string')throw Error('Gemini 子代理須指定原生模型與推理程度；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
-    const nativeModel=`${model}-${effort}`;
+    const nativeModel=effort==null?model:`${model}-${effort}`;
     if(signal?.aborted)return {status:'cancelled',settled:true,output:'',outputFiles:[],acceptance:'not-reviewed'};
     if(!(await models()).has(nativeModel))throw Error(`${nativeModel} 目前不可用；未自動換模。`);
     if(signal?.aborted)return {status:'cancelled',settled:true,output:'',outputFiles:[],acceptance:'not-reviewed'};

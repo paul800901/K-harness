@@ -27,7 +27,7 @@ function codexInput(text,attachments=[]){
 }
 
 // One active conversation. Official runtime remains the history authority.
-export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
+export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},workerCatalog,onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const activity=createWorkActivity(state),childActivities=new Map(),nativeTerminals=new Map();
@@ -385,6 +385,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  }
  function request(m){
   const p=m.params;
+  if(m.method==='k/claude/requestApproval'&&p?.parentId===state.threadId&&!opening&&!closing&&!stopping)return queueRequest(m);
   if(p?.threadId!==state.threadId)return collectNativeWorkerIds([...items.values()]).includes(p?.threadId)?nativeRequest(m):undefined;
   if(!state.busy||stopping||closing||p.turnId!==turnId)return undefined;
   return queueRequest(m,items.get(p.itemId));
@@ -436,7 +437,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
  const recordFlash=record=>{
   if(!record||record.parentId!==state.threadId)return;
-  const index=state.workers.findIndex(w=>w.provider==='gemini'&&w.requestId===record.requestId);
+  const index=state.workers.findIndex(w=>w.provider===record.provider&&w.requestId===record.requestId);
   if(index<0)state.workers.push(record);else state.workers[index]=record;
   for(const name of record.outputFiles??[]){if(typeof name==='string'&&!state.artifacts.includes(name))state.artifacts.push(name);}
   const queued=flashQueue.get(record.requestId);if(queued&&!workerNoticeCurrent(queued,record))flashQueue.delete(record.requestId);
@@ -451,7 +452,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  // One controller owns one native host and one active main turn at a time.
  // Keep its authenticated gateway URL stable; replace the context-bound bridge.
  const lazyFlashBridge={workerPolicy:state.workerPolicy,accounts:()=>ensureFlashBridge().then(value=>value.accounts?.()??{enabled:false,accounts:[]}),
-  async start(args){if(opening||closing||stopping)throw new Error('Codex 對話正在切換或停止；Flash 工人未啟動。');flashArmed.add(args.requestId);return (await ensureFlashBridge()).start(args);},
+  async start(args){if(opening||closing||stopping)throw new Error('Codex 對話正在切換或停止；子代理未啟動。');flashArmed.add(args.requestId);return (await ensureFlashBridge()).start(args);},
   inspect:args=>ensureFlashBridge().then(value=>value.inspect(args)),wait:args=>ensureFlashBridge().then(value=>value.wait(args)),
   reconcile:args=>ensureFlashBridge().then(value=>value.reconcile(args)),
   async cancel(args){disarmFlash(args.requestId);return (await ensureFlashBridge()).cancel(args);},
@@ -486,7 +487,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     await flashBridge.cancel({requestId:record.requestId});
     const waited=await flashBridge.wait({requestId:record.requestId,timeoutMs:10000});
     const verified=await flashBridge.inspect({requestId:record.requestId});
-    if(!waited?.settled||!verified?.settled)throw new Error(`Flash 子代理 ${record.requestId} 的停止狀態未確認；Codex 主控保持開啟。`);
+    if(!waited?.settled||!verified?.settled)throw new Error(`子代理 ${record.requestId} 的停止狀態未確認；Codex 主控保持開啟。`);
    }
   }
   const bridge=flashBridge;
@@ -520,8 +521,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const result=await delivery;
    completed=true;turnId=result?.turn?.id??null;
    const attention=batch.some(record=>!record.settled);
-   state.tools.push({id:`flash-completion:${batch.map(workerNoticeKey).join(':')}`,name:attention?'子代理狀態待確認':native?'原生子代理終止':'Flash 子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(turnId?{turnId}:{})});
-   addNotice('info',attention?'子代理狀態待確認已交給主代理判斷；尚未確認完成或停止。':native?'原生子代理終止已交給主代理核對；不代表交付成功。':'Flash 子代理結果已交給 Codex 主代理驗收。',attention?'worker-attention':'worker-completion',turnId);
+   state.tools.push({id:`flash-completion:${batch.map(workerNoticeKey).join(':')}`,name:attention?'子代理狀態待確認':native?'原生子代理終止':'子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(turnId?{turnId}:{})});
+   addNotice('info',attention?'子代理狀態待確認已交給主代理判斷；尚未確認完成或停止。':native?'原生子代理終止已交給主代理核對；不代表交付成功。':'子代理結果已交給 Codex 主代理驗收。',attention?'worker-attention':'worker-completion',turnId);
    if(turnId){state.busy=true;state.status='working';}else{flashDeliveryUncertain=parent;state.busy=false;state.status='uncertain';state.error='子代理完成通知送出狀態未確認；未重送。';}
    await persistFlashNotifications();
    if(submission===delivery)submission=null;
@@ -746,7 +747,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const catalog=await this.models({signal});
     signal.throwIfAborted();const selected=findMainModel(catalog.models,model);
     if(!selected)throw new Error('目前帳號未提供指定模型。');
-    const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,catalog.models,{geminiGateway:true});
+    const workerModels=workerCatalog?(await workerCatalog()).models:catalog.models;
+    const policy=validateWorkerPolicy(workerPolicy??saved?.workerPolicy,workerModels,{geminiGateway:true,claudeGateway:!!workerCatalog});
     const efforts=reasoningEfforts(selected);
     const selectedServiceTier=mainServiceTier(selected,serviceTier??saved?.serviceTier??'default');
     effort=effort??saved?.effort??undefined;
@@ -813,10 +815,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
      const workerGateway=await configureFlashGateway();
      const effective=await call('config/read',{includeLayers:false});
-     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:catalog.models,geminiGateway:true});
+     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:workerModels,geminiGateway:true,claudeGateway:!!workerCatalog});
      const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
      const geminiServer=workerGateway?.mcpConfig?.mcpServers?.k_gemini;
-     if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('Flash MCP gateway 未提供有效的專案限定連線設定。');
+     if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('子代理 MCP gateway 未提供有效的專案限定連線設定。');
      const googleOps=await googleOpsMcp(workspace,{root});
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
      const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};

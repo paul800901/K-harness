@@ -12,6 +12,8 @@ import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 
+const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
+
 async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
   await mkdir(base,{recursive:true});
@@ -21,7 +23,7 @@ async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
   const uuid='123e4567-e89b-42d3-a456-426614174000';
   let hostOptions,bridgeOptions,gatewayOptions,closeHost;
   const makeHost=()=>{let resolveClosed;return {startCalls:[],closed:new Promise(resolve=>{resolveClosed=resolve;}),async start(content){this.startCalls.push(content);},async interrupt(){this.interrupted=true;},async close(){resolveClosed();}};};let host;
-  const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return args;},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
+  const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return {...args,provider:fakeWorkerProvider(args.model)};},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
   const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
   const controllerOptions={...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
     hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
@@ -509,10 +511,10 @@ test('cancelled Claude reconnect stays interrupted and only a new send resumes t
   assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'new explicit request');
  }finally{release();await f.controller.close();}
 });
-for(const provider of ['codex','gemini'])test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`,async()=>{
+for(const [provider,model] of [['codex','gpt-6.1-sol'],['gemini','gemini-3.8-flash'],['claude','claude-opus-5-5']])test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`,async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'delegate bounded work'});
-  await f.gatewayOptions.bridge.start({requestId:'notify',task:'bounded'});
+  await f.gatewayOptions.bridge.start({requestId:'notify',model,task:'bounded'});
   const record={provider,parentId:f.controller.state.threadId,requestId:'notify',settled:true,status:'completed',output:'done',outputFiles:[]};
   f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,1);
   f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
@@ -572,6 +574,32 @@ test('Claude preserves PDF extraction warnings in native attachment context',asy
   assert.ok(context.includes(`warning="${doc.warning.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"`));
   assert.ok(context.includes(`originalPath="${path.resolve(f.root,doc.path)}"`));
   assert.equal((await readFile(path.join(f.root,doc.path),'utf8')),'synthetic invalid PDF');
+ }finally{await f.controller.close();}
+});
+
+test('Claude gateway approval stays with its parent, requires write content, and survives parent idle',async()=>{
+ const f=await fixture();
+ try{
+  await f.controller.open({});const parentId=f.controller.state.threadId;
+  await f.gatewayOptions.bridge.start({requestId:'claude-child',model:'claude-opus-5-5',effort:'high',task:'bounded'});
+  f.bridge.records=[{requestId:'claude-child',provider:'claude',parentId,status:'running',settled:false}];
+  f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
+  assert.equal((await f.controller.workers()).find(row=>row.requestId==='claude-child').settled,false,'the child remains active after its parent turn ends');
+
+  const callback=f.bridgeOptions.onRequest;
+  const approval=callback({method:'k/claude/requestApproval',params:{parentId,requestId:'claude-child',toolName:'Write',input:{file_path:'result.txt',content:'approved'}}});
+  const question=f.controller.state.questions.at(-1);assert.equal(question.canAccept,true);assert.equal(question.provider,'codex-luna');
+  await f.controller.answer({id:question.id,accept:true});assert.deepEqual(await approval,{behavior:'allow',updatedInput:{file_path:'result.txt',content:'approved'}});
+
+  const wrongParent=callback({method:'k/claude/requestApproval',params:{parentId:'claude-other-parent',requestId:'foreign-child',toolName:'Write',input:{file_path:'result.txt',content:'no'}}});
+  assert.equal(f.controller.state.questions.length,0,'a request owned by another parent must not enter this conversation UI');
+  assert.equal(wrongParent,undefined,'a foreign-parent request is rejected without creating an approval');
+
+  const missing=callback({method:'k/claude/requestApproval',params:{parentId,requestId:'claude-child',toolName:'Write',input:{file_path:'result.txt'}}});
+  const unavailable=f.controller.state.questions.at(-1);assert.equal(unavailable.canAccept,false);
+  await assert.rejects(f.controller.answer({id:unavailable.id,accept:true}),/缺少實際變更內容/);
+  assert.ok(f.controller.state.questions.some(row=>row.id===unavailable.id),'a rejected accept must leave the request available for an explicit denial');
+  await f.controller.answer({id:unavailable.id,accept:false});assert.equal((await missing).behavior,'deny');
  }finally{await f.controller.close();}
 });
 test('Claude gives generic media original file path without reading it into the native prompt',async()=>{
@@ -1209,9 +1237,9 @@ test('Claude cannot silently turn an edit-only request into new work',async()=>{
  const f=await fixture();try{await f.controller.open({});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.host.startCalls.length,0);}finally{await f.controller.close();}
 });
 
-for(const provider of ['gemini','codex'])test(`${provider} quiet notice wakes Claude only once and preserves later completion`,async()=>{
+for(const [provider,model] of [['gemini','gemini-3.8-flash'],['codex','gpt-6.1-sol'],['claude','claude-opus-5-5']])test(`${provider} quiet notice wakes Claude only once and preserves later completion`,async()=>{
  const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'synthetic long work'});await f.gatewayOptions.bridge.start({requestId:'quiet',task:'bounded'});
+  await f.controller.open({});await f.controller.send({text:'synthetic long work'});await f.gatewayOptions.bridge.start({requestId:'quiet',model,task:'bounded'});
   const record={provider,parentId:f.controller.state.threadId,requestId:'quiet',status:'running',settled:false,inspection:{noticeId:'quiet-one',checkedAt:1000,lastActivityAt:0}};
   f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
   assert.match(f.host.startCalls[1][0].text,/久無活動也不等於卡死/);

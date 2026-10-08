@@ -51,7 +51,10 @@ async function fixture(){
    },
   };hosts.push(host);return host;
  };
- const options={root,executable:'fake',hostFactory};
+ // Worker instructions now read all native catalogs. Keep every core fake in
+ // this empty-room test, rather than opening a real Claude/Gemini process.
+ const otherCore=()=>({state:{usage:{}},models:async()=>({models:[]}),usage:async()=>({}),workers:async()=>[],close:async()=>{}});
+ const options={root,executable:'fake',hostFactory,claudeFactory:otherCore,geminiFactory:otherCore};
  return {root,workspace,hosts,calls,durable,options,create:()=>createDesktopController(options),failSend:(error=Error('transport outcome unknown'))=>{failSend=error;}};
 }
 

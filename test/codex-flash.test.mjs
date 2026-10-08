@@ -7,6 +7,8 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
+const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
+
 async function fixture({accessMode='workspace-write',savedSession,root:existingRoot,workerPolicy={model:'gpt-6-luna',effort:'high'},cancelSettles=true,delayToolOutput=false,rejectToolOutput=false}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=existingRoot??await mkdtemp(path.join(base,'codex-flash-'));
  if(savedSession)await saveMainSession(root,{threadId:'codex-parent',model:'gpt-6-astra',workspace:root,accessMode,workerPolicy,workerNotifications:{},...savedSession});
@@ -31,7 +33,7 @@ async function fixture({accessMode='workspace-write',savedSession,root:existingR
  }};hosts.push(host);hostOptions.push(options);return host;};
  const c=createDesktopController({root,executable:'fixture-codex',hostFactory:newHost,workerPolicy,
   bridgeFactory:async options=>{bridgeOptions.push(options);return {
-   start:async args=>{workerOperations.push(['start',args.requestId]);const record={requestId:args.requestId,provider:'gemini',parentId:options.parentId,workspace:options.workspace,status:'running',settled:false,output:'',...args};workerRecords.set(args.requestId,record);options.onChange(record);return structuredClone(record);},
+   start:async args=>{workerOperations.push(['start',args.requestId]);const record={requestId:args.requestId,provider:fakeWorkerProvider(args.model),parentId:options.parentId,workspace:options.workspace,status:'running',settled:false,output:'',...args};workerRecords.set(args.requestId,record);options.onChange(record);return structuredClone(record);},
    list:async includeSettled=>{workerOperations.push(['list',includeSettled]);return [...workerRecords.values()].map(record=>structuredClone(record));},inspect:async({requestId})=>{workerOperations.push(['inspect',requestId]);return workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null;},
    wait:async({requestId})=>{workerOperations.push(['wait',requestId]);return workerRecords.has(requestId)?structuredClone(workerRecords.get(requestId)):null;},
    cancel:async({requestId})=>{workerOperations.push(['cancel',requestId]);const record=workerRecords.get(requestId);if(record&&cancelSettles){record.status='cancelled';record.settled=true;options.onChange(record);}return record?structuredClone(record):null;},
@@ -51,6 +53,7 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
   assert.deepEqual(config.mcp_servers.k_gemini,{url:'http://127.0.0.1:43210/mcp',http_headers:{Authorization:'Bearer fixture-token'}});
   assert.equal(config.mcp_servers.k_luna,undefined);assert.equal(config.mcp_servers.k_flash.enabled,false);
   assert.equal(config.agents.default_subagent_model,'gpt-6-luna');assert.equal(config.agents.default_subagent_reasoning_effort,'high');
+  assert.doesNotMatch(JSON.stringify(config.agents),/claude-/,'native GPT defaults must not be populated with Claude models');
   assert.equal(f.gatewayOptions[0].geminiOnly,true);assert.equal(f.bridgeOptions.length,0,'bridge is lazy until a Flash tool is called');
  }finally{await f.c.close();}
 });
@@ -111,11 +114,11 @@ test('Flash rows coexist with native GPT rows; permission changes confirm stop a
  }finally{await f.c.close();}
 });
 
-test('Flash result is delivered once as a native tool output only after Codex turn ends',async()=>{
+for(const [provider,model] of [['gemini','gemini-3.8-flash'],['claude','claude-opus-5-5']])test(`GPT to ${provider} result returns once to the original chat and is not replayed on reopen`,async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'處理一個 Flash 子任務'});
   const gateway=f.gatewayOptions[0],bridge=gateway.bridge;
-  await bridge.start({requestId:'flash-in-turn',model:'gemini-3.8-flash',effort:'low',task:'完成'});
+  await bridge.start({requestId:'flash-in-turn',model,effort:'low',task:'完成'});
   let record=f.workerRecords.get('flash-in-turn');record.status='completed';record.settled=true;record.output='已完成';bridgeOptionsCallback(f,record);
   bridge.resultReady({requestId:'flash-in-turn'},{settled:false});
   f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
@@ -131,7 +134,7 @@ test('Flash result is delivered once as a native tool output only after Codex tu
   await f.c.close();
   const reopened=await fixture({root:f.root});try{
    await reopened.c.open({model:'gpt-6-astra',threadId:'codex-parent'});await reopened.c.send({text:'繼續原任務'});
-   const reopenedBridge=reopened.gatewayOptions[0].bridge;await reopenedBridge.start({requestId:'flash-in-turn',model:'gemini-3.8-flash',effort:'low',task:'既有完成工作'});
+   const reopenedBridge=reopened.gatewayOptions[0].bridge;await reopenedBridge.start({requestId:'flash-in-turn',model,effort:'low',task:'既有完成工作'});
    const oldRecord=reopened.workerRecords.get('flash-in-turn');oldRecord.status='completed';oldRecord.settled=true;reopened.bridgeOptions[0].onChange(oldRecord);
    reopenedBridge.resultReady({requestId:'flash-in-turn'},{settled:false});
    reopened.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});
@@ -256,10 +259,10 @@ test('native goal turn winning a Flash notification race preserves rejected resu
  }finally{f.c.state.goal=null;await f.c.close();}
 });
 
-test('quiet Flash notification is delivered once, leaves completion armed, and does not start another worker',async()=>{
+for(const [provider,model] of [['gemini','gemini-3.8-flash'],['claude','claude-opus-5-5']])test(`quiet ${provider} notification is delivered once and leaves completion armed`,async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});await f.c.send({text:'long work'});
-  const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:'quiet-notice',model:'gemini-3.8-flash',effort:'low',task:'fake'});
+  const bridge=f.gatewayOptions[0].bridge;await bridge.start({requestId:'quiet-notice',model,effort:'low',task:'fake'});
   const record=f.workerRecords.get('quiet-notice');record.inspection={noticeId:'quiet-fixture',checkedAt:1000,lastActivityAt:0,statusObserved:'running',reason:'quiet'};
   f.bridgeOptions[0].onChange(record);
   f.hostOptions.at(-1).onEvent({method:'turn/completed',params:{threadId:'codex-parent',turn:{id:'turn-1',status:'completed'}}});

@@ -25,6 +25,7 @@ current.tools=Array.from({length:5000},(_,i)=>({id:`bulk-tool-${i}`,groupId:'bul
 current.turnDiffs=[{turnId:'bulk-turn',diff:'EXACT_LAZY_TURN_DIFF'}];
 current.fastTier={id:'fast',name:'Fast'};current.serviceTier='default';current.effectiveServiceTier='default';
 const workerDetails=[{conversationId:current.threadId,conversationTitle:'目前聊天室',requestId:'worker-current',provider:'codex',model:'gpt-6-luna',status:'running',settled:false,lastActivityAt:Date.now()-360000},{conversationId:'fake-room-2',conversationTitle:'另一個聊天室',requestId:'worker-other',provider:'gemini',status:'unresolved',settled:false}];
+current.workers=[{...workerDetails[0],task:'假資料：目前聊天室子代理工作'}];
 const quotaReads=[];let testUsage={codex:{status:'ready',windows:[{key:'primary',minutes:300,remainingPercent:73}]}};
 const controller={concurrentConversations:true,get state(){return {...current,usage:testUsage,workerActivity:{running:1,uncertain:true,unconfirmed:1},workerDetails,conversationActivity:[...rooms.values()].map(r=>({threadId:r.threadId,workspace:root,busy:r.busy,status:r.status,pendingQuestions:r.questions.length}))};},
  sessions:async()=>({sessions:[...rooms.values()].map(({messages,tools,turnDiffs,...metadata})=>metadata)}),models:async()=>({models}),usage:async force=>{quotaReads.push(force);if(force)testUsage={codex:{status:'ready',checkedAt:new Date().toISOString(),windows:[{key:'primary',minutes:300,remainingPercent:72}]}};return {...testUsage,gemini:{accounts:[{id:'fake-account',email:'fake@example.test',quota:{status:'stale',windows:[]}}]}};},markViewed:()=>({ok:true}),
@@ -87,11 +88,10 @@ try{
  await reasoning.getByRole('combobox',{name:'推理程度',exact:true}).selectOption('low');await reasoning.waitFor({state:'hidden'});
  await page.getByRole('dialog',{name:'對話設定',exact:true}).getByRole('button',{name:'完成',exact:true}).click();
  await page.setViewportSize({width:360,height:740});
- await page.locator('.header-actions .worker-activity').click();
- const workers=page.getByRole('dialog',{name:'子代理狀態',exact:true});await workers.waitFor();await workers.getByText('本聊天室的子代理',{exact:true}).waitFor();assert.equal(await workers.getByText('另一個聊天室',{exact:true}).count(),0);assert.equal(await workers.locator('.worker-popover-row').count(),1);
- const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker popup outside mobile viewport');
- await workers.getByText(/久未回報不等於已卡死/).waitFor();await noOverflow(page);await screenshot('mobile-worker-status');
- await page.getByRole('button',{name:'關閉子代理狀態',exact:true}).click();await workers.waitFor({state:'hidden'});
+ const trigger=page.locator('.header-actions .worker-activity');await trigger.waitFor();await trigger.click();const quick=page.getByRole('dialog',{name:'子代理狀態',exact:true});await quick.waitFor();assert.equal(await quick.locator('.worker-activity-row').count(),1);assert.equal(await quick.getByText('另一個聊天室',{exact:true}).count(),0);
+ await quick.getByText('worker-current',{exact:true}).waitFor();await quick.getByRole('button',{name:'查看詳細',exact:true}).click();const workers=page.getByRole('dialog',{name:'成果與工作面板',exact:true});await workers.waitFor();await workers.getByText('假資料：目前聊天室子代理工作',{exact:true}).waitFor();assert.equal(await workers.getByText('另一個聊天室',{exact:true}).count(),0);
+ const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker detail panel outside mobile viewport');
+ await noOverflow(page);await screenshot('mobile-worker-status');await page.getByRole('button',{name:'回到聊天室',exact:true}).click();
  await page.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();
  // Real browser audio capture/PCM encoding and remote POST; synthetic device + recognizer only.
  const input=page.getByRole('textbox',{name:'工作訊息',exact:true});await input.fill('保留原草稿');

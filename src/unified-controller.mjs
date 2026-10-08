@@ -19,7 +19,8 @@ export function createUnifiedController(options){
  const {root,onChange=()=>{},codexFactory=createDesktopController,claudeFactory=createClaudeController,geminiFactory=createGeminiController,inspect=inspectClaude}=options;
  let active,changing=false,queue;
  const changed=()=>{onChange();if(!changing)queue?.schedule();};
- const codex=codexFactory({...options,onChange(){if(active===codex)changed();}});
+ const workerCatalog=()=>api.models();
+ const codex=codexFactory({...options,workerCatalog,onChange(){if(active===codex)changed();}});
  let claude,gemini;
  const getGemini=()=>gemini??=(geminiFactory({...options,onChange(){if(active===gemini)changed();}}));
  active=codex;
@@ -27,7 +28,7 @@ export function createUnifiedController(options){
  const api={
   get state(){return {...active.state,...queue.state,provider:active===codex?'codex':active===claude?'claude':'gemini',usage:{...active.state.usage,codex:codex.state.usage?.codex,claude:claude?.state.usage?.claude,gemini:gemini?.state.usage?.gemini}};},
   async usage(refresh=false){
-   claude??=claudeFactory({...options,onChange(){changed();}});
+   claude??=claudeFactory({...options,workerCatalog,onChange(){changed();}});
    await Promise.all([claude.usage(refresh),codex.usage(refresh),getGemini().usage(refresh)]);
    onChange();return api.state.usage;
   },
@@ -40,7 +41,7 @@ export function createUnifiedController(options){
    if(!record)throw new Error('K 對話不存在。');
    if(modelProvider(record.model)==='gemini')return await getGemini().metadata(data);
    if(record.model.startsWith('claude-')){
-    claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
+    claude??=claudeFactory({...options,workerCatalog,onChange(){if(active===claude)changed();}});
     return await claude.metadata(data);
    }
    return await codex.metadata(data);
@@ -71,14 +72,14 @@ export function createUnifiedController(options){
    return {files:normalizeNativeFileSearchResults(response,workspace)};
   },
   async models(){
-   claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
+   claude??=claudeFactory({...options,workerCatalog,onChange(){if(active===claude)changed();}});
    const [gpt,anthropic,google]=await Promise.allSettled([codex.models(),claude.models(),getGemini().models()]);
    const models=[],warnings=[];
    for(const [provider,result] of [['codex',gpt],['claude',anthropic],['gemini',google]]){
     if(result.status==='fulfilled')models.push(...result.value.models.filter(m=>m.hidden!==true).map(m=>({...m,provider})));
     else warnings.push(`${provider} 目錄暫時不可用：${String(result.reason?.message??result.reason)}`);
    }
-   return {models,warnings,geminiGateway:gpt.status==='fulfilled'&&gpt.value.geminiGateway===true};
+   return {models,warnings,geminiGateway:gpt.status==='fulfilled'&&gpt.value.geminiGateway===true,claudeGateway:anthropic.status==='fulfilled'};
   },
   async open(data,{signal}={}){
    if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw new Error('請先結束目前工作與核准，再切換對話。');
@@ -90,7 +91,7 @@ export function createUnifiedController(options){
     if(saved&&saved.model!==data.model)throw new Error('對話設定已更新，請重新整理清單。');
     if(isClaude){
      const auth=await abortable(inspect({cwd:root,signal}),signal);if(!auth.available)throw new Error('請先在 K 登入 Claude 訂閱。'+(auth.reason??''));
-     claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
+     claude??=claudeFactory({...options,workerCatalog,onChange(){if(active===claude)changed();}});
     }
     const target=isClaude?claude:provider==='gemini'?getGemini():codex;
     if(target!==active){
@@ -154,7 +155,7 @@ export function createUnifiedController(options){
     if(same){
      created=await active.fork({messageId,model,effort,accessMode,permissionConfirmed});
     }else{
-     if(targetProvider==='claude')claude??=claudeFactory({...options,onChange(){if(active===claude)changed();}});
+     if(targetProvider==='claude')claude??=claudeFactory({...options,workerCatalog,onChange(){if(active===claude)changed();}});
      const target=targetProvider==='claude'?claude:targetProvider==='gemini'?getGemini():codex;
      if(active.state.busy||active.state.questions?.length)throw Error('原對話收到新的工作事件，請待完成後再分支。');
      await target.selectWorkspace({path:source.workspace});
