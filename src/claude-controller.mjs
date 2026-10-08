@@ -4,6 +4,7 @@ import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
+import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
 import {randomUUID} from 'node:crypto';
 import {openClaudeHost, claudeQuota, claudeModelsFrom, CLAUDE_MODEL, CLAUDE_ACCESS_MODES, normalizeClaudeAccessMode, claudePermissionMode, nativeCapabilitiesFrom} from './claude-host.mjs';
 import {normalizeWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
@@ -536,9 +537,12 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       state.efforts=selected.supportedReasoningEfforts.map(row=>row.reasoningEffort);state.effort=effort??null;
       await saveCurrent();if(!host)await this.open({threadId,model,effort:state.effort});changed();return {cancelled:false,threadId,model,effort:state.effort};
     },
-    async usage(refresh=false){
-      if(usageRequest)return usageRequest;
-      if(!refresh&&Date.now()-lastUsageAttempt<(host?60000:300000))return clone(state.usage);
+      async usage(refresh=false){
+        if(usageRequest)return usageRequest;
+        // A model-scoped limit must not freeze quota updates for other models.
+        const sharedQuota={...state.usage.claude,windows:state.usage.claude.windows?.filter(w=>['five_hour','seven_day'].includes(w.key))};
+        if(!refresh&&quotaZeroUntil(sharedQuota))return clone(state.usage);
+        if(!refresh&&!quotaZeroRecheckDue(sharedQuota)&&Date.now()-lastUsageAttempt<(host?60000:300000))return clone(state.usage);
       lastUsageAttempt=Date.now();
       usageRequest=(async()=>{
         let temporary;

@@ -56,7 +56,7 @@ export function UsageDetails({state,online}){
    <details className="usage-more"><summary>查詢與重設時間</summary>
     <div className="usage-timestamps"><span>{claude?.checkedAt?`上次取得：${new Date(claude.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(claude?.windows??[]).map(w=><span key={w.key}>{w.label}重設：{w.resetsAt?new Date(w.resetsAt*1000).toLocaleString('zh-TW'):'官方未提供'}</span>)}</div>
     {claude?.extraUsageDisabled===true&&<p className="usage-note">依目前觀察到的 Claude CLI 狀態，額外用量：未啟用（額度用完即停止，不會加價計費）。</p>}
-    <p className="usage-note">Claude 連線中約每分鐘更新；無連線時約每 5 分鐘更新。直接讀取官方訂閱額度，不以 Token 推算。</p>
+    <p className="usage-note">Claude 連線中約每分鐘更新；無連線時約每 5 分鐘更新。共用額度歸零時等待官方重設，人工更新可重查。不以 Token 推算。</p>
    </details>
   </section>
   <section className="usage-provider-section" aria-label="GPT / Codex 訂閱剩餘額度">
@@ -65,7 +65,7 @@ export function UsageDetails({state,online}){
    {(!online||quota?.status==='stale')&&<p className="usage-note">舊資料，等待更新。</p>}
    <details className="usage-more"><summary>查詢與重設時間</summary>
     <div className="usage-timestamps"><span>{quota?.checkedAt?`上次取得：${new Date(quota.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(quota?.windows??[]).filter(w=>w.resetsAt).map(w=><span key={w.key}>{windowName(w)}重設：{new Date(w.resetsAt*1000).toLocaleString('zh-TW')}</span>)}</div>
-    <p className="usage-note">約每分鐘更新。</p>
+    <p className="usage-note">約每分鐘更新；額度歸零時等待官方重設，人工更新可重查。</p>
    </details>
   </section>
   <section className="usage-provider-section" aria-label="Gemini / Antigravity 訂閱剩餘額度">
@@ -80,10 +80,10 @@ export function UsageDetails({state,online}){
      </summary>
      <div className="usage-timestamps"><span>{account.quota?.checkedAt?`上次查詢：${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚未查詢額度。'}</span>{(account.quota?.windows??[]).map(w=><span key={w.key}>{quotaIsHistorical(account.quota,online)?'上次回報・':''}{w.label||(w.key==='seven_day'?'每週':'5 小時')}：{quotaPercent(w)}；重設時間：{quotaReset(w)}</span>)}</div>
     </details>)}</div>
-    <p className="usage-note">百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。更新會在 Gemini 閒置時輪流查詢全部帳號，再切回原帳號；工作中不切換。</p>
+    <p className="usage-note">百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。人工更新會在 Gemini 閒置時查詢全部帳號，再切回原帳號。自動查詢略過歸零帳號；全部帳號實查歸零後最早重設到期會重查全部。工作中不切換。</p>
    </>:<>
     <div className="quota-line">{gemini?.windows?.length?gemini.windows.map(w=><span key={w.key}>{windowName(w)} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>{gemini?.note??'尚未取得官方額度。'}</span>}</div>
-    <p className="usage-note">{!online||gemini?.status==='stale'?'舊資料，等待更新。':'約每分鐘更新。'}直接查詢 Antigravity 官方額度，不以 Token 推算。</p>
+    <p className="usage-note">{!online||gemini?.status==='stale'?'舊資料，等待更新。':'約每分鐘更新；額度歸零時等待官方重設。'}直接查詢 Antigravity 官方額度，不以 Token 推算。</p>
     <details className="usage-more"><summary>查詢與重設時間</summary><div className="usage-timestamps"><span>{gemini?.checkedAt?`上次取得：${new Date(gemini.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(gemini?.windows??[]).map(w=><span key={w.key}>{windowName(w)}重設：{w.resetsAt?new Date(w.resetsAt*1000).toLocaleString('zh-TW'):'官方未提供'}</span>)}</div></details>
    </>}
   </section>

@@ -473,7 +473,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   }
   return {
     start, inspect, cancel, reconcile, workerPolicy:clone(defaults),
-    accounts:()=>geminiOptions.accounts?.refreshAll()??{enabled:false,accounts:[]},
+     accounts:()=>geminiOptions.accounts?.refreshAll({force:false})??{enabled:false,accounts:[]},
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
       const readSnapshot=async()=>{

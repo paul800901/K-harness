@@ -1,4 +1,5 @@
 import {createWorkActivity,geminiWorkActivity} from './work-activity.mjs';
+import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
@@ -89,7 +90,8 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async usage(refresh=false){
    if(accounts){const managed=await accounts.usage(refresh);if(managed){state.usage.gemini=managed;return {gemini:managed};}}
    if(usagePending)return usagePending;
-   if(!refresh&&Date.now()-usageAttemptAt<60000)return {gemini:state.usage.gemini};
+   if(!refresh&&quotaZeroUntil(state.usage.gemini))return {gemini:state.usage.gemini};
+   if(!refresh&&!quotaZeroRecheckDue(state.usage.gemini)&&Date.now()-usageAttemptAt<60000)return {gemini:state.usage.gemini};
    usageAttemptAt=Date.now();
    usagePending=(async()=>{
     let result;try{result=await (accounts?accounts.inspect(()=>login.status()):login.status());}catch{result={reason:'官方額度查詢失敗，請稍後刷新。'};}

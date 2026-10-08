@@ -8,6 +8,7 @@ import {saveAttachment,saveAttachmentStream,readPresentedFile} from './desktop-f
 import {sessionAttachment,sessionAttachmentSource,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
 import path from 'node:path';
 import {codexQuota} from './usage.mjs';
+import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
 import {validateWorkspace,listWorkspaceDirectories} from './workspaces.mjs';
 import {listMainModels,findMainModel,reasoningEfforts,supportsImages,fastServiceTier,mainServiceTier} from './main-models.mjs';
 import {normalizeWorkerPolicy,validateWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
@@ -369,9 +370,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  async function usage(force=false){
   if(closing)return state.usage;
   if(usagePending)return usagePending;
+  if(!force&&quotaZeroUntil(state.usage.codex))return state.usage;
   const active=host;
   usagePending=(async()=>{
-  if(force||Date.now()-quotaReadAt>=(host?60000:300000)){
+  if(force||quotaZeroRecheckDue(state.usage.codex)||Date.now()-quotaReadAt>=(host?60000:300000)){
     let reader=active,temporary=false;
     try{
      if(!reader){temporary=true;reader=hostFactory({executable,cwd:root});await reader.request('initialize',{clientInfo:{name:'k_harness_usage',version:'0.1.0'}});reader.notify({method:'initialized',params:{}});}

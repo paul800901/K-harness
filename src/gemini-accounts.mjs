@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {atomicWrite} from './atomic-write.mjs';
+import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
 
 const unknown=()=>({status:'unavailable',windows:[],note:'尚未查詢此帳號的官方額度。'});
 const clone=value=>structuredClone(value);
@@ -11,7 +12,7 @@ const validId=id=>typeof id==='string'&&/^[a-f0-9]{32}$/u.test(id);
 export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.now,onChange=()=>{}}){
  const file=path.join(root,'.runtime','gemini-accounts.json');
  let data={version:1,activeAccountId:null,accounts:[],loginPending:null,uncertain:false};
- let changing=false,running=0,refreshPending=null,acquiring=null;
+ let changing=false,running=0,refreshPending=null,acquiring=null,recoveryAttemptedAt=null;
  let loading;
  const load=()=>loading??=(async()=>{try{data=JSON.parse(await readFile(file,'utf8'));if(data.version!==1||!Array.isArray(data.accounts)||data.accounts.some(row=>!validId(row.id)||typeof row.email!=='string'))throw Error('Gemini 帳號紀錄格式不符，未覆寫。');}catch(error){if(error.code!=='ENOENT')throw error;}if(data.quotaRefreshOriginalId)data.uncertain=true;})();
  const save=async()=>{await atomicWrite(file,JSON.stringify(data,null,2));onChange();};
@@ -19,13 +20,30 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  const stamp=()=>new Date(clock()).toISOString();
  const queryAge=row=>clock()-Math.max(Date.parse(row?.lastQueryAt??'')||0,Date.parse(row?.auth?.checkedAt??'')||0);
  const quotaCurrent=row=>['ready','available'].includes(row?.quota?.status)&&queryAge(row)<60000;
- const cachedExhausted=row=>row?.quota?.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
- const exhausted=row=>quotaCurrent(row)&&row.quota.windows?.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock());
+ const cachedExhausted=row=>quotaZeroUntil(row?.quota,clock())!==null;
+ const exhausted=cachedExhausted;
+ // Derive the all-exhausted episode from successful observations, not a new
+ // timer or persisted flag. A failed recovery breaks the complete observation.
+ const allRecheckAt=()=>{
+  if(!data.accounts.length)return null;
+  const latestObserved=Math.max(...data.accounts.map(row=>Date.parse(row.quota?.checkedAt??row.lastQueryAt??'')));
+  if(!Number.isFinite(latestObserved))return null;
+  const resets=data.accounts.map(row=>{
+   return ['ready','available'].includes(row.quota?.status)?quotaZeroUntil(row.quota,latestObserved):null;
+  });
+  return resets.every(at=>at!==null)?Math.min(...resets):null;
+ };
+ const allRecheckDue=()=>{const at=allRecheckAt();return at!==null&&at<=clock()&&!(recoveryAttemptedAt!==null&&at<=recoveryAttemptedAt);};
+ const exhaustedMessage=()=>{
+  const resets=data.accounts.map(row=>quotaZeroUntil(row.quota,clock()));
+  const earliest=resets.length&&resets.every(at=>at!==null)?Math.min(...resets):null;
+  return `Gemini 依序帳號皆已無可用額度，未開始工作。${earliest?` 最早重查：${new Date(earliest).toLocaleString('zh-TW',{timeZone:'Asia/Taipei'})}（臺灣時間）${allRecheckAt()!==null?'；到時將重查全部帳號':''}。`:''}`;
+ };
  function publicRow(row){
   const quota=clone(row.quota??unknown());
   // Return the last official result and its query time, without a display TTL.
-  // A slow batch must not invalidate its own results; workers still query live.
-  return {id:row.id,email:row.email,auth:clone(row.auth??{status:'unknown'}),quota};
+  // Known zero remains dated evidence until its official reset, even past TTL.
+  return {id:row.id,email:row.email,auth:clone(row.auth??{status:'unknown'}),quota,querySuppressedUntil:quotaZeroUntil(quota,clock())};
  }
  function snapshot(){return {enabled,activeAccountId:data.activeAccountId,busy:changing||running>0||data.uncertain,checking:!!refreshPending,uncertain:!!data.uncertain,loginPending:!!data.loginPending,accounts:data.accounts.map(publicRow),...(data.uncertain?{reason:'前次 Gemini 程序停止尚未確認；請先停止工作，再刷新確認。'}:{})};}
  const authFailure=row=>row.auth?.status==='signed-out'?'此 Gemini 帳號需重新確認登入，未開始工作。':`${row.auth?.reason??'目前無法確認 Gemini 帳號狀態；尚無證據需要重新登入。'} 未開始工作。`;
@@ -45,7 +63,9 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  async function query(row){
   const before=await vault.current();
   if(before?.accountId!==row.id)throw Error('Antigravity 登入已在 K 外變更，未把額度記到原帳號。');
-  const result=await login.status();
+  let result;
+  try{result=await login.status();}
+  catch(error){row.lastQueryAt=stamp();row.quota={...(row.quota??unknown()),status:row.quota?.windows?.length?'stale':'unavailable',note:'此次官方額度查詢未成功。'};await save();throw error;}
   const after=await vault.current();
   if(after?.accountId!==row.id){data.activeAccountId=null;await save();throw Error('查詢期間 Antigravity 登入已改變，已丟棄此次額度。');}
   row.lastQueryAt=stamp();
@@ -55,13 +75,13 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   row.quota=result.quota??{...(row.quota??unknown()),status:row.quota?.windows?.length?'stale':'unavailable',note:result.reason??'此次官方額度查詢未成功。'};
   await save();return result;
  }
- async function activate(id,{restoring=false}={}){
+ async function activate(id,{restoring=false,refreshQuota=true}={}){
   if(!validId(id)||!find(id))throw Error('Gemini 帳號尚未加入 K。');
   await vault.assertIdle();
   const before=await vault.current();if(before&&!find(before.accountId)&&!restoring)throw Error('目前登入尚未加入 K；請先確認並保存目前登入，未覆寫。');
   const identity=await vault.activate(id,{preserveCurrent:!restoring});
   if(identity.accountId!==id)throw Error('Gemini 切換後身分不符，未開始工作。');
-  data.activeAccountId=id;await save();await query(find(id));
+  data.activeAccountId=id;await save();if(refreshQuota)await query(find(id));
  }
  async function restoreQuotaAccount(){
   const id=data.quotaRefreshOriginalId;
@@ -109,37 +129,44 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    data.loginPending=null;await save();return snapshot();
   });},
   async activate({accountId}){assertEnabled();return exclusive(async()=>{requireIdleLogin();await activate(accountId);return snapshot();},{waitForRefresh:true});},
-  async refresh(){
+  async refresh({force=true}={}){
    await load();if(!data.accounts.length&&!data.loginPending&&!data.uncertain)return snapshot();assertEnabled();
    if(refreshPending)return refreshPending;
    refreshPending=exclusive(async()=>{
     if(data.loginPending)throw Error('登入完成後請按「完成登入」，或取消回原帳號。');
     if(data.quotaRefreshOriginalId)throw Error('上次全部額度查詢尚未還原帳號；請按更新全部帳號恢復。');
     if(data.uncertain){await vault.assertIdle();data.uncertain=false;await save();}
-    const row=await current();if(row)await query(row);else await save();return snapshot();
+    const row=await current();if(row&&(force||!cachedExhausted(row)))await query(row);else if(!row)await save();return snapshot();
    });try{return await refreshPending;}finally{refreshPending=null;}
   },
-  async refreshAll(){
+  async refreshAll({force=true}={}){
    await load();assertEnabled();
    if(refreshPending)await refreshPending;
    const pending=exclusive(async()=>{
     if(data.loginPending)throw Error('請先完成或取消帳號登入。');
     // An interrupted batch restores its original login only; never resumes the batch.
     if(data.quotaRefreshOriginalId){await restoreQuotaAccount();return {...snapshot(),note:'已切回中斷查詢前的帳號；未重新執行全部查詢。'};}
+    const recheckAt=allRecheckAt(),recovery=allRecheckDue();
+    // Even a thrown vault/query error must not auto-replay this recovery batch.
+    // A newly reported future reset permits the next episode; manual refresh is unchanged.
+    if(recovery)recoveryAttemptedAt=clock();
     await vault.assertIdle();
     if(data.uncertain){data.uncertain=false;await save();}
     requireIdleLogin();
     if(!data.accounts.length)return snapshot();
+    const rows=data.accounts.filter(row=>force||recovery||!cachedExhausted(row));
+    if(!rows.length)return {...snapshot(),quotaCheck:{allExhausted:true,nextQueryAt:recheckAt},note:'全部帳號已有官方歸零紀錄，等待重設；未重新查詢。'};
     const original=await current();if(!original)throw Error('目前登入尚未加入 K，未切換帳號。');
     data.quotaRefreshOriginalId=original.id;data.uncertain=true;await save();
     let failure;
     try{
-     await query(original);
-     for(const row of data.accounts)if(row.id!==original.id)await activate(row.id);
+     if(rows.some(row=>row.id===original.id))await query(original);
+     for(const row of rows)if(row.id!==original.id)await activate(row.id);
     }catch(error){failure=error;}finally{await restoreQuotaAccount();}
     if(failure)throw Error(`${failure.message} 已切回原帳號；本次查詢未全部完成。`);
-    const failed=data.accounts.filter(row=>!['ready','available'].includes(row.quota?.status)||!row.quota.windows?.length||row.quota.windows.some(w=>!Number.isFinite(w.remainingPercent))).length;
-    return {...snapshot(),quotaCheck:{checkedAt:stamp(),allExhausted:failed?null:data.accounts.every(row=>row.quota.windows.some(w=>w.remainingPercent===0&&w.resetsAt*1000>clock()))},note:failed?`已查詢全部帳號並切回原帳號；${failed} 個帳號未取得最新額度。`:'已查詢全部帳號並切回原帳號。'};
+    const failed=rows.filter(row=>!['ready','available'].includes(row.quota?.status)||!row.quota.windows?.length||row.quota.windows.some(w=>!Number.isFinite(w.remainingPercent))).length;
+    const skipped=data.accounts.length-rows.length;
+    return {...snapshot(),quotaCheck:{checkedAt:stamp(),allExhausted:failed?null:data.accounts.every(cachedExhausted),nextQueryAt:allRecheckAt(),queried:rows.length,skipped},note:failed?`已查詢帳號並切回原帳號；${failed} 個帳號未取得最新額度。`:skipped?`已查詢 ${rows.length} 個帳號並切回原帳號；${skipped} 個歸零帳號等待重設，保留上次實查結果。`:'已查詢全部帳號並切回原帳號。'};
    });
    refreshPending=pending;try{return await pending;}finally{if(refreshPending===pending)refreshPending=null;}
   },
@@ -148,7 +175,11 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(!data.accounts.length)return null;
    if(!changing&&!running&&!data.loginPending&&!data.uncertain&&enabled){
     const row=find(data.activeAccountId);
-    if(refresh||!row||queryAge(row)>=60000)try{await api.refresh();}catch{/* retain the last result, never claim a new successful query */}
+    const recheckAt=allRecheckAt();
+    try{
+     if(!refresh&&allRecheckDue())await api.refreshAll({force:false});
+     else if(refresh||!(recheckAt!==null&&recoveryAttemptedAt!==null&&recheckAt<=recoveryAttemptedAt&&clock()-recoveryAttemptedAt<60000)&&(!row||!cachedExhausted(row)&&(quotaZeroRecheckDue(row.quota,clock())||queryAge(row)>=60000)))await api.refresh({force:refresh});
+    }catch{/* retain the last result, never claim a new successful query */}
    }
    const rows=data.accounts.map(publicRow),active=rows.find(row=>row.id===data.activeAccountId);
    return {...(active?.quota??unknown()),accountId:active?.id??null,accountEmail:active?.email??null,accounts:rows};
@@ -160,6 +191,8 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    let unlock;acquiring=new Promise(resolve=>{unlock=resolve;});
    try{
    await load();if(refreshPending)await refreshPending;requireIdleLogin();
+   const recovered=!running&&allRecheckDue();
+   if(recovered)await api.refreshAll({force:false});
    if(changing)throw Error('Gemini 正在切換帳號或登入，未開始工作。');
    changing=true;
    let chosen=null;
@@ -172,9 +205,8 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
      if(worker){
       if(!chosen)throw Error('目前 Antigravity 登入未加入 K，未開始工人工作。');
       if(accountId&&!find(accountId))throw Error('Gemini 帳號選擇無效，未開始工作。');
-      // Refresh before selecting: either official quota window may require a
-      // handoff, but an old/failed lookup must not rotate subscription logins.
-      if(!running)await query(chosen);
+      // Keep official zero evidence until reset; only query a usable candidate.
+      if(!running&&!cachedExhausted(chosen)&&(!recovered||!quotaCurrent(chosen)))await query(chosen);
       if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
       if(exhausted(chosen)){
        if(running)throw Error('目前 Gemini 工作尚未結束，不能交接帳號；未送出本工作。');
@@ -182,7 +214,8 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
        const next=[...data.accounts.slice(index+1),...data.accounts.slice(0,index)];
        let found=false;
        for(const row of next){
-        await activate(row.id);
+        if(cachedExhausted(row))continue;
+        await activate(row.id,{refreshQuota:!recovered||!quotaCurrent(row)});
         chosen=find(row.id);target=row.id;
         if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
         // A fresh positive official balance is usable even if its last reset
@@ -191,11 +224,10 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
         if(!quotaCurrent(chosen)||!available&&!exhausted(chosen))throw Error('下一個 Gemini 帳號尚無官方目前額度資料，未開始工作；請刷新確認後再試。');
         if(!exhausted(chosen)){found=true;break;}
        }
-       if(!found)throw Error('Gemini 依序帳號皆已無可用額度，未開始工作。');
+       if(!found)throw Error(exhaustedMessage());
       }else if(accountId&&accountId!==chosen.id){
        throw Error('目前 Gemini 帳號尚未確認額度耗盡，工人不得跳過順序切換帳號；未送出本工作。');
       }
-      if(!quotaCurrent(chosen)&&cachedExhausted(chosen))throw Error('目前帳號的耗盡狀態已過期且無法向官方重新確認，未開始工作或切換帳號。');
      }
      if(target!==chosen?.id){
       const targetRow=find(target);
@@ -206,6 +238,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
       await activate(target);chosen=find(target);
      }
      if(!chosen||chosen.id!==target)throw Error('Gemini 帳號選擇無效，未開始工作。');
+     if(exhausted(chosen))throw Error('此 Gemini 帳號官方額度已用完，等待重設；未重新查詢或開始工作。');
      const authStale=queryAge(chosen)>=60000;
      if(chosen.auth?.status!=='authenticated'){
       if(running)throw Error(authFailure(chosen));
@@ -219,7 +252,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    let released=false;
    return {accountId:chosen?.id??null,accountEmail:chosen?.email??null,async release({settled=true,refresh=false}={}){
     if(released)return;released=true;running--;if(!settled){data.uncertain=true;await save();}
-    onChange();if(refresh&&!running&&!data.uncertain&&chosen)try{await api.refresh();}catch{/* no replay; next status read shows cached quota */}
+    onChange();if(refresh&&!running&&!data.uncertain&&chosen)try{await api.refresh({force:false});}catch{/* no replay; next status read shows cached quota */}
    }};
    }finally{acquiring=null;unlock();}
   },

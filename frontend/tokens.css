@@ -13,6 +13,9 @@
   --k-hover: rgba(72, 58, 45, .06);
   --k-selected: rgba(72, 58, 45, .09);
   --k-brass: #9a7630;
+  --k-discussion-gpt: #285b8c;
+  --k-discussion-claude: #934734;
+  --k-discussion-gemini: #705395;
   --k-brass-line: rgba(154, 118, 48, .55);
   --k-brass-wash: rgba(154, 118, 48, .12);
   --k-danger: #a4432f;
@@ -130,6 +133,9 @@
 }
 
 :root[data-theme="dark"] {
+  --k-discussion-gpt: #9bbbe8;
+  --k-discussion-claude: #eab19d;
+  --k-discussion-gemini: #c5b0e5;
   color-scheme: dark;
   --k-desk: #15171b;
   --k-sheet: #191b20;

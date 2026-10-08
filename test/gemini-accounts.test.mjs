@@ -28,6 +28,108 @@ function authStatus(quota={status:'available',windows:[{remainingPercent:80,rese
  return {auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota};
 }
 
+test('known weekly or five-hour zero suppresses UI, AI and worker checks across the TTL',async t=>{
+ for(const key of ['five_hour','seven_day'])await t.test(key,async()=>{
+  let now=Date.parse('2026-10-03T12:00:00Z');
+  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key,remainingPercent:0,resetsAt:future}]})});
+  await f.accounts.capture();const observed=(await f.accounts.list()).accounts[0].quota.checkedAt,queries=f.calls.status;now+=120000;
+  await f.accounts.usage();const scan=await f.accounts.refreshAll({force:false});
+  await assert.rejects(f.accounts.acquire({worker:true}),/皆已無可用額度/);
+  assert.equal(f.calls.status,queries);assert.deepEqual(f.calls.activate,[]);assert.equal(scan.quotaCheck.allExhausted,true);
+  assert.equal(scan.accounts[0].quota.checkedAt,observed);assert.equal(scan.accounts[0].querySuppressedUntil,future*1000);
+ });
+});
+
+test('all five zero accounts recheck every account at the earliest effective reset and restore the original',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),recovered=false;const start=now;
+ const ids=[A,B,C,D,E],deadlines=ids.map((_,i)=>start+(i+1)*120000);
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'seven_day',remainingPercent:current.accountId===A&&recovered?70:0,resetsAt:deadlines[ids.indexOf(current.accountId)]/1000},{key:'five_hour',remainingPercent:current.accountId===A&&recovered?70:0,resetsAt:(start+60000)/1000}]})});
+ for(const id of ids){f.current={accountId:id,email};await f.accounts.capture();}
+ const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true,clock:()=>now});
+ const count=f.calls.status;now=start+61000;await restarted.usage();assert.equal(f.calls.status,count,'earlier five-hour reset cannot clear a later blocking weekly zero');
+ now=deadlines[0];recovered=true;f.calls.activate.length=0;await restarted.usage();
+ assert.equal(f.calls.status,count+5,'later-reset accounts are also queried in this complete recovery');assert.deepEqual(f.calls.activate,[A,B,C,D,E]);assert.equal(f.current.accountId,E);
+ await restarted.usage();assert.equal(f.calls.status,count+5);
+});
+
+test('sequential zero observations that never overlap do not trigger an all-account recovery',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),usable=false;const start=now,ids=[A,B,C,D,E];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:usable&&current.accountId===A?60:0,resetsAt:(current.accountId===A?start+120000:start+3600000)/1000}]})});
+ for(const [i,id] of ids.entries()){now=start+i*180000;f.current={accountId:id,email};await f.accounts.capture();}
+ const before=f.calls.status;await f.accounts.usage();assert.equal(f.calls.status,before);assert.deepEqual(f.calls.activate,[]);
+ usable=true;const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();
+ assert.equal(f.calls.status,before+1,'only the expired candidate is checked');assert.deepEqual(f.calls.activate,[A]);
+});
+
+test('all-zero recovery can run from worker startup and waits again after a new all-zero report',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),reset=now+120000,positive=false;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:positive&&current.accountId===A?40:0,resetsAt:reset/1000}]})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ let count=f.calls.status;now=reset;reset=now+120000;await f.accounts.usage();assert.equal(f.calls.status,count+5);
+ count=f.calls.status;await f.accounts.usage();await f.accounts.refreshAll({force:false});assert.equal(f.calls.status,count);
+ now=reset;reset=now+120000;positive=true;const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();
+ assert.equal(f.calls.status,count+5,'reuse the successful recovery check instead of immediately querying the selected candidate twice');assert.equal((await f.accounts.list()).busy,false);
+});
+
+test('all-zero recovery is deferred while Gemini is running and a failed recovery is not immediately replayed',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),failed=false;const reset=now+120000;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>failed?{temporaryFailure:true,auth:{status:'unknown'},reason:'fixture offline'}:authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ let finish;const work=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;}));while(!finish)await new Promise(resolve=>setImmediate(resolve));
+ const count=f.calls.status;now=reset;await f.accounts.usage();assert.equal(f.calls.status,count);finish();await work;
+ failed=true;await f.accounts.usage();assert.equal(f.calls.status,count+5);assert.equal(f.current.accountId,E);
+ const state=await f.accounts.list();assert(state.accounts.every(row=>row.quota.status==='stale'));
+ await f.accounts.usage();assert.equal(f.calls.status,count+5);assert.equal(state.uncertain,false);
+});
+
+test('known-zero candidates are skipped but an unknown account is checked before use',async()=>{
+ let known=false,now=Date.parse('2026-10-03T12:00:00Z');const queried=[];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>{queried.push(current.accountId);return authStatus({status:current.accountId===C&&!known?'unavailable':'ready',checkedAt:new Date(now).toISOString(),windows:current.accountId===C&&!known?[]:[{key:'seven_day',remainingPercent:current.accountId===C?80:0,resetsAt:future}]});}});
+ for(const id of [A,B,C]){f.current={accountId:id,email};await f.accounts.capture();}await f.accounts.activate({accountId:A});
+ queried.length=0;f.calls.activate.length=0;known=true;const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,C);await lease.release();
+ assert.deepEqual(queried,[C]);assert.deepEqual(f.calls.activate,[C]);
+});
+
+test('explicit all-account refresh overrides zero suppression before reset',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),remaining=0;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{remainingPercent:remaining,resetsAt:future}]})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ const count=f.calls.status;remaining=90;const result=await f.accounts.refreshAll();assert.equal(f.calls.status,count+5);assert.equal(result.quotaCheck.allExhausted,false);assert.equal(f.current.accountId,E);
+});
+
+test('a thrown account switch error cannot automatically replay the all-zero recovery batch',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),reset=now+120000;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ const activate=f.vault.activate;f.vault.activate=async id=>{if(id===A)throw Error('fixture switch failed');return activate(id);};
+ now=reset;reset=now+120000;const before=f.calls.status;await f.accounts.usage();assert.equal(f.calls.status,before+1);assert.equal(f.current.accountId,E);
+ await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+1);assert.equal((await f.accounts.list()).uncertain,false);
+ f.vault.activate=activate;await f.accounts.refreshAll();assert.equal(f.calls.status,before+6,'explicit human retry remains available');
+});
+
+test('delayed recovery cannot replay after its earliest reset moves to another already expired account',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),recovering=false;const start=now,ids=[A,B,C,D,E];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:(recovering?now+120000:start+(ids.indexOf(current.accountId)+1)*120000)/1000}]})});
+ for(const id of ids){f.current={accountId:id,email};await f.accounts.capture();}
+ await f.accounts.activate({accountId:A});const activate=f.vault.activate;
+ f.vault.activate=async id=>{if(id===B)throw Error('fixture switch failed');return activate(id);};
+ now=start+720000;recovering=true;const before=f.calls.status;
+ await f.accounts.usage();await f.accounts.usage();await f.accounts.usage();
+ assert.equal(f.calls.status,before+1,'the remaining expired deadlines belong to the same attempted recovery');assert.equal(f.current.accountId,A);
+ now+=120000;const switches=f.calls.activate.length;await f.accounts.usage();await f.accounts.usage();
+ assert.equal(f.calls.status,before+2,'the active account resumes single-account lookup at its new reset');assert.equal(f.calls.activate.length,switches,'failed recovery is not replayed as a batch');
+ f.vault.activate=activate;await f.accounts.refreshAll();assert.equal(f.calls.status,before+7,'manual refresh still queries all five');
+});
+
+test('a thrown first quota query also does not replay automatic recovery',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const reset=now+120000;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
+ for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+ f.login.status=async()=>{f.calls.status++;throw Error('fixture query threw');};now=reset;const before=f.calls.status;
+ await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+1);
+ now+=61000;await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+2,'single-account failures retain the existing one-minute throttle');
+});
+
 test('capture keeps account identity rows separate even when email duplicates',async()=>{
  const f=await fixture({identity:{accountId:A,email},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?70:20,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
  await f.accounts.capture();
@@ -174,7 +276,7 @@ test('a stale or unknown next account is queried and not assumed available',asyn
  assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
 });
 
-test('worker stays on one account and never rotates for unknown or failed quota reports',async t=>{
+test('worker does not rotate on unknown quota; a failed check retains prior official zero until reset',async t=>{
  for(const scenario of ['remaining','unknown','timeout'])await t.test(scenario,async()=>{
   let failed=false;
   const f=await fixture({identity:{accountId:A,email},statusFor:current=>{
@@ -189,8 +291,8 @@ test('worker stays on one account and never rotates for unknown or failed quota 
   if(scenario==='timeout'){failed=true;await f.accounts.refresh();}
   if(scenario!=='timeout'){
    for(let i=0;i<2;i++){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();}
-  }else await assert.rejects(f.accounts.acquire({worker:true}),/未開始工作/u);
-  assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).busy,false);
+  }else {const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();}
+  assert.equal(f.current.accountId,scenario==='timeout'?B:A);assert.deepEqual(f.calls.activate,scenario==='timeout'?[B]:[]);assert.equal((await f.accounts.list()).busy,false);
  });
 });
 
@@ -497,9 +599,11 @@ test('failed restoration survives restart, blocks work, and explicit retry only 
  const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true});await assert.rejects(restarted.acquire(),/停止尚未確認/u);await assert.rejects(restarted.refresh(),/尚未還原/u);
  f.vault.activate=activate;const queries=f.calls.status;const result=await restarted.refreshAll();assert.equal(f.current.accountId,B);assert.equal(f.calls.status,queries);assert.match(result.note,/未重新執行/u);assert.equal(result.uncertain,false);
 });
-test('worker rechecks even recent exhausted snapshot instead of rejecting a now replenished account',async()=>{
+test('an early quota replenishment requires explicit refresh instead of an automatic zero recheck',async()=>{
  let remaining=0;const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'five_hour',remainingPercent:remaining,resetsAt:future}]})});await f.accounts.capture();remaining=88;
- const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);assert.equal(f.calls.status,2);
+ await assert.rejects(f.accounts.acquire({worker:true}),/皆已無可用額度/);assert.equal(f.calls.status,1);
+ await f.accounts.refresh();assert.equal(f.calls.status,2);
+ const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);assert.equal(f.calls.status,3);
 });
 
 test('all-account refresh clears non-batch uncertain state only after native idle is confirmed',async()=>{
