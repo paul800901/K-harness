@@ -2,6 +2,7 @@ import {RemoteRecord} from './remote-record.jsx';
 import React,{useEffect,useRef,useState} from 'react';
 import {Copy,Check,X} from 'lucide-react';
 import {visibleNativeNotices,nativeNoticeText} from './native-notices.mjs';
+import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 export function CopyFeedback({text}){
  const [status,setStatus]=useState('idle');const timer=useRef(null),mounted=useRef(true);
  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;clearTimeout(timer.current);};},[]);
@@ -12,8 +13,8 @@ export function CopyFeedback({text}){
 export function NativeNotices({state,error=state.error}){
  const [dismissed,setDismissed]=useState({}),scope=JSON.stringify([state.provider,state.workspace,state.threadId]);
  return <div className="native-notices">{visibleNativeNotices(state.notices,error).filter(n=>!(dismissed[scope]??[]).includes(n.retryKey??n.id)).map(n=>{
-  const key=n.retryKey??n.id,text=nativeNoticeText(n),isError=n.level==='error'&&!n.willRetry;
-  return <div key={key} className={isError?'alert':'notice'} role={isError?'alert':'status'}><div className="native-notice-content"><span>{text}</span>{text!==n.message&&<details><summary>查看詳細內容</summary><pre>{n.message}</pre></details>}</div><button type="button" className="native-notice-dismiss" title="關閉此通知" aria-label="關閉此通知" onClick={()=>setDismissed(d=>({...d,[scope]:[...(d[scope]??[]),key]}))}><X size={15}/></button></div>;
+  const key=n.retryKey??n.id,text=nativeNoticeText(n,state.provider??providerOf(state.model)),isError=n.level==='error'&&!n.willRetry;
+  return <div key={key} className={isError?'alert':'notice'} role={isError?'alert':'status'}><div className="native-notice-content"><span>{text}</span>{(text!==n.message||n.error)&&<details><summary>查看詳細內容</summary><pre>{n.error?JSON.stringify(n.error,null,2):n.message}</pre></details>}</div><button type="button" className="native-notice-dismiss" title="關閉此通知" aria-label="關閉此通知" onClick={()=>setDismissed(d=>({...d,[scope]:[...(d[scope]??[]),key]}))}><X size={15}/></button></div>;
  })}</div>;
 }
 export function NativeReasoning({state,group}){

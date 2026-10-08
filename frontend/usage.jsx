@@ -1,7 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {RefreshCw} from 'lucide-react';
 import './usage.css';
-import {quotaIsHistorical,quotaPercent,quotaReset} from './quota-display.mjs';
+import {quotaIsHistorical,quotaPercent,quotaReset,weeklyQuotaNote} from './quota-display.mjs';
 
 const windowName=w=>w.minutes===10080?'每週':w.minutes===300?'5 小時':w.minutes?`${w.minutes} 分鐘`:w.key==='primary'?'短期額度':'長期額度';
 const refreshUsage=async force=>{const response=await fetch(`/api/usage${force?'?refresh=1':''}`,{cache:'no-store'});if(!response.ok)throw Error('額度查詢失敗；請確認電腦連線後再試。');return response.json();};
@@ -73,7 +73,7 @@ export function UsageDetails({state,online}){
    {geminiAccounts.length?<>
     <div className="gemini-usage-accounts">{geminiAccounts.map(account=><details className="gemini-usage-account" key={account.id} data-account-id={account.id}>
      <summary>
-      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{quotaIsHistorical(account.quota,online)?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span></span><span className="gemini-usage-status">{account.quota?.checkedAt?`上次實查 ${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}</span></span>
+      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{quotaIsHistorical(account.quota,online)?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span>{weeklyQuotaNote(account.quota,online)&&<span>{weeklyQuotaNote(account.quota,online)}</span>}</span><span className="gemini-usage-status">{account.quota?.checkedAt?`上次實查 ${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}</span></span>
       <span className="gemini-usage-value">每週 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'seven_day')}</b></span>
       <span className="gemini-usage-value">5 小時 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'five_hour')}</b></span>
       <span className="usage-expand" aria-hidden="true">⌄</span>

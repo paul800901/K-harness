@@ -82,3 +82,20 @@ test('diagnostic SQLite warning stays in raw records, not the everyday notice ba
  assert.deepEqual(visibleNativeNotices(notices),[failure]);
  assert.deepEqual(notices,before);
 });
+
+
+test('Codex capacity and quota are distinct; conflicting codes and unknown errors stay literal',()=>{
+ const raw='Selected model is at capacity. Please try a different model.';
+ assert.equal(nativeNotices.codexErrorKind({message:raw}),'capacity');
+ assert.equal(nativeNotices.codexErrorKind({message:'other wording',codexErrorInfo:'serverOverloaded'}),'capacity');
+ assert.equal(nativeNotices.codexErrorKind({message:raw,codexErrorInfo:'usageLimitExceeded'}),'quota');
+ assert.equal(nativeNotices.codexErrorKind({message:raw,codexErrorInfo:'other'}),null);
+ assert.equal(nativeNotices.codexErrorKind({message:'Tool capacity failed'}),null);
+ assert.match(nativeNotices.localizeNativeNotice(raw,'codex'),/與剩餘額度不同/);
+ assert.match(nativeNotices.localizeNativeNotice('native quota','codex',{message:'native quota',codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
+ const error={message:raw,codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}};
+ assert.equal(nativeNotices.localizeNativeNotice(raw,'codex',error),raw);
+ assert.equal(nativeNotices.nativeNoticeText({message:raw,error,willRetry:true}),'原生核心正在重試…');
+ assert.equal(nativeNotices.localizeNativeNotice(raw,'gemini'),raw);
+ assert.equal(nativeNotices.localizeNativeNotice(raw,'claude'),raw);
+});

@@ -7,15 +7,15 @@ import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 const LUNA='gpt-6-luna',SOL='gpt-6.1-sol';
 const catalog=[LUNA,SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image'],serviceTiers:[{id:'priority',name:'Fast',description:'Fast service'}]}));
 const overload={message:'Selected model is at capacity.',codexErrorInfo:'serverOverloaded'};
-async function fixture({goal=null,models=catalog,model=LUNA,serviceTier='default',failStart=false,immediateFailure=false,replyLost=false,solError=null,startAck=null,flash=false}={}){
+async function fixture({goal=null,model=LUNA,serviceTier='default',immediateFailure=false,startAck=null,flash=false}={}){
  await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/capacity-'));
  await saveMainSession(root,{threadId:'parent',model,effort:'high',serviceTier,accessMode:'read-only',workspace:root});
- const calls=[],turns=[];let nativeGoal=goal,opts,gate=null,closed,turnNumber=0,gateway,bridgeOptions,flashRecord;
+ const calls=[],turns=[];let nativeGoal=goal,opts,closed,turnNumber=0,gateway,bridgeOptions,flashRecord;
  const emit=(method,params={})=>opts.onEvent({method,params:{threadId:'parent',...params}});
  const finish=(error=overload,id=turns.at(-1)?.id)=>{const t=turns.find(t=>t.id===id);if(t){t.status=error?'failed':'completed';t.error=error;}emit('turn/completed',{turn:{id,status:error?'failed':'completed',error}});};
  const hostFactory=o=>{opts=o;return{closed:new Promise(r=>closed=r),close:async()=>closed(),notify(){},waitForMcp:async()=>{},request:async(method,p={})=>{
   calls.push({method,p});
-  if(method==='model/list'){if(gate)await gate;return{data:models,nextCursor:null};}
+  if(method==='model/list')return{data:catalog,nextCursor:null};
   if(method==='account/read')return{account:{type:'chatgpt'}};
   if(method==='thread/read')return{thread:{id:p.threadId,status:{type:turns.at(-1)?.status==='inProgress'?'active':'idle'},turns:structuredClone(turns)}};
   if(method==='thread/start'||method==='thread/resume')return{thread:{id:'parent'}};
@@ -23,12 +23,10 @@ async function fixture({goal=null,models=catalog,model=LUNA,serviceTier='default
   if(method==='thread/goal/set'){nativeGoal={...nativeGoal,...p};emit('thread/goal/updated',{goal:nativeGoal});return{goal:nativeGoal};}
   if(method==='thread/backgroundTerminals/list')return{data:[],nextCursor:null};
   if(method==='turn/start'){
-   if(failStart&&p.model===SOL)throw Error('transport lost; unknown');
    if(p.toolOutput)await new Promise(r=>setImmediate(r));
    const id=`turn-${++turnNumber}`,item={type:'userMessage',id:`u-${id}`,content:p.input};turns.push({id,status:'inProgress',items:[item]});
    emit('turn/started',{turn:{id}});emit('item/completed',{turnId:id,item});
-   if(immediateFailure||p.model===SOL||flash&&p.toolOutput)finish(p.model===SOL?solError:overload,id);
-   if(replyLost&&p.model===SOL)throw Error('reply lost after native event');
+   if(immediateFailure||flash&&p.toolOutput)finish(overload,id);
    if(startAck&&p.model===LUNA)await startAck;
    return{turn:{id}};
   }
@@ -40,93 +38,37 @@ async function fixture({goal=null,models=catalog,model=LUNA,serviceTier='default
   list:async()=>flashRecord?[structuredClone(flashRecord)]:[],close:async()=>{},
  };},gatewayFactory:async o=>{gateway=o;return{mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/fake',headers:{Authorization:'fake'}}}},close:async()=>{}};}});
  const c=make();await c.open({threadId:'parent',model});
- return{c,root,calls,turns,emit,finish,make,get bridge(){return gateway.bridge;},finishFlash:()=>{flashRecord={...flashRecord,status:'completed',settled:true,output:'fake worker result'};bridgeOptions.onChange(flashRecord);},setGoal:g=>{nativeGoal=g;emit('thread/goal/updated',{goal:g});},gate:p=>gate=p};
+ return{c,root,calls,turns,emit,finish,make,get bridge(){return gateway.bridge;},finishFlash:()=>{flashRecord={...flashRecord,status:'completed',settled:true,output:'fake worker result'};bridgeOptions.onChange(flashRecord);},setGoal:g=>{nativeGoal=g;emit('thread/goal/updated',{goal:g});}};
 }
 async function settle(c){for(let i=0;i<300&&c.state.completionPending;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.completionPending,false);}
 
-test('capacity switches same native thread to Sol medium once; no prompt replay, permissions and model history survive reopen',async()=>{
- const f=await fixture();try{
-  await f.c.send({text:'original unique task'});f.finish();await settle(f.c);
-  const starts=f.calls.filter(x=>x.method==='turn/start');assert.equal(starts.length,2);const p=starts[1].p;
-  assert.equal(p.model,SOL);assert.equal(p.effort,'medium');assert.equal(p.threadId,'parent');assert.equal(p.sandboxPolicy.type,'readOnly');assert(!JSON.stringify(p.input).includes('original unique task'));assert.match(p.input[0].text,/不可重送/);
-  assert.equal(f.c.state.model,SOL);assert.equal(f.c.state.effort,'medium');assert.equal(f.c.state.busy,false);assert.equal(f.c.state.modelChanges.length,1);
-  f.finish(overload,'turn-1');await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);
-  const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.modelChanges[0].reason,'capacity');assert.equal(saved.modelChanges[0].toEffort,'medium');
-  await f.c.close();const reopened=f.make();try{await reopened.open({threadId:'parent',model:SOL});assert.equal(reopened.state.modelChanges[0].reason,'capacity');assert.equal(reopened.state.effort,'medium');assert.equal(reopened.state.messages.length,2);}finally{await reopened.close();}
- }finally{await f.c.close();}
-});
 
-test('capacity handoff preserves Fast only when the target model catalog supports Fast',async()=>{
- const supported=await fixture({serviceTier:'priority'});
- try{
-  await supported.c.send({text:'fake fast task'});assert.equal(supported.calls.find(x=>x.method==='turn/start').p.serviceTier,'priority');supported.finish();await settle(supported.c);
-  const fallback=supported.calls.filter(x=>x.method==='turn/start').at(-1);assert.equal(fallback.p.model,SOL);assert.equal(fallback.p.serviceTier,'priority');assert.equal(supported.c.state.serviceTier,'priority');assert.equal(supported.c.state.effectiveServiceTier,'priority');
- }finally{await supported.c.close();}
- const unsupported=await fixture({serviceTier:'priority',models:[catalog[0],{...catalog[1],serviceTiers:[]}]});
- try{
-  await unsupported.c.send({text:'fake fast task'});unsupported.finish();await settle(unsupported.c);
-  const fallback=unsupported.calls.filter(x=>x.method==='turn/start').at(-1);assert.equal(fallback.p.model,SOL);assert.equal(fallback.p.serviceTier,'default');assert.equal(unsupported.c.state.serviceTier,'default');assert.equal(unsupported.c.state.effectiveServiceTier,'default');
- }finally{await unsupported.c.close();}
+for(const model of [LUNA,SOL])test(model+' capacity failure remains native: no model change, goal revival or extra submission',async()=>{
+ const goal={objective:'fake unfinished task',status:'active',createdAt:1,tokenBudget:999,tokensUsed:17};const f=await fixture({model,goal,serviceTier:'priority'});
+ try{await f.c.send({text:'original task'});const before=f.calls.length;f.setGoal({...goal,status:'blocked'});f.finish();await settle(f.c);assert.equal(f.c.state.status,'failed');assert.equal(f.c.state.model,model);assert.equal(f.c.state.effort,'high');assert.equal(f.c.state.serviceTier,'priority');assert.equal(f.c.state.modelChanges.length,0);assert.equal(f.c.state.goal.status,'blocked');assert(!f.calls.some(x=>x.method==='thread/goal/set'));assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert(!f.calls.slice(before).some(x=>x.method==='model/list'));const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.model,model);assert.equal(saved.modelChanges.length,0);}finally{await f.c.close();}
 });
-
-test('goal overload resumes only prior active native goal, status-only after Sol override',async()=>{
- const goal={objective:'fake test goal',status:'active',createdAt:1,tokenBudget:999,tokensUsed:17};const f=await fixture({goal});
- try{await f.c.send({text:'x'});f.setGoal({...goal,status:'blocked'});f.finish();await settle(f.c);
- const resume=f.calls.findIndex(x=>x.method==='thread/goal/set');assert(resume>f.calls.findLastIndex(x=>x.method==='turn/start'));assert.deepEqual(f.calls[resume].p,{threadId:'parent',status:'active'});assert.equal(f.c.state.goal.tokensUsed,17);assert.equal(f.c.state.goal.tokenBudget,999);
- }finally{await f.c.close();}
+for(const code of ['usageLimitExceeded','rateLimitExceeded','unauthorized',{responseStreamDisconnected:{httpStatusCode:null}},'other'])test('terminal '+JSON.stringify(code)+' never causes a K retry',async()=>{
+ const f=await fixture();try{await f.c.send({text:'x'});const error={...overload,codexErrorInfo:code};f.finish(error);await settle(f.c);assert.deepEqual(f.c.state.turnError.error,error);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.model,LUNA);}finally{await f.c.close();}
 });
-
-for(const error of ['usageLimitExceeded','rateLimitExceeded','unauthorized','responseStreamDisconnected','other'])test(`does not fallback on ${error}`,async()=>{
- const f=await fixture();try{await f.c.send({text:'x'});f.finish({...overload,codexErrorInfo:error});await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.model,LUNA);}finally{await f.c.close();}
+for(const model of [LUNA,SOL])test(model+' forwards native repeated retry events and waits for native completion',async()=>{
+ const f=await fixture({model});try{await f.c.send({text:'x'});for(let i=1;i<=5;i++)f.emit('error',{turnId:'turn-1',willRetry:true,error:{message:'Reconnecting... '+i+'/5',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}}});assert.equal(f.c.state.busy,true);assert.equal(f.c.state.status,'working');assert.equal(f.c.state.turnError,null);assert.equal(f.c.state.notices.at(-1).message,'Reconnecting... 5/5');assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);f.finish(null);await settle(f.c);assert.equal(f.c.state.status,'completed');assert(f.c.state.notices.filter(n=>n.willRetry).every(n=>n.resolved));assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);}finally{await f.c.close();}
 });
-for(const status of ['paused','complete','budgetLimited','usageLimited'])test(`does not resume goal changed to ${status}`,async()=>{
- const goal={objective:'x',createdAt:1,status:'active'};const f=await fixture({goal});try{await f.c.send({text:'x'});f.setGoal({...goal,status});f.finish();await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.busy,false);}finally{await f.c.close();}
+test('native capacity metadata and partial tool results survive; only explicit goal resume changes status',async()=>{
+ const goal={objective:'fake goal',status:'active',createdAt:1,tokenBudget:999,tokensUsed:17,timeUsedSeconds:30};const f=await fixture({goal});
+ try{await f.c.send({text:'remaining work'});f.emit('item/completed',{turnId:'turn-1',item:{id:'partial-tool',type:'commandExecution',command:'fake action',status:'completed',aggregatedOutput:'saved result'}});const error={...overload,additionalDetails:'opaque details',requestId:'fake-request-id'};f.emit('error',{turnId:'turn-1',willRetry:false,error});f.setGoal({...goal,status:'blocked'});f.finish(error);await settle(f.c);assert.deepEqual(f.c.state.turnError,{threadId:'parent',turnId:'turn-1',status:'failed',error});assert.deepEqual(f.c.state.notices.at(-1).error,error);assert(f.c.state.tools.some(t=>t.id==='partial-tool'&&t.output==='saved result'));assert(!f.calls.some(x=>x.method==='thread/goal/set'));await f.c.goal({status:'active',resumeOnly:true});assert.deepEqual(f.calls.find(x=>x.method==='thread/goal/set').p,{threadId:'parent',status:'active'});assert.equal(f.c.state.goal.tokensUsed,17);assert.equal(f.c.state.goal.tokenBudget,999);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);}finally{await f.c.close();}
 });
-test('missing official Sol medium never escalates; transient retry error alone never triggers fallback',async()=>{
- const f=await fixture({models:[catalog[0]]});try{await f.c.send({text:'x'});f.emit('error',{turnId:'turn-1',willRetry:true,error:overload});assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);f.finish();await settle(f.c);assert.match(f.c.state.error,/未提供/);assert.equal(f.c.state.model,LUNA);assert.equal(f.c.state.busy,false);}finally{await f.c.close();}
+for(const status of ['paused','complete','budgetLimited','usageLimited'])test('capacity leaves native goal '+status+' untouched',async()=>{
+ const f=await fixture({goal:{objective:'x',createdAt:1,status}});try{await f.c.send({text:'x'});f.finish();await settle(f.c);assert.equal(f.c.state.goal.status,status);assert(!f.calls.some(x=>x.method==='thread/goal/set'));assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);}finally{await f.c.close();}
 });
-test('unknown Sol delivery does not retry or claim a switch',async()=>{
- const f=await fixture({failStart:true});try{await f.c.send({text:'x'});f.finish();await settle(f.c);assert.equal(f.c.state.status,'uncertain');assert.equal(f.c.state.model,LUNA);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);}finally{await f.c.close();}
+test('native terminal failure before start acknowledgement never starts another turn',async()=>{
+ const f=await fixture({immediateFailure:true});try{await f.c.send({text:'x'});await settle(f.c);assert.equal(f.c.state.status,'failed');assert.equal(f.c.state.busy,false);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.model,LUNA);}finally{await f.c.close();}
 });
-test('stop during fallback preparation cancels handoff',async()=>{
- const f=await fixture();try{await f.c.send({text:'x'});let release;f.gate(new Promise(r=>release=r));f.finish();await new Promise(r=>setTimeout(r,15));const stopped=f.c.stop();release();await stopped;await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.status,'interrupted');}finally{await f.c.close();}
+test('stop before send acknowledgement does not interrupt the already failed turn or revive it',async()=>{
+ let release;const f=await fixture({immediateFailure:true,startAck:new Promise(r=>release=r)});try{const sending=f.c.send({text:'x'});await new Promise(r=>setTimeout(r,20));const stopping=f.c.stop();release();await sending;await stopping;await settle(f.c);assert.equal(f.c.state.status,'interrupted');assert.equal(f.c.state.turnError,null);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.calls.filter(x=>x.method==='turn/interrupt').length,0);}finally{await f.c.close();}
 });
-test('terminal failure before original send ack still switches exactly once',async()=>{
- const f=await fixture({immediateFailure:true});try{await f.c.send({text:'x'});await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);assert.equal(f.c.state.model,SOL);assert.equal(f.c.state.effort,'medium');assert.equal(f.c.state.status,'completed');}finally{await f.c.close();}
+test('manual continuation after reopen adds exactly one user turn, with no automatic historical failure alert',async()=>{
+ const f=await fixture();try{await f.c.send({text:'x'});f.finish();await settle(f.c);await f.c.close();const reopened=f.make();try{await reopened.open({threadId:'parent',model:LUNA});assert.equal(reopened.state.status,'ready');assert.equal(reopened.state.turnError,null);assert.equal(reopened.state.error,null);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);await reopened.send({text:'inspect existing results and continue'});assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);f.finish(null);await settle(reopened);}finally{await reopened.close();}}finally{await f.c.close();}
 });
-test('other primary model and child failures never start fallback',async()=>{
- const f=await fixture({model:SOL});try{await f.c.send({text:'x'});f.emit('turn/completed',{threadId:'child',turn:{id:'child-turn',status:'failed',error:overload}});f.finish();await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);}finally{await f.c.close();}
-});
-
-test('Sol native failure is not cleared by its start acknowledgement and never climbs further',async()=>{
- const f=await fixture({solError:overload});try{await f.c.send({text:'x'});f.finish();await settle(f.c);assert.equal(f.c.state.model,SOL);assert.equal(f.c.state.status,'failed');assert.equal(f.c.state.error,overload.message);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);}finally{await f.c.close();}
-});
-test('native start proof persists Sol even if RPC reply is lost; never resends',async()=>{
- const f=await fixture({replyLost:true});try{await f.c.send({text:'x'});f.finish();await settle(f.c);assert.equal(f.c.state.model,SOL);const saved=(await listMainSessions(f.root)).sessions[0];assert.equal(saved.model,SOL);assert.equal(saved.effort,'medium');assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);}finally{await f.c.close();}
-});
-test('stop before original send ack cannot resurrect or interrupt an already completed capacity turn',async()=>{
- let release;const startAck=new Promise(r=>release=r);const f=await fixture({immediateFailure:true,startAck});try{
-  const send=f.c.send({text:'x'});while(!f.turns.length)await new Promise(r=>setImmediate(r));
-  const stopped=f.c.stop();release();await Promise.all([send,stopped]);await settle(f.c);
-  assert.equal(f.c.state.status,'interrupted');assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.calls.filter(x=>x.method==='turn/interrupt').length,0);
- }finally{await f.c.close();}
-});
-test('overload event arriving after acknowledged stop never restarts the main agent',async()=>{
- const f=await fixture();try{await f.c.send({text:'x'});await f.c.stop();f.finish();await settle(f.c);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.c.state.model,LUNA);}finally{await f.c.close();}
-});
-
-test('capacity failure during Flash completion delivery continues once without replaying worker or its result',async()=>{
- const f=await fixture({flash:true});try{
-  await f.c.send({text:'fake original task'});
-  await f.bridge.start({requestId:'fake-flash',model:'gemini-3.8-flash',effort:'low',task:'fake worker'});
-  f.finishFlash();f.finish(null);await settle(f.c);
-  const starts=f.calls.filter(x=>x.method==='turn/start');assert.equal(starts.length,3);
-  assert.equal(starts.filter(x=>x.p.toolOutput).length,1);assert.equal(starts[2].p.model,SOL);assert.equal(starts[2].p.effort,'medium');
-  assert.equal(starts[2].p.toolOutput,undefined);assert(!JSON.stringify(starts[2].p.input).includes('fake worker result'));
-  assert.equal(f.c.state.status,'completed');assert.equal(f.c.state.model,SOL);
-  // UI completion can precede the queued atomic session write under a loaded full suite.
-  let saved;const deadline=Date.now()+3000;
-  do{saved=(await listMainSessions(f.root)).sessions[0];if(saved.model===SOL&&saved.workerNotifications?.['fake-flash']==='delivery-attempted')break;await new Promise(r=>setTimeout(r,20));}while(Date.now()<deadline);
-  assert.equal(saved.model,SOL);assert.equal(saved.workerNotifications['fake-flash'],'delivery-attempted');
- }finally{await f.c.close();}
+test('failed delivery of a worker completion is not replayed or escalated',async()=>{
+ const f=await fixture({flash:true});try{await f.c.send({text:'original'});await f.bridge.start({requestId:'fake-flash',model:'gemini-3.8-flash',effort:'low',task:'fake worker'});f.finishFlash();f.finish(null);await settle(f.c);const starts=f.calls.filter(x=>x.method==='turn/start');assert.equal(starts.length,2);assert.equal(starts.filter(x=>x.p.toolOutput).length,1);assert.equal(f.c.state.status,'failed');assert.equal(f.c.state.model,LUNA);assert.equal(f.c.state.modelChanges.length,0);}finally{await f.c.close();}
 });

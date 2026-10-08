@@ -10,7 +10,7 @@ export function geminiQuotaWindows(text=''){
  return text.split(/\r?\n/u).flatMap(line=>{
   const [group,label,remaining,reset]=line.split('\t'),period=periods[label];
   const percent=typeof remaining==='string'&&/^\d+(?:\.\d+)?%$/u.test(remaining)?Number(remaining.slice(0,-1)):NaN,resetsAt=Date.parse(reset)/1000;
-  return group==='Gemini Models'&&period&&Number.isFinite(percent)&&percent>=0&&percent<=100&&Number.isFinite(resetsAt)?[{...period,remainingPercent:percent,resetsAt}]:[];
+  return group==='Gemini Models'&&period&&Number.isFinite(percent)&&percent>=0&&percent<=100?[{...period,remainingPercent:percent,resetsAt:Number.isFinite(resetsAt)?resetsAt:null}]:[];
  });
 }
 // Authentication belongs to agy and Windows. A model catalog is not proof of login.

@@ -12,3 +12,9 @@ export function quotaReset(window,now=Date.now()){
  const at=window.resetsAt*1000;
  return `${new Date(at).toLocaleString('zh-TW')}${at<=now?'（已過）':''}`;
 }
+
+// Dated presentation only; never computes effective availability or changes quota.
+export function weeklyQuotaNote(quota,online=true,now=Date.now()){
+ if(quotaIsHistorical(quota,online,now)||!Number.isFinite(Date.parse(quota?.checkedAt??'')))return null;
+ return quota.windows?.some(w=>w.key==='seven_day'&&w.remainingPercent===0)?'上次實查：每週額度已用完':null;
+}

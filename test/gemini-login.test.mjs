@@ -51,7 +51,7 @@ test('refresh and opening Gemini preserve the user native onboarding and privacy
 
 test('Gemini quota preserves official remaining percentages and reset times without mixing other providers',()=>{
  const windows=geminiQuotaWindows('Gemini Models\tWeekly Limit Remaining\t97%\t2026-10-09T14:10:46Z\nGemini Models\tFive Hour Limit Remaining\t0%\t2026-10-03T08:01:09Z\nClaude and GPT models\tWeekly Limit Remaining\t100%\t2026-10-10T05:23:48Z\nGemini Models\tWeekly Limit Remaining\t101%\t2026-10-09T14:10:46Z\nGemini Models\tFive Hour Limit Remaining\t97%\tunknown');
- assert.deepEqual(windows.map(w=>[w.key,w.remainingPercent,w.minutes]),[['seven_day',97,10080],['five_hour',0,300]]);assert.equal(windows[0].resetsAt,Date.parse('2026-10-09T14:10:46Z')/1000);
+ assert.deepEqual(windows.map(w=>[w.key,w.remainingPercent,w.minutes]),[['seven_day',97,10080],['five_hour',0,300],['five_hour',97,300]]);assert.equal(windows[0].resetsAt,Date.parse('2026-10-09T14:10:46Z')/1000);
 });
 
 test('Gemini login remains behind the same human session and origin checks as existing cores',async()=>{
@@ -75,4 +75,9 @@ test('temporary usage failure is not a signed-out result, but an explicit login 
  report={code:1,stdout:'',stderr:'authentication required'};assert.equal((await login.status()).auth.status,'signed-out');
  report={code:1,stdout:'',stderr:'subscription unavailable; authentication required'};const unavailable=await login.status();assert.equal(unavailable.temporaryFailure,false);assert.equal(unavailable.auth.status,'signed-out');
  report={code:null,reason:'timeout',cleanupError:'fixture cleanup unconfirmed',stdout:'',stderr:''};assert.equal((await login.status()).temporaryFailure,false);
+});
+
+test('a valid Gemini percentage survives a missing or malformed reset, without inventing a deadline',()=>{
+ for(const reset of ['', 'unknown','not-a-date']){const windows=geminiQuotaWindows('Gemini Models\tFive Hour Limit Remaining\t100%\t'+reset);assert.equal(windows.length,1);assert.equal(windows[0].remainingPercent,100);assert.equal(windows[0].resetsAt,null);}
+ for(const percent of ['', 'unknown','-1%','101%'])assert.equal(geminiQuotaWindows('Gemini Models\tFive Hour Limit Remaining\t'+percent+'\t').length,0);
 });

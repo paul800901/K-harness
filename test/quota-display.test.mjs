@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {quotaIsHistorical,quotaPercent,quotaReset} from '../frontend/quota-display.mjs';
+import {quotaIsHistorical,quotaPercent,quotaReset,weeklyQuotaNote} from '../frontend/quota-display.mjs';
 test('quota display separates history and unknown from a current zero balance',()=>{
  assert.equal(quotaIsHistorical({status:'ready'}),false);
  assert.equal(quotaIsHistorical({status:'available'}),false);
@@ -27,4 +27,9 @@ test('display follows the official reset, not a 60-second or five-minute expiry'
  assert.equal(quotaIsHistorical(quota,true,reset),true);
  assert.equal(quotaIsHistorical({...quota,checkedAt:new Date(reset+1).toISOString()},true,reset+1),false);
  assert.equal(quota.windows[0].remainingPercent,0,'never infer replenishment');
+});
+
+test('weekly exhaustion is dated evidence and never rewrites the independent five-hour balance',()=>{
+ const now=Date.parse('2026-10-09T05:30:00+08:00'),quota={status:'ready',checkedAt:'2026-10-09T04:56:00+08:00',windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000+3600},{key:'five_hour',remainingPercent:100,resetsAt:null}]};const original=structuredClone(quota);assert.equal(weeklyQuotaNote(quota,true,now),'上次實查：每週額度已用完');assert.equal(quotaPercent(quota.windows[1]),'100%');assert.equal(quotaReset(quota.windows[1]),'官方未提供');assert.deepEqual(quota,original);
+ for(const status of ['stale','unavailable'])assert.equal(weeklyQuotaNote({...quota,status},true,now),null);assert.equal(weeklyQuotaNote(quota,false,now),null);assert.equal(weeklyQuotaNote({...quota,checkedAt:null},true,now),null);assert.equal(weeklyQuotaNote({...quota,windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000-1}]},true,now),null);assert.equal(weeklyQuotaNote({...quota,windows:[{key:'seven_day',remainingPercent:50}]},true,now),null);
 });
