@@ -462,6 +462,30 @@ test('failed settings restart close remains uncertain and retains the existing h
 });
 
 const tick=()=>new Promise(resolve=>setTimeout(resolve,40));
+test('mid-work steering preserves both completed replies in storage and after reopen',async()=>{
+ const f=await fixture();let reopened;
+ try{
+  const {threadId}=await f.controller.open({});await f.controller.send({text:'fake original work'});
+  const emit=f.hostOptions.onMessage;
+  emit({type:'assistant',uuid:'process',message:{content:[{type:'text',text:'fake tool work in progress'}]}});
+  await f.controller.steer({text:'fake first interruption'});
+  await f.controller.steer({text:'fake second interruption'});
+  for(const user of f.controller.state.messages.filter(m=>m.source==='steer'))emit({type:'user',uuid:user.id,isReplay:true,message:{content:[{type:'text',text:user.text}]}});
+  emit({type:'assistant',uuid:'first-final',message:{content:[{type:'text',text:'FIRST_COMPLETED_REPLY'}]}});
+  emit({type:'result',is_error:false});await tick();
+  emit({type:'assistant',uuid:'second-final',message:{content:[{type:'text',text:'SECOND_COMPLETED_REPLY'}]}});
+  emit({type:'result',is_error:false});await tick();
+  const expected=structuredClone(f.controller.state.messages);
+  assert.equal(new Set(expected.map(m=>m.groupId)).size,1);
+  for(const id of ['first-final','second-final']){const m=expected.find(m=>m.id===id);assert.ok(m.completedAt);assert.ok(!m.partial&&!m.streaming);}
+  assert.equal(expected.find(m=>m.id==='process').partial,true);
+  await f.controller.close();
+  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${threadId}.json`),'utf8'));
+  assert.deepEqual(saved.messages,expected);
+  reopened=f.createController();await reopened.open({threadId});assert.deepEqual(reopened.state.messages,expected);
+ }finally{await reopened?.close();await f.controller.close();}
+});
+
 async function waitFor(predicate){
  const deadline=Date.now()+5000;
  while(!predicate()){
