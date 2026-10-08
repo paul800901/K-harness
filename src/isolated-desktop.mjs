@@ -19,6 +19,7 @@ import {createGeminiCredentialVault} from './gemini-credential-vault.mjs';
 import {addProject,listProjects,updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
+import {openDiscussionSession} from './discussion-native.mjs';
 
 /** Native desktop composition. Provider permissions remain provider-owned. */
 export async function startIsolatedDesktop({root,workspace,port,executable,commandSpec,
@@ -57,6 +58,7 @@ export async function startIsolatedDesktop({root,workspace,port,executable,comma
     return controller;
   }
   const controllerFactory=options=>restrictWorkspace(createConversationController({...options,browserRequest:browsers.request,
+    discussionSessionFactory:opts=>openDiscussionSession({...opts,executable,commandSpec,env,accounts:geminiAccounts}),
     sessionFactory:settings=>restrictWorkspace(createUnifiedController({...settings,inspect,
       geminiFactory:opts=>{const browser=browsers.session();return createGeminiController({...opts,env,accounts:geminiAccounts,browserConfig:browser.config,closeBrowser:browser.close});},
       codexFactory:opts=>{const browser=browsers.session();let current;const hostFactory=hostOptions=>{const candidate=current?.state.workspace??selected;return codexHost(hostOptions,candidate.toLowerCase()===stateRoot.toLowerCase()?selected:candidate);};current=createDesktopController({...opts,hostFactory,bridgeFactory:params=>createLunaBridge({...params,claudeOptions:{env,commandSpec},geminiOptions:{env,accounts:geminiAccounts,browserSession:browsers.session}}),browserConfig:browser.config,closeBrowser:browser.close,browserRequest:browsers.request});return current;},

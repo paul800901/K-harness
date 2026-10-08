@@ -138,10 +138,10 @@ export async function killGeminiTree(pid,{execImpl=exec,platform=process.platfor
 }
 
 /** Queries may have a deadline; model turns pass 0. Cancellation waits for tree kill and pipe closure. */
-export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,maxStdout=8*1024*1024,maxStderr=128*1024,captureOutput=true,spawnImpl=spawn,killTree=killGeminiTree,onStart=()=>{},onChunk=()=>{}}) {
+export function geminiProcess(executable,args,{cwd,env,signal,input,timeoutMs=120000,maxStdout=8*1024*1024,maxStderr=128*1024,captureOutput=true,spawnImpl=spawn,killTree=killGeminiTree,onStart=()=>{},onChunk=()=>{}}) {
   if(signal?.aborted)return Promise.resolve({code:null,stdout:'',stderr:'',reason:'cancelled'});
   return new Promise((resolve,reject)=>{
-    let child;try{child=spawnImpl(executable,args,{cwd,env,shell:false,windowsHide:true,stdio:['ignore','pipe','pipe'],...(process.platform==='win32'?{}:{detached:true})});}catch(error){reject(error);return;}
+    let child;try{child=spawnImpl(executable,args,{cwd,env,shell:false,windowsHide:true,stdio:[input===undefined?'ignore':'pipe','pipe','pipe'],...(process.platform==='win32'?{}:{detached:true})});}catch(error){reject(error);return;}
     let stdout='',stderr='',outBytes=0,errBytes=0,reason,killPromise,cleanupError,ended=false,cleanupTimer;
     const finish=async code=>{
       if(ended)return;ended=true;clearTimeout(timer);clearTimeout(cleanupTimer);
@@ -164,6 +164,7 @@ export function geminiProcess(executable,args,{cwd,env,signal,timeoutMs=120000,m
     child.stderr.on('data',b=>{errBytes+=b.length;if(errBytes>maxStderr){stop('stderr limit exceeded');return;}stderr+=b.toString();});
     child.once('error',error=>{ended=true;clearTimeout(timer);clearTimeout(cleanupTimer);signal?.removeEventListener('abort',abort);reject(error.code==='ENOENT'?Error('找不到 agy，請安裝 Antigravity CLI 並登入。',{cause:error}):error);});
     child.once('close',code=>{void finish(code);});
+    if(input!==undefined){child.stdin.on('error',()=>stop('stdin delivery unconfirmed'));child.stdin.end(input);}
     try{onStart(child.pid);}catch{stop('start callback failed');}
     if(signal?.aborted)abort();
   });

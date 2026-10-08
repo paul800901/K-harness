@@ -2,22 +2,36 @@ import {createUnifiedController} from './unified-controller.mjs';
 import {listMainSessions} from './main-sessions.mjs';
 import {deleteArchived} from './archive-delete.mjs';
 import {createCompletionAttention} from './completion-attention.mjs';
+import {createDiscussionController} from './discussion-controller.mjs';
+import {sessionAttachment} from './session-workspace.mjs';
+import {readPresentedFile} from './desktop-files.mjs';
+import {discussionTranscript} from '../shared/discussion.mjs';
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
-export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,browserRequest,...options}){
+export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,discussionFactory=createDiscussionController,discussionSessionFactory,discussionOptions={},browserRequest,...options}){
  const rooms=new Map(),controllers=new Set(),locked=new Set();
  const attention=createCompletionAttention();
+ const discussions=new Map();
+ const discussion=controller=>discussions.get(controller.state.threadId);
+ const projected=controller=>{const s=controller.state,d=discussion(controller),ds=d?.state;return {...s,messages:d?d.project(s.messages??[]):s.messages,discussion:ds,
+  ...(d?.busy?{busy:true,status:ds.status==='stopping'?'stopping':'working'}:{}),...(ds?.error?{discussionError:ds.error}:{})};};
+ const loadDiscussion=async controller=>{
+  const id=controller.state.threadId;if(!id||discussions.has(id))return;
+  const d=discussionFactory({root,threadId:id,executable:options.executable,...discussionOptions,...(discussionSessionFactory?{sessionFactory:discussionSessionFactory}:{}),onChange(){attention.observe(projected(rooms.get(id)??controller));onChange();}});
+  await d.load();discussions.set(id,d);
+ };
+ const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.state?.status==='uncertain')throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
  const openedOrder=new Map();let openSequence=0;
  let pendingOpen;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
  const create=()=>{
   let controller;
-  controller=sessionFactory({...options,root,onChange:()=>{if(!closing){if(controller)attention.observe(controller.state);onChange();}}});
+  controller=sessionFactory({...options,root,onChange:()=>{if(!closing){if(controller)attention.observe(projected(controller));onChange();}}});
   controllers.add(controller);return controller;
  };
  const catalog=create();active=catalog;
- const activity=controller=>{const s=controller.state;return {threadId:s.threadId,workspace:s.workspace,busy:!!s.busy,status:s.status,pendingQuestions:s.questions?.length??0};};
+ const activity=controller=>{const s=projected(controller);return {threadId:s.threadId,workspace:s.workspace,busy:!!s.busy,status:s.status,pendingQuestions:s.questions?.length??0};};
  // Project the existing live owners, never saved history or only the selected room.
  const workerActivity=()=>{
   let running=0,uncertain=false,unconfirmed=0,historicalUnconfirmed=0;
@@ -82,6 +96,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
  const safelyIdle=async (controller,allowFailed=false)=>{
+  if(discussion(controller)?.busy||discussion(controller)?.state?.status==='uncertain')return false;
   const idleStatuses=allowFailed?['ready','completed','interrupted','failed']:['ready','completed','interrupted'];
   const s=controller.state;
   if(!s.threadId||s.busy||s.goalPending||(s.capabilities?.goalContinuesWhileIdle&&(s.goalError||['active','unknown'].includes(s.goal?.status)))||s.questions?.length||s.queuedMessages?.length||
@@ -126,7 +141,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=active.state;return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
+  get state(){const s=projected(active);return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
   markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),
@@ -146,6 +161,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
       try{recover||=(await browserRequest(root,s,s.threadId,'/state')).recoveryRequired===true;}catch{/* Missing browser endpoint alone is not proof of a failed native host. */}
      }
      const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
+     if(configure||recover)noDiscussion(existing);
      if((recover||configure)&&!s.busy&&!s.questions?.length){
       locked.add(existing);try{await existing.open(data,{signal:abort.signal});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
      }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
@@ -155,7 +171,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
     abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal});abort.signal.throwIfAborted();
     if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
-    reindex(candidate);active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
+    reindex(candidate);await loadDiscussion(candidate);active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
    }catch(error){
     if(candidate){try{await candidate.close();controllers.delete(candidate);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
     throw error;
@@ -173,6 +189,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    focusLock();let controller,previousId;
    try{
     controller=target(data);previousId=controller.state.threadId;
+    noDiscussion(controller);
+    if(discussion(controller)?.messages.some(m=>m.id===data.messageId))throw Error('這則是共用討論紀錄，不是單一原生分支點；請明確交接到新對話。');
     if(controller!==active)throw Error('請先切回要分支的聊天室。');
     locked.add(controller);
     // Native fork requires a settled source. The existing adapter enforces that
@@ -184,7 +202,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    }
   },
   async metadata(data){
-   focusLock();try{const result=await (rooms.get(data.threadId)??active).metadata(data);if(data.archived)attention.forget(data.threadId);return result;}finally{focusDone();}
+   focusLock();try{const controller=rooms.get(data.threadId)??active;if(data.archived)noDiscussion(controller);const result=await controller.metadata(data);if(data.archived)attention.forget(data.threadId);return result;}finally{focusDone();}
   },
   async moveWorkspace(data){
    focusLock();let controller;
@@ -195,6 +213,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     if(controller&&locked.has(controller))throw Error('此聊天室正在更新，請稍候。');
     if(!controller){controller=create();try{await controller.selectWorkspace({path:saved.workspace});await controller.open({threadId:saved.threadId,model:saved.model});reindex(controller);}catch(error){try{await controller.close();controllers.delete(controller);}catch{/* Keep failed teardown registered for explicit shutdown. */}throw error;}}
     locked.add(controller);
+    noDiscussion(controller);
     if(!await safelyIdle(controller,true))throw Error('聊天室仍有工作、待送訊息或瀏覽器接手，請先結束再移動。');
     const result=await controller.moveWorkspace(data);active=controller;openedOrder.set(controller,++openSequence);return result;
    }finally{if(controller)locked.delete(controller);focusDone();}
@@ -209,6 +228,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      const controller=rooms.get(id);
      if(!controller||controller===active||!saved.find(row=>row.threadId===id)?.archived)continue;
      const s=controller.state;
+     noDiscussion(controller);
      if(s.busy||s.questions?.length||s.queuedMessages?.length||locked.has(controller))throw Error('背景聊天室仍有工作、待確認或待送訊息，不能刪除。');
      locked.add(controller);held.push(controller);
      const workers=await controller.workers();
@@ -230,15 +250,50 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    pendingOpen?.abort(new DOMException('已取消連線。','AbortError'));
    await navigationSettled;
    await releasing;
+   const stopped=await Promise.allSettled([...discussions.values()].map(d=>d.close()));
+   if(stopped.some(result=>result.status==='rejected')){closing=false;throw Error('部分討論未確認關閉，原生聊天室尚未關閉。');}
    const results=await Promise.allSettled([...controllers].map(controller=>controller.close()));
    const failed=results.filter(result=>result.status==='rejected');
    if(failed.length){closing=false;throw new AggregateError(failed.map(result=>result.reason),'部分聊天室尚未確認關閉，請查明後再試。');}
    rooms.clear();controllers.clear();
   },
  };
+ api.discussionStart=async data=>{
+  const controller=target(data),s=controller.state;
+  noDiscussion(controller);
+  locked.add(controller);
+  try{
+  if(!await safelyIdle(controller,true))throw Error('請先結束或查明這個聊天室的原工作、核准與待送訊息，再開始討論。');
+  await loadDiscussion(controller);
+  const catalog=(await api.models()).models;
+  const choose=choice=>{const model=catalog.find(m=>m.model===choice.model&&m.available!==false);if(!model)throw Error('參與模型目前不在可用原生清單，未換模。');
+   const effort=choice.effort||model.defaultReasoningEffort||null,efforts=(model.supportedReasoningEfforts??[]).map(x=>typeof x==='string'?x:x.reasoningEffort);
+   if(effort&&!efforts.includes(effort))throw Error('參與模型不支援所選推理程度。');return {...model,effort};};
+  if(!Array.isArray(data.participants)||data.participants.length<2)throw Error('請選擇至少兩個參與者。');
+  const participants=data.participants.map((p,i)=>({...choose(p),id:`p${i+1}`}));
+  const facilitator={...choose({model:s.model,effort:s.effort}),id:'host'};
+  const source=discussion(controller).project(s.messages??[]);
+  const attachments=[],explicit=new Set(data.attachmentIds??[]),ids=new Set([...explicit,...(data.includeContext!==false?source.flatMap(m=>(m.attachments??[]).map(a=>a.id)):[])]);
+  for(const id of ids){const a=await sessionAttachment(s.workspace,s.previousWorkspaces,s.threadId,id);if(!a.textPath){if(explicit.has(id))throw Error('討論目前只帶入文字與已擷取文字的文件；圖片／影音請在一般原生對話處理，未假裝已閱讀。');attachments.push({...a,text:null,warning:'本次未帶入原始圖片／影音內容，不能宣稱看過。'});continue;}const content=await readPresentedFile(a.workspace,a.textPath);attachments.push({...a,text:content.bytes.toString('utf8')});}
+  return discussion(controller).start({mode:data.mode,text:data.text,participants,facilitator,workspace:s.workspace,source:discussionTranscript(source),attachments,
+   reviewTarget:data.reviewTarget??[...source].reverse().find(m=>m.role==='assistant'&&!m.partial&&!m.streaming)?.text,includeContext:data.includeContext!==false,afterMessageId:s.messages?.at(-1)?.id??null});
+  }finally{locked.delete(controller);}
+ };
+ api.discussionMessage=data=>{const c=target(data);if(!discussion(c))throw Error('這個聊天室沒有進行中的討論。');return discussion(c).interject(data);};
+ api.discussionStop=data=>{const c=target(data);return discussion(c)?.stop()??Promise.resolve({stopped:true});};
  for(const method of ['send','steer','queue','goal','answer','upload','selectModel','review','fuzzyFileSearch'])api[method]=data=>target(data)[method](data);
+ for(const method of ['send','steer','queue','goal','selectModel','review']){const original=api[method];api[method]=data=>{noDiscussion(target(data));return original(data);};}
+ api.send=async data=>{
+  const c=target(data);noDiscussion(c);const d=discussion(c);
+  if(!d)return c.send(data);
+  locked.add(c);let handoff;
+  try{handoff=await d.handoff(data.text);return await c.send({...data,text:handoff.text});}
+  catch(error){if(error.notSent===true)await handoff?.rejected?.();throw error;}
+  finally{locked.delete(c);}
+ };
  api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
- api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}return target(data).stop();};
+ const compact=api.compact;api.compact=data=>{noDiscussion(target(data));return compact(data);};
+ api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}const c=target(data);if(discussion(c)?.busy)return discussion(c).stop();return c.stop();};
  return api;
 }
