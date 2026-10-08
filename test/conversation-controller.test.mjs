@@ -232,7 +232,7 @@ test('shutdown cancels an opening room and closes a late-created runtime',async(
  const opening=c.open({model:codexModel});await entered;
  const shutdown=c.close();
  try{
-  await assert.rejects(c.open({model:claudeModel}),/切換聊天室/);
+  await assert.rejects(c.open({model:claudeModel}),/正在關閉/);
   assert.equal(f.native.some(controller=>controller.closed>0),false,'do not close a host before accepted open finishes');
  }finally{const cancelled=assert.rejects(opening,/取消/);releaseOpen();await cancelled;await shutdown;}
  assert.ok(f.native.every(controller=>controller.closed>0));

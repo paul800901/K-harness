@@ -16,13 +16,20 @@ const normalizeServiceTier=value=>typeof value==='string'&&value.length>0&&value
 const normalizeModelChanges=changes=>Array.isArray(changes)?changes.filter(change=>change&&typeof change.turnId==='string'&&change.turnId.length>0&&validMainModel(change.fromModel)&&validMainModel(change.toModel)&&typeof change.at==='string').map(({turnId,fromModel,toModel,at,reason,fromEffort,toEffort,sourceTurnId})=>({turnId,fromModel,toModel,at,...(reason==='capacity'?{reason,fromEffort:typeof fromEffort==='string'?fromEffort:null,toEffort:'medium',sourceTurnId:typeof sourceTurnId==='string'?sourceTurnId:null}:{})})):[];
 const validWorkerRequestId=id=>typeof id==='string'&&/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(id)&&id!=='.'&&id!=='..';
 const normalizeWorkerNotifications=value=>value&&typeof value==='object'&&!Array.isArray(value)?Object.fromEntries(Object.entries(value).filter(([id,status])=>validWorkerRequestId(id)&&status==='delivery-attempted')):{};
-export function saveMainSession(root,record,{rejectedCodexSubmission=false}={}){
-  const key=path.join(path.resolve(root),String(record.threadId));
-  const next=(saves.get(key)??Promise.resolve()).catch(()=>{}).then(()=>writeMainSession(root,record,rejectedCodexSubmission));
+function enqueueSave(root,threadId,operation){
+  const key=path.join(path.resolve(root),String(threadId));
+  const next=(saves.get(key)??Promise.resolve()).catch(()=>{}).then(operation);
   saves.set(key,next);
   return next.finally(()=>{if(saves.get(key)===next)saves.delete(key);});
 }
-async function writeMainSession(root,{threadId,model,title='',archived=false,pinned=false,workspace=root,workerPolicy,effort=null,serviceTier,accessMode='read-only',lastUsedModel=null,modelChanges=[],parentThreadId,parentTitle,branchType,browserSessionKey,workerNotifications,previousWorkspaces,previousArtifacts,codexSession},rejectedCodexSubmission) {
+export function saveMainSession(root,record,{rejectedCodexSubmission=false,activityAt}={}){
+  return enqueueSave(root,record.threadId,()=>writeMainSession(root,record,rejectedCodexSubmission,activityAt));
+}
+// Read inside the existing per-room save queue: a completion cannot overwrite a newer rename/settings save.
+export function saveMainSessionActivity(root,threadId,activityAt){
+  return enqueueSave(root,threadId,async()=>{const record=(await listMainSessions(root,{threadId})).sessions[0];if(record)await writeMainSession(root,record,false,activityAt);});
+}
+async function writeMainSession(root,{threadId,model,title='',archived=false,pinned=false,workspace=root,workerPolicy,effort=null,serviceTier,accessMode='read-only',lastUsedModel=null,modelChanges=[],parentThreadId,parentTitle,branchType,browserSessionKey,workerNotifications,previousWorkspaces,previousArtifacts,codexSession},rejectedCodexSubmission,activityAt) {
   if(!validId(threadId)||!validMainModel(model))throw new Error('Invalid K session.');
   const prior=(await listMainSessions(root,{threadId})).sessions[0];
   if(parentThreadId===undefined){parentThreadId=prior?.parentThreadId??null;parentTitle=prior?.parentTitle??null;branchType??=prior?.branchType??null;}
@@ -32,12 +39,16 @@ async function writeMainSession(root,{threadId,model,title='',archived=false,pin
   // ordinary metadata writes (including stale renames) remain monotonic.
   const rejected=rejectedCodexSubmission&&codexSession?.hasSubmitted===false&&codexSession.nativeThreadId===prior?.codexSession?.nativeThreadId;
   codexSession=prior?.codexSession?.hasSubmitted&&!rejected?prior.codexSession:codexSession??prior?.codexSession??null;
+  // Freeze legacy ordering before metadata/open writes; it is not a claimed activity timestamp.
+  const previousSortAt=prior?.sortAt??prior?.lastOpenedAt;
+  const activityTime=Date.parse(activityAt??'');
+  const sortAt=new Date(Math.max(Number.isFinite(activityTime)?activityTime:0,Date.parse(previousSortAt??'')||(!prior?Date.now():0))).toISOString();
   const selectedWorkspace=normalizeWorkspacePath(workspace);
   const moved={previousWorkspaces:previousWorkspaces.map(normalizeWorkspacePath),previousArtifacts};
   const directory=path.join(root,'.runtime/main-sessions');
   const saveOrder=Math.max(Date.now()*1000,lastSaveOrder+1);lastSaveOrder=saveOrder;
   const target=path.join(directory,`${threadId}-current.json`);
-  await atomicWrite(target,JSON.stringify({threadId,model,codexSession:normalizeCodexSession(codexSession),title,archived,pinned,saveOrder,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:modelProvider(model),accountType:model.startsWith('claude-')?'claude.ai':model.startsWith('gemini-')?'antigravity':'chatgpt',workspace:selectedWorkspace,...moved,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,serviceTier,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),workerNotifications:normalizeWorkerNotifications(workerNotifications),savedAt:new Date().toISOString()},null,2));
+  await atomicWrite(target,JSON.stringify({threadId,model,codexSession:normalizeCodexSession(codexSession),title,archived,pinned,saveOrder,sortAt,browserSessionKey:typeof browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(browserSessionKey)?browserSessionKey:null,branchType:branchType==='user'?'user':null,parentThreadId:validId(parentThreadId)?parentThreadId:null,parentTitle:typeof parentTitle==='string'?parentTitle:null,provider:modelProvider(model),accountType:model.startsWith('claude-')?'claude.ai':model.startsWith('gemini-')?'antigravity':'chatgpt',workspace:selectedWorkspace,...moved,workerPolicy:normalizeWorkerPolicy(workerPolicy),effort:typeof effort==='string'?effort:null,serviceTier,accessMode:sessionAccessMode(model,accessMode),lastUsedModel:validMainModel(lastUsedModel)?lastUsedModel:null,modelChanges:normalizeModelChanges(modelChanges),workerNotifications:normalizeWorkerNotifications(workerNotifications),savedAt:new Date().toISOString()},null,2));
   return target;
 }
 export async function listMainSessions(root,{threadId}={}) {
@@ -56,7 +67,7 @@ export async function listMainSessions(root,{threadId}={}) {
       // allowed, but still must be absolute and not a drive root/HOME.
       const workspace=normalizeWorkspacePath(record.workspace===undefined?root:record.workspace);
       const moved={previousWorkspaces:(record.previousWorkspaces??[]).map(normalizeWorkspacePath),previousArtifacts:(record.previousArtifacts??[]).filter(name=>typeof name==='string'&&path.isAbsolute(name))};
-      const item={codexSession:normalizeCodexSession(record.codexSession),browserSessionKey:typeof record.browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(record.browserSessionKey)?record.browserSessionKey:null,branchType:record.branchType==='user'?'user':null,parentThreadId:validId(record.parentThreadId)?record.parentThreadId:null,parentTitle:typeof record.parentTitle==='string'?record.parentTitle:null,provider:modelProvider(record.model),threadId:record.threadId,model:record.model,workerPolicy:normalizeWorkerPolicy(record.workerPolicy),effort:typeof record.effort==='string'?record.effort:null,serviceTier:normalizeServiceTier(record.serviceTier),accessMode:sessionAccessMode(record.model,record.accessMode??'read-only'),lastUsedModel:validMainModel(record.lastUsedModel)?record.lastUsedModel:null,modelChanges:normalizeModelChanges(record.modelChanges),workerNotifications:normalizeWorkerNotifications(record.workerNotifications),title:typeof record.title==='string'?record.title:'',archived:record.archived===true,pinned:record.pinned===true,workspace,lastOpenedAt:info.mtime.toISOString(),mtime:Math.max(info.mtimeMs*1000,record.saveOrder??0)};
+      const item={codexSession:normalizeCodexSession(record.codexSession),browserSessionKey:typeof record.browserSessionKey==='string'&&/^[A-Za-z0-9-]{1,100}$/.test(record.browserSessionKey)?record.browserSessionKey:null,branchType:record.branchType==='user'?'user':null,parentThreadId:validId(record.parentThreadId)?record.parentThreadId:null,parentTitle:typeof record.parentTitle==='string'?record.parentTitle:null,provider:modelProvider(record.model),threadId:record.threadId,model:record.model,workerPolicy:normalizeWorkerPolicy(record.workerPolicy),effort:typeof record.effort==='string'?record.effort:null,serviceTier:normalizeServiceTier(record.serviceTier),accessMode:sessionAccessMode(record.model,record.accessMode??'read-only'),lastUsedModel:validMainModel(record.lastUsedModel)?record.lastUsedModel:null,modelChanges:normalizeModelChanges(record.modelChanges),workerNotifications:normalizeWorkerNotifications(record.workerNotifications),title:typeof record.title==='string'?record.title:'',archived:record.archived===true,pinned:record.pinned===true,workspace,sortAt:Number.isFinite(Date.parse(record.sortAt))?record.sortAt:info.mtime.toISOString(),lastOpenedAt:info.mtime.toISOString(),mtime:Math.max(info.mtimeMs*1000,record.saveOrder??0)};
       Object.assign(item,moved);
       if(!sessions.has(item.threadId)||sessions.get(item.threadId).mtime<item.mtime)sessions.set(item.threadId,item);
     }catch{unreadable++;}

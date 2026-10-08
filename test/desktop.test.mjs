@@ -713,3 +713,17 @@ test('Codex confirms pre-dispatch rejection while attempted delivery stays unkno
   assert.equal(f.c.state.status,'uncertain');
  }finally{await f.c.close();}
 });
+
+
+test('cold Codex history is exposed before native resume and metadata saves preserve sidebar order',async()=>{
+ const f=await fixture();try{
+  await saveMainSession(f.root,{threadId:'test-thread',model:'gpt-6-astra',workspace:f.root,title:'old room'});
+  const before=(await listMainSessions(f.root)).sessions[0].sortAt;let preview;
+  await f.c.open({model:'gpt-6-astra',threadId:'test-thread'},{onHistory:async state=>{
+   preview=structuredClone(state.messages);assert.equal(f.calls.some(x=>x.method==='thread/resume'),false);
+   assert.equal(state.busy,false);
+  }});
+  assert.equal(preview.at(-1).text,'原回答');assert.equal((await listMainSessions(f.root)).sessions[0].sortAt,before);
+  await f.c.send({text:'new activity'});assert.ok((await listMainSessions(f.root)).sessions[0].sortAt>=before);
+ }finally{await f.c.close();}
+});

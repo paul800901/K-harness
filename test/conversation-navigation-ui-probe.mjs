@@ -19,10 +19,10 @@ let active=A;
 let openAState=A;
 let holdASend=false,releaseASend;
 try{
-  process.env.PLAYWRIGHT_BROWSERS_PATH=resolve(root,'.runtime/playwright-browsers');
+  process.env.PLAYWRIGHT_BROWSERS_PATH=process.env.PLAYWRIGHT_BROWSERS_PATH??resolve(root,'.runtime/playwright-browsers');
   const until=Date.now()+15000;
   while(Date.now()<until){try{const response=await fetch(origin);if(response.ok)break;}catch{}await delay(100);}
-  browser=await chromium.launch({headless:true,executablePath:resolve(root,'.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe')});
+  browser=await chromium.launch({headless:true,executablePath:resolve(process.env.PLAYWRIGHT_BROWSERS_PATH,'chromium-1246/chrome-win64/chrome.exe')});
   const page=await browser.newPage();
   const selectRoom=async title=>{
     await page.locator('.session-open').filter({hasText:title}).click();
@@ -30,8 +30,8 @@ try{
   };
   await page.addInitScript(state=>{
     window.__fakeState=state;window.__fakeEs=null;
-    window.__emitState=state=>{window.__fakeState=state;window.__fakeEs?.onmessage?.({data:JSON.stringify(state)});};
-    window.EventSource=class{constructor(){window.__fakeEs=this;setTimeout(()=>{if(window.__fakeState)this.onmessage?.({data:JSON.stringify(window.__fakeState)});},0);}close(){}};
+    window.__emitState=state=>{window.__fakeState=state;window.__fakeEs?.onmessage?.({data:JSON.stringify({type:'snapshot',revision:0,state})});};
+    window.EventSource=class{constructor(){window.__fakeEs=this;setTimeout(()=>{if(window.__fakeState)this.onmessage?.({data:JSON.stringify({type:'snapshot',revision:0,state:window.__fakeState})});},0);}close(){}};
   },A);
   await page.route('**/api/**',async route=>{
     const url=new URL(route.request().url()),path=url.pathname,method=route.request().method();
@@ -39,13 +39,13 @@ try{
     if(path==='/api/sessions'){await route.fulfill({json:{sessions}});return;}
     if(path==='/api/projects'){await route.fulfill({json:{projects:[{path:A.workspace,name:'工作區 A'},{path:B.workspace,name:'工作區 B'}]}});return;}
     if(method==='POST'){
-      const data=route.request().postDataJSON();requests.push({path,data});
+      const data=path.startsWith('/api/upload')?{name:'假附件.txt',threadId:new URL(route.request().url()).searchParams.get('threadId')??route.request().headers()['x-k-thread-id']}:route.request().postDataJSON();requests.push({path,data});
       if(path==='/api/open'){
         active=data.threadId===A.threadId?openAState:B;
         await page.evaluate(state=>window.__emitState(state),active);
         await route.fulfill({json:{opened:true}});return;
       }
-      if(path==='/api/upload'){await route.fulfill({json:{id:'fake-attachment-A',name:data.name,size:3,kind:'text'}});return;}
+      if(path.startsWith('/api/upload')){await route.fulfill({json:{id:'fake-attachment-A',name:data.name,size:3,kind:'text'}});return;}
       if(path==='/api/send'){
         if(data.threadId===A.threadId&&holdASend){await new Promise(resolve=>{releaseASend=(success=true)=>{route.fulfill(success?{json:{sent:true}}:{status:400,json:{error:'隔離測試：未送出'}}).then(resolve);};});return;}
         await route.fulfill({json:{sent:true}});return;
@@ -61,7 +61,7 @@ try{
   });
   await page.goto(origin);
   await page.locator('.session-open').filter({hasText:'對話 A'}).waitFor();
-  if((await page.locator('.session-activity').filter({hasText:'需要確認'}).count())!==1)throw Error('A pending confirmation is not visible in the sidebar');
+  if((await page.locator('.session-activity').filter({hasText:'待確認'}).count())!==1)throw Error('A pending confirmation is not visible in the sidebar');
   const evidenceDir=resolve(root,process.env.K_NAVIGATION_UI_EVIDENCE??'.runtime/conversation-navigation-ui-20260925/evidence');await mkdir(evidenceDir,{recursive:true});
   const composer=page.locator('textarea[aria-label="工作訊息"]');
   await composer.fill('A 草稿保留');
@@ -71,7 +71,7 @@ try{
   await page.locator('textarea[aria-label="工作訊息"]').waitFor();
   await page.screenshot({path:resolve(evidenceDir,'A-pending-while-B-selected.png'),fullPage:true});
   if(await page.locator('[aria-label="需要你的確認"]').count())throw Error('A confirmation leaked into B');
-  if((await page.locator('.session-activity').filter({hasText:'需要確認'}).count())!==1)throw Error('A sidebar confirmation disappeared while B is selected');
+  if((await page.locator('.session-activity').filter({hasText:'待確認'}).count())!==1)throw Error('A sidebar confirmation disappeared while B is selected');
   await page.locator('textarea[aria-label="工作訊息"]').fill('B 訊息');
   await page.getByRole('button',{name:'送出訊息'}).click();
   await page.waitForFunction(()=>true);
@@ -106,7 +106,7 @@ try{
   await selectRoom('對話 B');
   releaseASend(false);holdASend=false;await delay(100);
   await selectRoom('對話 A');
-  if(await page.locator('textarea[aria-label="工作訊息"]').inputValue()!=='A 尚未送出的訊息')throw Error('failed send after switching lost the original A draft');
+  await page.waitForFunction(()=>document.querySelector('textarea[aria-label="工作訊息"]')?.value==='A 尚未送出的訊息');
   await page.locator('textarea[aria-label="工作訊息"]').fill('A 已送出的舊稿');holdASend=true;releaseASend=null;
   await page.getByRole('button',{name:'送出訊息'}).click();
   for(let i=0;i<60&&!releaseASend;i++)await delay(50);
@@ -117,7 +117,7 @@ try{
   releaseASend();holdASend=false;await delay(100);
   await selectRoom('對話 B');
   await selectRoom('對話 A');
-  if(await page.locator('textarea[aria-label="工作訊息"]').inputValue()!=='A 另外寫的新稿')throw Error('late acknowledgement cleared a newer A draft');
+  await page.waitForFunction(()=>document.querySelector('textarea[aria-label="工作訊息"]')?.value==='A 另外寫的新稿');
   const result={ok:true,requests:requests.map(({path,data})=>({path,threadId:data.threadId??null})),assertions:['busy A remained navigable','B send used fake-B','B stop used fake-B','A draft restored','A attachment restored','A pending confirmation stayed in sidebar and never appeared in B','successful in-flight A send did not restore stale draft','failed in-flight A send restored original draft','late acknowledgement preserved newer A draft'],screenshot:resolve(evidenceDir,'A-pending-while-B-selected.png')};
   await writeFile(resolve(evidenceDir,'result.json'),JSON.stringify(result,null,2)+'\n');
   console.log(JSON.stringify(result,null,2));

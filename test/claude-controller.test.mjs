@@ -1317,3 +1317,16 @@ test('Claude confirms pre-dispatch rejection, but never labels an attempted nati
   assert.equal(f.controller.state.status,'uncertain');
  }finally{await f.controller.close();}
 });
+
+
+test('cold Claude history is exposed before host connection and opening never bumps order',async()=>{
+ let previews=0,hosts=0;const f=await fixture({waitForHost:async()=>{hosts++;if(hosts===2)assert.equal(previews,1);}});const c=f.controller;
+ try{
+  await c.open({});await c.send({text:'fake saved request'});f.hostOptions.onMessage({type:'assistant',message:{content:[{type:'text',text:'fake saved reply'}]}});f.hostOptions.onMessage({type:'result',result:'fake saved reply',is_error:false});
+  await c.close();const id=c.state.threadId,before=(await listMainSessions(f.root)).sessions[0].sortAt;
+  const reopened=f.createController();try{
+   await reopened.open({threadId:id,model:'claude-opus-5-5'},{onHistory:async state=>{previews++;assert.ok(state.messages.some(m=>m.text==='fake saved reply'));assert.equal(hosts,1);}});
+   assert.equal(previews,1);assert.equal((await listMainSessions(f.root)).sessions[0].sortAt,before);
+  }finally{await reopened.close();}
+ }finally{await c.close();}
+});

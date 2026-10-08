@@ -24,9 +24,11 @@
 .sidebar .session-title{display:flex;flex:1;min-width:0;align-items:center;gap:4px}.sidebar .session-title>svg{flex:none;color:var(--k-ink-2)}.sidebar .session-title>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .sidebar .session-open time{flex:none;color:var(--k-ink-3);font-size:var(--k-text-xs);font-variant-numeric:tabular-nums;white-space:nowrap}
 .sidebar .session-activity{display:flex;flex:none;align-items:center;gap:5px;color:var(--k-ink-2);font-size:var(--k-text-xs);white-space:nowrap}
-.sidebar .session-activity i{display:inline-block;flex:none;width:6px;height:6px;border-radius:50%;background:var(--k-brass)}
-.sidebar .session-activity.running i{animation:pulse 1.6s ease-in-out infinite}.sidebar .session-activity.needs-approval i{animation:none}
-.sidebar .session-activity.completed-unread i{background:var(--k-ink-2);animation:none}
+.sidebar .session-activity svg{flex:none;stroke-width:2}
+.sidebar .session-activity.running{color:var(--k-brass)}.sidebar .session-activity.running svg{animation:session-spin 1s linear infinite}
+.sidebar .session-activity.needs-approval{color:var(--k-brass)}.sidebar .session-activity.completed-unread{color:var(--k-ink-2)}
+@keyframes session-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.sidebar .session-activity.running svg{animation:none}}
 .sidebar .session-menu{position:relative;flex:none;margin-right:3px;opacity:0}.sidebar .session:hover .session-menu,.sidebar .session:focus-within .session-menu,.sidebar .session.selected .session-menu,.sidebar .session-menu[data-open=true],.sidebar .session-menu:focus-within{opacity:1}
 .sidebar .row-menu-trigger{display:grid;place-items:center;min-width:28px;min-height:28px;padding:4px;border-radius:var(--k-radius-sm);color:var(--k-ink-3);font-size:var(--k-text-md);cursor:pointer}
 .row-menu-popup{padding:4px;border:1px solid var(--k-line);border-radius:var(--k-radius-md);background:var(--k-raised);box-shadow:var(--k-shadow-2)}.row-menu-popup button{width:100%;justify-content:flex-start;padding:7px 9px;font-size:var(--k-text-sm)}

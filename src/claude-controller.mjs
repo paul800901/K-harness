@@ -125,10 +125,10 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const next=persistChain.catch(()=>{}).then(operation);persistChain=next;
     return next.then(value=>{persistError=null;return value;},error=>{persistError=error;state.error=`對話投影保存失敗：${error.message}`;changed();throw error;});
   };
-  const saveCurrent = async () => {
+  const saveCurrent = async (activityAt) => {
     const snapshot={model:state.model,threadId:state.threadId,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,messages:clone(state.messages),tools:clone(state.tools),artifacts:[...state.artifacts],workerNotifications:clone(workerNotifications),goal:clone(state.goal),compactions:compactionSnapshot(),lastOpenedAt:new Date().toISOString()};
     const policy=clone(state.workerPolicy);
-    return enqueuePersist(async()=>{const record=(await persisted(snapshot.threadId)).find(item=>item.threadId===snapshot.threadId);if(!record)return;const projection={...record,...snapshot,effort:state.effort,workerPolicy:policy};await saveRecord(root,projection);await saveMainSession(root,{threadId:snapshot.threadId,model:projection.model,title:projection.title,archived:projection.archived,pinned:projection.pinned,workspace:projection.workspace,previousWorkspaces:projection.previousWorkspaces,previousArtifacts:projection.previousArtifacts,workerPolicy:policy,accessMode:projection.accessMode,effort:state.effort});});
+    return enqueuePersist(async()=>{const record=(await persisted(snapshot.threadId)).find(item=>item.threadId===snapshot.threadId);if(!record)return;const projection={...record,...snapshot,effort:state.effort,workerPolicy:policy};await saveRecord(root,projection);await saveMainSession(root,{threadId:snapshot.threadId,model:projection.model,title:projection.title,archived:projection.archived,pinned:projection.pinned,workspace:projection.workspace,previousWorkspaces:projection.previousWorkspaces,previousArtifacts:projection.previousArtifacts,workerPolicy:policy,accessMode:projection.accessMode,effort:state.effort},{activityAt});});
   };
   const flushPersist=async()=>{await persistChain;if(persistError)throw persistError;};
   const appendMessage = (role,text,id=randomUUID()) => {
@@ -413,7 +413,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       state.busy=nativePending.size>0; state.status=message.is_error?'failed':state.busy?'working':'completed';
       if(state.progress.compaction==='compacting'){state.progress.compaction=message.is_error?'failed':'idle';if(!message.is_error)state.progress.compactionsComplete=false;}
       if(message.is_error) state.error=message.result??'Claude Code 工具回合失敗；未自動重送。';
-      void saveCurrent().catch(()=>{});
+      void saveCurrent(last?.completedAt).catch(()=>{});
       const needsGoalRead=wasBusy&&(state.goalError||['active','unknown'].includes(state.goal?.status));
       if(needsGoalRead&&state.goalPending)goalRefreshNeeded=true;
       if(needsGoalRead&&host?.goal&&!state.goalPending){void goalCommand().catch(()=>{}).finally(()=>{if(!message.is_error)scheduleWorkers();});}
@@ -580,7 +580,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       let updated;
       await enqueuePersist(async()=>{const record=(await persisted(threadId)).find(item=>item.threadId===threadId);if(!record)throw new Error('K Claude 對話不存在。');updated={...record,...(title===undefined?{}:{title:title.trim()}),...(archived===undefined?{}:{archived}),...(pinned===undefined?{}:{pinned})};await saveRecord(root,updated);await saveMainSession(root,{threadId,model:updated.model,title:updated.title,archived:updated.archived,pinned:updated.pinned,workspace:updated.workspace,workerPolicy:updated.workerPolicy,accessMode:updated.accessMode,effort:updated.effort});});if(threadId===state.threadId){state.title=updated.title;changed();}return updated;
     },
-    async open({model=CLAUDE_MODEL,threadId,accessMode='claude-manual',effort,forkFrom,workerPolicy}={}, {signal:outerSignal,relocation}={}){
+    async open({model=CLAUDE_MODEL,threadId,accessMode='claude-manual',effort,forkFrom,workerPolicy}={}, {signal:outerSignal,relocation,onHistory}={}){
       if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
 
       openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
@@ -612,6 +612,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         state.previousWorkspaces=relocation?.previousWorkspaces??commonSaved?.previousWorkspaces??source?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??commonSaved?.previousArtifacts??source?.previousArtifacts??[];
         state.artifacts=relocation?[...state.previousArtifacts]:[...new Set([...state.previousArtifacts,...state.artifacts])];
         workerArmed.clear();workerQueue.clear();workerNotifications=clone(saved?.workerNotifications??{});
+        await onHistory?.(state);signal.throwIfAborted();
         await configureGateway();
         const mcpConfig=await nativeMcpConfig(id);
         signal.throwIfAborted();
@@ -681,7 +682,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         attempted=true;
         try {await hostAtSend.start(content,{uuid:sentMessage.id});}catch(error){state.status='uncertain';state.error='訊息送出狀態未確認，未自動重送。請先重開原對話查明。';throw error;}
         if(!state.title) state.title=text.trim().slice(0,40);
-        await saveCurrent();
+        await saveCurrent(sentMessage.createdAt);
         return {sent:true};
       } catch(error) {if(!['uncertain','offline'].includes(state.status)){state.busy=false;state.status='ready';}throw error;}
       finally{changed();}
@@ -716,7 +717,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const {content,attachmentRecords}=await claudeInput(text,attachmentIds,state);
       if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('附件檢查期間回合已結束或對話已切換；未立即送入。');
       const record=appendMessage('user',text);record.attachments=attachmentRecords;currentTurnId=record.id;record.source='steer';record.delivery='queued';nativePending.add(record.id);changed();
-      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');await active.start(content,{uuid:record.id});return {steered:true,delivery:record.delivery};}
+      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');await active.start(content,{uuid:record.id});await saveCurrent(record.createdAt);return {steered:true,delivery:record.delivery};}
       catch(error){nativePending.delete(record.id);record.delivery='uncertain';state.error='立即送入狀態未確認；未重送。';await saveCurrent().catch(()=>{});throw error;}
       finally{changed();}
     },

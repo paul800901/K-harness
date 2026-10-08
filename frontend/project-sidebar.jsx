@@ -1,6 +1,6 @@
 import React,{useEffect,useState} from 'react';
 import {useAnchoredPopover} from './anchored-popover.jsx';
-import {Folder,FolderOpen,ChevronRight,Plus,Pin,Pencil,Archive,ArrowUp,ArrowDown,Ellipsis} from 'lucide-react';
+import {Folder,FolderOpen,ChevronRight,Plus,Pin,Pencil,Archive,ArrowUp,ArrowDown,Ellipsis,LoaderCircle,MessageCircle,TriangleAlert} from 'lucide-react';
 import {projectKey,groupProjectSessions,sortSessions} from './project-groups.mjs';
 
 // Project-row arrangement adapted from DeepSeekHarness ui-workspace/rows/Rows.tsx.
@@ -41,14 +41,14 @@ function ProjectRow({onDropSession,project,expanded,containsCurrent,onToggle,onC
   </div>;
 }
 
-function SessionRows({sessions,workspace,state,disabled,modelName,onOpen,onRename,onMetadata,onMove,onChooseWorkspace,manual,conversationActivity=[]}) {
+function SessionRows({sessions,workspace,state,disabled,openDisabled=disabled,modelName,onOpen,onRename,onMetadata,onMove,onChooseWorkspace,manual,conversationActivity=[]}) {
   const activityById=new Map((conversationActivity??[]).map(item=>[item.threadId,item]));
   const unread=new Set((state.completionAttention?.unread??[]).map(item=>item.threadId));
-  return sessions.map((s,index)=>{const activity=activityById.get(s.threadId)??s,pending=Array.isArray(activity.pendingQuestions)?activity.pendingQuestions.length:activity.pendingQuestions??0,activityLabel=pending>0?'需要確認':activity.busy?'處理中':'';return <div key={s.threadId} draggable={!disabled&&!activity.busy&&!pending} onDragStart={event=>{if(disabled||activity.busy||pending){event.preventDefault();return;}event.dataTransfer.setData(conversationDragType,s.threadId);event.dataTransfer.effectAllowed='move';}} className={`session ${state.threadId===s.threadId?'selected':''}`}>
-    <button className="session-open" aria-current={state.threadId===s.threadId?'page':undefined} title={`${s.title||'未命名對話'}\n${modelName(s.model)}`} onClick={()=>onOpen({model:s.model,threadId:s.threadId})} disabled={disabled}>
+  return sessions.map((s,index)=>{const activity=activityById.get(s.threadId)??s,pending=Array.isArray(activity.pendingQuestions)?activity.pendingQuestions.length:activity.pendingQuestions??0,activityLabel=pending>0?'待確認':activity.busy?'處理中':'';return <div key={s.threadId} draggable={!disabled&&!activity.busy&&!pending} onDragStart={event=>{if(disabled||activity.busy||pending){event.preventDefault();return;}event.dataTransfer.setData(conversationDragType,s.threadId);event.dataTransfer.effectAllowed='move';}} className={`session ${state.threadId===s.threadId?'selected':''}`}>
+    <button className="session-open" aria-current={state.threadId===s.threadId?'page':undefined} title={`${s.title||'未命名對話'}\n${modelName(s.model)}`} onClick={()=>onOpen({model:s.model,threadId:s.threadId})} disabled={openDisabled}>
       <span className="session-title">{s.pinned&&<Pin size={11}/>}<span>{s.title||'未命名對話'}</span></span>
       {workspace&&<small className="session-workspace">{typeof workspace==='function'?workspace(s):workspace}</small>}{s.parentThreadId&&<small className="session-branch">分支自：{s.parentTitle||'原對話'}</small>}
-      {activityLabel?<small className={`session-activity ${pending>0?'needs-approval':'running'}`} aria-label={activityLabel} title={activityLabel}><i aria-hidden="true"/>{pending>0?'需要確認':null}</small>:unread.has(s.threadId)?<small className="session-activity completed-unread" aria-label="已完成，尚未查看" title="已完成，尚未查看"><i aria-hidden="true"/></small>:<time>{s.lastOpenedAt?new Date(s.lastOpenedAt).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}):''}</time>}
+      {activityLabel?<small className={`session-activity ${pending>0?'needs-approval':'running'}`} aria-label={activityLabel} title={activityLabel}>{pending>0?<><TriangleAlert size={14} aria-hidden="true"/>待確認</>:<LoaderCircle size={14} aria-hidden="true"/>}</small>:unread.has(s.threadId)?<small className="session-activity completed-unread" aria-label="有新回覆" title="有新回覆"><MessageCircle size={14} fill="currentColor" aria-hidden="true"/></small>:<time>{(s.sortAt??s.lastOpenedAt)?new Date(s.sortAt??s.lastOpenedAt).toLocaleDateString('zh-TW',{month:'numeric',day:'numeric'}):''}</time>}
     </button>
     <RowMenu className="session-menu" label={`管理對話 ${s.title||'未命名對話'}`} title="對話選項">
       <p className="session-info">{modelName(s.model)}</p>
@@ -64,7 +64,7 @@ function SessionRows({sessions,workspace,state,disabled,modelName,onOpen,onRenam
   </div>;});
 }
 
-export function ProjectSidebar({projects,sessions,state,disabled,modelName,layout='grouped',sort='recent',order=[],conversationActivity=[],onOpen,onCreate,onRename,onMetadata,onMove,onMoveWorkspace,onChooseWorkspace,onRenameProject,onProjectDetails,onProjectMetadata}) {
+export function ProjectSidebar({projects,sessions,state,disabled,openDisabled=disabled,modelName,layout='grouped',sort='recent',order=[],conversationActivity=[],onOpen,onCreate,onRename,onMetadata,onMove,onMoveWorkspace,onChooseWorkspace,onRenameProject,onProjectDetails,onProjectMetadata}) {
   const [collapsed,setCollapsed] = useState(() => {
     try {const saved=JSON.parse(localStorage.getItem('k-collapsed-projects')??'[]');return new Set(Array.isArray(saved)?saved:[]);}catch{return new Set();}
   });
@@ -75,7 +75,7 @@ export function ProjectSidebar({projects,sessions,state,disabled,modelName,layou
     const flat=sortSessions(groups.flatMap(project=>project.sessions),{sort,order});
     return <nav className="session-list" aria-label="所有工作區的對話">
       <div className="flat-projects">{groups.map(project=><ProjectRow onDropSession={dropSession} key={projectKey(project.path)} project={project} expanded={false} containsCurrent={projectKey(state.workspace)===projectKey(project.path)} disabled={disabled} expandable={false} onCreate={()=>onCreate(project.path)} onRenameProject={onRenameProject} onProjectDetails={onProjectDetails} onProjectMetadata={onProjectMetadata}/>)}</div>
-      <SessionRows sessions={flat} workspace={s=>projects.find(p=>projectKey(p.path)===projectKey(s.workspace))?.name} state={state} disabled={disabled} modelName={modelName} onOpen={onOpen} onRename={onRename} onMetadata={onMetadata} onMove={onMove} onChooseWorkspace={onChooseWorkspace} manual={sort==='manual'} conversationActivity={conversationActivity}/>
+      <SessionRows sessions={flat} workspace={s=>projects.find(p=>projectKey(p.path)===projectKey(s.workspace))?.name} state={state} disabled={disabled} openDisabled={openDisabled} modelName={modelName} onOpen={onOpen} onRename={onRename} onMetadata={onMetadata} onMove={onMove} onChooseWorkspace={onChooseWorkspace} manual={sort==='manual'} conversationActivity={conversationActivity}/>
       {!flat.length&&<p className="empty-list">尚無對話</p>}
     </nav>;
   }
@@ -87,7 +87,7 @@ export function ProjectSidebar({projects,sessions,state,disabled,modelName,layou
         <ProjectRow onDropSession={dropSession} project={project} expanded={expanded} containsCurrent={active} disabled={disabled}
           onToggle={()=>setCollapsed(old=>{const next=new Set(old);if(next.has(key))next.delete(key);else next.add(key);return next;})}
           onCreate={()=>onCreate(project.path)} onRenameProject={onRenameProject} onProjectDetails={onProjectDetails} onProjectMetadata={onProjectMetadata}/>
-        {expanded&&<div className="project-sessions"><SessionRows sessions={project.sessions} state={state} disabled={disabled} modelName={modelName} onOpen={onOpen} onRename={onRename} onMetadata={onMetadata} onMove={onMove} onChooseWorkspace={onChooseWorkspace} manual={sort==='manual'} conversationActivity={conversationActivity}/>{!project.sessions.length&&<p className="project-empty">尚無對話</p>}</div>}
+        {expanded&&<div className="project-sessions"><SessionRows sessions={project.sessions} state={state} disabled={disabled} openDisabled={openDisabled} modelName={modelName} onOpen={onOpen} onRename={onRename} onMetadata={onMetadata} onMove={onMove} onChooseWorkspace={onChooseWorkspace} manual={sort==='manual'} conversationActivity={conversationActivity}/>{!project.sessions.length&&<p className="project-empty">尚無對話</p>}</div>}
       </section>;
     })}
     {!groups.length&&<p className="empty-list">尚無工作區</p>}

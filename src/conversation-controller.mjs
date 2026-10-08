@@ -1,4 +1,5 @@
 import {createUnifiedController} from './unified-controller.mjs';
+import {conversationPreview} from '../shared/conversation-preview.mjs';
 import {listMainSessions} from './main-sessions.mjs';
 import {deleteArchived} from './archive-delete.mjs';
 import {createCompletionAttention} from './completion-attention.mjs';
@@ -16,14 +17,14 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const discussion=controller=>discussions.get(controller.state.threadId);
  const projected=controller=>{const s=controller.state,d=discussion(controller),ds=d?.state;return {...s,messages:d?d.project(s.messages??[]):s.messages,discussion:ds,
   ...(d?.busy?{busy:true,status:ds.status==='stopping'?'stopping':'working'}:{})};};
- const loadDiscussion=async controller=>{
-  const id=controller.state.threadId;if(!id||discussions.has(id))return;
+ const loadDiscussion=async (controller,state=controller.state)=>{
+  const id=state.threadId;if(!id||discussions.has(id))return;
   const d=discussionFactory({root,threadId:id,executable:options.executable,...discussionOptions,...(discussionSessionFactory?{sessionFactory:discussionSessionFactory}:{}),onChange(){attention.observe(projected(rooms.get(id)??controller));onChange();}});
   await d.load();discussions.set(id,d);
  };
  const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.held)throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
  const openedOrder=new Map();let openSequence=0;
- let pendingOpen;
+ let pendingOpen,pendingView,navigationRequest=0;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
  const create=()=>{
   let controller;
@@ -141,17 +142,33 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
-  get state(){const s=projected(active);return {...s,connectionOpening:!!pendingOpen,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
+  get state(){const s=projected(active),view=pendingView?conversationPreview(pendingView.record,pendingView.history):null;return {...s,...view,connectionOpening:!!pendingView,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
   markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
   models:()=>catalog.models(),
   async usage(refresh=false){sharedUsage=await catalog.usage(refresh);onChange();return api.state.usage;},
   async open(data={}){
-   focusLock();const abort=new AbortController();pendingOpen=abort;onChange();let candidate,existing;
+   if(closing)throw Error('K 正在關閉。');
+   if(navigating&&!pendingOpen)throw Error('正在更新聊天室，請稍候。');
+   const request=++navigationRequest;
+   pendingView={record:data};onChange();
+   // A new selection supersedes the view, not another room's native work.
+   // Let an accepted opening settle and retain its owner before opening the latest target.
+   if(pendingOpen)await navigationSettled;
+   if(request!==navigationRequest)return {superseded:true};
+   try{focusLock();}catch(error){if(request===navigationRequest){pendingView=null;onChange();}throw error;}
+   const abort=new AbortController();pendingOpen=abort;let candidate,existing;
+   const showHistory=async history=>{
+    abort.signal.throwIfAborted();
+    if(request!==navigationRequest)return;
+    await loadDiscussion(candidate??existing,history);abort.signal.throwIfAborted();
+    if(request===navigationRequest){const d=discussions.get(history.threadId);pendingView={record:pendingView.record,history:{...history,messages:d?d.project(history.messages??[]):history.messages}};onChange();}
+   };
    try{
-    const saved=data.threadId?(await listMainSessions(root)).sessions.find(row=>row.threadId===data.threadId):null;
+    const saved=data.threadId?(await listMainSessions(root,{threadId:data.threadId})).sessions[0]:null;
     if(data.threadId&&!saved)throw Error('只能開啟 K 清單中的對話。');
     if(saved&&saved.model!==data.model)throw Error('對話設定已更新，請重新整理清單。');
+    if(request===navigationRequest){pendingView={record:saved??data};onChange();}
     existing=data.threadId?rooms.get(data.threadId):null;
     if(existing){
      const s=existing.state;
@@ -163,19 +180,19 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
      if(configure||recover)noDiscussion(existing);
      if((recover||configure)&&!s.busy&&!s.questions?.length){
-      locked.add(existing);try{await existing.open(data,{signal:abort.signal});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
+      locked.add(existing);try{await showHistory(projected(existing));await existing.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
      }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
-    abort.signal.throwIfAborted();active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId};
+    abort.signal.throwIfAborted();if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId};
     }
     abort.signal.throwIfAborted();candidate=create();
     await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
-    abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal});abort.signal.throwIfAborted();
+    abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();
     if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
-    reindex(candidate);await loadDiscussion(candidate);active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
+    reindex(candidate);await loadDiscussion(candidate);if(request===navigationRequest)active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
    }catch(error){
     if(candidate){try{await candidate.close();controllers.delete(candidate);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
     throw error;
-   }finally{pendingOpen=null;focusDone();}
+   }finally{pendingOpen=null;if(request===navigationRequest)pendingView=null;focusDone();}
   },
   async selectWorkspace(data){
    // Workspace selection only prepares an empty view; it never repurposes a
@@ -244,7 +261,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   attachmentSource(id,context){return target(context).attachmentSource(id,context);},
   artifact(name,context){return target(context).artifact(name);},
   async close(){
-   closing=true;
+   closing=true;++navigationRequest;pendingView=null;
    // A controller still opening may create its native host after close() runs.
    // Settle that already accepted navigation before collecting every owner.
    pendingOpen?.abort(new DOMException('已取消連線。','AbortError'));
@@ -294,6 +311,6 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
  const compact=api.compact;api.compact=data=>{noDiscussion(target(data));return compact(data);};
- api.stop=async data=>{if(data?.cancelOpening===true){if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}return {cancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
+ api.stop=async data=>{if(data?.cancelOpening===true){++navigationRequest;pendingView=null;if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}onChange();return {cancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
  return api;
 }

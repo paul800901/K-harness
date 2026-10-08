@@ -2,8 +2,8 @@ export const projectKey = p => String(p ?? '').replaceAll(String.fromCharCode(92
 export const isVisibleMainSession = session => !session?.parentThreadId || session?.branchType === 'user';
 
 const recentOrder=(a,b)=>{
-  const left=Date.parse(a.lastOpenedAt??'')||0,right=Date.parse(b.lastOpenedAt??'')||0;
-  return right-left;
+  const left=Date.parse(a.sortAt??a.lastOpenedAt??'')||0,right=Date.parse(b.sortAt??b.lastOpenedAt??'')||0;
+  return right-left||String(a.threadId).localeCompare(String(b.threadId));
 };
 
 export function sortSessions(sessions,{sort='recent',order=[]}={}) {

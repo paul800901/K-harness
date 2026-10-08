@@ -53,11 +53,11 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
  const changed=()=>{try{onChange(state);}catch{}};
  const file=id=>{if(!sessionId(id))throw Error('Gemini 對話 ID 無效。');return path.join(root,'.runtime/gemini-sessions',`${id}.json`);};
  const home=()=>path.join(root,'agent-home','gemini','main',state.threadId);
- const save=()=>{
+ const save=(activityAt)=>{
   if(!record)return Promise.resolve();
   const snapshot=structuredClone({...record,model:state.model,effort:state.effort,title:state.title,workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,accessMode:state.accessMode,goal:state.goal,messages:state.messages,tools:state.tools,artifacts:state.artifacts,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,lastOpenedAt:now()});
   record=snapshot;
-  const next=persist.catch(()=>{}).then(async()=>{await atomicWrite(file(snapshot.threadId),JSON.stringify(snapshot,null,2));await saveMainSession(root,snapshot);});persist=next;return next;
+  const next=persist.catch(()=>{}).then(async()=>{await atomicWrite(file(snapshot.threadId),JSON.stringify(snapshot,null,2));await saveMainSession(root,snapshot,{activityAt});});persist=next;return next;
  };
  const read=async id=>JSON.parse(await readFile(file(id),'utf8'));
  const idle=()=>{if(state.busy||opening||unresolvedPid)throw Error('請先結束或查明目前 Gemini 工作。');};
@@ -103,7 +103,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
   async workers(){return structuredClone(state.workers);},
   async directories(parent=state.workspace){return listWorkspaceDirectories(parent);},
   async selectWorkspace({path:requested}){idle();const workspace=await validateWorkspace(requested);await persist;await resetBrowser();state.workspace=workspace;state.threadId=null;state.title='';state.messages=[];state.tools=[];state.artifacts=[];state.workers=[];state.status='idle';state.error=null;record=null;changed();return {workspace};},
-  async open({threadId,model,effort,accessMode='workspace-write',permissionConfirmed=false}={}, {signal,relocation}={}){
+  async open({threadId,model,effort,accessMode='workspace-write',permissionConfirmed=false}={}, {signal,relocation,onHistory}={}){
    idle();activity.clear();opening=true;let previousBrowserClosed=false;
    const originalWorkspace=relocation?{workspace:state.workspace,previousWorkspaces:state.previousWorkspaces,previousArtifacts:state.previousArtifacts,artifacts:state.artifacts}:null;
    try{
@@ -122,6 +122,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     state.previousWorkspaces=relocation?.previousWorkspaces??common?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??common?.previousArtifacts??[];
     state.artifacts=relocation?[...state.previousArtifacts]:[...new Set([...state.previousArtifacts,...state.artifacts])];
     state.goal=record.goal?{...record.goal,...(['active','starting'].includes(record.goal.status)?{status:'unknown'}:{})}:null;
+    await onHistory?.(state);signal?.throwIfAborted();
     await prepare();signal?.throwIfAborted();await save();changed();return {threadId:state.threadId};
    }catch(error){if(originalWorkspace)Object.assign(state,originalWorkspace);if(previousBrowserClosed){state.status=relocation?'error':'failed';state.error=error.message;await resetBrowser();}throw error;
    }finally{opening=false;}
@@ -189,7 +190,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
     record.nativeStarted=true;await save();current.abort.signal.throwIfAborted();launched=true;attempted=true;
     current.done=(async()=>{
      try{
-      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:false,killTree,onStart:pid=>{current.pid=pid;},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
+      const result=await run(binary,args,{cwd:state.workspace,env:geminiEnvironment(env,home()),signal:current.abort.signal,timeoutMs:goalObjective?0:timeoutMs,captureOutput:false,killTree,onStart:pid=>{current.pid=pid;void save(user.createdAt).catch(error=>{state.error=`對話活動時間保存失敗：${error.message}`;changed();});},onChunk:chunk=>parser.write(chunk)}),outcome=geminiOutcome(parser.end(),result);
       if(outcome.output)ensureAssistant().text=goalConfirmed?outcome.output.replace(/<!-- GOAL_COMPLETE -->/g,'').trim():outcome.output;
       if(goalObjective)state.goal={...state.goal,status:outcome.settled===false?'unknown':outcome.status==='cancelled'?'interrupted':outcome.status!=='completed'?'failed':goalConfirmed&&outcome.output.includes('<!-- GOAL_COMPLETE -->')?'complete':'ended'};
       if(outcome.settled===false){unresolvedPid=current.pid;state.status='uncertain';}else state.status=outcome.status==='cancelled'?'interrupted':outcome.status;
@@ -199,7 +200,7 @@ export function createGeminiController({root,geminiExecutable:executable,env=pro
      finally{
       if(assistant){delete assistant.streaming;if(state.status!=='completed')assistant.partial=true;}
       for(const tool of state.tools)if(tool.status==='running')tool.status='interrupted';
-      try{await save();}catch(error){state.status='uncertain';state.error=`對話保存失敗；未重送：${error.message}`;}
+      try{await save(assistant?now():undefined);}catch(error){state.status='uncertain';state.error=`對話保存失敗；未重送：${error.message}`;}
       try{await accountLease?.release({settled:!unresolvedPid,refresh:true});}catch{state.status='uncertain';state.error='Gemini 帳號狀態保存失敗；原工作未重送。';}
       state.busy=false;turn=null;finish();changed();
      }

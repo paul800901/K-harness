@@ -2,7 +2,7 @@ import {createWorkActivity,codexWorkActivity} from './work-activity.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
-import {saveMainSession,listMainSessions} from './main-sessions.mjs';
+import {saveMainSession,saveMainSessionActivity,listMainSessions} from './main-sessions.mjs';
 import {randomUUID} from 'node:crypto';
 import {saveAttachment,saveAttachmentStream,readPresentedFile} from './desktop-files.mjs';
 import {sessionAttachment,sessionAttachmentSource,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
@@ -299,7 +299,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const capacityFailure=turnId===completedTurnId&&completedTurnId!==stoppedTurnId&&p.turn?.status==='failed'&&p.turn.error?.codexErrorInfo==='serverOverloaded'&&state.model==='gpt-6-luna'&&!opening&&!stopping&&!closing&&!capacityTask;
    const priorGoal=turnGoal;
    const final=[...state.messages].reverse().find(m=>m.role==='assistant'&&(!completedTurnId||m.turnId===completedTurnId));
-   if(final){final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
+   if(final){void saveMainSessionActivity(root,state.threadId,completedAt).catch(error=>{state.error=`對話活動時間保存失敗：${error.message}`;changed();});final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
    turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
    if(capacityFailure){
@@ -724,7 +724,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // Sidebar labels/visibility are local K metadata; never alter model history.
    await saveMainSession(root,found);if(threadId===state.threadId){state.title=found.title;changed();}return found;
   },
-  async open({model,threadId,effort,serviceTier,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation}={}){
+  async open({model,threadId,effort,serviceTier,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation,onHistory}={}){
    if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
    if(typeof model!=='string'||!model.trim())throw new Error('請選擇可用的 Codex 模型。');
    // Reserve before any asynchronous session/catalog read.  Catalog failure
@@ -735,7 +735,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
     signal.throwIfAborted();
-    const saved=threadId?(await listMainSessions(root)).sessions.find(s=>s.threadId===threadId):null;
+    const saved=threadId?(await listMainSessions(root,{threadId})).sessions[0]:null;
     if(threadId&&!saved)throw new Error('只能開啟 K 清單中的對話。');
     if(threadId&&saved.model!==model)throw Object.assign(new Error('此對話的主模型設定已更新，請重新整理清單後再開啟。'),{code:'K_STALE_MODEL_SELECTION'});
     const access=permissionMode(accessMode??saved?.accessMode??'workspace-write');
@@ -814,6 +814,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      }
      const lastTurn=prior?.thread.turns?.at(-1);activeGroupId=lastTurn?(uiTiming.messages[(lastTurn.items??[]).findLast(i=>i.type==='userMessage')?.id]?.groupId??turnGroupId(lastTurn.id)):null;
      syncArtifacts();changed();
+     await onHistory?.(state);signal.throwIfAborted();
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
      const workerGateway=await configureFlashGateway();
      const effective=await call('config/read',{includeLayers:false});
@@ -909,7 +910,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      state.lastUsedModel=state.model;state.effort=turnEffort??null;state.accessMode=access;
     }
     catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected){state.busy=false;e.notSent=true;}state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
-    {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
+    {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges},{activityAt:sentMessage.createdAt});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
    }finally{finishSubmission();submission=null;changed();void deliverFlashResults();}
    }catch(error){if(!attempted)error.notSent=true;throw error;}
@@ -927,6 +928,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const result=await activeHost.request('turn/steer',{threadId,expectedTurnId:expected,input});
     if(result.turnId!==expected)throw new Error('修正未套用到目前回合；未自動重送。');
     message(attempt.itemId??'steer:'+randomUUID(),'user',acceptedText,attachments,expected,attempt.itemId?'native':'steer');changed();
+    await saveMainSessionActivity(root,threadId,new Date().toISOString());
     return {steered:true,turnId:expected};
    }finally{if(pendingSteer===attempt)pendingSteer=null;}
   },

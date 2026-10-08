@@ -268,3 +268,15 @@ test('Gemini confirms pre-dispatch rejection without replaying an attempted nati
   assert.equal(f.calls.length,1);
  }finally{await f.controller.close();}
 });
+
+
+test('cold Gemini history is exposed before prepare and open preserves activity order',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({model:'gemini-3.8-flash',effort:'low'});await f.controller.send({text:'fake request'});await finish(f.controller);
+  const id=f.controller.state.threadId;await f.controller.close();const before=(await listMainSessions(f.root)).sessions[0].sortAt;
+  const reopened=createGeminiController(f.opts);let previews=0;try{
+   await reopened.open({threadId:id,model:'gemini-3.8-flash'},{onHistory:async state=>{previews++;assert.ok(state.messages.some(m=>m.text==='native reply'));assert.equal(f.calls.length,1);}});
+   assert.equal(previews,1);assert.equal((await listMainSessions(f.root)).sessions[0].sortAt,before);assert.equal(f.calls.length,1);
+  }finally{await reopened.close();}
+ }finally{await f.controller.close();}
+});

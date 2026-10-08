@@ -49,7 +49,7 @@ test('archiving the selected workspace returns the visible view home without tou
 test('attachments are stored per thread and sidebar shows human-readable activity',()=>{
   assert.ok(main.includes("uploadsByThread[state.threadId??'']"));
   assert.match(main,/setUploadsByThread\(previous=>\(\{\.\.\.previous,\[threadId\]:/);
-  assert.match(sidebar,/pending>0\?'需要確認':activity\.busy\?'處理中'/);
+  assert.match(sidebar,/pending>0\?'待確認':activity\.busy\?'處理中'/);
   assert.match(main,/api\/attachment\?id=\$\{a\.id\}&threadId=\$\{encodeURIComponent\(threadId\?\?'\'\)\}/);
   assert.match(main,/previewRequest\.current===requestId&&stateRef\.current\.threadId===threadId/);
   assert.match(main,/api\/artifact\?path=\$\{encodeURIComponent\(name\)\}&threadId=\$\{encodeURIComponent\(state\.threadId\?\?'\'\)\}&download=1/);

@@ -81,11 +81,11 @@ export function createUnifiedController(options){
    }
    return {models,warnings,geminiGateway:gpt.status==='fulfilled'&&gpt.value.geminiGateway===true,claudeGateway:anthropic.status==='fulfilled'};
   },
-  async open(data,{signal}={}){
+  async open(data,{signal,onHistory}={}){
    if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw new Error('請先結束目前工作與核准，再切換對話。');
    changing=true;
    try{
-    const saved=data.threadId?(await listMainSessions(root)).sessions.find(s=>s.threadId===data.threadId):null;
+    const saved=data.threadId?(await listMainSessions(root,{threadId:data.threadId})).sessions[0]:null;
     if(data.threadId&&!saved)throw new Error('只能開啟 K 清單中的對話。');
     const provider=modelProvider(saved?.model??data.model),isClaude=provider==='claude';
     if(saved&&saved.model!==data.model)throw new Error('對話設定已更新，請重新整理清單。');
@@ -100,7 +100,7 @@ export function createUnifiedController(options){
      if(list.some(w=>w.settled===false||['running','starting','pending'].includes(w.status)))throw new Error('子代理尚未結束，請先停止或查明原工作。');
      await target.selectWorkspace({path:saved?.workspace??active.state.workspace});
     }
-    signal?.throwIfAborted();const result=await target.open(data,{signal});signal?.throwIfAborted();
+    signal?.throwIfAborted();const result=await target.open(data,{signal,onHistory:state=>onHistory?.({...state,provider})});signal?.throwIfAborted();
     // Keep old state intact if the new provider cannot open. No history is transferred.
     if(target!==active){
      try{await active.close();}catch(error){await target.close().catch(()=>{});throw error;}
