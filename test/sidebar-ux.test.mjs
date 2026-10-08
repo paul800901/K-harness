@@ -41,7 +41,7 @@ test('rapid selection is last-click-wins without aborting an accepted native ope
   await f.select('A');const gate=deferred();gate.working=true;f.gates.set('B',gate);
   const b=f.select('B');await until(()=>f.c.state.historyReady);
   const c=f.select('C'),d=f.select('D');assert.equal(f.c.state.threadId,'D');assert.deepEqual(f.c.state.messages,[]);
-  gate.resolve();await Promise.all([b,c,d]);assert.equal(f.c.state.threadId,'D');
+  gate.resolve();const result=await Promise.all([b,c,d]);assert.equal(result[0].superseded,true);assert.equal(result[1].superseded,true);assert.equal(result[2].superseded,undefined);assert.equal(f.c.state.threadId,'D');
   assert.deepEqual(f.calls.filter(([m])=>m==='open').map(([,id])=>id),['A','B','D']);
   const hidden=f.owners.find(o=>o.state.threadId==='B');assert.equal(hidden.state.busy,true);assert.equal(hidden.closed,0);
   assert.ok(f.c.state.conversationActivity.some(s=>s.threadId==='B'&&s.busy));

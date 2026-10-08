@@ -250,7 +250,7 @@ function App(){
  };
  const open=async(s)=>{if(mobile)setSidebar(false);if(s.threadId===state.threadId&&s.model===state.model&&state.status==='ready'&&state.workerConnection!=='failed'&&!state.browserAccess?.enabled)return true;
   const id=++navigationId.current,record=sessions.find(row=>row.threadId===s.threadId)??s;setError('');setModal(null);setNavigationTarget(record);
-  try{const result=await api('open',{...s,title:record.title,workspace:record.workspace});if(id===navigationId.current)setNavigationTarget(current=>current?{...current,settled:true}:null);return result;}catch(e){if(id===navigationId.current){setNavigationTarget(null);setError(e.message);}return false;}
+  try{const result=await api('open',{...s,title:record.title,workspace:record.workspace});if(id===navigationId.current)setNavigationTarget(current=>!result.superseded&&current?{...current,settled:true}:null);return result;}catch(e){if(id===navigationId.current){setNavigationTarget(null);setError(e.message);}return false;}
  };
  const metadata=async data=>{await api('metadata',data);await refresh();};
  const projectMetadata=async data=>{await api('projects/metadata',data);await refresh();};

@@ -182,13 +182,13 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      if((recover||configure)&&!s.busy&&!s.questions?.length){
       locked.add(existing);try{await showHistory(projected(existing));await existing.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
      }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
-    abort.signal.throwIfAborted();if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId};
+    abort.signal.throwIfAborted();if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId,...(request!==navigationRequest?{superseded:true}:{})};
     }
     abort.signal.throwIfAborted();candidate=create();
     await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
     abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();
     if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
-    reindex(candidate);await loadDiscussion(candidate);if(request===navigationRequest)active=candidate;releasing=releasing.then(releaseIdleRooms);return result;
+    reindex(candidate);await loadDiscussion(candidate);if(request===navigationRequest)active=candidate;releasing=releasing.then(releaseIdleRooms);return request===navigationRequest?result:{...result,superseded:true};
    }catch(error){
     if(candidate){try{await candidate.close();controllers.delete(candidate);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
     throw error;
