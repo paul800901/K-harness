@@ -57,7 +57,16 @@
 
 最後完整來源 full-test-5.log 1039/1039（Codex最後窄修前）；build及UI實測passed。補Gemini真權限 read-tools-kBpXqb、nativefe880978-9ee9-4f54-979b-a86fc5b49a44：actual run_command dir遭command(dir) deny，隨機假檔名／內容未讀，closed。沒有list_dir/grep原生事件，不把工具不存在／未嘗試算作那些工具的deny實測。
 
-正式K在本批收尾期間已由本人重新啟動，15:01本機讀回47831 Listen、launcher/node/electron程序在；正式指標仍c5d605d。本批不停止／取代這些工作，先完成固定候選並等待本人「離開並停止」。候選或正式交換前都需再次確認，不沿用先前閒置快照。
+正式K在本批收尾期間已由本人重新啟動，本機讀回47831 Listen、launcher/node/electron程序在；正式指標仍c5d605d。本批不停止／取代這些工作，先完成固定候選並等待本人「離開並停止」。候選或正式交換前都需再次確認，不沿用先前閒置快照。
 
 ### 最後真正 Opus 放行與完整來源驗證
 Codex小差異第三輪真正 Opus session533527c5-6a86-4f71-8c7a-1ab25b0118ae（8 Read、官方Pro、實際claude-opus-5-5、CLI2.1.294、code0/success/is_error=false）確認前置notSent／native未知不回復／顯示mapping正確、無P1/P2與多餘防禦，不要求再添架構。Opus只讀沒有重跑測試；Astra獨立執行最後來源全套 full-test-6.log **1041/1041**，0fail/cancel/skip。未知native送出與既有保守UI狀態不額外改路由／回放。本批所有模型測試程序已關閉。
+
+## 固定候選收尾：已實作／驗證，未正式套用
+- 固定程式 commit **a693ba44a2715e490dda039d72b24f6a5fd4a35a**（承接c5d605d）。候選 **D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\prepare-discussion-a693ba44a271**，從該 SHA 的 git archive 全新展開，只複製既有正式依賴到新候選；沒有 npm install／更新Electron或原生核心，沒有保留指向將來退版資料夾的node_modules junction。
+- UI、既有Chrome擴充與既有Windows launcher建置成功；乾淨固定候選全套 **1041/1041**、built desktop/mobile discussion UI passed（0pageerror）；來源1041/1041，候選不是未測dirty copy。
+- 初次固定來源逐檔讀回发现extension-protocol.cjs唯一差異：建置由固定來源CRLF轉LF，UTF8内容正規化完全相同，並非新的程式差異。只在新候選用固定archive原位還原該檔，不改工作樹、正式K或其他資料；45/45瀏覽器回歸通過。最終 **596/596 Git檔案逐位元一致**、差異0，證據 fixed-source-readback-final.json。原始差異收據保留，不把第一次當成功。
+- 所有候選證據在其 .runtime/discussion-evidence：clean-full-test.log、clean-ui-probe.log、build/extension-build/launcher-build.log、extension-exact-source-tests.log、fixed-source-readback{,-final}.json、ui-result.json與兩尺寸截圖。真原生及Opus原始收據仍在上列來源／根.runtime證據目錄，未公開。
+- **2026-10-08 07:07:30 UTC正式讀回**：47831仍Listen（PID27960），正式版本c5d605d146e10080502fbec61a8f0c2a8b114af3。本批没有強制停止、交換runtime、啟動新正式版、恢復／重派任務、動登入或對話。不是已部署；目前候選ready，需本人在正式K「離開並停止」後再確認無程序與新正式版本變化，保留當時版本再套用／讀回。
+- 無正式退版操作／位置，本批尚未交換；既有previous位置屬前批，不冒稱本批備份。東區未更新。公開GitHub push問題已詢問，尚無本輪公開發布授權，未push、未移動main/tag。
+- 此後文件收尾commit只補實際證據與狀態，正式程式要用上方完整固定 SHA，不把文件較新當程式已重部署。
