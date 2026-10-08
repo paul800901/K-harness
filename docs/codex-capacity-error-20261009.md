@@ -37,3 +37,11 @@ src/desktop-controller.mjs、src/gemini-login.mjs；frontend/main.jsx/native-not
 尚待真正Opus5.5本輪複查、處理實證問題、兩邊固定SHA整合、整合驗證、部署者核對無工作及保留退版後正式讀回。沒有宣稱OpenAI容量修復或Google原始缺欄原因查明。不推論Gemini／Claude從來不會容量不足；本輪Codex執行變更只限Codex。
 
 原生策略參考：[0.161.0官方原始碼](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/protocol/src/error.rs#L363-L425)、[官方config](https://learn.chatgpt.com/docs/config-file/config-reference)；Google週／短期限額分開，見[官方plans](https://antigravity.google/docs/plans/)。不是把一般串流5次套成這次容量錯誤5次。
+
+## 本輪正式更新已完成（2026-10-09 06:50 臺灣時間）
+
+本人後續明確允許與另一邊一起更新，取代本文件前面「修好先停」的當時部署限制。整合後固定程式為 `5762d48913ca185e68dad1709197ccfe47c7dc67`；真正 Opus 5.5 整合及 P2 收尾複查通過，固定低並行1077/1077、各項built UI通過。變更、原意見、失敗與驗證見 [整合收尾](sidebar-ux-fix-20261009.md)。
+
+南區正式已套用此 SHA；程式／啟動器退版在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791499740190`，不是對話資料快照。替換前後97233個既有檔案byte hash未變，非版本欄設定未變。真正正式 owner／登入後 built UI讀回通過：20聊天室、無不可讀、served資產與正式disk一致，0工作POST、無選取聊天室、既有事件投影未改；正常關閉後K仍停止。沒有恢復原業務、翻譯目標、派工或帳號切換。
+
+本人Electron／手機實機體驗尚待日常使用；新功能行为證据是固定candidate真built UI，正式讀回不冒稱已重跑原業務。東區未更新。GitHub暫未push／tag：本版包含先前2026-10-08明確no push候選，本轮只明確一起更新本機，保守不以一般發布SOP默認撤回该限制；本機更新不因此延後。

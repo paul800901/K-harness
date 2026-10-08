@@ -55,3 +55,11 @@
 - 主代理核對 worker completion 在 Claude 實作為 user 事件，不受 assistant 顯示新增條件影響。Codex／Gemini 真插話與歷史投影未另跑，合成 UI 不冒稱三家 native 實測；本次 root cause 和真保存／回讀證據為 Claude。
 - 最後產品小差異對應完整 **1062/1062** 通過，最後六種 built UI＋真既有回覆只讀顯示、native 假資料保存檔顯示、討論三主題／長文皆通過；git diff --check 通過。額外 pinned-header probe 的 baseline 失敗仍保留，不修無關項。
 - 依本人本輪後續要求立即停在候選。正式版本仍 `f5e9e266b677dbb9d4d330729fbc66fa9d674e53`，没有部署、重啟、push、tag、東區更新或原業務資料改寫。實際正式畫面恢復待本人之後允許套用，再做正式讀回；目前不是「已在正式 K 修復」。
+
+## 本輪正式更新已完成（2026-10-09 06:50 臺灣時間）
+
+本人後續明確允許與另一邊一起更新，取代本文件前面「修好先停」的當時部署限制。整合後固定程式為 `5762d48913ca185e68dad1709197ccfe47c7dc67`；真正 Opus 5.5 整合及 P2 收尾複查通過，固定低並行1077/1077、各項built UI通過。變更、原意見、失敗與驗證見 [整合收尾](sidebar-ux-fix-20261009.md)。
+
+南區正式已套用此 SHA；程式／啟動器退版在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791499740190`，不是對話資料快照。替換前後97233個既有檔案byte hash未變，非版本欄設定未變。真正正式 owner／登入後 built UI讀回通過：20聊天室、無不可讀、served資產與正式disk一致，0工作POST、無選取聊天室、既有事件投影未改；正常關閉後K仍停止。沒有恢復原業務、翻譯目標、派工或帳號切換。
+
+本人Electron／手機實機體驗尚待日常使用；新功能行为證据是固定candidate真built UI，正式讀回不冒稱已重跑原業務。東區未更新。GitHub暫未push／tag：本版包含先前2026-10-08明確no push候選，本轮只明確一起更新本機，保守不以一般發布SOP默認撤回该限制；本機更新不因此延後。

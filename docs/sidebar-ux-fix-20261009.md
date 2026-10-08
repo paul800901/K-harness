@@ -40,3 +40,25 @@
 - 本批提交 `1877a4d`，另一本批的 `4825d0c` 在此重放為 `335c4fc832f3e26508c56c5c43cc88fbb4fb6ba4`。衝突僅為 main.jsx 同一長行：保留新的導航／唯讀 header，併入另一邊原生錯誤詳細；style 與索引兩方均保留。AGENTS／README／Gemini 與工人終態修正皆保留。
 - 追加清除預覽的 turnError，避免繼承別房的原生錯誤詳情。整合定向 51/51 通過；真 Opus 複查未開始。另一方確認不再另行呼叫 Opus，由本方 06:30 後一次完整審查，也須讀真 Gemini 額度原文，不把當時缺原始 stdout 的未知升級為已知。
 - 一次低並行測試 1078/1078 通過，但其執行期間與本機整合作業重疊，因此不作固定版本全測證明。待來源不變的完整重跑與固定候選證據。
+
+## 固定版本與真 Opus 收尾（2026-10-09）
+
+以下取代上文各階段 NOT READY／待複查的當時狀態。
+
+- 固定程式 `5762d48913ca185e68dad1709197ccfe47c7dc67`，包含 peer `4825d0c` 的完整候選、既有插話顯示修正、側欄／冷開啟／排序與最新選擇回執。root 開發區既有 dirty 修改未被 reset 或整批複製。
+- 固定 Git archive 建置 UI／擴充／C# 啟動器；611 個 tracked 檔案逐位元讀回一致，build generator 唯一換行差異恢復原 archive bytes。使用既有 lockfile 的本機已安裝相依實體複本，不安裝套件、不部署 outgoing runtime junction。
+- 真 Opus 5.5 整合：官方 Pro、Claude Code 2.1.294、actual `claude-opus-5-5`，session `7fb88545-f443-47fe-b3dc-0df1c5fba779`。首輪 25 個只讀工具；唯一 P2 是原生已接受插話後，新增的排序時間保存失敗不應讓 API 失敗、恢復草稿並誘發再次送出。Astra 將此可選保存改為非阻擋，保留原診斷；原生接受前必要存檔、收訊不明規則均不動。兩家各新增失敗注入：仍接受、原生不重送、錯誤可見；Claude 收訊回執和之後保存恢復亦通過。
+- 同真 Opus session 再讀窄差異與完整 quota-zero／Gemini accounts，下游 null reset 不永久抑制，7 個工具，明確「通過，沒有阻擋級問題」。Astra 自行核對 diff、失敗測試、原報告、模型／訂閱及固定候選證據，不把代理回報單獨當驗收。
+- 修正定向154/154；最終固定低並行完整 **1077/1077**。建置後側欄三主題×桌面／手機6/6，真 SSE patch、歷史先讀、晚回執不覆蓋、readonly與取消；導航9用例、額度2尺寸、插話三家×2尺寸6/6＋真既有遺失回覆投影顯示／reload，全部通過。後者沒有修改保存原文，也未重新送出原業務工作。
+- 保留限制：冷連線總耗時未量測；三家2-final為 deterministic／built UI，真 native sentinel 僅取得1-final，不冒稱新2-final真模型重現。正式 owner 的零工作讀回亦不代替人親自操作 Electron／手機。Opus 指出的 fake Claude preview fixture 缺原生 accessMode 造成待套用文案，非產品阻擋項，未擴張改碼。先前 pinned-header baseline 失敗未修。
+- Gemini 週0／reset未知可以顯示官方成功百分比，不會推算已恢復或抑制到永久；但目前帳號既有交接判定要求未來 reset，null 不因此啟動交接，由原生忠實回報。此現有行為未改為新的帳號／重試政策，另一帳號缺可靠窗口仍保守拒絕。第二帳號缺原始 stdout 的原因保留未知。
+- 06:30:16 官方仍拒絕（`38622774-3b9c-444e-8c8d-3bb3a57f8c6d`，0 input/tool）；等5分鐘後才單次新工程複查，未改本機 quota cache、換模或 API 路徑。原失敗及原生過期 reset 欄位完整保留，不能宣稱首試成功。
+- 證據集中 `D:\K-harness\.runtime\sidebar-capacity-build-20261009`：`clean-full-test.log`、`fixed-source-readback.json`、各 UI receipts、`review-after-reset`／`review-followup` 原始 JSONL 和結論。只給 Opus 工程封包／假資料截圖，不傳既有業務回覆內容。
+
+## 正式套用／讀回與停止
+
+- 臺灣06:49正式activate為 `5762d48913ca185e68dad1709197ccfe47c7dc67`，base仍是原正式f5e9e266，沒有覆蓋另一方新部署；兩邊單一部署者。上一版程式／啟動器在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791499740190`，對話資料不回退。
+- 替換前後 **97233** 個既有狀態／profiles／原生核心設定檔hash相同；非version／previous設定逐項不變，對話、登入、語音及工具位置保留。first preflight只讀hash過量並行EMFILE發生在activate之前，正式未動；保留失敗紀錄後同項讀回改32批次，沒有改產品或新增常駐驗證系統。
+- 臺灣06:50實際正式owner啟動，原生health200；未授權首頁／state403；新正式JS/CSS served bytes與disk SHA256相符。真正本機狀態配合authenticated built UI首頁：20聊天室，unreadable0，sortAt有效，0 POST／0 pageerror，未選取或resume任何聊天室、busy false，既有遺失回覆projection hash仍相同。
+- 正常close owner後驗證47831不可連線，**K維持關閉**。不恢復暫停工作、不重做StoreOps、小說或派工。此次是正式服務／built UI讀回，不宣稱本人Electron窗口與手機實機操作已驗收。
+- 本地`runtime.json`version及退版位置讀回完成；東區未更新。GitHub未push／tag：合併父版本含2026-10-08明确no push批次，本轮明說一起更新本機，不以一般SOP默認撤回。遠端main實查仍`f0d32ef263e71bced827d264bbaaa71f1f8132b1`；不是正式本機SHA。文件收尾提交另列，不混稱重部署程式。
