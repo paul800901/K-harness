@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-09：[使用者訊息一鍵複製](user-message-copy-20261009.md)：核對本人Codex截圖与K原碼，UserMessage少了既有CopyFeedback；窄補正常文字／引用／交接可讀複製，9個built UI案例通過，不改後端／OS權限／工作。正式K仍開啟，候選驗證／真Opus後等待更新；正式狀態以末段為準。
+
 - 2026-10-09：[Gemini 原生 disabled 額度正式修正](gemini-disabled-quota-20261009.md)：原生第二列 five_hour=disabled 被丟掉已修正，3bcdde04 正式套用；87/87、1088/1088、6 個 built UI／真 Opus／五帳號實查與正式畫面讀回通過，98774 保留檔一致；帳號還原，K維持關閉，不push／東區。
 
 - 2026-10-09：[排序預設＋附件-only整合正式更新](sidebar-manual-default-20261009.md#本人允許後的整合正式更新2026-10-09取代前文候選停等狀態)：本人允許後唯一部署者，6138b578正式套用與owner讀回完成；凍結1084/1084、整合built／真Opus通過，98756保留檔一致，失敗原文保留。K維持關閉、不恢復／重送、不push／更新東區；圖片側[紀錄](attachment-only-fix-20261009.md)同段收尾。
