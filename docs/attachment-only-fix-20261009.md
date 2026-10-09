@@ -33,3 +33,18 @@
 - 已停在待整合／上線候選。本人未再明確通知前，不執行發布；東區也未更新。
 
 證據：D:\K-harness\.runtime\attachment-only-fix-20261009（native.mjs、三家 candidate、ui、review、review-packet-readback.json、formal-unchanged.json）；工作樹 .runtime\attachment-only（focused-final.txt、full.txt、build-final.txt、ui-verified-all.txt）。
+
+## 本人允許後的整合正式更新（2026-10-09，取代前文候選停等狀態）
+
+- 本人最新明確允許「可以關掉，可以更新」；兩邊協調由「追查插話後最終回覆消失」單一部署者整合，peer确认無新增產品修改或阻擋。停止核對時47831不可連線，K桌面／Electron／K專用三核心工作程序均未執行；只有既有外部Chrome／瀏覽器助手保留，沒有強制結束或停止它們。
+- 以正式5762d489為基底，sidebar 4d621c5與peer附件95fba565重放92a9861，自動整合main.jsx無衝突；規則／文件併入後固定完整SHA **6138b578b20540dcfeaaa2cc47270d59cd4aba74**。root開發區原有dirty內容未reset或覆蓋，不是用舊root整包更新。未保存偏好預設依工作區＋manual；已保存recent／分組不變，舊環境需自行切一次手動，不宣稱現用設定已被遷移。
+- 從Git archive乾淨候選建置UI／擴充／C#啟動器；只複製現用已安裝相依的實體副本，未安裝／更新核心。建置後616個tracked檔逐位元一致；generator只產生extension-protocol換行差異，還原archive bytes，完整回歸後再次616/616核對。沒有部署指向退版位置的node_modules連結。
+- 整合版**完整序列1084/1084，0fail／0skip**；建置側欄延遲／唯讀導航三主題×兩尺寸6/6；實際桌面HTTP／SSE／假native與磁碟的manual/recent互切、送出／回覆／reload、新房尾端／上移及430px模式可見全部通過；三核心×1920／390附件-only六組全通過，包括空白／上傳中禁止、無字送圖、busy待送、歷史附件、清空queue文字及失敗圖檔保留。沒有用正式工作或圖片重送作驗證。
+- 真正Opus5.5整合複查：官方Claude.ai Pro／firstParty、CLI2.1.294，session **49aab930-51b2-4f62-8593-79c38c46b808**，actual claude-opus-5-5、9個Read/Grep、exit0／success／is_error=false；明確無阻擋。Astra自行檢查全diff、13份review封包與候選逐位元一致、616份tracked source、完整回歸／built結果；不把代理回覆當成驗收。
+- Opus非阻擋意見：已存recent保留、每次recent→manual捕捉當下且不恢復舊manual，均是明確契約並已說明；空白Claude steer原樣保存不順手改；Codex純圖steer**真原生回聲未特別實測**。Astra另讀原回聲程式以完整codexInput文字（含附件上下文）對應，非只比acceptedText，未发现阻擋但不升級為真原生驗證。多模型討論的原有未擷取附件拒絕仍由conversation-controller處理，不把一般原生圖片能力扩成討論。
+- 失敗保留：先用PowerShell5.1執行建置時，把Vite既有bundle警告的stderr誤当NativeCommandError；未動正式程式，改用本機既有PowerShell7完成，未安裝／改環境。第一次完整序列1083/1084，在未改動的browser-native-profiles等候新descriptor時失敗；原log clean-full-test.log完整保留。該檔重跑3/3，再同版本全測1084/1084；沒有放寬測試／timeout或改產品，不把推測的負載原因當已確認根因。前批並行native-wakeup失敗亦仍保留。
+- 正式activate成功，version **6138b578b20540dcfeaaa2cc47270d59cd4aba74**；上一版程式／啟動器 **D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791524572264**。98756個既有狀態／profiles／原生設定檔更新前後hash相同；非version／previous本機設定不變。這是程式退版，不把它當對話還原，也沒移動登入資料／模型或改計費。
+- 台灣13:44正式owner讀回：health200，未授權首頁／state403；新JS/CSS served bytes與正式磁碟SHA256相同；authenticated built首頁20聊天室、unreadable0，新的空白瀏覽器default grouped/manual模式文字實際可見；0 POST／0pageerror、selectedThread=null、busy=false，原遺失回覆projection hash仍相同。沒選取／resume／send任何現有聊天室，不恢復暫停小說或其他工作。這是正式owner／built UI，非本人Electron／實體手機觸控驗收。
+- 讀回後正常close，確認47831不可連線，**K保持關閉，已可重新開啟**。正式指標及退版位置已讀回；不push／打tag，不更新東區。之後docs收尾commit只記錄，不把它當再次部署程式SHA。
+
+本批完整證據：**D:/K-harness/.runtime/sidebar-attachment-deploy-20261009**（candidate.json、source.zip、fixed-source-readback.json、clean-full-test.log、clean-full-test-rerun.log、manual-ui/result.json、attachment-ui/result.json、review、acceptance.json、deployment-activation.json、deployment-preserved.json、formal-readback.json）。
