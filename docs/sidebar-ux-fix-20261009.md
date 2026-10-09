@@ -62,3 +62,11 @@
 - 臺灣06:50實際正式owner啟動，原生health200；未授權首頁／state403；新正式JS/CSS served bytes與disk SHA256相符。真正本機狀態配合authenticated built UI首頁：20聊天室，unreadable0，sortAt有效，0 POST／0 pageerror，未選取或resume任何聊天室、busy false，既有遺失回覆projection hash仍相同。
 - 正常close owner後驗證47831不可連線，**K維持關閉**。不恢復暫停工作、不重做StoreOps、小說或派工。此次是正式服務／built UI讀回，不宣稱本人Electron窗口與手機實機操作已驗收。
 - 本地`runtime.json`version及退版位置讀回完成；東區未更新。GitHub未push／tag：合併父版本含2026-10-08明确no push批次，本轮明說一起更新本機，不以一般SOP默認撤回。遠端main實查仍`f0d32ef263e71bced827d264bbaaa71f1f8132b1`；不是正式本機SHA。文件收尾提交另列，不混稱重部署程式。
+
+## 2026-10-09 12:41 Pick Me Up 再次回報：診斷，未追加產品變更
+
+- 本人回報 Pick Me Up 曾瞬間跳頂，暫記不清是點開前後或送出前後；只注意到此聊天室。不能以此宣稱所有房間退化，也不能以假資料通過否定現場回報。
+- 當時正式仍5762d48、K正在工作。只讀核對該房 K index sortAt=2026-10-09T04:33:36.528Z（臺灣12:33:36），與同房新 user UI timing createdAt完全一致；native對應task_started=04:33:36.560Z、同房有新user指令。這是新訊息活動推進的證據，不是重播歷史／點開寫mtime的證據；不把缺失的點擊時點猜成已知。
+- 原生coldopen／legacy錨點／metadata／manual/pin定向4/4。另以正式source及正式dist-ui，隔離fake state與fake native transport，跑真HTTP/API、真SSE、真持久檔與built DOM，依序觀察：初始末位、cold唯讀歷史、連線ready、切走再選回、reload，Pick排序位置及sortAt均不變且native turn/start=0；明確送出假新訊息後才升首位，turn/start=1；假完成回報後仍首位，無額外送出。不是只mock sidebar列表。0 pageerror。無真模型呼叫、無正式profile／業務寫入、未關閉或重啟K。
+- 未重現「僅點開就移位」，但本人原瞬間的確切時點仍未知。現行recent需求是新訊息／回覆會重新排序；若本人希望發言後仍保持固定位置，那是另一項排序取捨，未擅自改成固定或寫本人localStorage。
+- 本次僅診斷與記錄，無產品diff／部署／push／tag。證據 D:\K-harness\.runtime\sidebar-sort-followup-20261009\result.json、ui-probe.mjs；兩次fixture locator失敗（hidden textarea、送出按鈕實際名）完整保留，修測試selector後通過，沒有改產品／放寬判定。
