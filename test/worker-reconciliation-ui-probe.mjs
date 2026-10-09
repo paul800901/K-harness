@@ -39,7 +39,7 @@ try{
   const activity=page.locator('.worker-activity');
   await page.waitForFunction(()=>document.querySelector('.worker-activity')?.textContent.includes('子代理未結束'));
   const headerText=(await activity.textContent()).replace(/\s+/g,' ').trim();assert.doesNotMatch(headerText,/舊工單|持有中的未解工單|另一聊天室|原生已完成|假資料/);
-  await activity.click();const quick=page.getByRole('dialog',{name:'子代理狀態'});await quick.waitFor();assert.equal(await quick.locator('.worker-activity-row').count(),1,'quick view shows only current live-owner unknown row');await quick.getByText('owned-open-fixture',{exact:true}).waitFor();
+  await activity.click();const quick=page.getByRole('dialog',{name:'子代理狀態'});await quick.waitFor();assert.equal(await quick.locator('.worker-activity-row').count(),1,'quick view shows only current live-owner unknown row');const quickText=await quick.innerText();assert.match(quickText,/GPT-6\.1 Sol|gpt-6\.1-sol/);await quick.getByText('待確認',{exact:true}).waitFor();assert.doesNotMatch(quickText,/owned-open-fixture|持有中的未解工單|假資料|最近活動|分前/);
   await quick.getByRole('button',{name:'查看詳細',exact:true}).click();const panel=page.getByRole(width<700?'dialog':'complementary',{name:'成果與工作面板'});await panel.waitFor();
   assert.equal(await panel.locator('.worker-card').count(),4,'details retain current room task history');
   await panel.getByText('假資料：持有中的未解工單',{exact:true}).waitFor();

@@ -7,15 +7,25 @@ export function collectNativeWorkerIds(items){
 export async function checkNativeWorkers(host,parentThreadId,ids,{stop=false}={}){
  return Promise.all(ids.map(async threadId=>{
   const result={requestId:`codex:${threadId}`,threadId,provider:'codex',status:'unresolved',settled:false,outputFiles:[]};let lastReadAt;
+  const read=async()=>{
+   let thread=(await host.request('thread/read',{threadId,includeTurns:false}))?.thread;
+   if(!thread||thread.parentThreadId!==parentThreadId)return thread;
+   if(thread.historyMode==='paginated'){
+    // Latest native turn summary, not deprecated full-history hydration.
+    const page=await host.request('thread/turns/list',{threadId,limit:1,sortDirection:'desc',itemsView:'summary'});
+    return {...thread,turns:Array.isArray(page?.data)?page.data:[]};
+   }
+   return (await host.request('thread/read',{threadId,includeTurns:true}))?.thread;
+  };
   try{
-   let thread=(await host.request('thread/read',{threadId,includeTurns:true}))?.thread;
+   let thread=await read();
    if(!thread||typeof thread!=='object')return {...result,error:'原生子代理狀態讀回資料不完整。'};
    lastReadAt=new Date().toISOString();
    if(thread.parentThreadId!==parentThreadId)return {...result,lastReadAt,error:'原生子代理來源無法確認。'};
    const active=thread.turns?.findLast(t=>t.status==='inProgress');
    if(stop&&active){
     await host.request('turn/interrupt',{threadId,turnId:active.id});
-    thread=(await host.request('thread/read',{threadId,includeTurns:true}))?.thread;
+    thread=await read();
     if(!thread||typeof thread!=='object')throw Error('native thread readback was incomplete');
     lastReadAt=new Date().toISOString();
     if(thread.parentThreadId!==parentThreadId)return {...result,lastReadAt,error:'原生子代理來源無法確認。'};

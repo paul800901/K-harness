@@ -58,3 +58,45 @@ test('idle or notLoaded settles only explicit completed, interrupted, or failed 
   assert.equal(result.status,expected);assert.equal(result.settled,true);assert.equal(result.turnId,'child-turn');
  }
 });
+
+test('paginated workers read only the latest native turn summary and exclude completed history',async()=>{
+ const calls=[],ids=Array.from({length:96},(_,i)=>`child-${i}`);
+ const host={async request(method,p){calls.push({method,p});
+  if(method==='thread/read')return {thread:{id:p.threadId,parentThreadId:'parent',historyMode:'paginated',model:'gpt-6-luna',status:{type:'notLoaded'},turns:[]}};
+  if(method==='thread/turns/list')return {data:[{id:`turn-${p.threadId}`,status:'completed'}],nextCursor:null};
+  throw Error('unexpected mutation');
+ }};
+ const rows=await checkNativeWorkers(host,'parent',ids);
+ assert.equal(rows.length,96);assert.ok(rows.every(r=>r.settled&&r.status==='completed'&&r.model==='gpt-6-luna'));
+ assert.ok(calls.filter(c=>c.method==='thread/read').every(c=>c.p.includeTurns===false));
+ assert.ok(calls.filter(c=>c.method==='thread/turns/list').every(c=>c.p.limit===1&&c.p.sortDirection==='desc'&&c.p.itemsView==='summary'));
+});
+
+test('paginated stop rechecks ownership and exact latest turn after interrupt',async()=>{
+ const calls=[];let stopped=false;
+ const host={async request(method,p){calls.push({method,p});
+  if(method==='thread/read')return {thread:{id:p.threadId,parentThreadId:'parent',historyMode:'paginated',status:{type:stopped?'idle':'active'},turns:[]}};
+  if(method==='thread/turns/list')return {data:[{id:'latest-turn',status:stopped?'interrupted':'inProgress'}]};
+  if(method==='turn/interrupt'){stopped=true;return {};}
+  if(method==='thread/backgroundTerminals/list')return {data:[]};
+ }};
+ const [row]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
+ assert.equal(row.status,'cancelled');assert.equal(row.settled,true);
+ assert.deepEqual(calls.find(c=>c.method==='turn/interrupt').p,{threadId:'child',turnId:'latest-turn'});
+ assert.equal(calls.filter(c=>c.method==='thread/turns/list').length,2);
+});
+
+test('paginated missing, unknown, failed read and foreign ownership never become completed',async()=>{
+ for(const variant of ['empty','unknown','error','foreign']){
+  const calls=[];
+  const host={async request(method,p){calls.push(method);
+   if(method==='thread/read')return {thread:{parentThreadId:variant==='foreign'?'elsewhere':'parent',historyMode:'paginated',status:{type:'notLoaded'},turns:[{id:'stale',status:'completed'}]}};
+   if(method==='thread/turns/list'){if(variant==='error')throw Error('read failed');return {data:variant==='empty'?[]:[{id:'latest',status:'unknown'}]};}
+   throw Error('unexpected mutation');
+  }};
+  const [row]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
+  assert.equal(row.status,'unresolved',variant);assert.equal(row.settled,false,variant);
+  assert.equal(calls.includes('turn/interrupt'),false);
+  if(variant==='foreign')assert.equal(calls.includes('thread/turns/list'),false);
+ }
+});
