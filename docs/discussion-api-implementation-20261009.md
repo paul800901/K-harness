@@ -32,16 +32,26 @@
 - [Antigravity CLI](https://www.antigravity.google/docs/cli/features/)：本批 CLI 1.3.1、實際目錄的 Flash 3.8 low 出現 search_web、read_url_content、view_file。初次探測缺少目錄 variant，零模型回合即被拒絕；映射實際目錄後才測能力，不改模型 fallback。該次正文讀取被 K deny 拒絕，保留失敗證據，Ask 與 Allow 的優先序也不能做例外，保留兩次失敗；空 cwd 修後新原生回合成功 search_web／read_url_content／view_file，零工具錯誤。另用假原工作區檔案證實 headless 拒絕（該回合無最終文字，未冒充成功）。此網站部分原生抓取只有 HTML shell，模型明示用搜尋索引核對；工具接通不是完整正文／即時性的保證。
 - [OpenCode 搜尋接線](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/tool/websearch.ts)、[Exa 官方開源 MCP](https://github.com/exa-labs/exa-mcp-server)：採相同固定 hosted 入口，不照搬其供應商抽選／自動備援。2026-10-09 讀實際 tools/list：搜尋為 query + objective，讀頁為 urls + maxCharacters；不是照舊文件猜參數。
 - [Exa 官方權限／費用說明](https://exa.ai/docs/get-started/exa-mcp#authentication)：匿名免費限流；OAuth／Key／agent_run 是另一條路，本批未接。已直接用候選 K 的 reader 實測公開官方搜尋及正文，兩者成功、無 Key、未呼叫模型 API。
-- [Brave 官方 MCP](https://github.com/brave/brave-search-mcp-server)、[Tavily 官方 MCP](https://github.com/tavily-ai/tavily-mcp) 需另外搜尋 Key；[SearXNG MCP](https://github.com/ihor-sokoliuk/mcp-searxng) 需既有自架搜尋實例。不為本次安裝／維護服務或增加付費設定；先前詢問兩者偏好已被不需它們的官方匿名入口取代。
+- [Brave 官方 MCP](https://github.com/brave/brave-search-mcp-server)、[Tavily 官方 MCP](https://github.com/tavily-ai/tavily-mcp) 需另外搜尋 Key；[SearXNG MCP](https://github.com/ihor-sokoliuk/mcp-searxng) 需既有自架搜尋實例。本人中途回覆選自架 SearXNG 後，工程先暫停部署、只讀核對環境，未安裝服務；後續本人表示討論量不多，重新確認 Exa 方案。本次不安裝／維護搜尋服務或增加付費設定。
 
 ## 驗證與正式狀態
 - 假資料：本機 HTTP 假 API 實際收取 Chat Completions，要求讀原文，再收到工具原文與行號；追加問題保留必要 reasoning_content。
 - 隔離測試涵蓋秘密不入設定／回傳、目錄／metadata、名稱修改、active mutation、同名 API／native 路由、超範圍／秘密／junction／Windows ADS／裝置路徑拒絕、工具分片、未知寫工具拒絕、停止中斷、錯誤與截斷不重播。
 - 真 Windows **假 Key** 的保存、精確讀回、移除及不存在讀回已通過；未操作任何原有真實 Key。
-- 完整回歸、UI、真正 Opus 複查、固定來源建置及正式更新／Git 精確讀回將在收尾追加；未取得證據前不宣稱完成。私人執行證據留本機 `.runtime/discussion-api-implementation-20261009`，不發布。
+- 固定來源驗收及真正 Opus 複查結果見下方最新收尾；私人執行證據留本機 `.runtime/discussion-api-implementation-20261009`，不發布。
 
 ## 官方協定依據
 - [DeepSeek 模型目錄](https://api-docs.deepseek.com/api/list-models/)
 - [DeepSeek tool calls](https://api-docs.deepseek.com/guides/tool_calls/)
 - [DeepSeek thinking/tool reasoning 保留規則](https://api-docs.deepseek.com/guides/thinking_mode/)
 - [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling)
+
+## 候選驗收完成、依本人最新要求停止（2026-10-09）
+
+- 最後定案：三家訂閱優先原生搜尋、API 參與者使用 Exa；重要結論讀原始來源及交叉查證。本人已開啟 K，要求改好後先停；本段取代前文直接部署／push 的當時授權。
+- 固定程式來源：`73ccc767f50a237427e0e8107920231c3d9d6214`，包含 API 接線 `421c360a4611d4943570f75f821189be57e433bf` 與 Gemini 原生 TEMP 唯讀補修。獨立候選 `prepare-discussion-api-20261009-final` 的 UI／擴充／啟動器建置成功，完整序列回歸 **1102/1102**，測後 **634 個 archive 來源檔完全一致**。沿用已安裝相依，未安裝套件或升級核心。
+- built UI：API 設定／分組／同 ID 路由／Key 清除及不進 browser storage／遠端禁管理／開啟目錄更新 **9 項通過**；既有討論桌面／手機通過；使用者訊息複製 **9 組回歸通過**。假模型 API 證實參與者自主讀原文、獨立工具回合、網頁工具及歷史 reasoning 保留；尚未使用本人真 Key 呼叫模型 API。
+- Exa 候選 reader 已實際匿名搜尋及讀取公開官方正文成功；原生 Codex、Claude、Gemini 分別有實際搜尋／讀頁工具事件，不以模型自稱取代證據。這不是所有網站／問題的品質保證，也未實測付費 API 參與者的真模型行為。
+- 真正 Opus 5.5 經官方訂閱完成多輪只讀程式複查；搜尋接線複查 session `4da401d6-5e75-4572-afd2-93084f854416`、收尾 `30437814-76f6-46cf-84a3-4c28c045566f`、最終 TEMP 補修 `4dd19c95-7057-4b78-ba58-9b4d106936c0`，均無待處理阻擋缺陷。Astra 另核對實際程式、假資料測試、原始工具事件、固定來源及完整回歸。
+- Gemini 先前原生會隱式允許 TEMP 假檔讀取，補修後原生事件明確拒絕，brain 網頁暫存仍可讀；最後成功 session `6e05942f-28dc-408e-afd1-e75f1a19bdc2` 的實際 settings 已留讀回。`list_dir`／`grep_search` 有工具宣告但模型未呼叫，權限行為未驗；目錄被 `view_file` 拒絕是參數錯誤，不列為權限驗收。K state 若放在 TEMP 下可能安全側失敗，未擴張本次機制處理。
+- 正式 runtime 指標唯讀確認仍為 `1a45a73440a5f948c5cec625de02340863b7c67d`。**本批已完成候選，未部署、重啟、停止現行 K、push、排程更新或重播任何聊天室工作。** 尚無本批正式 owner／畫面讀回；待本人另行通知再處理上線。
