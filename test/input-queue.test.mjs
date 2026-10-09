@@ -271,3 +271,14 @@ test('idle native Claude goal allows the next explicit queued input to continue'
  const base=await root(),active=controller(),queue=queueFor(base,active);await queue.load('queue-session');
  try{active.state.goal={status:'active'};await queue.enqueue({text:'continue native goal'});await until(()=>active.calls.length===1);}finally{await queue.close();}
 });
+
+
+for(const busy of [true,false])test(`attachment-only queue send-now and text removal while ${busy?'busy':'idle'}`,async()=>{
+ const base=await root(),sent=[],active=controller({busy,steer:async input=>{sent.push(input);return {steered:true};},send:async input=>{sent.push(input);return {sent:true};}}),queue=queueFor(base,active);await queue.load('queue-session');
+ try{
+  await queue.pause();await assert.rejects(queue.enqueue({text:'   '}),/訊息/);
+  const row=await queue.enqueue({attachmentIds:['image']});await queue.action({id:row.id,action:'edit-start'});await queue.action({id:row.id,action:'edit-save',text:''});
+  await queue.action({id:row.id,action:'send-now'});assert.deepEqual(sent,[{text:'',attachmentIds:['image']}]);assert.deepEqual(queue.state.queuedMessages,[]);
+  const noFile=await queue.enqueue({text:'keep text'});await queue.action({id:noFile.id,action:'edit-start'});await assert.rejects(queue.action({id:noFile.id,action:'edit-save',text:''}),/訊息/);
+ }finally{await queue.close();}
+});

@@ -280,3 +280,16 @@ test('cold Gemini history is exposed before prepare and open preserves activity 
   }finally{await reopened.close();}
  }finally{await f.controller.close();}
 });
+
+
+test('Gemini accepts attachment-only input through native file references',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({model:'gemini-3.8-flash',effort:'low'});
+  for(const input of [{text:''},{text:'   '},{text:null,attachmentIds:['fake']},{text:'x'.repeat(32001),attachmentIds:['fake']}])await assert.rejects(f.controller.send(input),/訊息/);
+  const image=await f.controller.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
+  await assert.rejects(f.controller.send({text:'',attachmentIds:['missing']}));assert.equal(f.calls.length,0);
+  await f.controller.send({attachmentIds:[image.id]});await finish(f.controller);
+  assert.equal(f.calls.length,1);const prompt=f.calls[0].args[1];assert.ok(prompt.startsWith('\n\n附件'));assert.match(prompt,/pixel\.png/);
+  const user=f.controller.state.messages.find(m=>m.role==='user');assert.equal(user.text,'');assert.equal(user.attachments.length,1);assert.equal(f.controller.state.title,'pixel.png');
+ }finally{await f.controller.close();}
+});

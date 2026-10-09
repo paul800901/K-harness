@@ -36,7 +36,7 @@ export function createInputQueue({root,getController,onChange=()=>{}}){
  const api={
   get state(){const s=getController().state;return {queuedMessages:rows.map(r=>({...r,...editingWrites.get(r)})),queuePaused:paused,queueWaitingReason:rows.length&&hasWorkers(s)?'等待子代理完成':null};},
   async load(id){clearTimeout(timer);await chain;threadId=id;rows=[];paused=false;if(id){try{const saved=JSON.parse(await readFile(file(id),'utf8'));rows=(saved.rows??[]).map(r=>({...r,status:r.status==='sending'?'uncertain':r.status}));paused=rows.length>0;}catch(e){if(e.code!=='ENOENT')throw e;}}notify();},
-  async enqueue({text,attachmentIds=[]}){if(typeof text!=='string'||!text.trim()||text.length>32000)throw Error('請輸入 1–32000 字元的訊息。');if(!threadId||getController().state.threadId!==threadId)throw Error('請先開啟對話。');if(!Array.isArray(attachmentIds)||attachmentIds.some(x=>typeof x!=='string'))throw Error('附件格式無效。');const row={id:randomUUID(),text,attachmentIds,createdAt:new Date().toISOString(),status:'queued'};rows.push(row);try{await save();}catch(e){rows=rows.filter(r=>r!==row);throw e;}notify();api.schedule();return {queued:true,id:row.id};},
+  async enqueue({text='',attachmentIds=[]}){if(typeof text!=='string'||text.length>32000||(!text.trim()&&(!Array.isArray(attachmentIds)||!attachmentIds.length)))throw Error('請輸入 1–32000 字元的訊息。');if(!threadId||getController().state.threadId!==threadId)throw Error('請先開啟對話。');if(!Array.isArray(attachmentIds)||attachmentIds.some(x=>typeof x!=='string'))throw Error('附件格式無效。');const row={id:randomUUID(),text,attachmentIds,createdAt:new Date().toISOString(),status:'queued'};rows.push(row);try{await save();}catch(e){rows=rows.filter(r=>r!==row);throw e;}notify();api.schedule();return {queued:true,id:row.id};},
   schedule(){if(closed||timer)return;timer=setTimeout(()=>{timer=null;if(ready())void deliver(rows[0]).catch(()=>{});},100);},
   async action({id,action,text}){
    if(action==='resume'){if(rows.some(r=>r.status==='uncertain'))throw Error('有送出未確認的訊息，請先查明並移除該筆。');const s=getController().state;if(!['ready','completed','working','failed','interrupted'].includes(s.status))throw Error(`目前對話狀態「${s.status}」無法繼續排隊。`);paused=false;await save();notify();api.schedule();return {resumed:true};}
@@ -44,7 +44,7 @@ export function createInputQueue({root,getController,onChange=()=>{}}){
    if(editingWrites.has(row))throw Error('這則訊息正在儲存，請稍候。');
    if(['edit-start','edit-save','edit-cancel'].includes(action)){
     if(row.status!==(action==='edit-start'?'queued':'editing'))throw Error('只能編輯尚未送出的待送訊息。');
-    if(action==='edit-save'&&(typeof text!=='string'||!text.trim()||text.length>32000))throw Error('請輸入 1–32000 字元的訊息。');
+    if(action==='edit-save'&&(typeof text!=='string'||text.length>32000||(!text.trim()&&!row.attachmentIds?.length)))throw Error('請輸入 1–32000 字元的訊息。');
     const before={text:row.text,status:row.status};editingWrites.set(row,before);
     row.status=action==='edit-start'?'editing':'queued';if(action==='edit-save')row.text=text;
     try{await save();}catch(error){Object.assign(row,before);throw error;}finally{editingWrites.delete(row);}

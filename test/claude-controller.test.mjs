@@ -1350,3 +1350,16 @@ test('cold Claude history is exposed before host connection and opening never bu
   }finally{await reopened.close();}
  }finally{await c.close();}
 });
+
+
+test('Claude sends and steers image-only content with no empty text block',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.controller.open({});
+  for(const input of [{text:''},{text:'   '},{text:null,attachmentIds:['fake']},{text:'x'.repeat(32001),attachmentIds:['fake']}])await assert.rejects(f.controller.send(input),/訊息/);
+  const image=await f.controller.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
+  await assert.rejects(f.controller.send({text:'',attachmentIds:['missing']}));assert.equal(f.host.startCalls.length,0);
+  await f.controller.send({attachmentIds:[image.id]});await f.controller.steer({text:'   ',attachmentIds:[image.id]});
+  assert.equal(f.host.startCalls.length,2);for(const content of f.host.startCalls){assert.equal(content.length,1);assert.equal(content[0].type,'image');}
+  assert.deepEqual(f.controller.state.messages.filter(m=>m.role==='user'&&m.attachments.length).map(m=>m.text),['','   ']);assert.equal(f.controller.state.title,'pixel.png');
+ }finally{await f.controller.close();}
+});

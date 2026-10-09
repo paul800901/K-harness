@@ -744,3 +744,21 @@ test('cold Codex history is exposed before native resume and metadata saves pres
   await f.c.send({text:'new activity'});assert.ok((await listMainSessions(f.root)).sessions[0].sortAt>=before);
  }finally{await f.c.close();}
 });
+
+
+test('Codex sends and steers attachment-only input without inventing user text',async()=>{
+ const f=await fixture();try{
+  const {threadId}=await f.c.open({model:'gpt-6-astra'});
+  for(const input of [{text:''},{text:'   '},{text:null,attachmentIds:['fake']},{text:'x'.repeat(32001),attachmentIds:['fake']}])await assert.rejects(f.c.send(input),/訊息/);
+  const image=await f.c.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
+  await assert.rejects(f.c.send({text:'',attachmentIds:['missing']}));
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+  await f.c.send({attachmentIds:[image.id]});
+  const send=f.calls.findLast(c=>c.method==='turn/start');assert.equal(send.p.input[1].type,'localImage');assert.ok(send.p.input[0].text.startsWith('\n\n<K_ATTACHMENT_CONTEXT>'));
+  assert.equal(f.c.state.messages.find(m=>m.role==='user').text,'');assert.equal(f.c.state.title,'pixel.png');
+  const prior=f.host.request;f.host.request=async(method,p)=>{if(method==='turn/steer'){f.calls.push({method,p});return {turnId:p.expectedTurnId};}return prior(method,p);};
+  await assert.rejects(f.c.steer({text:'   '}),/修正/);
+  await f.c.steer({text:'',attachmentIds:[image.id]});
+  const steer=f.calls.findLast(c=>c.method==='turn/steer');assert.equal(steer.p.input[1].type,'localImage');assert.equal(f.calls.filter(c=>c.method==='turn/start').length,1);
+ }finally{await f.c.close();}
+});

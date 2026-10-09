@@ -801,10 +801,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    }
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },
-  async send({text,attachmentIds=[],effort,accessMode,permissionConfirmed}){
+  async send({text='',attachmentIds=[],effort,accessMode,permissionConfirmed}){
    let attempted=false;
    try{
-   if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的訊息。');
+   if(typeof text!=='string'||text.length>32000||(!text.trim()&&(!Array.isArray(attachmentIds)||!attachmentIds.length)))throw new Error('請輸入 1–32000 字元的訊息。');
    if(!host||opening||closing||stopping||state.busy||state.goalPending||submission||!['ready','completed','interrupted','failed'].includes(state.status)){throw new Error('請先開啟對話，或等待目前工作結束。');}
    // Flash is optional. Its connection state is shown separately and must not
    // block direct Codex work or native GPT subagents.
@@ -839,13 +839,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      state.lastUsedModel=state.model;state.effort=turnEffort??null;state.accessMode=access;
     }
     catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected){state.busy=false;e.notSent=true;}state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
-    {try{const title=state.title||text.trim().slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges},{activityAt:sentMessage.createdAt});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
+    {try{const title=state.title||(text.trim()||attachments[0]?.name||'').slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges},{activityAt:sentMessage.createdAt});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
    }finally{finishSubmission();submission=null;changed();void deliverFlashResults();}
    }catch(error){if(!attempted)error.notSent=true;throw error;}
   },
-  async steer({text,attachmentIds=[]}){
-   if(typeof text!=='string'||!text.trim()||text.length>32000)throw new Error('請輸入 1–32000 字元的修正內容。');
+  async steer({text='',attachmentIds=[]}){
+   if(typeof text!=='string'||text.length>32000||(!text.trim()&&(!Array.isArray(attachmentIds)||!attachmentIds.length)))throw new Error('請輸入 1–32000 字元的修正內容。');
    if(!Array.isArray(attachmentIds)||attachmentIds.some(id=>typeof id!=='string'))throw new Error('附件格式無效。');
    if(!host||!state.threadId||!state.busy||!turnId||opening||closing||stopping||pendingSteer)throw new Error('目前沒有可修正的執行中回合。');
    const expected=turnId,activeHost=host,threadId=state.threadId,acceptedText=text.trim(),attempt={turnId:expected,inputText:null,itemId:null};pendingSteer=attempt;
