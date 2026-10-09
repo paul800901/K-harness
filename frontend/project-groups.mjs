@@ -20,6 +20,12 @@ export function sortSessions(sessions,{sort='recent',order=[]}={}) {
   });
 }
 
+export function completeSessionOrder(order,sessions) {
+  const known=new Set(order);
+  const added=sortSessions(sessions.filter(isVisibleMainSession)).filter(s=>!known.has(s.threadId)).map(s=>s.threadId);
+  return added.length?[...order,...added]:order;
+}
+
 export function moveSessionOrder(order,sessions,visibleSessions,threadId,direction) {
   const complete=sortSessions(sessions,{sort:'manual',order}).map(s=>s.threadId);
   const visible=sortSessions(visibleSessions,{sort:'manual',order});

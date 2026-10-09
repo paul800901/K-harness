@@ -27,7 +27,7 @@ import {conversationPreview} from '../shared/conversation-preview.mjs';
 import {useCompletionAttention} from './completion-attention.jsx';
 import {QueuedMessages} from './queued-messages.jsx';
 import {workspaceName,sameWorkspace} from './workspace.jsx';
-import {projectKey,isVisibleMainSession,moveSessionOrder,searchSessions,sortSessions} from './project-groups.mjs';
+import {projectKey,isVisibleMainSession,completeSessionOrder,moveSessionOrder,searchSessions,sortSessions} from './project-groups.mjs';
 import {AppearanceSettings} from './appearance.jsx';
 import {applyAppearance,readAppearance,saveAppearance,readTheme,saveTheme} from './appearance.mjs';
 import {groupConversationMessages,elapsedConversationMs,formatElapsed} from '../shared/conversation-groups.mjs';
@@ -159,7 +159,7 @@ function App(){
   const [appearance,setAppearance]=useState(()=>readAppearance());
  const [nativeRefresh,setNativeRefresh]=useState(0);
  useEffect(()=>{applyAppearance(saveAppearance(appearance));},[appearance]);
- const [receivedState,setState]=useState({messages:[],status:'idle'}),[sessions,setSessions]=useState([]),[projects,setProjects]=useState([]),[online,setOnline]=useState(false),[loginRequired,setLoginRequired]=useState(false),[connecting,setConnecting]=useState(remoteClient),[error,setError]=useState(''),[notice,setNotice]=useState(''),[archiveMessage,setArchiveMessage]=useState(''),[busy,setBusy]=useState(false),[sidebar,setSidebar]=useState(()=>!narrowScreen()),[inspector,setInspector]=useState(false),[panel,setPanel]=useState('artifacts'),[panelTabsByThread,setPanelTabsByThread]=useState(()=>({['']:['artifacts']})),[browserInfo,setBrowserInfo]=useState(null),[modal,setModal]=useState(null),[models,setModels]=useState([]),[uploadsByThread,setUploadsByThread]=useState({}),[effort,setEffort]=useState(''),[accessMode,setAccessMode]=useState('workspace-write'),[theme,setTheme]=useState(()=>readTheme()),[sidebarLayout,setSidebarLayout]=useState(()=>readSidebarPreference('k-sidebar-layout','grouped',['grouped','flat'])),[sidebarSort,setSidebarSort]=useState(()=>readSidebarPreference('k-sidebar-sort','recent',['recent','manual'])),[manualOrder,setManualOrder]=useState(()=>readSidebarOrder()),[panelWidth,setPanelWidth]=useState(null);
+ const [receivedState,setState]=useState({messages:[],status:'idle'}),[sessions,setSessions]=useState([]),[projects,setProjects]=useState([]),[online,setOnline]=useState(false),[loginRequired,setLoginRequired]=useState(false),[connecting,setConnecting]=useState(remoteClient),[error,setError]=useState(''),[notice,setNotice]=useState(''),[archiveMessage,setArchiveMessage]=useState(''),[busy,setBusy]=useState(false),[sidebar,setSidebar]=useState(()=>!narrowScreen()),[inspector,setInspector]=useState(false),[panel,setPanel]=useState('artifacts'),[panelTabsByThread,setPanelTabsByThread]=useState(()=>({['']:['artifacts']})),[browserInfo,setBrowserInfo]=useState(null),[modal,setModal]=useState(null),[models,setModels]=useState([]),[uploadsByThread,setUploadsByThread]=useState({}),[effort,setEffort]=useState(''),[accessMode,setAccessMode]=useState('workspace-write'),[theme,setTheme]=useState(()=>readTheme()),[sidebarLayout,setSidebarLayout]=useState(()=>readSidebarPreference('k-sidebar-layout','grouped',['grouped','flat'])),[sidebarSort,setSidebarSort]=useState(()=>readSidebarPreference('k-sidebar-sort','manual',['recent','manual'])),[manualOrder,setManualOrder]=useState(()=>readSidebarOrder()),[panelWidth,setPanelWidth]=useState(null);
  const [navigationTarget,setNavigationTarget]=useState(null);
  const state=navigationTarget&&(!receivedState.connectionOpening||receivedState.threadId!==navigationTarget.threadId)?{...receivedState,...conversationPreview(navigationTarget,receivedState.threadId===navigationTarget.threadId?receivedState:undefined)}:receivedState;
  useEffect(()=>{if(navigationTarget?.settled&&receivedState.threadId===navigationTarget.threadId&&!receivedState.connectionOpening)setNavigationTarget(null);},[navigationTarget,receivedState.threadId,receivedState.connectionOpening]);
@@ -225,6 +225,7 @@ function App(){
  useEffect(()=>{if(state.busy)setNotice('');},[state.busy]);
  useEffect(()=>{const root=document.documentElement;root.dataset.theme=saveTheme(theme);document.querySelector('meta[name="theme-color"]')?.setAttribute('content',getComputedStyle(root).getPropertyValue('--k-desk').trim());},[theme]);
  useEffect(()=>{try{localStorage.setItem('k-sidebar-layout',sidebarLayout);localStorage.setItem('k-sidebar-sort',sidebarSort);}catch{}},[sidebarLayout,sidebarSort]);
+ useLayoutEffect(()=>{if(sidebarSort==='manual')setManualOrder(order=>completeSessionOrder(order,sessions));},[sidebarSort,sessions]);
  useEffect(()=>{try{localStorage.setItem('k-sidebar-manual-order',JSON.stringify(manualOrder));}catch{}},[manualOrder]);
 
  const upload=async files=>{
@@ -273,6 +274,7 @@ function App(){
  const moveToWorkspace=(session,workspace)=>action(async()=>{await api('workspace/move',{threadId:session.threadId,workspace});setModal(null);await refresh();});
  const moveConversation=(session,list,direction)=>setManualOrder(order=>moveSessionOrder(order,sessions.filter(s=>isVisibleMainSession(s)&&!s.archived),list,session.threadId,direction));
   const chooseView=(setter,value)=>{setter(value);viewMenu.close();};
+  const chooseSort=value=>{if(value==='manual'&&sidebarSort!=='manual')setManualOrder(completeSessionOrder([],sessions));setSidebarSort(value);viewMenu.close();};
   const openPanel=id=>{setPanelTabs(tabs=>tabs.includes(id)?tabs:[...tabs,id]);setPanel(id);panelMenu.close();};
   const closePanel=(id,{dismiss=true}={})=>{if(id==='artifacts')return;if(dismiss&&id.startsWith('browser:')){const threadId=stateRef.current.threadId??'',closed=dismissedBrowserPages.current.get(threadId)??new Set(),pageId=id==='browser:current'?browserInfo?.selectedPageId:id.slice('browser:'.length);if(pageId)closed.add(pageId);dismissedBrowserPages.current.set(threadId,closed);}const index=panelTabs.indexOf(id),remaining=panelTabs.filter(tab=>tab!==id);setPanelTabs(remaining);if(panel===id)setPanel(remaining[Math.max(0,index-1)]??'artifacts');};
   const addBrowserPanel=()=>{dismissedBrowserPages.current.delete(stateRef.current.threadId??'');const browserTabs=panelTabs.filter(id=>id.startsWith('browser:'));if(browserTabs.length){setPanel(browserTabs.at(-1));}else openPanel('browser:current');panelMenu.close();};
@@ -291,14 +293,14 @@ function App(){
    <div className="workspace-heading"><span>工作區</span>
      <IconButton title="搜尋對話" onClick={()=>setModal({type:'search',query:''})}><Search size={16}/></IconButton>
      <div className="view-control">
-      <IconButton title="檢視選項" aria-expanded={viewMenu.open} ref={viewMenu.trigger} popoverTarget={viewMenu.id} aria-controls={viewMenu.id}><SlidersHorizontal size={16}/></IconButton>
+      <IconButton className="icon-button sidebar-sort-button" title={`檢視選項：${sidebarSort==='manual'?'手動排序':'最近訊息'}`} aria-expanded={viewMenu.open} ref={viewMenu.trigger} popoverTarget={viewMenu.id} aria-controls={viewMenu.id}><SlidersHorizontal size={16}/><span>{sidebarSort==='manual'?'手動排序':'最近訊息'}</span></IconButton>
       <div ref={viewMenu.popup} id={viewMenu.id} popover="auto" onToggle={viewMenu.onToggle} className="sidebar-view-popover anchored-popover" aria-label="檢視選項">
        <strong>分組方式</strong>
        <button aria-pressed={sidebarLayout==='grouped'} onClick={()=>chooseView(setSidebarLayout,'grouped')}>{sidebarLayout==='grouped'&&<Check size={14}/>}依工作區</button>
        <button aria-pressed={sidebarLayout==='flat'} onClick={()=>chooseView(setSidebarLayout,'flat')}>{sidebarLayout==='flat'&&<Check size={14}/>}單一清單</button>
        <span className="view-divider"/><strong>排序方式</strong>
-       <button aria-pressed={sidebarSort==='recent'} onClick={()=>chooseView(setSidebarSort,'recent')}>{sidebarSort==='recent'&&<Check size={14}/>}最近使用</button>
-       <button aria-pressed={sidebarSort==='manual'} onClick={()=>chooseView(setSidebarSort,'manual')}>{sidebarSort==='manual'&&<Check size={14}/>}手動排序</button>
+       <button aria-pressed={sidebarSort==='recent'} onClick={()=>chooseSort('recent')}>{sidebarSort==='recent'&&<Check size={14}/>}最近訊息</button>
+       <button aria-pressed={sidebarSort==='manual'} onClick={()=>chooseSort('manual')}>{sidebarSort==='manual'&&<Check size={14}/>}手動排序</button>
        {sidebarSort==='manual'&&<small>在對話選單中使用「上移／下移對話」調整順序。</small>}
       </div>
      </div>

@@ -52,3 +52,5 @@
 
 .project-row.workspace-drop-target{background:var(--k-hover);outline:2px solid var(--k-brass);outline-offset:-2px;border-radius:8px}
 .session[draggable="true"]{cursor:grab}
+
+.workspace-heading .sidebar-sort-button{display:flex;align-items:center;gap:4px;padding:5px 6px;white-space:nowrap;font-size:var(--k-text-xs)}

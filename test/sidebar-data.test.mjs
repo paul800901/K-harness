@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {groupProjectSessions,isVisibleMainSession,moveSessionOrder,searchSessions,sortSessions} from '../frontend/project-groups.mjs';
+import {completeSessionOrder,groupProjectSessions,isVisibleMainSession,moveSessionOrder,searchSessions,sortSessions} from '../frontend/project-groups.mjs';
 
 const projects=[{path:'D:\\A',name:'音訊'},{path:'D:\\B',name:'研究'},{path:'D:\\C',name:'已封存工作區',archived:true}];
 const sessions=[
@@ -50,4 +50,25 @@ test('manual movement swaps only within the visible list and keeps pin order con
   assert.deepEqual(sortSessions(all,{sort:'manual',order:cannotCrossPin}).map(s=>s.threadId),['b','a','c','e']);
   const flat=sortSessions(all,{sort:'manual',order:['b','a','c','e']});
   assert.deepEqual(sortSessions(all,{sort:'manual',order:moveSessionOrder(['b','a','c','e'],all,flat,'c',-1)}).map(s=>s.threadId),['b','c','a','e']);
+});
+
+test('manual bootstrap captures the current order once and activity cannot move existing rooms',()=>{
+  const order=completeSessionOrder([],sessions);
+  assert.deepEqual(order,['b','c','a','e','d']);
+  const changed=sessions.map(s=>s.threadId==='e'?{...s,sortAt:'2026-10-09T12:00:00Z'}:s);
+  assert.strictEqual(completeSessionOrder(order,changed),order);
+  assert.deepEqual(groupProjectSessions(projects,changed,{sort:'manual',order}).map(p=>p.sessions.map(s=>s.threadId)),[['b','a','e'],['c']]);
+  assert.deepEqual(groupProjectSessions(projects,changed,{sort:'recent'}).map(p=>p.sessions.map(s=>s.threadId)),[['b','e','a'],['c']]);
+  assert.deepEqual(completeSessionOrder([],changed),['b','e','c','a','d']);
+});
+
+test('manual order appends new main rooms and retains archived or temporarily absent positions',()=>{
+  const order=['absent','e','d','b','a','c'];
+  const branch={threadId:'branch',parentThreadId:'a',branchType:'user',workspace:'D:\\A',sortAt:'2026-10-09T12:00:00Z'};
+  const fresh={threadId:'new',workspace:'D:\\A',sortAt:'2026-10-09T13:00:00Z'};
+  const complete=completeSessionOrder(order,[...sessions,branch,fresh]);
+  assert.deepEqual(complete,[...order,'new','branch']);
+  const later=[...sessions.map(s=>s.threadId==='d'?{...s,archived:false}:s),branch,{...fresh,sortAt:'2026-10-10T00:00:00Z'}];
+  assert.strictEqual(completeSessionOrder(complete,later),complete);
+  assert.deepEqual(groupProjectSessions(projects,later,{sort:'manual',order:complete}).map(p=>p.sessions.map(s=>s.threadId)),[['b','e','a','new','branch'],['d','c']]);
 });
