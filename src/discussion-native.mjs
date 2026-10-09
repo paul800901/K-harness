@@ -48,6 +48,9 @@ export async function openDiscussionSession({root,workspace,selection,executable
    // native Ask (headless denial). Only this session's web artifacts are allowed.
    identity.cwd=path.join(identity.home,'workspace');await mkdir(identity.cwd,{recursive:true});
    const settings=geminiSettings(identity.cwd,'read-only',temps);
+   // Native agy implicitly allows %TEMP% reads even outside cwd. A real fake-
+   // file probe confirmed it; exclude the original user temp directories.
+   settings.permissions.deny.push(...[...new Set(temps.filter(Boolean).map(dir=>path.resolve(dir)))].map(dir=>`read_file(${dir})`));
    settings.permissions.allow.push(`read_file(${path.join(identity.home,'.gemini/antigravity-cli/brain')})`);
    await atomicWrite(path.join(identity.home,'.gemini/antigravity-cli/settings.json'),JSON.stringify(settings));
    await atomicWrite(path.join(identity.home,'.gemini/config/mcp_config.json'),'{"mcpServers":{}}');
