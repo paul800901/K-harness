@@ -9,6 +9,7 @@ export function geminiQuotaWindows(text=''){
  const periods={'Weekly Limit Remaining':{key:'seven_day',label:'每週',minutes:10080},'Five Hour Limit Remaining':{key:'five_hour',label:'5 小時',minutes:300}};
  return text.split(/\r?\n/u).flatMap(line=>{
   const [group,label,remaining,reset]=line.split('\t'),period=periods[label];
+  if(group==='Gemini Models'&&period&&remaining==='disabled')return [{...period,disabled:true,remainingPercent:null,resetsAt:null}];
   const percent=typeof remaining==='string'&&/^\d+(?:\.\d+)?%$/u.test(remaining)?Number(remaining.slice(0,-1)):NaN,resetsAt=Date.parse(reset)/1000;
   return group==='Gemini Models'&&period&&Number.isFinite(percent)&&percent>=0&&percent<=100?[{...period,remainingPercent:percent,resetsAt:Number.isFinite(resetsAt)?resetsAt:null}]:[];
  });
@@ -48,7 +49,7 @@ export function createGeminiLogin({cwd,env=process.env,executable,run=geminiProc
     catch{return {...base,auth:{status:'unknown'},reason:'無法確認登入狀態，請稍後刷新。'};}
     const checkedAt=new Date().toISOString();
     const windows=geminiQuotaWindows(report.stdout);
-    const confirmed=report.code===0&&!report.reason&&!report.cleanupError&&windows.length>0;
+    const confirmed=report.code===0&&!report.reason&&!report.cleanupError&&windows.some(w=>Number.isFinite(w.remainingPercent));
     if(confirmed)return {...base,auth:{status:'authenticated',loggedIn:true,checkedAt},quota:{status:'ready',checkedAt,windows},reason:'已登入 Antigravity 訂閱，官方帳號查詢成功。'};
     const diagnostic=`${report.stdout}\n${report.stderr}`;
     const temporaryFailure=!report.cleanupError&&(report.reason==='timeout'||/\bcode 503\b|\b503 Service Unavailable\b|\bnetwork timeout\b/iu.test(diagnostic));

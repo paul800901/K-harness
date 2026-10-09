@@ -46,7 +46,7 @@ export function UsageDetails({state,online}){
   }catch(e){setError(e.message);}finally{setRefreshing(false);}
  }
  const gemini=usage?.gemini,geminiAccounts=gemini?.accounts??[];
- const quotaLine=(windows,key)=>{const item=windows?.find(w=>w.key===key);return item?.remainingPercent==null?'—':`${item.remainingPercent}%`;};
+ const quotaLine=(windows,key)=>quotaPercent(windows?.find(w=>w.key===key));
  return <section className="usage-details" aria-label="額度與用量詳細資訊">
   <div className="usage-toolbar"><span>剩餘額度 · 同一帳號的對話共用</span><button type="button" title="更新額度與用量" aria-label="更新額度與用量" disabled={refreshing||!online} onClick={refresh}><RefreshCw size={15}/>{refreshing?'查詢中…':'更新額度'}</button></div>{error&&<p role="alert" className="usage-note">{error}</p>}{notice&&<p role="status" className="usage-note">{notice}</p>}
   <section className="usage-provider-section" aria-label="Claude 訂閱剩餘額度">
@@ -73,16 +73,16 @@ export function UsageDetails({state,online}){
    {geminiAccounts.length?<>
     <div className="gemini-usage-accounts">{geminiAccounts.map(account=><details className="gemini-usage-account" key={account.id} data-account-id={account.id}>
      <summary>
-      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{quotaIsHistorical(account.quota,online)?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span>{weeklyQuotaNote(account.quota,online)&&<span>{weeklyQuotaNote(account.quota,online)}</span>}</span><span className="gemini-usage-status">{account.quota?.checkedAt?`上次實查 ${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}</span></span>
+      <span className="gemini-usage-identity"><strong>{account.email||'未確認帳號'}</strong><span className="gemini-usage-status">{account.id===gemini.accountId&&<span className="usage-current">目前使用</span>}<span>{account.auth?.status==='authenticated'?'已驗證登入':account.auth?.status==='signed-out'?'未登入':'尚未確認'}{quotaIsHistorical(account.quota,online)?' · 目前額度待查詢':''}{account.quota?.status==='unavailable'?' · 尚無可用額度資料':''}</span>{weeklyQuotaNote(account.quota,online)&&<strong className="usage-exhausted">{weeklyQuotaNote(account.quota,online)}；等待重設</strong>}</span><span className="gemini-usage-status">{account.quota?.checkedAt?`上次實查 ${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚無查詢時間'}</span></span>
       <span className="gemini-usage-value">每週 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'seven_day')}</b></span>
       <span className="gemini-usage-value">5 小時 <b>{quotaIsHistorical(account.quota,online)?'—':quotaLine(account.quota?.windows,'five_hour')}</b></span>
       <span className="usage-expand" aria-hidden="true">⌄</span>
      </summary>
      <div className="usage-timestamps"><span>{account.quota?.checkedAt?`上次查詢：${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚未查詢額度。'}</span>{(account.quota?.windows??[]).map(w=><span key={w.key}>{quotaIsHistorical(account.quota,online)?'上次回報・':''}{w.label||(w.key==='seven_day'?'每週':'5 小時')}：{quotaPercent(w)}；重設時間：{quotaReset(w)}</span>)}</div>
     </details>)}</div>
-    <p className="usage-note">百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。人工更新會在 Gemini 閒置時查詢全部帳號，再切回原帳號。自動查詢略過歸零帳號；全部帳號實查歸零後最早重設到期會重查全部。工作中不切換。</p>
+    <p className="usage-note">每週或 5 小時任一額度用完，仍須等待該項重設；另一項 100% 不代表可繼續工作。「未啟用」是官方回報該限制 disabled，不是 0% 或未知。百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。人工更新會在 Gemini 閒置時查詢全部帳號，再切回原帳號。自動查詢略過歸零帳號；全部帳號實查歸零後最早重設到期會重查全部。工作中不切換。</p>
    </>:<>
-    <div className="quota-line">{gemini?.windows?.length?gemini.windows.map(w=><span key={w.key}>{windowName(w)} <b>{w.remainingPercent==null?'—':`${w.remainingPercent}%`}</b></span>):<span>{gemini?.note??'尚未取得官方額度。'}</span>}</div>
+    <div className="quota-line">{gemini?.windows?.length?gemini.windows.map(w=><span key={w.key}>{windowName(w)} <b>{quotaPercent(w)}</b></span>):<span>{gemini?.note??'尚未取得官方額度。'}</span>}</div>
     <p className="usage-note">{!online||gemini?.status==='stale'?'舊資料，等待更新。':'約每分鐘更新；額度歸零時等待官方重設。'}直接查詢 Antigravity 官方額度，不以 Token 推算。</p>
     <details className="usage-more"><summary>查詢與重設時間</summary><div className="usage-timestamps"><span>{gemini?.checkedAt?`上次取得：${new Date(gemini.checkedAt).toLocaleString('zh-TW')}`:'尚未取得官方額度。'}</span>{(gemini?.windows??[]).map(w=><span key={w.key}>{windowName(w)}重設：{w.resetsAt?new Date(w.resetsAt*1000).toLocaleString('zh-TW'):'官方未提供'}</span>)}</div></details>
    </>}

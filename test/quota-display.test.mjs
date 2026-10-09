@@ -33,3 +33,11 @@ test('weekly exhaustion is dated evidence and never rewrites the independent fiv
  const now=Date.parse('2026-10-09T05:30:00+08:00'),quota={status:'ready',checkedAt:'2026-10-09T04:56:00+08:00',windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000+3600},{key:'five_hour',remainingPercent:100,resetsAt:null}]};const original=structuredClone(quota);assert.equal(weeklyQuotaNote(quota,true,now),'上次實查：每週額度已用完');assert.equal(quotaPercent(quota.windows[1]),'100%');assert.equal(quotaReset(quota.windows[1]),'官方未提供');assert.deepEqual(quota,original);
  for(const status of ['stale','unavailable'])assert.equal(weeklyQuotaNote({...quota,status},true,now),null);assert.equal(weeklyQuotaNote(quota,false,now),null);assert.equal(weeklyQuotaNote({...quota,checkedAt:null},true,now),null);assert.equal(weeklyQuotaNote({...quota,windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000-1}]},true,now),null);assert.equal(weeklyQuotaNote({...quota,windows:[{key:'seven_day',remainingPercent:50}]},true,now),null);
 });
+
+test('disabled quota is distinct from a missing percentage and never claims an unlimited or replenished balance',()=>{
+ const window={key:'five_hour',disabled:true,remainingPercent:null,resetsAt:null},before=structuredClone(window);
+ assert.equal(quotaPercent(window),'未啟用');assert.equal(quotaReset(window),'不適用（官方未啟用）');
+ assert.equal(quotaPercent(undefined),'—');assert.equal(quotaPercent({remainingPercent:100}),'100%');assert.deepEqual(window,before);
+ const quota={status:'ready',checkedAt:'2026-10-09T05:57:29Z',windows:[{key:'seven_day',remainingPercent:0,resetsAt:Date.parse('2026-10-11T13:01:05Z')/1000},window]};
+ assert.equal(weeklyQuotaNote(quota,true,Date.parse('2026-10-09T06:00:00Z')),'上次實查：每週額度已用完');
+});

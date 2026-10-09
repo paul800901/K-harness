@@ -632,3 +632,20 @@ test('slow multi-account queries retain their results without a display time lim
  now+=86400000;const later=await f.accounts.list();assert(later.accounts.every(a=>a.quota.status==='ready'));
  assert.deepEqual(later.accounts.map(a=>a.quota.checkedAt),queried,'waiting must not invent new query times');
 });
+
+test('successful quota refresh retains a native disabled window but weekly zero still blocks work',async()=>{
+ const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'seven_day',remainingPercent:0,resetsAt:future},{key:'five_hour',disabled:true,remainingPercent:null,resetsAt:null}]})});
+ await f.accounts.capture();const result=await f.accounts.refreshAll();
+ assert.equal(result.note,'已查詢全部帳號並切回原帳號。');assert.equal(result.quotaCheck.allExhausted,true);
+ assert.equal(result.accounts[0].quota.windows[1].disabled,true);assert.equal(f.current.accountId,A);
+ await assert.rejects(f.accounts.acquire({worker:true}),/皆已無可用額度/u);
+});
+
+test('sequential worker handoff accepts an explicitly disabled limit only alongside positive known quota',async()=>{
+ for(const scenario of ['disabled','unknown','all-disabled']){
+  const f=await fixture({identity:{accountId:A,email},statusFor:current=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:current.accountId===A?[{key:'seven_day',remainingPercent:0,resetsAt:future}]:scenario==='all-disabled'?[{key:'five_hour',disabled:true,remainingPercent:null,resetsAt:null}]:[{key:'seven_day',remainingPercent:40,resetsAt:future},{key:'five_hour',...(scenario==='disabled'?{disabled:true}:{}),remainingPercent:null,resetsAt:null}]})});
+  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:A,email};
+  if(scenario==='disabled'){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();}
+  else await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/u);
+ }
+});

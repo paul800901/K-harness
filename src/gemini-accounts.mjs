@@ -164,7 +164,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
      for(const row of rows)if(row.id!==original.id)await activate(row.id);
     }catch(error){failure=error;}finally{await restoreQuotaAccount();}
     if(failure)throw Error(`${failure.message} 已切回原帳號；本次查詢未全部完成。`);
-    const failed=rows.filter(row=>!['ready','available'].includes(row.quota?.status)||!row.quota.windows?.length||row.quota.windows.some(w=>!Number.isFinite(w.remainingPercent))).length;
+    const failed=rows.filter(row=>!['ready','available'].includes(row.quota?.status)||!row.quota.windows?.length||row.quota.windows.some(w=>w.disabled!==true&&!Number.isFinite(w.remainingPercent))).length;
     const skipped=data.accounts.length-rows.length;
     return {...snapshot(),quotaCheck:{checkedAt:stamp(),allExhausted:failed?null:data.accounts.every(cachedExhausted),nextQueryAt:allRecheckAt(),queried:rows.length,skipped},note:failed?`已查詢帳號並切回原帳號；${failed} 個帳號未取得最新額度。`:skipped?`已查詢 ${rows.length} 個帳號並切回原帳號；${skipped} 個歸零帳號等待重設，保留上次實查結果。`:'已查詢全部帳號並切回原帳號。'};
    });
@@ -220,7 +220,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
         if(chosen.auth?.status!=='authenticated')throw Error(authFailure(chosen));
         // A fresh positive official balance is usable even if its last reset
         // timestamp is in the past (for example an unused, full account).
-        const available=chosen.quota?.windows?.length>0&&chosen.quota.windows.every(w=>Number.isFinite(w.remainingPercent)&&w.remainingPercent>0);
+        const available=chosen.quota?.windows?.some(w=>Number.isFinite(w.remainingPercent)&&w.remainingPercent>0)&&chosen.quota.windows.every(w=>w.disabled===true||Number.isFinite(w.remainingPercent)&&w.remainingPercent>0);
         if(!quotaCurrent(chosen)||!available&&!exhausted(chosen))throw Error('下一個 Gemini 帳號尚無官方目前額度資料，未開始工作；請刷新確認後再試。');
         if(!exhausted(chosen)){found=true;break;}
        }

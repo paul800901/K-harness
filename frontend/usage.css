@@ -17,3 +17,5 @@
 @media(max-width:520px){.gemini-usage-account>summary{grid-template-columns:minmax(0,1fr) 48px 48px 10px;gap:6px;padding:9px 8px}.gemini-usage-account>.usage-timestamps{padding:0 8px 9px}}
 
 .usage-toolbar button{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;min-height:44px}
+
+.usage-exhausted{display:block;color:var(--k-warn);font-weight:700}

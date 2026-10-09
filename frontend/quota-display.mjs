@@ -6,8 +6,9 @@ export function quotaIsHistorical(quota,online=true,now=Date.now()){
  // Providers can legitimately report a past reset in a new successful query.
  return quota.windows?.some(w=>Number.isFinite(w.resetsAt)&&w.resetsAt>0&&w.resetsAt*1000<=now&&(!Number.isFinite(queried)||w.resetsAt*1000>queried))??false;
 }
-export const quotaPercent=window=>Number.isFinite(window?.remainingPercent)?`${window.remainingPercent}%`:'—';
+export const quotaPercent=window=>window?.disabled===true?'未啟用':Number.isFinite(window?.remainingPercent)?`${window.remainingPercent}%`:'—';
 export function quotaReset(window,now=Date.now()){
+ if(window?.disabled===true)return '不適用（官方未啟用）';
  if(!Number.isFinite(window?.resetsAt)||window.resetsAt<=0)return '官方未提供';
  const at=window.resetsAt*1000;
  return `${new Date(at).toLocaleString('zh-TW')}${at<=now?'（已過）':''}`;

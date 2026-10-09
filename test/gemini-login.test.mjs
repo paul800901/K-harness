@@ -35,7 +35,7 @@ test('Gemini auth requires the native account report, including exhausted quota,
  }});
  const verified=await login.status();assert.equal(verified.auth.loggedIn,true);assert.ok(Date.parse(verified.auth.checkedAt));assert.deepEqual(calls,[['--version'],['-p','/usage']],'account queries must not wait for the model catalog');
  report={code:1,stdout:'',stderr:'authentication required'};const out=await login.status();assert.equal(out.auth.loggedIn,false);assert.equal(out.available,true);assert.match(out.reason,/尚未登入/);
- for(const invalid of [{code:0,stdout:'gemini-3.8-flash-low'},{code:0,stdout:'new unknown report format'},{code:1,stderr:'network timeout secret diagnostic'},{code:0,stdout:'Gemini Models\tWeekly Limit Remaining\t97%\t2026-10-10T05:23:48Z',reason:'timeout'}]){
+ for(const invalid of [{code:0,stdout:'gemini-3.8-flash-low'},{code:0,stdout:'new unknown report format'},{code:0,stdout:'Gemini Models\tFive Hour Limit Remaining\tdisabled\t'},{code:1,stderr:'network timeout secret diagnostic'},{code:0,stdout:'Gemini Models\tWeekly Limit Remaining\t97%\t2026-10-10T05:23:48Z',reason:'timeout'}]){
   report=invalid;const unknown=await login.status();assert.equal(unknown.auth.status,'unknown');assert.equal(unknown.auth.loggedIn,undefined);assert.doesNotMatch(unknown.reason,/secret diagnostic/);
  }
  calls.length=0;const catalog=await login.status({checkAuth:false});assert.equal(catalog.auth,undefined);assert.deepEqual(calls,[['--version'],['models']]);
@@ -80,4 +80,12 @@ test('temporary usage failure is not a signed-out result, but an explicit login 
 test('a valid Gemini percentage survives a missing or malformed reset, without inventing a deadline',()=>{
  for(const reset of ['', 'unknown','not-a-date']){const windows=geminiQuotaWindows('Gemini Models\tFive Hour Limit Remaining\t100%\t'+reset);assert.equal(windows.length,1);assert.equal(windows[0].remainingPercent,100);assert.equal(windows[0].resetsAt,null);}
  for(const percent of ['', 'unknown','-1%','101%'])assert.equal(geminiQuotaWindows('Gemini Models\tFive Hour Limit Remaining\t'+percent+'\t').length,0);
+});
+
+test('native disabled quota survives parsing without becoming a zero, percentage or reset',()=>{
+ const raw='Gemini Models\tWeekly Limit Remaining\t0%\t2026-10-11T13:01:05Z\nGemini Models\tFive Hour Limit Remaining\tdisabled\t\nClaude and GPT models\tFive Hour Limit Remaining\tdisabled\t';
+ const windows=geminiQuotaWindows(raw);
+ assert.equal(windows.length,2);assert.equal(windows[0].remainingPercent,0);
+ assert.deepEqual(windows[1],{key:'five_hour',label:'5 小時',minutes:300,disabled:true,remainingPercent:null,resetsAt:null});
+ assert.equal(geminiQuotaWindows('Gemini Models\tFive Hour Limit Remaining\tunknown\t').length,0);
 });
