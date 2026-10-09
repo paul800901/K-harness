@@ -10,7 +10,7 @@ import {discussionTranscript} from '../shared/discussion.mjs';
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
-export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,discussionFactory=createDiscussionController,discussionSessionFactory,discussionOptions={},browserRequest,...options}){
+export function createConversationController({root,onChange=()=>{},sessionFactory=createUnifiedController,discussionFactory=createDiscussionController,discussionSessionFactory,discussionApi,discussionOptions={},browserRequest,...options}){
  const rooms=new Map(),controllers=new Set(),locked=new Set();
  const attention=createCompletionAttention();
  const discussions=new Map();
@@ -142,6 +142,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
+  get discussionBusy(){return locked.size>0||[...discussions.values()].some(d=>d.busy||d.held);},
   get state(){const s=projected(active),view=pendingView?conversationPreview(pendingView.record,pendingView.history):null;return {...s,...view,connectionOpening:!!pendingView,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
   markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},
   async sessions(){const result=await listMainSessions(root);return {...result,sessions:result.sessions.map(row=>{const controller=rooms.get(row.threadId);return controller?{...row,...activity(controller),title:controller.state.title??row.title,model:controller.state.model}:row;})};},
@@ -287,7 +288,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     const effort=choice.effort||model.defaultReasoningEffort||null,efforts=(model.supportedReasoningEfforts??[]).map(x=>typeof x==='string'?x:x.reasoningEffort);
     if(effort&&!efforts.includes(effort))throw Error('參與模型不支援所選推理程度。');return {model:model.model,displayName:model.displayName,effort,...(model.nativeModels?{nativeModels:model.nativeModels}:{})};};
   if(!Array.isArray(data.participants)||data.participants.length<2)throw Error('請選擇至少兩個參與者。');
-  const participants=data.participants.map((p,i)=>({...choose(p),id:`p${i+1}`}));
+  const participants=await Promise.all(data.participants.map(async(p,i)=>{if(p.route&&p.route!=='api')throw Error('討論參與者路線無效。');if(p.route==='api'&&!discussionApi)throw Error('此版本未接通討論 API。');return {...(p.route==='api'?await discussionApi.resolve(p):choose(p)),id:`p${i+1}`};}));
   const facilitator={...choose({model:s.model,effort:s.effort}),id:'host'};
   const source=discussion(controller).project(s.messages??[]);
   const attachments=[],explicit=new Set(data.attachmentIds??[]),ids=new Set([...explicit,...(data.includeContext!==false?source.flatMap(m=>(m.attachments??[]).map(a=>a.id)):[])]);

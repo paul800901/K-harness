@@ -16,7 +16,7 @@ import {remoteStateEvent} from '../shared/remote-state.mjs';
 import {createLocalDictation, LocalDictationError, MAX_JSON_BYTES} from './local-dictation.mjs';
 import {readRemoteConfig,clearRemoteSessions,createRemoteAccess,remoteRouteAllowed,remoteLoginHtml,remoteLoginJs,remoteLoginCss} from './remote-access.mjs';
 
-export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
+export async function startDesktop({root,executable,port=47831,controllerFactory=createConversationController,pickWorkspace=pickWorkspaceDirectory,localDictationFactory=createLocalDictation,claudeLoginFactory=createClaudeLogin,codexLoginFactory=createCodexLogin,geminiLoginFactory=createGeminiLogin,geminiAccounts,discussionApi,coreUpdates,browserRequest,validateProjectWorkspace=validateWorkspace,uiRoot=new URL('../dist-ui/',import.meta.url)}){
  const remoteFile=path.join(root,'.local','remote-access.json');
  let remoteConfig=null,remoteError=null;
  try{remoteConfig=await readRemoteConfig(remoteFile);}catch(error){remoteError=error.message;}
@@ -144,6 +144,8 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
     const heartbeat=setInterval(async()=>{try{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');}catch(error){console.error('[remote heartbeat]',error.message);clients.delete(res);res.end();}},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
+   if(req.method==='GET'&&url.pathname==='/api/discussion/models')return json(200,discussionApi?await discussionApi.models():{models:[]});
+   if(req.method==='GET'&&url.pathname==='/api/discussion/connections')return json(200,discussionApi?await discussionApi.list():{connections:[]});
    if(req.method==='GET'&&url.pathname==='/api/gemini/accounts')return json(200,geminiAccounts?await geminiAccounts.list():{enabled:false,activeAccountId:null,busy:false,loginPending:false,accounts:[]});
    if(req.method==='GET'&&url.pathname==='/api/gemini/auth'){
     const managed=await geminiAccounts?.list();
@@ -204,6 +206,11 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    const chunks=[],maxBody=url.pathname==='/api/upload'?Infinity:url.pathname==='/api/dictation/transcribe'?MAX_JSON_BYTES:65536;let bodyBytes=0;
    for await(const chunk of req){bodyBytes+=chunk.length;if(bodyBytes>maxBody){if(url.pathname==='/api/dictation/transcribe')throw new LocalDictationError('請求過大。',{code:'REQUEST_TOO_LARGE',statusCode:413});throw new Error('請求過大。');}chunks.push(chunk);}
    const data=JSON.parse(Buffer.concat(chunks).toString('utf8')||'{}');
+   if(url.pathname.startsWith('/api/discussion/connections/')){
+    if(!discussionApi)throw Error('此版本未接通討論 API 設定。');
+    const operation={'/api/discussion/connections/save':'save','/api/discussion/connections/models':'discover','/api/discussion/connections/remove':'remove'}[url.pathname];
+    if(!operation)throw Error('API 連線操作無效。');return json(200,await discussionApi[operation](data));
+   }
    if(url.pathname==='/api/core-update'){
     if(!coreUpdates)throw Error('請從正式桌面入口更新核心。');
     return json(200,await coreUpdates.update(data.provider));
