@@ -70,7 +70,7 @@ test('permission handlers fail closed after owner lifecycle closes or URLs becom
 
 test('chat web links and subscription login links open externally without a site allowlist',()=>{
  const opened=[],handler=createExternalLinkWindowHandler(async url=>{opened.push(url);});
- const urls=['https://example.com/research?q=a%2Bb#section','http://127.0.0.1:5137/callback?state=fixture','https://accounts.google.com/o/oauth2/v2/auth?state=fixture','https://auth.openai.com/oauth/authorize?state=fixture','https://claude.ai/oauth/authorize?state=fixture','https://claude.com/oauth/authorize?state=fixture'];
+ const urls=['mailto:test@example.test','tel:+886123','https://example.com/research?q=a%2Bb#section','http://127.0.0.1:5137/callback?state=fixture','https://accounts.google.com/o/oauth2/v2/auth?state=fixture','https://auth.openai.com/oauth/authorize?state=fixture','https://claude.ai/oauth/authorize?state=fixture','https://claude.com/oauth/authorize?state=fixture'];
  for(const url of urls){
   assert.deepEqual(handler({url}),{action:'deny'});
   assert.equal(opened.at(-1),url);
@@ -78,9 +78,9 @@ test('chat web links and subscription login links open externally without a site
  assert.deepEqual(opened,urls);
 });
 
-test('non-web destinations cannot launch OS handlers or Electron popups',async()=>{
+test('unapproved protocols cannot launch OS handlers or Electron popups',async()=>{
  const opened=[],handler=createExternalLinkWindowHandler(async url=>{opened.push(url);});
- for(const url of ['javascript:alert(1)','data:text/html,test','file:///C:/Windows/System32/cmd.exe','ms-settings:','mailto:test@example.test','about:blank','http://','not a URL'])assert.deepEqual(handler({url}),{action:'deny'});
+ for(const url of ['javascript:alert(1)','data:text/html,test','file:///C:/Windows/System32/cmd.exe','ms-settings:','vscode://file/D:/a.js','about:blank','http://','not a URL'])assert.deepEqual(handler({url}),{action:'deny'});
  assert.deepEqual(opened,[]);
  const failed=createExternalLinkWindowHandler(async()=>{throw Error('test browser failure');});
  assert.deepEqual(failed({url:'https://example.test/'}),{action:'deny'});

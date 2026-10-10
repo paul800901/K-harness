@@ -128,3 +128,5 @@ main>header{height:auto;min-height:52px;padding-block:12px;flex-wrap:wrap}.heade
 .history-skeleton{display:grid;gap:18px;padding:36px 0;width:100%}.history-skeleton span{display:block;border-radius:var(--k-radius-md);height:72px;background:var(--k-hover)}.history-skeleton span:nth-child(2){height:120px;width:86%}.history-skeleton span:nth-child(3){width:65%}
 /* Expanded native error details must remain scrollable from the top on mobile. */
 .alert>.native-notice-content{align-self:flex-start}
+
+.native-message-image{display:block;max-width:100%;height:auto}.native-destination{display:inline-block;overflow-wrap:anywhere;margin-left:.4em}

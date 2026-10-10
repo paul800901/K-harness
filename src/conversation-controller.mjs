@@ -6,6 +6,7 @@ import {createCompletionAttention} from './completion-attention.mjs';
 import {createDiscussionController} from './discussion-controller.mjs';
 import {sessionAttachment} from './session-workspace.mjs';
 import {readPresentedFile} from './desktop-files.mjs';
+import {readNativeMessageFile} from './native-message-file.mjs';
 import {discussionTranscript} from '../shared/discussion.mjs';
 import {abortable} from './abortable.mjs';
 import {readFile} from 'node:fs/promises';
@@ -369,6 +370,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   attachmentFile(id,context){return target(context).attachmentFile(id);},
   attachmentSource(id,context){return target(context).attachmentSource(id,context);},
   artifact(name,context){return target(context).artifact(name);},
+  messageFile(href,context){return readNativeMessageFile(projected(target(context)),href);},
   async close(){
    closing=true;++navigationRequest;pendingView=null;
    idleProbe?.abort.abort(new DOMException('K 正在關閉。','AbortError'));

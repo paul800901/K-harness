@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir,mkdtemp} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
@@ -458,4 +458,14 @@ test('active or unknown native goals and pending goal controls protect hidden ro
 test('idle Claude goals and saved Gemini unknown outcomes do not keep inactive hosts alive',async()=>{
  const f=await fixture(),c=f.controller;let first;
  try{for(let i=0;i<7;i++){const room=await c.open({model:codexModel}),native=f.room(room.threadId);if(i===0){first=native;native.state.goal={status:'unknown'};native.state.goalError='saved native outcome unknown';native.notify();}}await new Promise(r=>setTimeout(r,150));assert.equal(first.closed,1);}finally{await c.close();}
+});
+
+ test('native file preview uses exact source room including saved discussion replies, not the selected room',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const file=path.join(f.root,'討論交接.md');await writeFile(file,'same-room discussion file');await mkdir(path.join(f.root,'.runtime/discussions'),{recursive:true});
+  await writeFile(path.join(f.root,'.runtime/discussions/file-room-a.json'),JSON.stringify({threadId:'file-room-a',runs:[{id:'discussion',afterMessageId:null}],messages:[{runId:'discussion',role:'assistant',text:'[交接](<'+file+'>)'}]}));
+  for(const threadId of ['file-room-a','file-room-b'])await saveMainSession(f.root,{threadId,model:codexModel,workspace:f.root,messages:[]});
+  const a=await c.open({model:codexModel,threadId:'file-room-a'});const b=await c.open({model:codexModel,threadId:'file-room-b'});
+  assert.equal((await c.messageFile(file,a)).bytes.toString(),'same-room discussion file');await assert.rejects(c.messageFile(file,b));assert.throws(()=>c.messageFile(file,{threadId:'not-opened'}));
+ }finally{await c.close();}
 });

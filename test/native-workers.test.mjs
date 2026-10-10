@@ -100,3 +100,17 @@ test('paginated missing, unknown, failed read and foreign ownership never become
   if(variant==='foreign')assert.equal(calls.includes('thread/turns/list'),false);
  }
 });
+
+test('large historical worker set is read with bounded native queue pressure and stable order, never retried',async()=>{
+ let inFlight=0,max=0,calls=0;const ids=Array.from({length:461},(_,i)=>`child-${i}`);
+ const host={async request(method,{threadId}){calls++;inFlight++;max=Math.max(max,inFlight);await new Promise(r=>setTimeout(r,1));inFlight--;if(method==='thread/read')return {thread:{id:threadId,parentThreadId:'main',historyMode:'paginated',status:{type:'notLoaded'}}};return {data:[{id:`turn-${threadId}`,status:threadId==='child-460'?'failed':'completed'}]};}};
+ const rows=await checkNativeWorkers(host,'main',ids);assert.equal(rows.length,461);assert.deepEqual(rows.map(r=>r.threadId),ids);assert.ok(rows.every(r=>r.settled));assert.ok(max<=12);assert.equal(calls,922);
+});
+
+test('native overload stays unresolved with original diagnostic; no hidden retry',async()=>{
+ let calls=0;const rows=await checkNativeWorkers({async request(){calls++;throw Error('Server overloaded; retry later.')}},'main',['child']);assert.equal(calls,1);assert.equal(rows[0].settled,false);assert.equal(rows[0].diagnostic,'Server overloaded; retry later.');
+});
+
+test('paginated newest summary overrides stale embedded historical turns',async()=>{
+ const rows=await checkNativeWorkers({async request(method){return method==='thread/read'?{thread:{parentThreadId:'main',historyMode:'paginated',status:{type:'idle'},turns:[{id:'old',status:'completed'}]}}:{data:[{id:'new',status:'inProgress'}]};}},'main',['child']);assert.equal(rows[0].turnId,'new');assert.equal(rows[0].status,'running');assert.equal(rows[0].settled,false);
+});

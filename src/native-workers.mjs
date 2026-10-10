@@ -5,7 +5,7 @@ export function collectNativeWorkerIds(items){
 }
 
 export async function checkNativeWorkers(host,parentThreadId,ids,{stop=false}={}){
- return Promise.all(ids.map(async threadId=>{
+ const readWorker=async threadId=>{
   const result={requestId:`codex:${threadId}`,threadId,provider:'codex',status:'unresolved',settled:false,outputFiles:[]};let lastReadAt;
   const read=async()=>{
    let thread=(await host.request('thread/read',{threadId,includeTurns:false}))?.thread;
@@ -40,6 +40,13 @@ export async function checkNativeWorkers(host,parentThreadId,ids,{stop=false}={}
     return {...result,...metadata,lastReadAt,error:'原生子代理最後回合狀態未確認。'};
    }
    return {...result,...metadata,lastReadAt};
-  }catch{return {...result,...(lastReadAt?{lastReadAt}:{}),error:'原生子代理狀態讀回失敗。'};}
+  }catch(error){return {...result,...(lastReadAt?{lastReadAt}:{}),error:'原生子代理狀態讀回失敗。',diagnostic:error?.protocolMessage??error?.message};}
+ };
+ // Hundreds of historical children otherwise overflow the native request queue.
+ // Each child is read once; bounded concurrency is not a retry or task replay.
+ const results=new Array(ids.length);let next=0;
+ await Promise.all(Array.from({length:Math.min(12,ids.length)},async()=>{
+  while(next<ids.length){const index=next++;results[index]=await readWorker(ids[index]);}
  }));
+ return results;
 }

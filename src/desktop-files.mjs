@@ -6,6 +6,7 @@ import {createWriteStream} from 'node:fs';
 import {pipeline} from 'node:stream/promises';
 import {checkedPath} from './files.mjs';
 const imageTypes={'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'};
+const presentedImageTypes={...imageTypes,'.gif':'image/gif','.svg':'image/svg+xml','.avif':'image/avif'};
 const mediaTypes={'.wav':['audio','audio/wav'],'.mp3':['audio','audio/mpeg'],'.m4a':['audio','audio/mp4'],'.mp4':['video','video/mp4']};
 const textTypes=new Set(['.txt','.md','.json','.csv','.tsv','.js','.mjs','.ts','.tsx','.jsx','.py','.css','.html','.xml','.yaml','.yml','.log']);
 const MAX_OPTIONAL_EXTRACTION_BYTES=32*1024*1024;
@@ -70,6 +71,12 @@ export async function loadAttachment(root,threadId,id){
 }
 export async function readPresentedFile(root,name,{maxBytes}={}){
  const target=await checkedPath(root,name,false);
+ return readPresentedPath(target,{maxBytes});
+}
+// Only called for a human-visible, exact native message destination, not worker input.
+export async function readPresentedPath(target,{maxBytes}={}){
+ if(!(await stat(target)).isFile())throw Error('這個連結不是一般檔案。');
+ const name=target;
  let bytes,size;
  if(maxBytes===undefined){bytes=await readFile(target);size=bytes.length;}
  else{
@@ -79,5 +86,5 @@ export async function readPresentedFile(root,name,{maxBytes}={}){
   finally{await file.close();}
  }
  const ext=path.extname(name).toLowerCase();
- return {name:path.basename(name),bytes,...(maxBytes===undefined?{}:{size,truncated:bytes.length<size}),contentType:imageTypes[ext]??mediaTypes[ext]?.[1]??(ext==='.pdf'?'application/pdf':'application/octet-stream'),isText:textTypes.has(ext)};
+ return {name:path.basename(name),bytes,...(maxBytes===undefined?{}:{size,truncated:bytes.length<size}),contentType:presentedImageTypes[ext]??mediaTypes[ext]?.[1]??(ext==='.pdf'?'application/pdf':'application/octet-stream'),isText:textTypes.has(ext)};
 }

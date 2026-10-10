@@ -93,7 +93,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
   const json=(code,value)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8'});res.end(JSON.stringify(value));};
   let requestPath='';
   res.setHeader('Cache-Control','no-store');res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');
-  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+  res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data: http: https:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
   try{
    const requestOrigin=isRemote?remoteConfig.origin:origin;
    const remoteIdentity=isRemote?await remote.identity(req):null;
@@ -180,14 +180,14 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    }
    if(req.method==='GET'&&url.pathname==='/api/usage'){const refresh=url.searchParams.get('refresh')==='1',usage=await controller.usage(refresh),managed=await geminiAccounts?.usage(false);return json(200,{...usage,...(managed?{gemini:managed}:{})});}
    if(req.method==='GET'&&url.pathname==='/api/directories')return json(200,await controller.directories(url.searchParams.get('path')??undefined));
-   if(req.method==='GET'&&['/api/artifact','/api/attachment'].includes(url.pathname)){
+   if(req.method==='GET'&&['/api/artifact','/api/attachment','/api/message-file'].includes(url.pathname)){
     const context={threadId:url.searchParams.get('threadId')};
     if(url.pathname==='/api/attachment'&&url.searchParams.get('download')==='1'){
      const file=await controller.attachmentSource(url.searchParams.get('id'),context);
      res.writeHead(200,{'Content-Disposition':`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`,'Content-Type':file.contentType,'Content-Length':String(file.size)});
      await pipeline(createReadStream(file.path),res);return;
     }
-    const file=url.pathname==='/api/artifact'?await controller.artifact(url.searchParams.get('path'),context):await controller.attachmentFile(url.searchParams.get('id'),context);
+    const file=url.pathname==='/api/message-file'?await controller.messageFile(url.searchParams.get('path'),context):url.pathname==='/api/artifact'?await controller.artifact(url.searchParams.get('path'),context):await controller.attachmentFile(url.searchParams.get('id'),context);
     if(url.searchParams.get('download')==='1'){res.setHeader('Content-Disposition',`attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);res.setHeader('Content-Type',file.contentType);return res.end(file.bytes);}
     if(file.contentType.startsWith('image/')){res.setHeader('Content-Type',file.contentType);return res.end(file.bytes);}
     return json(200,{name:file.name,isText:file.isText,text:file.isText?file.bytes.subarray(0,262144).toString('utf8'):null,truncated:file.bytes.length>262144,size:file.bytes.length});

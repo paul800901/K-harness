@@ -3,9 +3,9 @@ import {createTaskbarAttentionController,createWindowFocusNotifier} from './task
 
 export function createExternalLinkWindowHandler(openExternal){
  return ({url})=>{
-  // Web links use the system browser, without a K-specific site allowlist.
+  // Web, email and phone links use their standard handler after a human click.
   // Never turn a Markdown destination into an arbitrary OS protocol launch.
-  try{if(['http:','https:'].includes(new URL(url).protocol))void openExternal(url).catch(()=>{});}catch{}
+  try{if(['http:','https:','mailto:','tel:'].includes(new URL(url).protocol))void openExternal(url).catch(()=>{});}catch{}
   return {action:'deny'};
  };
 }
