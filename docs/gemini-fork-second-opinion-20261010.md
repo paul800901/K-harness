@@ -1,5 +1,7 @@
 # Gemini 分支附件第二意見與實證反例（2026-10-10）
 
+> 最新候選：Astra 裁決最小可信投影、真正Sol實作，兩反例red→green、serial1184/1184、真Codex新鏈及舊假房只讀相容通過；真Claude／真Opus末審仍待。見[2026-10-11工程紀錄](fork-attachment-trusted-projection-20261011.md)。以下保留各階段當時狀態，不把前次或Gemini意見當正式完成。
+
 ## 授權與目前狀態
 
 使用者明確要求 Opus 沒額度時改問真正 Gemini 查盲點，並確認 Gemini 3.8 Flash 也可用。本轮是明確委派，不是暗換模型／換帳號／改 API 計費。
@@ -58,3 +60,13 @@
 4. 阻擋解除後才核對閒置、固定版本、保留程式退版、部署／正式讀回；不恢復／重播小說，不push／更新東區。
 
 本輪沒有正式停止／重啟／部署或完全修復宣稱。Gemini為實際第二意見，不冒充Opus已審。模型意見可發現盲點，也必須用反例與原始證據校正。
+
+## Sol 接手：正式 red 回歸準備（2026-10-11）
+
+依本人本輪分工，由 Astra 判斷修法、GPT-6.1 Sol 執行工程；本階段只將已重現反例轉成正式回歸，不先改產品碼。
+
+- 工作來源：`C:\Users\Paulus\.codex\worktrees\room-lock-fix-20261010\K-harness`，HEAD `2b42d94af72a949bf12e36217178c6ec6395b57f`。保留既有 untracked `node_modules-root-link`，未修改 `D:\K-harness` 的產品來源。
+- `test/fork-attachments.test.mjs` 新增父房 strict 拒絕、界線內 foreign marker 分支後亦應拒絕的回歸，含首次子房卡片／預覽／下载及 fresh controller 重開的預期。實際執行 **9 項、8 pass／1 fail**；唯一失敗是 child 卡片數量實際1、預期0。父房拒絕已先通過，失敗後的下載及重開斷言尚未執行，不將其預期寫成已驗證結果。
+- 證據：`D:\K-harness\.runtime\fork-complete-fix-20261010\sol-ownership-red\fork-attachments-red.log` 與 `result.json`。純假 host／假附件，模型回合0，沒有重播既有 native 工作。
+- 既有正常祖父與子房附件／孫房、來源 old→current 與 child→destination、父 K metadata 不在、界線後／外房附件拒絕均已有 passing 覆蓋。現有 fixture 未提供 `forkedFromId`；`codex-empty-room.test.mjs` 雖另有 K stable ID／native ID 路由測試，尚未結合繼承附件 owner 驗證。後續修法需要相称的真祖先 lineage、K/native alias、祖先 K metadata 缺席及未知來源拒絕測試，不能只靠直接父 ID。
+- 根因目前仍在 `src/desktop-controller.mjs` 歷史投影呼叫與 `src/session-workspace.mjs` 的 `inheritedAttachment`：copied-turn 只是界線，磁碟 owner 自我驗證未證明來源歸屬。尚未實作修正、未完成真 Opus 5.5 最後複查，不能部署。

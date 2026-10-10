@@ -1,5 +1,11 @@
 # K 最新工程交接索引
 
+- 2026-10-11：[前串 BUG／更新／未修項逐項稽核](incident-repair-audit-20261011.md)：分開正式完成、候選與UNKNOWN；確認前批人用分支及附件端到端漏驗、remote compact英文前綴漏修。後者限定兩行呈現補修、精確正式red→30/30聚焦green及桌面／手機4/4，納附件合併候選Opus末審；長任務偏移、上游stream及正常關閉根因仍未解，不部署或重播原工作。
+
+- 2026-10-11：[分支附件可信投影修正候選](fork-attachment-trusted-projection-20261011.md)：Astra 判斷／真Sol實作，兩個 marker 反例與cross-provider own退化red→green；最小可信引用、legacy alias／UNKNOWN下次確認、原文保留。19項附件／最終全套1187/1187、真Codex新鏈／假房與書房只讀、新Claude K卡片不變性；真Opus首審blocking補修後增量無blocking、Astra独立驗收，程式0b345a0。僅候選、不部署／push／重播，長任務／stream／close未知不變。
+
+- 2026-10-11：[Sol 界線內外房假標記正式 red 回歸](gemini-fork-second-opinion-20261010.md#sol-接手正式-red-回歸準備2026-10-11)：Astra 判斷／Sol 工程接手，新增正式回歸9項中8 pass／1 fail，父房拒絕但子房卡片仍被接受；產品码未動，native lineage＋alias 的修法測試缺口已列，未部署／push／重播。
+
 - 2026-10-10：[Gemini 分支附件第二意見與實證反例](gemini-fork-second-opinion-20261010.md)：本人指定 Opus 沒額度時用 Gemini，真 Pro 一輪／Flash 兩輪，實證校正模型建議；close 確定排乾的持久化回歸已补、1174/1174，但獨立假資料反例重現候選界線內無關附件歸屬升格。來源證據相容修法、新真Claude及Opus末審未完成，不能部署／宣稱完整，不恢復工作。
 
 - 2026-10-10：[分支歷史附件完整修復候選／Opus 主導診斷](fork-inherited-attachments-20261010.md)：依本人要求真正 Opus 5.5 兩輪獨立診斷／最小方案，補 GPT＋Claude 歷史附件預覽下載、孫分支／搬工作區／討論及取消歸屬。舊版10項red、候選1173/1173、真Codex完整附件HTTP链／雙尺寸UI通過，真書只讀實際一個引用恢復且原檔不變；Claude五階段HTTP通過但projection/hash證據疑點未裁決，第三輪Opus官方額度耗盡至凌晨1點，最後複查未完成，未部署／重播／換模／push。
