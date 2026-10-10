@@ -1,5 +1,7 @@
 # 原生內容呈現／歷史子代理假待確認修正（2026-10-10）
 
+**最新：正式版本1b3749e已更新並啟動，驗證完成；下方候選段落保留為當時工程歷史，正式結果見末段。**
+
 ## 範圍與現況
 
 本人指出本機交接連結被 K 變成只有標籤，並要求不再默默擋掉原生內容；Pick Me Up 同時出現數百個「模型待確認」，與模型逐筆查核的終態矛盾。本輪修正這兩個已觀察缺口。K 原生權限、帳號／計費、壓縮與真正未知工作不得重播的邊界不變。
@@ -39,3 +41,21 @@
 第一次 archive 隨 Git core.autocrlf 轉 CRLF，使嚴格來源比對報 `.claude/settings.json` 不符；不是正式設定被修改。原 `source.zip` 保留，重製 `core.autocrlf=false` 的 `source-raw.zip`；先核对648筆差異全部僅換行，才將自建候選還原為原始 bytes，重新完成全測及來源讀回。證據 `archive-newline-repair.json`，沒有放寬來源比對或動正式檔案。
 
 **已具備更新候選；尚未部署。** 正式版本仍 a454a8bb，K 程式仍開著，已請本人等現有工作結束後「離開並停止 K」。不代替本人強制停止，不恢復／重派／重送任何小說工作。實際更新、程式可退回與正式 UI／歷史計數讀回仍待安全停止後完成。
+
+
+## 正式更新完成（2026-10-10 19:58 臺灣，取代上方候選停等狀態）
+
+本人明確回覆「正常關閉完成 可以更新」。更新前47831沒有服務，沒有K Node／Electron／原生工人程序；只看到本次診斷自己的PowerShell，未強制結束任何程序。
+
+- 正式程式 **1b3749eecf914d4e8c7ac84eda3cfbf2dbaaeaec**，由 a454a8bb 更新。只從驗證過的獨立固定候選套用，不部署 D:\K-harness 根工作樹未提交內容。
+- 程式／啟動器可退回位置 **D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791633196178**。這只是程式退版，不宣稱是對話資料備份。provider家目錄／vault／profiles位置保留，部署前後四份非秘密設定hash、五個目錄身分／第一層項目及其餘runtime設定一致；不讀憑證明文、不改模型／原生權限／計費。
+- 原候選1154/1154、真Opus三輪證據仍有效；正式安裝後 **658來源逐位元組零差異**，JS／CSS實際服務資產hash一致。
+- 真正式owner：health200、未認證state403；1440×960／390×844認證介面讀回，24個既有聊天室可列，選中thread=null、busy=false、無pageerror、無POST。未開原小說房、未新送模型任務，截圖已檢視。
+- 在正式安裝來源再跑相同六組built UI假內容：每組九種本機連結預覽／完整下載與三張圖片均通過。不把三provider投影當三家真模型回合。
+- 正式安裝的checkNativeWorkers實際只讀相同父對話461個工人，**460 completed、1 failed、0 unresolved／error，317ms**。無resume/start/interrupt、無任務重播。這是原生真狀態讀回；沒有為驗畫面打開或恢復原小說工作。
+- 使用原本Start-K-Desktop.ps1 **只啟動一次**。正式Node父程序PID10456、Electron主程序PID33352、K視窗存在且標題正確、health200；工作台已開啟，不恢復／重送舊工作。
+- 第一次啟動讀回錯找Electron的.mjs入口而報not found；实际入口是electron-isolated-main.cjs，由Node的.mjs父程序啟動。只修診斷比對、核對父子身分，未重新啟動或改產品，失敗記錄保留於restart-readback。
+
+證據 **D:/K-harness/.runtime/native-presentation-deploy-20261010**：activation／preserved／formal-source-readback／formal-readback及截圖、native-worker-formal／restart-readback／closeout。只提交這批工程文件；不因此重部署、不push／更新東區、不清理原工作樹或node_modules-root-link。
+
+本輪已部署的是已觀察到的原生呈現及假待確認修正，不宣稱所有原生能力完整等價、上百次壓縮偏移或原生stream斷線已解決。原文／native權限保留；HTML／危險協定不任意執行，大檔記憶體等前述限制仍在。
