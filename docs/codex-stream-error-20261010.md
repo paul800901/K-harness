@@ -108,3 +108,8 @@
 K 英文呈現、疑似重複提示及子代理待確認仍是另外的候選問題，前文未修／未逐筆核對限制不因本次測試改變。本輪未修改產品程式；正式版本讀回仍 `1a45a73440a5f948c5cec625de02340863b7c67d`。前批候選繼續停等本人回來一起更新。
 
 私有證據：`D:\K-harness\.runtime\stream-ab-diagnosis-20261010` 下 `evidence.json`、`audit.md`、`independent-readback.json`、`live-result.json`、`live-independent-verification.json`、兩支限定診斷腳本；`live-start.json`／`k-live-start.json` 保留開始標記禁止再重跑。沒有提交原始小說、帳號、金鑰或授權 header。只提交本工程紀錄與索引。
+
+
+## 2026-10-10 正式整合追加
+
+已隨固定程式433e7f2整合正式更新；1133/1133、六組built UI、647來源及真正Opus通過，正式owner雙尺寸／資產／認證與本人桌面啟動讀回完成。舊K正常關閉失敗後由本人確認強制結束自有程序，再套用；不宣稱该長任務關閉根因已修復。完整差異、部署、退版及限制以 [三聊天室整合正式收尾](integrated-update-20261010.md) 為準；不恢復／重送，不push／東區，記憶方案仍研究未實作。
