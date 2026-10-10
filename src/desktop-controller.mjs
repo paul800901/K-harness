@@ -28,7 +28,7 @@ function codexInput(text,attachments=[]){
 }
 
 // One active conversation. Official runtime remains the history authority.
-export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},workerCatalog,onChange=()=>{},browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
+export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},workerCatalog,onChange=()=>{},onContinueConversation,onConversationSettled,browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,turnError:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const activity=createWorkActivity(state),childActivities=new Map(),nativeTerminals=new Map();
@@ -269,8 +269,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      // Both started and completed echo the model input. Keep K's compact
      // projection when that exact input belongs to an already displayed message.
      const matches=m=>m.role==='user'&&codexInput(m.text,m.attachments)[0].text===text;
-     const localInput=state.messages.find(m=>m.id===i.id&&matches(m))??state.messages.find(m=>m.turnId===itemTurnId&&['local','steer'].includes(m.source)&&matches(m));
-     if(localInput){const oldId=localInput.id;localInput.id=i.id;localInput.source='native';localInput.turnId=itemTurnId;updateTiming('messages',oldId,{createdAt:localInput.createdAt,groupId:localInput.groupId,turnId:itemTurnId});transferTiming('messages',oldId,i.id);}
+     const localInput=state.messages.find(m=>m.id===i.id&&matches(m))??state.messages.find(m=>m.turnId===itemTurnId&&['local','steer','continuation'].includes(m.source)&&matches(m));
+     if(localInput){const oldId=localInput.id;localInput.id=i.id;if(localInput.source!=='continuation')localInput.source='native';localInput.turnId=itemTurnId;updateTiming('messages',oldId,{createdAt:localInput.createdAt,groupId:localInput.groupId,turnId:itemTurnId});transferTiming('messages',oldId,i.id);}
      else message(i.id,'user',text,[],itemTurnId,'native');
     }
    }
@@ -284,6 +284,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const final=[...state.messages].reverse().find(m=>m.role==='assistant'&&(!completedTurnId||m.turnId===completedTurnId));
    if(final){void saveMainSessionActivity(root,state.threadId,completedAt).catch(error=>{state.error=`對話活動時間保存失敗：${error.message}`;changed();});final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
    turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
+   if(onConversationSettled)queueMicrotask(()=>onConversationSettled({threadId:p.threadId,turnId:p.turn.id,status:stopping?'interrupted':p.turn.status}));
    state.turnError=p.turn.error?{threadId:state.threadId,turnId:completedTurnId,status:p.turn.status,error:structuredClone(p.turn.error)}:null;
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
    settlingWorkers++;
@@ -395,7 +396,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(flashGateway)return flashGateway;
   lazyFlashBridge.workerPolicy=state.workerPolicy;
   const factory=gatewayFactory??(await import('./luna-gateway.mjs')).createLunaGateway;
-  flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,editGoal:async(args,meta)=>{
+  flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,...(onContinueConversation?{continueConversation:async(args,meta)=>{
+   assertMainGoalCaller(meta);
+   return onContinueConversation({...args,threadId:state.threadId,turnId,stillCurrent:()=>assertMainGoalCaller(meta)});
+  }}:{}),editGoal:async(args,meta)=>{
    assertMainGoalCaller(meta);
    return goal({objective:args.objective,editOnly:true});
   },resumeGoal:async(args,meta)=>{
@@ -604,6 +608,19 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    await saveMainSession(root,{threadId:result.thread.id,model,workspace:state.workspace,accessMode:access,effort,serviceTier:'default',workerPolicy:state.workerPolicy,parentThreadId:parent,parentTitle:state.title});
    return this.open({threadId:result.thread.id,model,effort,serviceTier:'default',accessMode:access});
   },
+  async prepareContinuation({turnId:expectedTurnId}){
+   if(!host||opening||closing||stopping||submission||turnId||state.busy||state.goalPending||state.questions.length||flashQueue.size||flashNotifying||nativeTerminals.size||state.status!=='completed')throw Object.assign(Error('原回合尚未確認正常結束；未建立新聊天室。'),{notCreated:true});
+   const parent=state.threadId;opening=true;
+   try{
+    const goalResult=await host.request('thread/goal/get',{threadId:parent});
+    if(goalResult.goal?.status==='active'||goalResult.goal?.tokenBudget!=null)throw Error('原生目標仍在執行或帶有預算限制，不能另建目標繞過用量；未建立新聊天室。');
+    if((await workers()).some(w=>w.settled!==true)|| (await listTerminals(host,parent)).length)throw Error('原工作或子代理未確認結束；未建立新聊天室。');
+    const stored=await host.request('thread/read',{threadId:parent,includeTurns:true}),last=stored.thread?.turns?.at(-1);
+    if(last?.id!==expectedTurnId||last.status!=='completed'||state.busy||turnId||stopping||closing||flashQueue.size||flashNotifying||nativeTerminals.size||state.threadId!==parent)throw Error('已保存的原生回合與接續來源不符；未建立新聊天室。');
+    return {forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId,model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
+   }catch(error){error.notCreated=true;throw error;
+   }finally{opening=false;}
+  },
   async selectModel({threadId,model,effort,serviceTier,confirmed}={}){
    if(state.busy||turnId||submission||opening||closing||stopping)throw new Error('請先等待目前連線、工作或停止程序結束，再切換模型。');
    if(!host||!state.threadId||threadId!==state.threadId)throw new Error('K 對話已切換或過期，請重新開啟後再選模型。');
@@ -649,14 +666,15 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // Sidebar labels/visibility are local K metadata; never alter model history.
    await saveMainSession(root,found);if(threadId===state.threadId){state.title=found.title;changed();}return found;
   },
-  async open({model,threadId,effort,serviceTier,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation,onHistory}={}){
+  async open({model,threadId,effort,serviceTier,workerPolicy,accessMode,permissionConfirmed}={}, {signal:outerSignal,relocation,onHistory,continuation,onCreated}={}){
    if(state.busy||opening||closing||stopping)throw new Error('請先停止目前工作，再切換對話。');
    if(typeof model!=='string'||!model.trim())throw new Error('請選擇可用的 Codex 模型。');
+   if(continuation&&(threadId||host||state.threadId))throw Error('接續分支必須使用新的獨立主控；未建立新聊天室。');
    // Reserve before any asynchronous session/catalog read.  Catalog failure
    // must leave the current conversation untouched, while concurrent send
    // or open calls must still be rejected.
    opening=true;openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
-   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds);let createdHost;
+   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds);let createdHost,continuationForkAttempted=false;
    const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
     signal.throwIfAborted();
@@ -707,8 +725,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const unsent=unsentSessions.get(threadId);
      // Only a K record saved before any submission may be prepared again.
      // Legacy/attempted conversations always read their original native history.
-     const prior=threadId&&!prepared?await call('thread/read',{threadId,includeTurns:true}):null;
-     const compactionsComplete=!threadId||prepared||Array.isArray(prior?.thread?.turns)&&prior.thread.turns.every(turn=>Array.isArray(turn.items));
+     const prior=continuation?await call('thread/read',{threadId:continuation.nativeSourceId,includeTurns:true}):threadId&&!prepared?await call('thread/read',{threadId,includeTurns:true}):null;
+     if(continuation&&(prior?.thread?.turns?.at(-1)?.id!==continuation.throughTurnId||prior.thread.turns.at(-1).status!=='completed'))throw Object.assign(Error('來源歷史已變更；未建立新聊天室。'),{notCreated:true});
+     const compactionsComplete=(!threadId&&!continuation)||prepared||Array.isArray(prior?.thread?.turns)&&prior.thread.turns.every(turn=>Array.isArray(turn.items));
      const nextUiTiming=threadId?await loadUiMessageTiming(root,threadId):{version:1,messages:{},tools:{}};
      state.previousWorkspaces=relocation?.previousWorkspaces??saved?.previousWorkspaces??[];state.previousArtifacts=relocation?.previousArtifacts??saved?.previousArtifacts??[];
      compactionIds=new Set();clearQuestions();turnId=null;items.clear();childActivities.clear();state.tools=[];state.workers=[];state.artifacts=[];state.messages=[];state.goal=null;state.progress={plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null};state.progress.compactionsComplete=compactionsComplete;state.progress.compactions=compactionsComplete?0:null;state.threadId=threadId??null;state.model=model;state.modelDisplayName=selected.displayName??null;state.inputModalities=Array.isArray(selected.inputModalities)?[...selected.inputModalities]:['text','image'];state.efforts=efforts;state.title=saved?.title??'';
@@ -724,7 +743,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
        const match=text.match(/\n\n<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>$/);
        if(match){try{const context=JSON.parse(match[1]);if(context.instruction===ATTACHMENT_INSTRUCTION&&Array.isArray(context.files)){
         text=text.slice(0,match.index);
-        for(const a of context.files){try{attachments.push(await sessionAttachment(workspace,state.previousWorkspaces,threadId,a.id));}catch{state.error='部分附件無法重新載入；原始對話內容與檔案均未刪除。';}}
+        for(const a of context.files){try{attachments.push(await sessionAttachment(workspace,state.previousWorkspaces,continuation?.forkFrom??threadId,a.id));}catch{state.error='部分附件無法重新載入；原始對話內容與檔案均未刪除。';}}
        }}catch{/* User-authored text resembling a marker is still ordinary text. */}}
         const timing=historyMessageTiming(i.id,'user',turn.id),groupId=timing.groupId??turnGroupId(turn.id);
         message(i.id,'user',text,attachments,turn.id,undefined,{historical:true,persist:false,groupId,...timing});
@@ -751,7 +770,12 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
      const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
-     if(unsent&&unsent.selection===selection)session=unsent.session;
+     if(continuation){
+      continuationForkAttempted=true;session=await call('thread/fork',{...config,threadId:continuation.nativeSourceId,lastTurnId:continuation.throughTurnId});
+      state.threadId=session.thread.id;state.parentThreadId=continuation.forkFrom;state.parentTitle=continuation.parentTitle??'';
+      await saveMainSession(root,{threadId:state.threadId,model,workspace,accessMode:access,effort,serviceTier:selectedServiceTier,workerPolicy:policy,parentThreadId:continuation.forkFrom,parentTitle:continuation.parentTitle,title:continuation.parentTitle?`${continuation.parentTitle} · 接續`:'接續工作',codexSession:{nativeThreadId:state.threadId,hasSubmitted:true}});
+      await onCreated?.({threadId:state.threadId});
+     }else if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId&&!prepared){
       try{session=await call('thread/resume',{...config,threadId});}
       catch(e){
@@ -781,11 +805,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       }catch(error){
        if(host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch)addNotice('warning',`Windows 沙箱就緒狀態查詢失敗：${error.message}`,'windowsSandboxReadiness');
       }
-      state.title=saved?.title??'';
-      if(!threadId||prepared)unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access,state.serviceTier)});
+      state.title=continuation?(continuation.parentTitle?`${continuation.parentTitle} · 接續`:'接續工作'):saved?.title??'';
+      if(!continuation&&(!threadId||prepared))unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access,state.serviceTier)});
       state.goal=null;state.goalError=null;state.goalPending=false;
       try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch(error){state.goalError=`原生目標暫時無法讀回：${error.message}`;}
-      await saveMainSession(root,{...saved,...relocation,threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!threadId&&!prepared}});
+      await saveMainSession(root,{...saved,...relocation,...(continuation?{title:state.title,parentThreadId:continuation.forkFrom,parentTitle:continuation.parentTitle}:{}),threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!continuation||!!threadId&&!prepared}});
      state.workerConnection='ready';
      signal.throwIfAborted();
      if(!state.busy&&!turnId){
@@ -799,9 +823,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(createdHost){await closeFlashGateway();await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;
     }state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${nativeId(threadId)}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){await closeFlashGateway();const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}else await closeFlashGateway();throw new Error(state.error);}
    }
+   catch(error){if(continuation&&!continuationForkAttempted)error.notCreated=true;throw error;}
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },
-  async send({text='',attachmentIds=[],effort,accessMode,permissionConfirmed}){
+  async send({text='',attachmentIds=[],effort,accessMode,permissionConfirmed,source='local'}){
    let attempted=false;
    try{
    if(typeof text!=='string'||text.length>32000||(!text.trim()&&(!Array.isArray(attachmentIds)||!attachmentIds.length)))throw new Error('請輸入 1–32000 字元的訊息。');
@@ -826,7 +851,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(attachments.some(record=>record.kind==='image')&&!supportsImages({inputModalities:state.inputModalities}))throw new Error('目前模型不支援圖片附件。');
     }catch(e){state.busy=false;throw e;}
     if(stopRequested){state.busy=false;state.status='interrupted';return {sent:false};}
-    activeGroupId=randomUUID();state.status='working';state.error=null;state.turnError=null;const sentMessage=message(randomUUID(),'user',text,attachments,null,'local',{groupId:activeGroupId});changed();
+    activeGroupId=randomUUID();state.status='working';state.error=null;state.turnError=null;const sentMessage=message(randomUUID(),'user',text,attachments,null,source==='continuation'?'continuation':'local',{groupId:activeGroupId});changed();
     const input=codexInput(text,attachments);
     let wasPrepared=false;
     try{
