@@ -9,14 +9,14 @@ import {remoteRouteAllowed} from '../src/remote-access.mjs';
 
 const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const models=[{model:'gpt-6.1-sol',displayName:'Sol',provider:'codex'},{model:'claude-opus-5-5',displayName:'Opus',provider:'claude'},{model:'gemini-3.8-flash',displayName:'Flash',provider:'gemini'}].map(m=>({...m,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}]}));
-async function fixture({hold=false}={}){
+async function fixture({hold=false,discussionApi}={}){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'discussion-rooms-'));let seq=0;const answerPending=new Set();
  const owners=[],calls=[];
  const factory=({onChange})=>{
   const state={status:'idle',workspace:root,messages:[],workers:[],questions:[],queuedMessages:[],busy:false,usage:{},model:'gpt-6.1-sol',effort:'medium',accessMode:'workspace-write'};
   const c={state,closed:0,sent:[],async models(){return {models};},async selectWorkspace({path}){state.workspace=path;},async open(data){state.threadId=data.threadId??`room-${++seq}`;state.model=data.model;state.status='ready';await saveMainSession(root,state);onChange();return {threadId:state.threadId};},async workers(){return [];},async send(data){c.sent.push(data);state.messages.push({id:`native-${c.sent.length}`,role:'user',text:data.text});return {sent:true};},async stop(){state.busy=false;return {stopped:true};},async close(){c.closed++;},async metadata(data){await saveMainSession(root,{...state,...data});return data;},async selectModel(data){state.model=data.model;return data;}};owners.push(c);return c;
  };
- const c=createConversationController({root,sessionFactory:factory,discussionSessionFactory:async({selection,onIdentity})=>{
+ const c=createConversationController({root,sessionFactory:factory,discussionApi,discussionSessionFactory:async({selection,onIdentity})=>{
   await onIdentity({nativeSessionId:`discussion-${selection.id}`});return {async ask(prompt){calls.push({id:selection.id,prompt});if(selection.id==='host')return prompt.startsWith('你是多模型討論背景整理者')?'{"background":"需求與修正"}':'{"action":"finish","summary":"共識、分歧與未知都有保留。"}';if(hold)await new Promise((resolve,reject)=>{answerPending.add(reject);});return `${selection.model} 原始答案`;},async close(){for(const reject of answerPending)reject(Error('stopped'));answerPending.clear();}};
  }});
  const a=await c.open({model:'gpt-6.1-sol'}),owner=owners.find(o=>o.state.threadId===a.threadId);
@@ -29,6 +29,10 @@ test('discussion entry and interjection are available to the paired phone; the e
  for(const op of ['start','message'])assert.equal(remoteRouteAllowed('POST',`/api/discussion/${op}`),true);
  assert.equal(remoteRouteAllowed('POST','/api/stop'),true);assert.equal(remoteRouteAllowed('POST','/api/discussion/stop'),false);
  assert.equal(remoteRouteAllowed('POST','/api/discussion/login'),false);
+});
+
+test('API participants validate separately without entering native main/sub catalogs or changing the native facilitator',async()=>{
+ const f=await fixture({discussionApi:{async resolve(p){assert.equal(p.connectionId,'fake-connection');return {...p,displayName:'Independent API',effort:null};}}});try{await f.start({participants:[{route:'api',connectionId:'fake-connection',model:'native-id-collision'},{model:'claude-opus-5-5'}]});await settled(f);assert.equal(f.c.state.discussion.participants[0].route,'api');assert.equal(f.c.state.discussion.facilitator.model,'gpt-6.1-sol');assert.equal(f.c.state.model,'gpt-6.1-sol');assert(!(await f.c.models()).models.some(m=>m.route==='api'));await assert.rejects(f.start({participants:[{route:'unknown',model:'gpt-6.1-sol'},{model:'claude-opus-5-5'}]}),/路線無效/);}finally{await f.c.close();}
 });
 
 test('existing room directly starts a meeting, with no primary turn or extra sidebar/native registry rooms',async()=>{

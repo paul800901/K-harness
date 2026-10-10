@@ -81,7 +81,7 @@ export function createUnifiedController(options){
    }
    return {models,warnings,geminiGateway:gpt.status==='fulfilled'&&gpt.value.geminiGateway===true,claudeGateway:anthropic.status==='fulfilled'};
   },
-  async open(data,{signal,onHistory}={}){
+  async open(data,{signal,onHistory,continuation,onCreated}={}){
    if(changing||queue.sending||active.state.busy||active.state.questions?.length)throw new Error('請先結束目前工作與核准，再切換對話。');
    changing=true;
    try{
@@ -100,7 +100,7 @@ export function createUnifiedController(options){
      if(list.some(w=>w.settled===false||['running','starting','pending'].includes(w.status)))throw new Error('子代理尚未結束，請先停止或查明原工作。');
      await target.selectWorkspace({path:saved?.workspace??active.state.workspace});
     }
-    signal?.throwIfAborted();const result=await target.open(data,{signal,onHistory:state=>onHistory?.({...state,provider})});signal?.throwIfAborted();
+    signal?.throwIfAborted();const result=await target.open(data,{signal,continuation,onCreated,onHistory:state=>onHistory?.({...state,provider})});signal?.throwIfAborted();
     // Keep old state intact if the new provider cannot open. No history is transferred.
     if(target!==active){
      try{await active.close();}catch(error){await target.close().catch(()=>{});throw error;}
@@ -110,6 +110,10 @@ export function createUnifiedController(options){
    }finally{changing=false;}
   },
   async selectModel(data){if(modelProvider(data.model)!==api.state.provider)throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');if(data.serviceTier!==undefined&&api.state.provider!=='codex')throw new Error('服務速度選擇只支援 Codex 原生服務層級。');return active.selectModel(data);},
+  async prepareContinuation(data){
+   if(changing||queue.sending||queue.state.queuedMessages.length||api.state.provider!=='codex')throw Object.assign(Error('聊天室仍有待送操作或尚未支援此原生接續；未建立新聊天室。'),{notCreated:true});
+   changing=true;try{return await active.prepareContinuation(data);}finally{changing=false;}
+  },
   async moveWorkspace({threadId,workspace}){
    if(changing||queue.sending||queue.state.queuedMessages.length||active.state.busy||active.state.questions?.length)throw Error('請先結束目前工作、核准與待送訊息，再移動聊天室。');
    if(threadId!==active.state.threadId||!['ready','completed','interrupted','failed'].includes(active.state.status))throw Error('請先正常開啟這個聊天室，再移動工作區。');

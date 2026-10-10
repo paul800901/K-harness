@@ -94,8 +94,25 @@ test('Codex capacity and quota are distinct; conflicting codes and unknown error
  assert.match(nativeNotices.localizeNativeNotice(raw,'codex'),/與剩餘額度不同/);
  assert.match(nativeNotices.localizeNativeNotice('native quota','codex',{message:'native quota',codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
  const error={message:raw,codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}};
- assert.equal(nativeNotices.localizeNativeNotice(raw,'codex',error),raw);
+ assert.match(nativeNotices.localizeNativeNotice(raw,'codex',error),/回覆在完成前中斷/);
  assert.equal(nativeNotices.nativeNoticeText({message:raw,error,willRetry:true}),'原生核心正在重試…');
  assert.equal(nativeNotices.localizeNativeNotice(raw,'gemini'),raw);
  assert.equal(nativeNotices.localizeNativeNotice(raw,'claude'),raw);
+});
+
+test('native stream failures are localized without guessing a cause or changing raw diagnostics',()=>{
+ const message='stream disconnected before completion: An error occurred while processing your request. Please include the request ID fake-request-id in your message.';
+ const error={message,codexErrorInfo:'other',additionalDetails:null},before=structuredClone(error);
+ const expected='Codex 回覆在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
+ assert.equal(nativeNotices.localizeNativeNotice(message,'codex',error),expected);
+ assert.equal(nativeNotices.localizeNativeNotice(message,'codex'),expected);
+ assert.equal(nativeNotices.localizeNativeNotice('different wording','codex',{message:'different wording',codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}}),expected);
+ assert.deepEqual(error,before);
+ assert.equal(nativeNotices.nativeNoticeText({message,error,willRetry:true}),'原生核心正在重試…');
+ for(const provider of ['claude','gemini'])assert.equal(nativeNotices.localizeNativeNotice(message,provider,error),message);
+ for(const text of ['Tool said '+message,'stream disconnected before completion','Unknown error'])assert.equal(nativeNotices.localizeNativeNotice(text,'codex',{message:text,codexErrorInfo:'other'}),text);
+ for(const code of ['unauthorized','internalServerError',{httpConnectionFailed:{httpStatusCode:500}}])assert.equal(nativeNotices.localizeNativeNotice(message,'codex',{message,codexErrorInfo:code}),message);
+ assert.match(nativeNotices.localizeNativeNotice(message,'codex',{message,codexErrorInfo:'serverOverloaded'}),/容量不足/);
+ assert.match(nativeNotices.localizeNativeNotice(message,'codex',{message,codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
+ assert.equal(nativeNotices.localizeNativeNotice('unrelated displayed error','codex',error),'unrelated displayed error');
 });

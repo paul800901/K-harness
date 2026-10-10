@@ -23,7 +23,7 @@ try{
  const a=await app.controller.open({model:'gpt-6.1-sol'});
  browser=await chromium.launch({channel:'msedge',headless:true});const page=await browser.newPage({viewport:{width:1440,height:980}}),errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(app.createLaunchUrl());
  const mode=page.getByLabel('對話模式',{exact:true});await mode.waitFor();await mode.selectOption('parallel');await page.getByLabel('參與模型 2',{exact:true}).waitFor();
- await page.waitForFunction(()=>document.querySelector('[aria-label="參與模型 2"]').value==='claude-opus-5-5');
+ await page.waitForFunction(()=>document.querySelector('[aria-label="參與模型 2"]').value==='native:claude-opus-5-5');
  await page.getByLabel('工作訊息',{exact:true}).fill('請比較速度與資訊的取捨');await page.getByRole('button',{name:'送出訊息',exact:true}).click();
  await page.getByText('Sol 的原始觀點：重視速度。',{exact:true}).waitFor();await page.getByText('Opus 的原始觀點：重視資訊。',{exact:true}).waitFor();await page.getByRole('heading',{name:'分歧',exact:true}).waitFor();
  assert.equal((await app.controller.sessions()).sessions.length,1);assert.equal(calls.some(c=>c.op==='native-send'),false);await page.screenshot({path:path.join(out,'discussion-desktop.png')});

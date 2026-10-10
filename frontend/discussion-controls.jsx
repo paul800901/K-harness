@@ -16,6 +16,7 @@ export function useDiscussionConfig(threadId){
 export function DiscussionControls({state,models=[],config,onChange,loadModels,onCatalog,disabled}){
  const [expanded,setExpanded]=useState(false);
  const [catalogError,setCatalogError]=useState('');
+ const [apiModels,setApiModels]=useState([]),[apiCatalogError,setApiCatalogError]=useState('');
  const d=state.discussion,running=d?.busy;
  useEffect(()=>{if(running)setExpanded(false);},[running]);
  const available=models.filter(m=>m.available!==false&&m.hidden!==true);
@@ -23,6 +24,11 @@ export function DiscussionControls({state,models=[],config,onChange,loadModels,o
  const participants=config.participants?.length?config.participants:defaults;
  const change=fields=>onChange({...config,...fields});
  const changeParticipant=(index,fields)=>change({participants:participants.map((p,i)=>i===index?{...p,...fields}:p)});
+ const apiChoice=p=>`api:${encodeURIComponent(JSON.stringify({connectionId:p.connectionId,model:p.model}))}`;
+ const nativeChoice=model=>`native:${encodeURIComponent(model)}`;
+ const choiceFor=p=>p.route==='api'?apiChoice(p):p.model?nativeChoice(p.model):'';
+ const readApiModels=async()=>{try{const response=await fetch('/api/discussion/models',{cache:'no-store'});if(!response.ok)throw Error('目前無法讀取 API 討論模型。');const data=await response.json();setApiModels(Array.isArray(data.models)?data.models.filter(m=>m.route==='api'&&m.available===true):[]);setApiCatalogError('');}catch(error){setApiCatalogError(error.message||'目前無法讀取 API 討論模型。');}};
+ useEffect(()=>{if(!expanded)return;void readApiModels();const refresh=()=>void readApiModels();window.addEventListener('k-discussion-api-refresh',refresh);return()=>window.removeEventListener('k-discussion-api-refresh',refresh);},[expanded]);
  useEffect(()=>{if(config.mode==='normal'||models.length||!loadModels)return;let present=true;loadModels().then(result=>{if(present)onCatalog(result.models);}).catch(error=>{if(present)setCatalogError(error.message);});return()=>{present=false;};},[config.mode,models.length]);
  useEffect(()=>{if(config.mode!=='normal'&&!config.participants?.length&&available.length&&defaults[1].model)change({participants:defaults});},[models,state.model,config.mode]);
  return <section className="discussion-controls" aria-label="多模型討論">
@@ -36,8 +42,12 @@ export function DiscussionControls({state,models=[],config,onChange,loadModels,o
   </div>
   {!running&&config.mode!=='normal'&&expanded&&<div className="discussion-settings">
    <p>由目前主模型主持，AI 自動安排與整理，保留不同意見。只討論，不自動執行工作。</p>
-   {participants.map((p,index)=>{const selected=available.find(m=>m.model===p.model),efforts=selected?.supportedReasoningEfforts??[];return <div className="discussion-participant" key={index}>
-    <select aria-label={`參與模型 ${index+1}`} value={p.model} onChange={e=>changeParticipant(index,{model:e.target.value,effort:''})}><option value="">選擇模型</option>{available.map(m=><option key={m.model} value={m.model}>{m.displayName??m.model}</option>)}</select>
+   {participants.map((p,index)=>{const selected=p.route==='api'?apiModels.find(m=>m.connectionId===p.connectionId&&m.model===p.model):available.find(m=>m.model===p.model),efforts=selected?.supportedReasoningEfforts??[];const nativeGroups=[['codex','OpenAI／Codex（訂閱）'],['claude','Claude（訂閱）'],['gemini','Gemini（訂閱）']];const apiGroups=[...new Map(apiModels.map(m=>[m.connectionId,m.connectionName??m.providerLabel??'API 連線'])).entries()];const currentChoice=choiceFor(p);return <div className="discussion-participant" key={index}>
+    <select aria-label={`參與模型 ${index+1}`} value={currentChoice} onChange={e=>{const value=e.target.value;if(value.startsWith('api:')){try{const choice=JSON.parse(decodeURIComponent(value.slice(4)));change({participants:participants.map((old,i)=>i===index?{route:'api',connectionId:choice.connectionId,model:choice.model,effort:''}:old)});}catch{}}else if(value.startsWith('native:')){change({participants:participants.map((old,i)=>i===index?{model:decodeURIComponent(value.slice(7)),effort:''}:old)});}else changeParticipant(index,{model:'',effort:''});}}>
+     <option value="">選擇模型</option>{nativeGroups.map(([provider,label])=>{const group=available.filter(m=>modelProvider(m.model)===provider);return group.length?<optgroup key={provider} label={label}>{group.map(m=><option key={m.model} value={nativeChoice(m.model)}>{m.displayName??m.model}</option>)}</optgroup>:null;})}
+     {apiGroups.map(([connectionId,label])=><optgroup key={connectionId} label={`API · ${label}`}>{apiModels.filter(m=>m.connectionId===connectionId).map(m=><option key={`${connectionId}:${m.model}`} value={apiChoice(m)}>{m.displayName??m.model}</option>)}</optgroup>)}
+     {p.route==='api'&&!selected&&<option value={currentChoice}>{p.model}（API 目錄未列出）</option>}
+    </select>
     {!!efforts.length&&<select aria-label={`參與模型 ${index+1} 推理程度`} value={p.effort??''} onChange={e=>changeParticipant(index,{effort:e.target.value})}><option value="">模型預設</option>{efforts.map(level=>{const value=typeof level==='string'?level:level.reasoningEffort;return <option key={value} value={value}>{effortName[value]??value}</option>;})}</select>}
     {participants.length>2&&<button type="button" aria-label={`移除參與模型 ${index+1}`} onClick={()=>change({participants:participants.filter((_,i)=>i!==index)})}>移除</button>}
    </div>;})}
@@ -45,9 +55,10 @@ export function DiscussionControls({state,models=[],config,onChange,loadModels,o
    <label className="discussion-context"><input type="checkbox" checked={config.includeContext!==false} onChange={e=>change({includeContext:e.target.checked})}/>帶入前面對話，由 AI 整理背景</label>
    {config.mode==='parallel'&&<small>首答互不可見。不帶入前面對話時，只依新問題與本次文字附件獨立回答。</small>}
    {config.mode==='review'&&<label className="discussion-review"><span>被審查內容（留白時用最近完整回覆）</span><textarea aria-label="被審查內容" value={config.reviewTarget??''} onChange={e=>change({reviewTarget:e.target.value})} maxLength={16000}/></label>}
-   <small>可提供文字／已擷取文字的文件；圖片與影音仍在一般原生對話處理。討論模型不直接讀工作區檔案。</small>
+   <small>原生討論依各核心已接通能力處理，不代表都能任意讀取檔案。API 討論可在本次工作區唯讀搜尋及讀取，不會寫入檔案或派工；API 呼叫依供應商計費。</small>
   </div>}
   {d?.error&&<p className="discussion-error" role="alert">{d.error}</p>}
   {catalogError&&<p className="discussion-error" role="alert">{catalogError}</p>}
+  {apiCatalogError&&expanded&&<p className="discussion-error" role="status">{apiCatalogError}</p>}
  </section>;
 }

@@ -89,7 +89,7 @@ try{
  await page.getByRole('dialog',{name:'對話設定',exact:true}).getByRole('button',{name:'完成',exact:true}).click();
  await page.setViewportSize({width:360,height:740});
  const trigger=page.locator('.header-actions .worker-activity');await trigger.waitFor();await trigger.click();const quick=page.getByRole('dialog',{name:'子代理狀態',exact:true});await quick.waitFor();assert.equal(await quick.locator('.worker-activity-row').count(),1);assert.equal(await quick.getByText('另一個聊天室',{exact:true}).count(),0);
- await quick.getByText('worker-current',{exact:true}).waitFor();await quick.getByRole('button',{name:'查看詳細',exact:true}).click();const workers=page.getByRole('dialog',{name:'成果與工作面板',exact:true});await workers.waitFor();await workers.getByText('假資料：目前聊天室子代理工作',{exact:true}).waitFor();assert.equal(await workers.getByText('另一個聊天室',{exact:true}).count(),0);
+ await quick.getByText('GPT-6 Luna',{exact:true}).waitFor();assert.equal(await quick.getByText('worker-current',{exact:true}).count(),0);await quick.getByRole('button',{name:'查看詳細',exact:true}).click();const workers=page.getByRole('dialog',{name:'成果與工作面板',exact:true});await workers.waitFor();await workers.getByText('假資料：目前聊天室子代理工作',{exact:true}).waitFor();assert.equal(await workers.getByText('另一個聊天室',{exact:true}).count(),0);
  const workerBox=await workers.boundingBox();assert(workerBox.x>=0&&workerBox.y>=0&&workerBox.x+workerBox.width<=360&&workerBox.y+workerBox.height<=740,'worker detail panel outside mobile viewport');
  await noOverflow(page);await screenshot('mobile-worker-status');await page.getByRole('button',{name:'回到聊天室',exact:true}).click();
  await page.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();await desktop.getByRole('button',{name:'開始聽寫',exact:true}).waitFor();

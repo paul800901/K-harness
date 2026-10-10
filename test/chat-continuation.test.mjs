@@ -1,0 +1,186 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {createConversationController} from '../src/conversation-controller.mjs';
+import {createDesktopController} from '../src/desktop-controller.mjs';
+import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+
+const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url)),model='gpt-6.1-sol';
+async function fixture(){
+ await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'chat-continuation-'));
+ const owners=[],calls=[];let sequence=0,forkFailure,sendFailure;
+ const sessionFactory=hooks=>{
+  const state={provider:'codex',threadId:null,model,workspace:root,accessMode:'read-only',effort:'medium',serviceTier:'default',busy:false,status:'ready',questions:[],queuedMessages:[],messages:[],workers:[],goal:null};
+  const owner={state,hooks,
+   async models(){return {models:[]};},async selectWorkspace({path}){state.workspace=path;},
+   async open(data,{continuation,onCreated}={}){if(continuation){calls.push(['fork',{turnId:continuation.throughTurnId},continuation.forkFrom]);if(forkFailure)throw forkFailure;}Object.assign(state,data);state.threadId??=`room-${++sequence}`;await saveMainSession(root,{...state,...(continuation?{parentThreadId:continuation.forkFrom}:{})});if(continuation)await onCreated({threadId:state.threadId});return {threadId:state.threadId};},
+   async goal(){return {goal:state.goal};},async workers(){return state.workers;},
+   async prepareContinuation(data){return {forkFrom:state.threadId,nativeSourceId:state.threadId,throughTurnId:data.turnId,model,workspace:state.workspace,accessMode:state.accessMode,effort:state.effort};},
+   async send(data){calls.push(['send',data,state.threadId]);if(sendFailure)throw sendFailure;state.busy=true;state.status='working';state.messages.push({id:'next-user',role:'user',turnId:`turn-${sequence}`,text:data.text,source:data.source??'local'});return {sent:true};},
+   async steer(data){calls.push(['steer',data]);},async queue(data){calls.push(['queue',data]);},
+   async stop(){state.busy=false;state.status='interrupted';calls.push(['stop',state.threadId]);},async close(){state.busy=false;state.status='offline';},
+  };owners.push(owner);return owner;
+ };
+ const c=createConversationController({root,sessionFactory});
+ const opened=await c.open({model,workspace:root}),source=owners.find(o=>o.state.threadId===opened.threadId);
+ source.state.busy=true;source.state.status='working';source.state.messages=[{id:'human',role:'user',turnId:'transfer-turn',text:'換一間接著做',source:'local'}];
+ const request=()=>source.hooks.onContinueConversation({threadId:source.state.threadId,turnId:'transfer-turn',nextInstruction:'第2階段尚未完成；先核對已保存結果。'});
+ const finish=async(status='completed')=>{source.state.busy=false;source.state.status=status;source.hooks.onConversationSettled({threadId:source.state.threadId,turnId:'transfer-turn',status});await wait(()=>c.state.continuation?.status!=='pending'&&calls.some(x=>x[0]==='fork')||c.state.continuation?.status==='cancelled');await new Promise(r=>setTimeout(r,30));};
+ const receipt=id=>readFile(path.join(root,'.runtime/chat-continuations',`${id??opened.threadId}.json`),'utf8').then(JSON.parse);
+ return {root,c,source,owners,calls,opened,request,finish,receipt,failFork:error=>{forkFailure=error;},failSend:error=>{sendFailure=error;}};
+}
+async function wait(check){const deadline=Date.now()+2000;while(!await check()){if(Date.now()>deadline)throw Error('test wait timed out');await new Promise(r=>setTimeout(r,10));}}
+
+test('AI move uses no message button, branches once after its turn and leaves the source owner intact',async()=>{
+ const f=await fixture();try{
+  const accepted=await f.request();assert.equal(accepted.accepted,true);assert.equal(accepted.created,false);assert.equal(f.calls.length,0);
+  await f.request();assert.equal(f.calls.length,0);
+  await f.finish();await wait(()=>f.c.state.threadId!==f.opened.threadId);
+  assert.equal(f.calls.filter(c=>c[0]==='fork').length,1);assert.equal(f.calls.filter(c=>c[0]==='send').length,1);
+  assert.equal(f.source.state.threadId,f.opened.threadId);assert.equal(f.source.state.status,'completed');
+  assert.equal(f.c.state.workspace,f.source.state.workspace);assert.equal((await f.c.sessions()).sessions.length,2);
+  const sent=f.calls.find(c=>c[0]==='send')[1];assert.equal(sent.source,'continuation');assert.match(sent.text,/先讀回目前成果檔案/);assert.match(sent.text,/第2階段尚未完成/);
+  f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});await new Promise(r=>setTimeout(r,20));assert.equal(f.calls.filter(c=>c[0]==='fork').length,1);
+  const child=f.owners.find(o=>o.state.threadId===f.c.state.threadId);
+  await assert.rejects(child.hooks.onContinueConversation({threadId:child.state.threadId,turnId:child.state.messages.at(-1).turnId,nextInstruction:'again'}),/真人訊息/);
+ }finally{await f.c.close();}
+});
+for(const status of ['failed','interrupted'])test(`the transfer-request turn ending ${status} cancels without creating or replaying`,async()=>{
+ const f=await fixture();try{await f.request();await f.finish(status);assert.equal(f.calls.length,0);assert.equal((await f.receipt()).status,'cancelled');}finally{await f.c.close();}
+});
+test('active goals, budgeted goals, live and unconfirmed workers refuse acceptance',async()=>{
+ const f=await fixture();try{
+  for(const goal of [{status:'active'},{status:'paused',tokenBudget:100}]){f.source.state.goal=goal;await assert.rejects(f.request(),/原生目標/);}
+  f.source.state.goal=null;
+  for(const worker of [{status:'running',settled:false},{status:'unresolved',executionUnowned:true,settled:false}]){f.source.state.workers=[worker];await assert.rejects(f.request(),/子代理/);}
+  assert.equal(f.calls.length,0);
+ }finally{f.source.state.workers=[];await f.c.close();}
+});
+test('new human input or an explicit stop cancels a pending move',async()=>{
+ for(const stop of [false,true]){const f=await fixture();try{await f.request();if(stop)await f.c.stop({threadId:f.opened.threadId});else await f.c.send({threadId:f.opened.threadId,text:'別換了'});f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});await new Promise(r=>setTimeout(r,20));assert.equal(f.calls.filter(c=>c[0]==='fork').length,0);assert.equal((await f.receipt()).status,'cancelled');}finally{await f.c.close();}}
+});
+test('an uncertain fork or new-room send never creates or sends a second time',async()=>{
+ for(const phase of ['fork','send']){const f=await fixture();try{
+  if(phase==='fork')f.failFork(Error('native outcome unknown'));else f.failSend(Error('send outcome unknown'));
+  await f.request();f.source.state.busy=false;f.source.state.status='completed';f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});
+  await wait(async()=>(await f.receipt()).status==='uncertain');const saved=await f.receipt();assert.equal(saved.status,'uncertain');
+  await f.request();f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});await new Promise(r=>setTimeout(r,20));
+  assert.equal(f.calls.filter(c=>c[0]==='fork').length,1);assert.equal(f.calls.filter(c=>c[0]==='send').length,phase==='send'?1:0);
+ }finally{await f.c.close();}}
+});
+test('shutdown cancels pending creation',async()=>{
+ const f=await fixture();await f.request();await f.c.close();assert.equal((await f.receipt()).status,'cancelled');assert.equal(f.calls.length,0);
+});
+
+test('native continuation captures stored history including old failed turns without opening or closing the source',async()=>{
+ await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'native-continuation-'));const calls=[];let hooks,gateway,ended,goal=null;
+ const history=[{id:'old-failure',status:'failed',items:[{id:'partial',type:'agentMessage',text:'unfinished'}]},{id:'transfer-turn',status:'completed',items:[]}];
+ const host={closed:new Promise(r=>ended=r),notify(){},async close(){calls.push(['close']);ended();},async request(method,p){calls.push([method,p]);
+  if(method==='model/list')return {data:[{model,supportedReasoningEfforts:[{reasoningEffort:'medium'}],defaultReasoningEffort:'medium'}]};
+  if(method==='account/read')return {account:{type:'chatgpt'}};if(method==='config/read')return {config:{}};
+  if(method==='thread/start')return {thread:{id:'parent',turns:[]}};
+  if(method==='thread/goal/get')return {goal};if(method==='thread/backgroundTerminals/list')return {data:[]};
+  if(method==='thread/read')return {thread:{id:'parent',turns:history}};
+  if(method==='thread/fork')return {thread:{id:'child',turns:structuredClone(history)}};
+  if(method==='turn/start'){hooks.onEvent({method:'turn/started',params:{threadId:'parent',turn:{id:'transfer-turn',status:'inProgress'}}});return {turn:{id:'transfer-turn'}};}
+  return {};
+ }};
+ const c=createDesktopController({root,hostFactory:h=>{if(!h.onEvent)return {...host,close:async()=>{}};hooks=h;return host;},gatewayFactory:async g=>{gateway=g;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://fake/mcp',headers:{Authorization:'fake'}}}},close:async()=>{}};},onContinueConversation:async data=>({accepted:true,...data})});
+ try{
+  await c.open({model,effort:'medium',accessMode:'read-only'});await c.send({text:'move'});
+  await assert.rejects(gateway.continueConversation({nextInstruction:'continue'},{'x-codex-turn-metadata':JSON.stringify({thread_id:'worker',turn_id:'transfer-turn'})}),/目前主對話/);
+  const accepted=await gateway.continueConversation({nextInstruction:'continue'},{'x-codex-turn-metadata':JSON.stringify({thread_id:'parent',turn_id:'transfer-turn'})});assert.equal(accepted.turnId,'transfer-turn');
+  assert.doesNotThrow(accepted.stillCurrent);
+  hooks.onEvent({method:'item/completed',params:{threadId:'parent',turnId:'transfer-turn',item:{id:'native-human',type:'userMessage',content:[{type:'text',text:'move'}]}}});
+  assert.equal(c.state.messages.filter(m=>m.role==='user').length,1);assert.equal(c.state.messages.find(m=>m.role==='user').source,'native');
+  hooks.onEvent({method:'turn/completed',params:{threadId:'parent',turn:{id:'transfer-turn',status:'completed'}}});
+  assert.throws(accepted.stillCurrent,/目前主對話/);
+  goal={status:'active'};await assert.rejects(c.prepareContinuation({turnId:'transfer-turn'}),/原生目標/);goal=null;
+  const prepared=await c.prepareContinuation({turnId:'transfer-turn'});assert.equal(prepared.forkFrom,'parent');assert.equal(prepared.throughTurnId,'transfer-turn');assert.equal(c.state.threadId,'parent');
+  assert.equal(calls.some(c=>['thread/fork','thread/resume','close'].includes(c[0])),false);assert.equal((await listMainSessions(root)).sessions.length,1);
+  await c.send({text:'program continuation',source:'continuation'});
+  for(const method of ['item/started','item/completed'])hooks.onEvent({method,params:{threadId:'parent',turnId:'transfer-turn',item:{id:'native-control',type:'userMessage',content:[{type:'text',text:'program continuation'}]}}});
+  assert.equal(c.state.messages.filter(m=>m.text==='program continuation').length,1);assert.equal(c.state.messages.find(m=>m.text==='program continuation').source,'continuation');
+ }finally{await c.close();}
+});
+
+test('acceptance uses a fresh snapshot after awaited checks and revalidates native metadata after persistence',async()=>{
+ for(const phase of ['goal','receipt']){
+  const f=await fixture();try{
+   const mutable=f.source.state;
+   Object.defineProperty(f.source,'state',{get:()=>({...mutable})});
+   if(phase==='goal')f.source.goal=async()=>{mutable.busy=false;return {goal:null};};
+   await assert.rejects(f.source.hooks.onContinueConversation({threadId:f.opened.threadId,turnId:'transfer-turn',nextInstruction:'remaining',stillCurrent:()=>{if(phase==='receipt')throw Error('native turn ended');}}),phase==='goal'?/來源已變更/:/native turn ended/);
+   if(phase==='receipt')assert.equal((await f.receipt()).status,'cancelled');
+   f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});
+   await new Promise(r=>setTimeout(r,20));assert.equal(f.calls.length,0);
+  }finally{await f.c.close();}
+ }
+});
+
+test('a later real human native echo may request another move, not the program continuation',async()=>{
+ const f=await fixture();try{
+  f.source.state.accessMode='danger-full-access';await f.request();await f.finish();await wait(()=>f.c.state.threadId!==f.opened.threadId);
+  const child=f.owners.find(o=>o.state.threadId===f.c.state.threadId);assert.equal(child.state.accessMode,'danger-full-access');assert.equal(child.state.permissionConfirmed,true);
+  child.state.messages.push({id:'human-2',role:'user',turnId:'human-turn-2',text:'再次換房',source:'native'});
+  const accepted=await child.hooks.onContinueConversation({threadId:child.state.threadId,turnId:'human-turn-2',nextInstruction:'another explicit move'});assert.equal(accepted.accepted,true);
+ }finally{await f.c.close();}
+});
+
+test('steering or queueing real input cancels the pending move; native error takes precedence',async()=>{
+ for(const method of ['steer','queue']){
+  const f=await fixture();try{await f.request();await f.c[method]({threadId:f.opened.threadId,text:'new instruction'});assert.equal((await f.receipt()).status,'cancelled');assert.equal(f.calls.filter(c=>c[0]==='fork').length,0);}finally{await f.c.close();}
+ }
+ const f=await fixture();try{await f.request();await f.finish('failed');f.source.state.error='actual native failure';assert.equal(f.c.state.error,'actual native failure');}finally{await f.c.close();}
+});
+
+test('reopening an incomplete receipt persists cancellation or uncertainty and never dispatches',async()=>{
+ for(const status of ['pending','creating','created']){
+  const f=await fixture();await f.c.close();
+  const file=path.join(f.root,'.runtime/chat-continuations',`${f.opened.threadId}.json`);await mkdir(path.dirname(file),{recursive:true});
+  await writeFile(file,JSON.stringify({sourceThreadId:f.opened.threadId,turnId:'old-turn',status,nextInstruction:'never replay'}));
+  const c=createConversationController({root:f.root,sessionFactory:hooks=>({...f.source,hooks,state:{...f.source.state,status:'ready',busy:false},close:async()=>{}})});
+  try{await c.open({threadId:f.opened.threadId,model});assert.equal((await f.receipt()).status,status==='pending'?'cancelled':'uncertain');assert.equal(f.calls.length,0);}finally{await c.close();}
+ }
+});
+
+test('background notification turns cannot authorize a move',async()=>{
+ const f=await fixture();try{f.source.state.messages=[];await assert.rejects(f.request(),/真人訊息/);assert.equal(f.calls.length,0);}finally{await f.c.close();}
+});
+
+test('known pre-fork failures cancel but uncertain fork attempts remain blocked without retry',async()=>{
+ for(const notCreated of [true,false]){
+  const f=await fixture();try{
+   f.failFork(Object.assign(Error('open failed'),{notCreated}));await f.request();
+   f.source.state.busy=false;f.source.state.status='completed';f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'completed'});
+   await wait(async()=>(await f.receipt()).status===(notCreated?'cancelled':'uncertain'));
+   f.source.state.busy=true;f.source.state.messages.push({role:'user',turnId:'next-human',source:'native',text:'explicit new move'});
+   const request=()=>f.source.hooks.onContinueConversation({threadId:f.opened.threadId,turnId:'next-human',nextInstruction:'remaining'});
+   if(notCreated)assert.equal((await request()).accepted,true);else await assert.rejects(request(),/前次換房結果尚未確認/);
+   assert.equal(f.calls.filter(c=>c[0]==='fork').length,1);
+  }finally{await f.c.close();}
+ }
+});
+
+test('the real adapter preserves known pre-fork rejection and never marks a sent fork as not created',async()=>{
+ for(const phase of ['catalog','history','config','fork','mcp']){
+  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'continuation-open-failure-'));let ended;const calls=[];
+  const host={closed:new Promise(r=>ended=r),notify(){},close:async()=>{ended();},waitForMcp:async()=>{if(phase==='mcp')throw Error('MCP wait failed');},request:async(method,p)=>{
+   calls.push(method);
+   if(method==='model/list'){if(phase==='catalog')throw Error('catalog failed');return {data:[{model,supportedReasoningEfforts:[{reasoningEffort:'medium'}]}]};}
+   if(method==='account/read')return {account:{type:'chatgpt'}};
+   if(method==='thread/read')return {thread:{id:'parent',turns:[{id:phase==='history'?'changed-turn':'last-turn',status:'completed',items:[]}]}};
+   if(method==='config/read'){if(phase==='config')throw Error('config read failed');return {config:{}};}
+   if(method==='thread/fork'){if(phase==='fork')throw Error('fork response unknown');return {thread:{id:'new-child',turns:[]}};}
+   return {};
+  }};
+  const c=createDesktopController({root,hostFactory:h=>h.onEvent?host:{...host,close:async()=>{}},gatewayFactory:async()=>({mcpConfig:{mcpServers:{k_gemini:{url:'http://fake/mcp',headers:{Authorization:'fake'}}}},close:async()=>{}})});
+  try{
+   await assert.rejects(c.open({model,effort:'medium',accessMode:'danger-full-access',permissionConfirmed:true},{continuation:{forkFrom:'parent',nativeSourceId:'parent',throughTurnId:'last-turn'}}),error=>{assert.equal(error.notCreated===true,['catalog','history','config'].includes(phase));return true;});
+   assert.equal(calls.filter(c=>c==='thread/fork').length,['fork','mcp'].includes(phase)?1:0);
+   if(phase==='mcp')assert.equal(c.state.threadId,'new-child');
+  }finally{await c.close();}
+ }
+});
