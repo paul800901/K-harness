@@ -33,6 +33,27 @@ async function fixture(){
 }
 async function wait(check){const deadline=Date.now()+2000;while(!await check()){if(Date.now()>deadline)throw Error('test wait timed out');await new Promise(r=>setTimeout(r,10));}}
 
+test('a continuation accepted during an idle probe cannot be closed by its late read',async()=>{
+ const f=await fixture();let resolveRead,reading=false,closes=0,reads=0;
+ const pending=new Promise(resolve=>{resolveRead=resolve;});
+ const close=f.source.close;f.source.close=async()=>{closes++;return close();};
+ f.source.workers=async()=>{if(++reads===1){reading=true;return pending;}return [];};
+ try{
+  f.source.state.busy=false;f.source.state.status='completed';
+  for(let i=0;i<4;i++)await f.c.open({model,workspace:f.root});
+  await wait(()=>reading);
+  f.source.state.busy=true;f.source.state.status='working';
+  assert.equal((await f.request()).accepted,true);
+  // Completion may precede delivery of its callback; pending ownership still protects the room.
+  f.source.state.busy=false;f.source.state.status='completed';resolveRead([]);
+  await wait(()=>reads>=3);await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(closes,0);assert.equal((await f.receipt()).status,'pending');
+  await f.c.open({threadId:f.opened.threadId,model});assert.equal(f.c.state.threadId,f.opened.threadId);
+  await f.finish();assert.equal(f.calls.filter(c=>c[0]==='fork').length,1);
+  assert.equal(f.calls.filter(c=>c[0]==='send').length,1);
+ }finally{resolveRead([]);await f.c.close();}
+});
+
 test('AI move uses no message button, branches once after its turn and leaves the source owner intact',async()=>{
  const f=await fixture();try{
   const accepted=await f.request();assert.equal(accepted.accepted,true);assert.equal(accepted.created,false);assert.equal(f.calls.length,0);
