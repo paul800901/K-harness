@@ -52,3 +52,17 @@
 ## 候選停等
 
 本輪是候選呈現修復，不是服務故障修復或正式更新。正式程式指標讀回仍 `1a45a73440a5f948c5cec625de02340863b7c67d`，K 未被本輪停止／重啟。等本人回來允許，核對工作停止並與前批一併升級；程序還原只涵蓋程式，不還原／重播對話資料。
+
+
+## 08:52／08:53 兩張新截圖的唯讀追查
+
+本人再問「繼續工作又出問題，到底是 K 還是 Codex」，本段只診斷，不新增產品修正或執行回合，也不部署。
+
+- **我殺了學院玩家**：最新原生回合於臺灣 **08:11:04** failed；原生 SQLite／JSONL 保存完整 `Error running remote compact task: stream disconnected before completion: ...`，與截圖 request ID（569402d0 開頭）相符。這次發生在原生遠端上下文壓縮；同一 ID 原生日誌 HTTP 200 OK。並有原生 `responses_retry` 的多次警告，不能歸因為 K 沒有自行重送。
+- **拳王轉生**：最新原生回合於臺灣 **08:13:48** failed；原生保存 `stream disconnected before completion: ...`，與截圖 request ID（57d7fe1e 開頭）相符，同一 ID 原生日誌 HTTP 200 OK。
+- 兩筆皆 `codexErrorInfo='other'`、`additionalDetails=null`。可確認工作停在 Codex 原生／OpenAI 請求路徑，不是 K 只把成功回合畫成失敗；更內部服務原因仍未知。不能以两间失败宣稱全站故障、过载、Luna或額度不足，也不以 HTTP 200 當工作完成。
+- **K 層仍有另外問題**：英文長提示／兩個提示與子代理待確認不能混成服務故障。正式仍 1a45a734；前批中文與子代理讀法候選尚未部署。現有提示去重只比完整原文，remote compact 前綴與內文不是同一字串；未取得第二則詳情 request ID，不冒稱已證實是同一次錯誤重複，而是呈現需另外核對。
+- 新的 remote compact 前綴不在上一候選 localizer 的已辨識範圍，**尚未修正**；不能把先前的中文修正宣稱覆蓋本次全部形狀。此輪未實作／複查這個補修。
+- **子代理31待確認**：唯讀查該父對話歷史收集的 42 個原生子代理，42 個 latest turn 全為 completed，42 個 session_meta 父來源均一致。這能確認歷史有已完成工作，不能把「待確認31」當作31個確實執行中。沒有取得當時 K 的31列逐筆快照／錯誤回傳，不宣稱31列已逐筆定位或正式修復；既有尚未部署的 latest-summary 候選仍待正式讀回。
+
+私有證據 `D:\K-harness\.runtime\stream-error-audit-20261010-0853`：native-audit.json、兩父對話事件、compact-log-summary.json、boxing-child-summary.json。只摘錄原生錯誤／狀態／種類，不複製小說內容／登入資料。本輪沒有對正式 host 呼叫任何方法、修改目標、切換模型、停止／重送／壓縮／更新 K。
