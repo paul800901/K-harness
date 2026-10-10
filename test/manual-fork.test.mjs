@@ -103,6 +103,15 @@ test('manual fork rejects a live background command without terminating it or cr
  }finally{f.finishBackground();await f.c.close();}
 });
 
+test('cancelled history navigation restores inherited worker ownership and historical tools',async()=>{
+ const f=await fixture({sourceWorker:true});try{
+  await f.c.fork({messageId:'answer'});const beforeTools=structuredClone(f.c.state.tools),abort=new AbortController();
+  await assert.rejects(f.c.open({threadId:'parent',model:f.model},{signal:abort.signal,onHistory:()=>abort.abort(new DOMException('cancel','AbortError'))}),/cancel/);
+  assert.equal(f.c.state.threadId,'child');assert.deepEqual(f.c.state.tools,beforeTools);assert.deepEqual(await f.c.workers(),[]);
+  assert.equal(f.calls.some(x=>x.method==='turn/interrupt'),false);
+ }finally{await f.c.close();}
+});
+
 test('manual fork cannot use inherited high privilege to raise a lower-privilege source',async()=>{
  const f=await fixture();try{
   await assert.rejects(f.c.fork({messageId:'answer',accessMode:'danger-full-access'}),/permissionConfirmed/);

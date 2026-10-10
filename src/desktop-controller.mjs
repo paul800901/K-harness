@@ -7,7 +7,7 @@ import {readConversationContext,renderCompactionContext,CONVERSATION_CONTEXT_GUI
 import {saveMainSession,saveMainSessionActivity,listMainSessions} from './main-sessions.mjs';
 import {randomUUID} from 'node:crypto';
 import {saveAttachment,saveAttachmentStream,readPresentedFile} from './desktop-files.mjs';
-import {sessionAttachment,sessionAttachmentSource,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
+import {sessionAttachment,sessionAttachmentSource,inheritedAttachment,messageAttachment,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
 import path from 'node:path';
 import {codexQuota} from './usage.mjs';
 import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
@@ -669,8 +669,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   },
   async upload(data){if(!state.threadId||opening||closing||data.threadId!==state.threadId)throw new Error('對話已切換，請在目前對話重新加入附件。');const threadId=state.threadId,workspace=state.workspace;return saveAttachment(workspace,threadId,data);},
   async uploadStream(data,stream){if(!state.threadId||opening||closing||data.threadId!==state.threadId)throw new Error('對話已切換，請在目前對話重新加入附件。');const threadId=state.threadId,workspace=state.workspace;return saveAttachmentStream(workspace,threadId,{...data,stream});},
-  async attachmentFile(id){const a=await sessionAttachment(state.workspace,state.previousWorkspaces,state.threadId,id);return {...await readPresentedFile(a.workspace,a.path),name:a.name};},
-  async attachmentSource(id,context={}){if(context.threadId&&context.threadId!==state.threadId)throw new Error('聊天室已切換，請回到原對話下載附件。');return sessionAttachmentSource(state.workspace,state.previousWorkspaces,state.threadId,id);},
+  async attachmentFile(id){const a=await messageAttachment(state,id);return {...await readPresentedFile(a.workspace,a.path),name:a.name};},
+  async attachmentSource(id,context={}){if(context.threadId&&context.threadId!==state.threadId)throw new Error('聊天室已切換，請回到原對話下載附件。');const a=await messageAttachment(state,id);return sessionAttachmentSource(a.workspace,[],a.threadId,id);},
   async artifact(name){if(!state.artifacts.includes(name))throw new Error('只開啟本對話已記錄的成果。');return sessionArtifact(state.workspace,state.previousWorkspaces,name);},
   async metadata({threadId,title,archived,pinned}){
    const found=(await listMainSessions(root)).sessions.find(s=>s.threadId===threadId);if(!found)throw new Error('K 對話不存在。');
@@ -689,7 +689,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // or open calls must still be rejected.
    const forkSource=continuation??manualFork;
    opening=true;openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
-   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds);let createdHost,continuationForkAttempted=false,forkCreatedId;
+   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds),previousItems=new Map(items),previousInheritedWorkers=new Set(inheritedWorkerItems);let createdHost,continuationForkAttempted=false,forkCreatedId;
    const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
     signal.throwIfAborted();
@@ -775,7 +775,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
        const match=text.match(/\n\n<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>$/);
        if(match){try{const context=JSON.parse(match[1]);if(context.instruction===ATTACHMENT_INSTRUCTION&&Array.isArray(context.files)){
         text=text.slice(0,match.index);
-        for(const a of context.files){try{attachments.push(await sessionAttachment(workspace,state.previousWorkspaces,forkSource?.forkFrom??threadId,a.id));}catch{state.error='部分附件無法重新載入；原始對話內容與檔案均未刪除。';}}
+        for(const a of context.files){try{attachments.push(await (inheritedTurns.has(turn.id)?inheritedAttachment(a):sessionAttachment(workspace,state.previousWorkspaces,threadId,a.id)));}catch{state.error='部分附件無法重新載入；原始對話內容與檔案均未刪除。';}}
        }}catch{/* User-authored text resembling a marker is still ordinary text. */}}
         const timing=historyMessageTiming(i.id,'user',turn.id),groupId=timing.groupId??turnGroupId(turn.id);
         message(i.id,'user',text,attachments,turn.id,undefined,{historical:true,persist:false,groupId,...timing});
@@ -852,7 +852,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      }
      void usage();return {threadId:state.threadId};
    }catch(e){if(signal.aborted){
-     Object.assign(state,previousState);compactionIds=previousCompactionIds;
+     Object.assign(state,previousState);compactionIds=previousCompactionIds;items.clear();for(const [id,item]of previousItems)items.set(id,item);inheritedWorkerItems.clear();for(const id of previousInheritedWorkers)inheritedWorkerItems.add(id);
      // Resume may already have reset the projection, even when reusing the host.
      if(state.threadId){state.status='offline';state.browserAccess={enabled:false,networkAccess:false};}
      if(createdHost){await closeFlashGateway();await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;

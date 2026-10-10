@@ -805,6 +805,24 @@ test('native Claude fork requests new session with source history and preserves 
  }finally{await f.controller.close();}
 });
 
+test('Claude inherited attachment preview and download survive reopen, second fork and workspace move without granting send',async()=>{
+ const f=await fixture();try{
+  const {threadId:parent}=await f.controller.open({});
+  const a=await f.controller.upload({threadId:parent,name:'繼承.txt',base64:Buffer.from('Claude 假原文').toString('base64')});
+  await f.controller.send({text:'ORIGINAL',attachmentIds:[a.id]});
+  f.hostOptions.onMessage({type:'assistant',uuid:'answer',message:{content:[{type:'text',text:'conclusion'}]}});f.hostOptions.onMessage({type:'result',is_error:false});
+  const {threadId:child}=await f.controller.fork({messageId:'answer',accessMode:'claude-auto'});
+  const check=async()=>{assert.equal((await f.controller.attachmentFile(a.id)).bytes.toString(),'Claude 假原文');const source=await f.controller.attachmentSource(a.id,{threadId:f.controller.state.threadId});assert.equal((await readFile(source.path)).toString(),'Claude 假原文');};
+  await check();await f.controller.close();await f.controller.open({threadId:child});await check();
+  const destination=path.join(f.root,'moved');await mkdir(destination);await f.controller.close();await f.controller.open({threadId:child},{relocation:{workspace:destination,previousWorkspaces:[f.root],previousArtifacts:[]}});await check();
+  const {threadId:grandchild}=await f.controller.fork({messageId:'answer',accessMode:'claude-auto'});await check();await f.controller.close();await f.controller.open({threadId:grandchild});await check();
+  await assert.rejects(f.controller.send({text:'not sent',attachmentIds:[a.id]}),/其他對話/);assert.equal(f.host.startCalls.length,0);
+  f.controller.state.busy=true;await assert.rejects(f.controller.steer({text:'not steered',attachmentIds:[a.id]}),/其他對話/);f.controller.state.busy=false;assert.equal(f.host.startCalls.length,0);
+  const foreign=await saveAttachment(f.root,'unrelated',{name:'foreign.txt',base64:'eA=='});await assert.rejects(f.controller.attachmentFile(foreign.id));
+  const card=f.controller.state.messages[0].attachments[0];const owner=card.threadId;card.threadId='unrelated';await assert.rejects(f.controller.attachmentFile(a.id));card.threadId=owner;
+ }finally{await f.controller.close();}
+});
+
 test('Claude fork requires explicit confirmation when escalating to bypass permissions',async()=>{
  const f=await fixture();try{
   await f.controller.open({});await f.controller.send({text:'ORIGINAL'});

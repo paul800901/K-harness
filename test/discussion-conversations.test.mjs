@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 import {remoteRouteAllowed} from '../src/remote-access.mjs';
+import {saveAttachment} from '../src/desktop-files.mjs';
 
 const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
 const models=[{model:'gpt-6.1-sol',displayName:'Sol',provider:'codex'},{model:'claude-opus-5-5',displayName:'Opus',provider:'claude'},{model:'gemini-3.8-flash',displayName:'Flash',provider:'gemini'}].map(m=>({...m,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}]}));
@@ -24,6 +25,19 @@ async function fixture({hold=false,discussionApi}={}){
  return {root,c,a,owner,owners,calls,start};
 }
 const settled=async f=>{while(f.c.state.discussion?.busy)await new Promise(r=>setTimeout(r,5));};
+
+for(const model of ['gpt-6.1-sol','claude-opus-5-5'])test(`discussion context uses verified inherited ${model} attachment cards while explicit foreign IDs remain rejected`,async()=>{
+ const f=await fixture();try{
+  f.owner.state.model=model;
+  const a=await saveAttachment(f.root,'source-parent',{name:'繼承.txt',base64:Buffer.from('INHERITED_DISCUSSION_FAKE_BODY').toString('base64')});
+  f.owner.state.messages.push({id:'inherited-user',role:'user',text:'原房假附件',attachments:[{...a,workspace:f.root}]});
+  await f.start();await settled(f);assert(f.calls.some(row=>row.prompt.includes('INHERITED_DISCUSSION_FAKE_BODY')));
+  const foreign=await saveAttachment(f.root,'unrelated',{name:'foreign.txt',base64:'eA=='});
+  await assert.rejects(f.start({attachmentIds:[foreign.id]}),/其他對話/);
+  await assert.rejects(f.start({attachmentIds:[a.id]}),/其他對話/);
+  assert.equal(f.owner.sent.length,0);
+ }finally{await f.c.close();}
+});
 
 test('discussion entry and interjection are available to the paired phone; the existing stop route is reused',()=>{
  for(const op of ['start','message'])assert.equal(remoteRouteAllowed('POST',`/api/discussion/${op}`),true);

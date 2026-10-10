@@ -4,7 +4,7 @@ import {listMainSessions} from './main-sessions.mjs';
 import {deleteArchived} from './archive-delete.mjs';
 import {createCompletionAttention} from './completion-attention.mjs';
 import {createDiscussionController} from './discussion-controller.mjs';
-import {sessionAttachment} from './session-workspace.mjs';
+import {sessionAttachment,messageAttachment} from './session-workspace.mjs';
 import {readPresentedFile} from './desktop-files.mjs';
 import {readNativeMessageFile} from './native-message-file.mjs';
 import {discussionTranscript} from '../shared/discussion.mjs';
@@ -405,7 +405,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const facilitator={...choose({model:s.model,effort:s.effort}),id:'host'};
   const source=discussion(controller).project(s.messages??[]);
   const attachments=[],explicit=new Set(data.attachmentIds??[]),ids=new Set([...explicit,...(data.includeContext!==false?source.flatMap(m=>(m.attachments??[]).map(a=>a.id)):[])]);
-  for(const id of ids){const a=await sessionAttachment(s.workspace,s.previousWorkspaces,s.threadId,id);if(!a.textPath){if(explicit.has(id))throw Error('討論目前只帶入文字與已擷取文字的文件；圖片／影音請在一般原生對話處理，未假裝已閱讀。');attachments.push({...a,text:null,warning:'本次未帶入原始圖片／影音內容，不能宣稱看過。'});continue;}const content=await readPresentedFile(a.workspace,a.textPath);attachments.push({...a,text:content.bytes.toString('utf8')});}
+  for(const id of ids){const a=await (explicit.has(id)?sessionAttachment(s.workspace,s.previousWorkspaces,s.threadId,id):messageAttachment(s,id));if(!a.textPath){if(explicit.has(id))throw Error('討論目前只帶入文字與已擷取文字的文件；圖片／影音請在一般原生對話處理，未假裝已閱讀。');attachments.push({...a,text:null,warning:'本次未帶入原始圖片／影音內容，不能宣稱看過。'});continue;}const content=await readPresentedFile(a.workspace,a.textPath);attachments.push({...a,text:content.bytes.toString('utf8')});}
   return discussion(controller).start({mode:data.mode,text:data.text,participants,facilitator,workspace:s.workspace,source:discussionTranscript(source),attachments,
    reviewTarget:data.reviewTarget??[...source].reverse().find(m=>m.role==='assistant'&&!m.partial&&!m.streaming)?.text,includeContext:data.includeContext!==false,afterMessageId:s.messages?.at(-1)?.id??null});
   }finally{locked.delete(controller);}

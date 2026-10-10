@@ -1,5 +1,5 @@
 import path from 'node:path';
-import {access,stat} from 'node:fs/promises';
+import {access,stat,readFile} from 'node:fs/promises';
 import {loadAttachment,readPresentedFile} from './desktop-files.mjs';
 import {checkedPath} from './files.mjs';
 
@@ -24,6 +24,29 @@ export async function sessionAttachment(workspace,previousWorkspaces,threadId,id
   return {...await loadAttachment(root,threadId,id),workspace:root};
  }
  throw Error('找不到這個對話的附件；原檔案未搬移或刪除。');
+}
+
+// Only called for a copied native user turn inside the saved fork boundary.
+// The marker locates an upload; the upload record, not the marker, owns it.
+export async function inheritedAttachment({id,originalPath}){
+ if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/u.test(id)||typeof originalPath!=='string'||!path.isAbsolute(originalPath))throw Error('繼承附件參照無效。');
+ const folder=path.dirname(originalPath),uploads=path.dirname(folder),runtime=path.dirname(uploads),workspace=path.dirname(runtime);
+ if(path.basename(folder)!==id||path.basename(uploads)!=='uploads'||path.basename(runtime)!=='.runtime'||!path.basename(originalPath).startsWith('source'))throw Error('繼承附件路徑無效。');
+ const record=JSON.parse(await readFile(await checkedPath(workspace,`.runtime/uploads/${id}/attachment.json`,false),'utf8'));
+ if(typeof record.threadId!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/u.test(record.threadId))throw Error('繼承附件擁有者無效。');
+ const item=await loadAttachment(workspace,record.threadId,id);
+ if(path.relative(path.resolve(workspace,item.path),originalPath)!=='')throw Error('繼承附件原檔路徑不符。');
+ return {...item,workspace};
+}
+
+// Historical cards are already verified at projection time (or persisted by
+// Claude). Recheck their exact owner and file; never search unrelated rooms.
+export async function messageAttachment(state,id){
+ const card=state.messages.flatMap(message=>message.attachments??[]).find(a=>a.id===id&&a.threadId!==state.threadId);
+ if(!card)return sessionAttachment(state.workspace,state.previousWorkspaces,state.threadId,id);
+ const item=await loadAttachment(card.workspace,card.threadId,id);
+ if(path.relative(path.resolve(card.workspace,card.path),path.resolve(card.workspace,item.path))!=='')throw Error('歷史附件原檔路徑不符。');
+ return {...item,workspace:card.workspace};
 }
 
 export async function sessionAttachmentSource(workspace,previousWorkspaces,threadId,id){

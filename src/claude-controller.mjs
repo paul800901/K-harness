@@ -10,7 +10,7 @@ import {openClaudeHost, claudeQuota, claudeModelsFrom, CLAUDE_MODEL, CLAUDE_ACCE
 import {normalizeWorkerPolicy,workerPolicyConfig} from './worker-policy.mjs';
 import {createLunaBridge, lunaResult} from './luna-bridge.mjs';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
-import {sessionAttachment,sessionAttachmentSource,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
+import {sessionAttachment,sessionAttachmentSource,messageAttachment,sessionArtifact,workspaceGuidance} from './session-workspace.mjs';
 import {validateWorkspace, listWorkspaceDirectories} from './workspaces.mjs';
 import {approvalRequest} from './desktop-permissions.mjs';
 import {saveMainSession, listMainSessions} from './main-sessions.mjs';
@@ -570,8 +570,8 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     },
     async upload(data){if(!state.threadId||opening||closing||data.threadId!==state.threadId)throw new Error('對話已切換，請在目前對話重新加入附件。');const threadId=state.threadId,workspace=state.workspace;return saveAttachment(workspace,threadId,data);},
     async uploadStream(data,stream){if(!state.threadId||opening||closing||data.threadId!==state.threadId)throw new Error('對話已切換，請在目前對話重新加入附件。');const threadId=state.threadId,workspace=state.workspace;return saveAttachmentStream(workspace,threadId,{...data,stream});},
-    async attachmentFile(id){const a=await sessionAttachment(state.workspace,state.previousWorkspaces,state.threadId,id);return {...await readPresentedFile(a.workspace,a.path),name:a.name};},
-    async attachmentSource(id,context={}){if(context.threadId&&context.threadId!==state.threadId)throw new Error('聊天室已切換，請回到原對話下載附件。');return sessionAttachmentSource(state.workspace,state.previousWorkspaces,state.threadId,id);},
+    async attachmentFile(id){const a=await messageAttachment(state,id);return {...await readPresentedFile(a.workspace,a.path),name:a.name};},
+    async attachmentSource(id,context={}){if(context.threadId&&context.threadId!==state.threadId)throw new Error('聊天室已切換，請回到原對話下載附件。');const a=await messageAttachment(state,id);return sessionAttachmentSource(a.workspace,[],a.threadId,id);},
     async artifact(name){if(!state.artifacts.includes(name))throw new Error('只開啟本對話已記錄的成果。');return sessionArtifact(state.workspace,state.previousWorkspaces,name);},
     async metadata({threadId,title,archived,pinned}){
       if(title!==undefined&&(typeof title!=='string'||!title.trim()||title.length>120))throw new Error('標題須為 1–120 字元。');
