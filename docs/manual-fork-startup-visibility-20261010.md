@@ -42,3 +42,16 @@
 **候選已實作並完成上述原生假資料／回歸驗證；第二輪真正 Opus 5.5 複查完成，沒有阻擋問題。正式程式仍為 1b3749e，未部署、停止或重啟現用 K。** 只有失敗分支 metadata 入口恢復已實際執行。
 
 沒有恢復／重送原小說、push、更新東區、讀或搬其他專案／供應商憑證。部署仍須核對現用 K 工作結束與完全關閉，保留程式退版並做正式讀回。不能用這次短假資料宣稱上游串流、上百次壓縮或全部未知問題已修。
+
+
+## 本人確認停止後正式更新（2026-10-10 20:54 臺灣）
+
+本節取代前文候選停等狀態。本人回覆「離開並停止 K」後，實際核對正式 K 程序已退出、47831 不可連線，才套用固定程式 **be1d976f2d70453fb033cd870dc283bd906a4c1b**；正式原基底為 1b3749e。
+
+- 獨立安裝候選沿用既有且 lock 相同的相依套件，沒有安裝／升級環境。介面、擴充及啟動器建置成功；安裝候選再驗證 **1161/1161、零失敗**，660 個固定來源檔零差異。套用後再次逐檔核對正式 660 檔零差異。
+- 正式 runtime／根啟動器已更新。舊程式與啟動器保留於 releases/before-1791636761225；這是程式退版，不是對話資料快照。原生 homes、private-state、profiles、供應商目錄原處未搬動；供應商設定、Codex config、projects、Gemini 帳號清單及唯一恢復分支 metadata 雜湊不變，既有 runtime 設定除 version／previous 外保留。
+- 使用真正正式 owner／served assets 讀回桌面 1440×960 及手機 390×844：原分支 ID、user 標記、未封存與 forkThroughTurnId 完整；側欄實際存在「Pick Me Up · 分支」。JavaScript／CSS 與正式資產一致，無頁面錯誤；API POST 為零，沒有打開小說原房或分支、沒有送出接續或重建分支。手機只展開側欄。
+- 完成讀回後關閉臨時 owner，确认正式 port 已停止，再從原本 Start-K-Desktop.ps1 **啟動一次**。正式 Node supervisor／electron-isolated-main.cjs 已建立，桌面視窗標題 K 執行中樞、health 200、設定 version be1d976；沒有恢復／重送原工作。
+- 證據位於 D:\K-harness\.runtime\manual-fork-deploy-20261010：validation.json、installed-source.json、activation.json、preserved.json、formal-readback.json、formal-ui-1440.png／390.png、restart-start.json、restart-readback.json。真正原生假資料分支／接續／重開及兩輪真正 Opus 5.5 證據仍在前述 manual-fork-fix-20261010。
+
+**正式程式已更新並啟動；失敗分支原 ID 已保留且正式側欄已讀回。** 沒有 push 或更新東區。沒有實際接續原小說，亦不把短假資料成功宣稱為極長任務、上百次壓縮或所有未知問題已解決。
