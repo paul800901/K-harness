@@ -66,3 +66,45 @@
 - **子代理31待確認**：唯讀查該父對話歷史收集的 42 個原生子代理，42 個 latest turn 全為 completed，42 個 session_meta 父來源均一致。這能確認歷史有已完成工作，不能把「待確認31」當作31個確實執行中。沒有取得當時 K 的31列逐筆快照／錯誤回傳，不宣稱31列已逐筆定位或正式修復；既有尚未部署的 latest-summary 候選仍待正式讀回。
 
 私有證據 `D:\K-harness\.runtime\stream-error-audit-20261010-0853`：native-audit.json、兩父對話事件、compact-log-summary.json、boxing-child-summary.json。只摘錄原生錯誤／狀態／種類，不複製小說內容／登入資料。本輪沒有對正式 host 呼叫任何方法、修改目標、切換模型、停止／重送／壓縮／更新 K。
+
+
+## 本人授權後的原生與K對照診斷（2026-10-10）
+
+本人詢問如何查明根因，確認「追 request ID、獨立假資料、同原生版本對照、不重播小說、不操作正式 K」後回覆「做」。本段記錄實際診斷，不是故障修復或正式驗收。
+
+### 已確認的失敗層級
+
+主代理獨立以 SQLite URI `mode=ro` 核對兩個原生 turn、request ID、HTTP 紀錄及 `codex_core::responses_retry`，與限定 Luna 唯讀稽核交叉比對：
+
+- 我殺了學院玩家：turn `01a12324-6e58-72a0-b16d-b5382a3ea74c` 原生 failed，沒有 final agent item。最後 request `569402d0-b02a-4bf3-865a-43e888429270` 對應 HTTP 200，但原生遠端壓縮未完成。日誌明確記錄 `remote compaction v2 stream failed`，由原生核心進行 `1/2`、`2/2` 延遲重試後失敗；不是 K 應自行重送而未重送。
+- 拳王轉生：turn `01a12324-a831-7df0-9930-8b90cc47b616` 原生 failed，沒有 final agent item。最後 request `57d7fe1e-2b9e-4615-ac5e-4191380cf5b8` 同樣 HTTP 200；最後一組原生 sampling 重試 `1/5` 到 `5/5` 後仍失敗。周邊存在壓縮痕跡，不足以證明這筆最後失敗也是壓縮造成。
+- 檢查目標時間窗 stream／websocket 日誌，沒有保留可辨識的 `response.failed`／`response.completed` 協定事件。**這是記錄不足，不是「確定沒有上游失敗事件」或「必定只有網路斷線」的證據。** Generic `other`／request ID 無法進一步判定 OpenAI 內部錯誤、傳輸或特定長脈絡觸發因素；也沒有足夠證據指向過載、額度、Luna 或全站故障。
+
+### 真實訂閱限定假資料對照
+
+使用正式已安裝的 Codex **0.161.0**、同一 K 專用 `CODEX_HOME`／既有 ChatGPT 訂閱、`gpt-6.1-sol`／medium、read-only、新建假資料工作區。沒有 API Key 或付費 API fallback，不讀取／複製登入檔。
+
+| 路徑 | 一般回覆 | 手動壓縮 | 壓縮後接續 |
+| --- | --- | --- | --- |
+| 直接原生 app-server，獨立 stdio JSON-RPC，不經 K transport／controller | completed | completed | completed，驗證碼／160 筆相符 |
+| 正式 K 已安裝的 controller＋host＋專案限定 gateway | completed | completed | completed，驗證碼／160 筆相符 |
+
+- 原生測試 thread `01a12366-137c-73d3-a583-f6dd529f4abf`，臺灣 09:20:54–09:21:08；K 測試 thread `01a12368-74c8-71a2-b0b6-bc5639771f94`，09:23:30–09:23:43。
+- 兩路首則均 **17,780 字元**，接續 49 字元，實際送出的 input SHA 相同；一般回覆為 `AB_INITIAL_OK`，壓縮後各自取回 `STREAM_AB_20261010`／160。
+- 主代理獨立讀回原生 history：**六個 turn 全 completed／error null**，兩個壓縮均有 contextCompaction completed 及 turn completed；沒有觀察到工具呼叫或 error event。四次 turn/start、兩次 thread/compact/start，全部只針對兩個新測試 thread。
+- 本機診斷程序已結束、自己的測試 host 已關閉；未停止正式 K、原對話或原子代理，沒有目標恢復、小說重送、換模、升級、push 或網路／全域設定變更。
+
+### 對照限制與診斷程式自身失敗
+
+- 測試是新假資料／單一人工壓縮，不是原小說多小時、大量工具／子代理、自動壓縮的完整重現。K 主接入使用正式程式，但跨模型 bridge 派工刻意拒絕；沒有測試原31列或完整 UI。兩路在先後不同時間執行，不等於故障當時的同時對照。
+- 首次診斷腳本在原生三階段通過後，誤假定 K 目錄查詢用 hostFactory 一定帶 onEvent，於 K 尚未開始模型回合前退出。這是**本次診斷腳本的錯誤**，不是 K／Codex 產品失敗；保留原失敗。修正為可選 callback 後，只執行原先未執行的 K 路徑，沒有重送原生三階段或原工作。
+- 兩路相同 CODEX_HOME 且各自經官方 account/read 確認 ChatGPT 訂閱；首次脚本的原生帳號 fingerprint 尚未寫檔即遇到上述失敗，所以只記錄**同家目錄／官方訂閱核對**，不冒稱留有兩路 historical account fingerprint 完整比對。
+- 現在六階段成功只能證明這次基本路徑可用，不能證明原故障已修復、K 在所有長任務中無影響、服務端／網路唯一根因已查明。
+
+### 結論與停止狀態
+
+目前已定位到 **Codex 原生請求／遠端壓縮的真實失敗**，排除「只是 K 將成功畫成失敗」。本次新假資料沒有重現；**唯一底層根因仍未確認**。不能依錯誤名稱再加 K 自動重送／換模或改網路、升級核心。若要確定上游內部原因，需要供應商以兩個 request ID 查服務端紀錄；本輪沒有對外送訊或上傳。
+
+K 英文呈現、疑似重複提示及子代理待確認仍是另外的候選問題，前文未修／未逐筆核對限制不因本次測試改變。本輪未修改產品程式；正式版本讀回仍 `1a45a73440a5f948c5cec625de02340863b7c67d`。前批候選繼續停等本人回來一起更新。
+
+私有證據：`D:\K-harness\.runtime\stream-ab-diagnosis-20261010` 下 `evidence.json`、`audit.md`、`independent-readback.json`、`live-result.json`、`live-independent-verification.json`、兩支限定診斷腳本；`live-start.json`／`k-live-start.json` 保留開始標記禁止再重跑。沒有提交原始小說、帳號、金鑰或授權 header。只提交本工程紀錄與索引。
