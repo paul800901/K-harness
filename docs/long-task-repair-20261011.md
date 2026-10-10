@@ -57,3 +57,21 @@ red／第二入口 EPIPE red 均保留；host seams/diagnostics 17/17，整合 h
 末審文字把 exit 簡化成拒絕 pending 並不精確：實際 exit 保留既有 pending response 到 close；stdin EPIPE／process error 才立即拒絕 pending。以產品來源與測試為準，未依模型簡述改正確實作。
 
 固定產品／測試 commit：`fc65ab5fc12d0e926b08bca24a89ad12e07d1139`（16檔）。真正末審與 Astra 驗收後未再改產品；正式更新仍待下節 live receipt，不把 commit 當上線。
+
+## 正式套用／停止讀回（2026-10-11 臺灣02:38–02:40）
+
+Astra 獨立讀 genuine Opus 原始結果、16檔 current/hash、1213全回歸與 B1 正式入口，解除有條件項並批准單次更新；未做第二審或非blocking精簡。本節取代前段當時「尚未部署」狀態，歷史證據不刪。
+
+- 產品／測試 SHA：`fc65ab5fc12d0e926b08bca24a89ad12e07d1139`。
+- 正式安裝版本（含當時工程文件）：`e1712d117d3c7f2d4f1df7ffd0b2beb94ffa15e1`。本節追加為後續 docs-only，不再重建／部署。
+- live 停止複核：無 K tray／supervisor／native worker、47831/5199 無 listener、無其他部署者；本人說關閉仍以實際程序查證。未強制終止。
+- 相同 fixed package manifests，複製已安裝 standalone 相依，**未 install／升級／改登入／全域設定**。在獨立 prepared root 三 build 與 installed focused **137/137**；全部 **670 tracked source bytes 零差異**。
+- 既有安全交易只換程式與啟動器，原 runtime92a 可退：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791657520042`。不把程式退版稱聊天資料快照。
+- 正式 owner 實際服務與 assets SHA、desktop1440/mobile390 前端／側欄讀回；UI25房、selectedThread=null、busy=false、0 POST/pageerror。原房只列側欄，**未 read/resume/start/stop/replay／改goal，部署後未送真模型回合**。手機圖已視查；不是新增 manual tray click 驗收。
+- **73個 main-session JSON 的 hash／檔名全不變，UI列25房**，兩種母數不混用。selected-cores、Codex config、projects及runtime除version/previous之外設定不變；vault／provider home位置不搬。launcher installed hash 等於本次真 C# 編譯候選。
+- idle UI 例行官方 Gemini 額度 cache 的 gemini-accounts.json hash 變化；只有 before hash、沒有 before內容，所以具體改哪些欄仍 UNKNOWN，不宣稱只有幾欄。沒有登入／切帳號／保存憑證操作。
+- 自有 verification owner/browser 正常 close；最後 K 程序／47831/5199 listener 均空，**日常 K 保持關閉**。不 push／東區，不清理既有 untracked；未恢復任何原工作。
+
+正式 receipt：`D:\K-harness\.runtime\long-task-repair-20261011\deployment\final-receipt.json`；旁有 activation/preserved/installed-source/final-preservation/stopped-after-readback/formal-readback、三build與137 focused logs，以及 formal-ui-{1440,390}.png。
+
+仍在界線內的未證：歷史上游服務內因與缺失wire、模型誤pause是否壓縮致因、上百次壓縮／真native密集歷史長任務、其他供應商的Codex context hook等價、人工tray點擊／提示、模型永遠不偏移均未驗證。已正式處理的是上述**三組可重現 K 缺口**，不是所有長任務或上游根因全面治癒。
