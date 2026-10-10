@@ -36,21 +36,21 @@ export async function startElectronIsolatedLauncher({paths=isolatedLauncherPaths
   },120000);
   const pending=new Map();let nextId=1;
   const rpc=(method,timeout=15000)=>new Promise((resolve,reject)=>{
-    if(exited||!child.connected)return reject(Error('Native workbench child is disconnected.'));
-    const id=nextId++,timer=setTimeout(()=>{pending.delete(id);reject(Error(`Native workbench ${method} request timed out.`));},timeout);
+    if(exited||!child.connected)return reject(Object.assign(Error('Native workbench child is disconnected.'),{code:'K_SHUTDOWN_DISCONNECTED'}));
+    const id=nextId++,timer=setTimeout(()=>{pending.delete(id);reject(Object.assign(Error(`Native workbench ${method} request timed out.`),{code:'K_SHUTDOWN_RPC_TIMEOUT'}));},timeout);
     pending.set(id,{resolve:value=>{clearTimeout(timer);resolve(value);},reject:error=>{clearTimeout(timer);reject(error);}});
-    child.send({type:'owner-request',id,method},error=>{if(error){pending.delete(id);clearTimeout(timer);reject(error);}});
+    child.send({type:'owner-request',id,method},error=>{if(error){pending.delete(id);clearTimeout(timer);reject(Object.assign(Error('Native workbench IPC send failed.'),{code:'K_SHUTDOWN_DISCONNECTED'}));}});
   });
   const fail=()=>{
     if(failed)return;failed=true;readyReject(Error('Native Electron workbench disconnected before ready.'));
-    for(const request of pending.values())request.reject(Error('Native Electron workbench disconnected.'));pending.clear();
+    for(const request of pending.values())request.reject(Object.assign(Error('Native Electron workbench disconnected.'),{code:'K_SHUTDOWN_DISCONNECTED'}));pending.clear();
     if(protocol&&!exited)void protocol.close();
   };
   child.on('message',message=>{
     if(message?.type==='owner-ready'&&message.origin===ORIGIN){readyResolve();return;}
     if(message?.type==='owner-response'&&Number.isSafeInteger(message.id)){
       const request=pending.get(message.id);if(!request)return;pending.delete(message.id);
-      message.ok?request.resolve(message.value):request.reject(Error('Native workbench request failed.'));return;
+      message.ok?request.resolve(message.value):request.reject(Object.assign(Error('Native workbench request failed.'),{code:message.diagnostic?.code==='K_SHUTDOWN_RESOURCE_FAILURE'?'K_SHUTDOWN_RESOURCE_FAILURE':'K_SHUTDOWN_UNCONFIRMED'}));return;
     }
     if(message?.type==='owner-close-request'){void protocol?.close();return;}
     if(message?.type==='owner-error')fail();

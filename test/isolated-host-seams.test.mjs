@@ -25,7 +25,7 @@ function fakeChild({exitOnEnd=false,onTerminate}={}) {
   const child=new EventEmitter();
   child.stdout=new PassThrough();child.stderr=new PassThrough();
   child.exitCode=null;child.signalCode=null;child.pid=4321;
-  const emitExit=(code=0,signal=null)=>{if(child.exitCode!==null||child.signalCode!==null)return;child.exitCode=code;child.signalCode=signal;child.emit('exit',code,signal);};
+  const emitExit=(code=0,signal=null)=>{if(child.exitCode!==null||child.signalCode!==null)return;child.exitCode=code;child.signalCode=signal;child.emit('exit',code,signal);child.stdout.end();child.stderr.end();setImmediate(()=>child.emit('close',code,signal));};
   child.emitExit=emitExit;
   child.stdin=new Writable({
     write(chunk,_encoding,callback){

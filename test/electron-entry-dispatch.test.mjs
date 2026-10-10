@@ -88,3 +88,15 @@ test('uninitialized supervisor disconnect quits Electron',async()=>{
  await waitFor(()=>main.app.quitCalls===1);
  assert.equal(main.imports.length,0);
 });
+
+test('owner close transmits only a fixed resource code for a real resource rejection, otherwise unknown',async()=>{
+ for(const code of ['K_SHUTDOWN_PARTIAL','PRIVATE_CODE',undefined]){
+  const main=loadMain({argvEntry:'D:/candidate/scripts/electron-entry-pilot.cjs',mainFilename:'fixture'});
+  main.context.failureCode=code;
+  vm.runInContext("ownerWorkbench={async close(){throw Object.assign(Error('SECRET_PRIVATE_ERROR 小說假片段'),{code:failureCode,cause:Error('PRIVATE_CAUSE')});}}",main.context);
+  main.events.emit('message',{type:'owner-request',id:7,method:'close'});await waitFor(()=>main.messages.length>0);
+  assert.deepEqual(JSON.parse(JSON.stringify(main.messages.at(-1))),{type:'owner-response',id:7,ok:false,diagnostic:{code:code==='K_SHUTDOWN_PARTIAL'?'K_SHUTDOWN_RESOURCE_FAILURE':'K_SHUTDOWN_UNCONFIRMED'}});
+  assert.equal(JSON.stringify(main.messages).includes('PRIVATE'),false);assert.equal(JSON.stringify(main.messages).includes('小說'),false);
+  assert.equal(main.app.quitCalls,0,'unconfirmed close never quits or force-stops owner');
+ }
+});

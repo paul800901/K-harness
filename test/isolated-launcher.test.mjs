@@ -206,3 +206,24 @@ test('native desktop keeps selected project rules but not an extra isolated work
  assert.equal(await received.validateProjectWorkspace(p.agentHome),p.agentHome);
  await app.close();
 });
+
+test('Electron close diagnostics distinguish timeout, resource rejection and disconnect without private error text',async t=>{
+ for(const kind of ['timeout','resource','disconnect','unknown'])await t.test(kind,async t=>{
+  const {p}=await fixture(),input=new PassThrough();let text='',finish=false;
+  const output=new Writable({write(b,_e,cb){text+=b;cb();}});
+  await mkdir(path.dirname(p.electronExecutable),{recursive:true});await writeFile(p.electronExecutable,'fixture');
+  const mainPath=path.join(p.trustedRuntime,'src','electron-isolated-main.cjs');await mkdir(path.dirname(mainPath),{recursive:true});await writeFile(mainPath,'fixture');
+  const child=Object.assign(new EventEmitter(),{connected:true,send(m,cb){cb?.();if(finish)queueMicrotask(()=>child.emit('message',{type:'owner-response',id:m.id,ok:true,value:{closed:true}}));else if(kind==='resource'||kind==='unknown')queueMicrotask(()=>child.emit('message',{type:'owner-response',id:m.id,ok:false,diagnostic:{code:kind==='resource'?'K_SHUTDOWN_RESOURCE_FAILURE':'PRIVATE_ARBITRARY_CODE',stage:'PRIVATE_BOOK_TEXT',message:'SECRET_PRIVATE_ERROR',elapsedMs:999999}}));}});
+  const owner=await startElectronIsolatedLauncher({paths:p,mainPath,input,output,processObject:{env:{},execPath:process.execPath},spawnImpl:()=>{queueMicrotask(()=>child.emit('message',{type:'owner-ready',origin:'http://127.0.0.1:47831'}));return child;}});
+  try{
+   t.mock.timers.enable({apis:['setTimeout','Date']});
+   const close=owner.protocol.close();if(kind==='timeout')t.mock.timers.tick(15000);else if(kind==='disconnect'){child.connected=false;child.emit('disconnect');}
+   assert.deepEqual(await close,{closed:false});
+   const event=text.trim().split('\n').map(JSON.parse).findLast(e=>e.type==='closed');
+   assert.equal(event.confirmed,false);assert.equal(event.diagnostic?.code,{timeout:'K_SHUTDOWN_RPC_TIMEOUT',resource:'K_SHUTDOWN_RESOURCE_FAILURE',disconnect:'K_SHUTDOWN_DISCONNECTED',unknown:'K_SHUTDOWN_UNCONFIRMED'}[kind]);
+   assert.equal(event.diagnostic.stage,kind==='resource'?'owner-resources':kind==='unknown'?'owner-close':'owner-rpc');
+   assert.equal(Number.isSafeInteger(event.diagnostic.elapsedMs),true);assert.equal(event.diagnostic.elapsedMs,kind==='timeout'?15000:0);
+   assert.equal(text.includes('PRIVATE_BOOK_TEXT'),false);assert.equal(text.includes('SECRET_PRIVATE_ERROR'),false);assert.equal(text.includes('PRIVATE_ARBITRARY_CODE'),false);assert.equal(text.includes('999999'),false);
+  }finally{finish=true;child.connected=true;await owner.protocol.close();t.mock.timers.reset();input.destroy();output.end();}
+ });
+});

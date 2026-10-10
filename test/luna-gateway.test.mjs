@@ -28,6 +28,22 @@ function spoofHost(url,token){
 }
 async function body(response){const text=await response.text();const data=text.split(/\r?\n/u).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n');return JSON.parse(data||text);}
 
+test('context gateway retains item paging and exposes explicit turn cursors and exact original ranges',async()=>{
+ const f=fixture(),seen=[];const gateway=await createLunaGateway({bridge:f.bridge,readContext:async(args)=>{seen.push(args);return {original:{text:'中文🙂中段',charCount:6,nextOffset:null}};}});
+ try{
+  const config=gateway.mcpConfig.mcpServers.k_luna,url=config.url,token=config.headers.Authorization.slice(7);
+  await body(await post(url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}}));
+  for(const args of [{cursor:'native-item-cursor'},{source:'turns',cursor:'native-turn-cursor'},{original:{messageId:'m',turnId:'t',offset:2000}}]){
+   const value=await body(await post(url,token,{jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'conversation_context',arguments:args}}));
+   assert.deepEqual(seen.at(-1),args);assert.equal(JSON.parse(value.result.content[0].text).original.text,'中文🙂中段');
+  }
+  const count=seen.length;
+  for(const args of [{cursor:{type:'item',itemId:'m'}},{source:'wrong'},{cursor:'c',original:{messageId:'m',turnId:'t',offset:0}},{hook:true,original:{messageId:'m',turnId:'t',offset:0}},{original:{messageId:'m',turnId:'t',offset:-1}}])
+   await body(await post(url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name:'conversation_context',arguments:args}}));
+  assert.equal(seen.length,count);
+ }finally{await gateway.close();}
+});
+
 test('gateway is loopback-only, bearer-authenticated, and exposes fixed MCP Luna tools',async()=>{
   const f=fixture();const gateway=await createLunaGateway({bridge:f.bridge});
   try {

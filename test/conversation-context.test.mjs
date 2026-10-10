@@ -133,19 +133,20 @@ test('renderer preserves verified null goal/cursor/errors and status for a long 
  assert.match(long,/"status":"paused"/);assert.match(long,/"tokensUsed":8/);
 });
 
-test('compact-only bounded scan crosses long tool pages without changing normal pagination',async()=>{
+test('compact-only bounded summary scan crosses autonomous turns without changing normal item pagination',async()=>{
  const calls=[];const request=async(method,p)=>{
   calls.push({method,p});if(method==='thread/goal/get')return {goal:null};
-  if(!p.cursor)return {data:Array.from({length:40},(_,i)=>({item:{type:'mcpToolCall',id:'tool'+i}})),nextCursor:'older'};
-  return {data:[userItem('latest','取消舊暫停；更正術語','t'),userItem('previous','先前要求','old')],nextCursor:null};
+  if(method==='thread/items/list')return {data:Array.from({length:40},(_,i)=>({item:{type:'mcpToolCall',id:'tool'+i}})),nextCursor:'older'};
+  if(!p.cursor)return {data:Array.from({length:40},(_,i)=>({id:'auto'+i,items:[{type:'agentMessage',id:'agent'+i}]})),nextCursor:'older'};
+  return {data:[{id:'t',items:[userItem('latest','取消舊暫停；更正術語','t').item]},{id:'old',items:[userItem('previous','先前要求','old').item]}],nextCursor:null};
  };
  const snapshot=await readConversationContext({request,threadId:'t',scan:true});
- assert.equal(calls.filter(c=>c.method==='thread/items/list').length,2);assert.equal(snapshot.userMessages.at(-1).text,'取消舊暫停；更正術語');
+ assert.equal(calls.filter(c=>c.method==='thread/turns/list').length,2);assert.equal(snapshot.userMessages.at(-1).text,'取消舊暫停；更正術語');
  const normal=await readConversationContext({request,threadId:'t'});assert.equal(normal.nextCursor,'older');assert.equal(normal.userMessages.length,0);
 });
 test('compact scan has a five-page bound and preserves a failed next page as partial',async()=>{
- let n=0;const request=async(method)=>method==='thread/goal/get'?{goal:null}:(n++,{data:[{item:{type:'mcpToolCall',id:'m'}}],nextCursor:'more'});
+ let n=0;const request=async(method)=>method==='thread/goal/get'?{goal:null}:(n++,{data:[{id:'auto',items:[{type:'agentMessage',id:'m'}]}],nextCursor:'more'});
  const s=await readConversationContext({request,threadId:'t',scan:true});assert.equal(n,5);assert.equal(s.partial,true);
- n=0;const fail=await readConversationContext({threadId:'t',scan:true,request:async(method)=>{if(method==='thread/goal/get')return {goal:null};if(n++)throw Error('timed out');return {data:[userItem('u','latest','t')],nextCursor:'more'};}});
+ n=0;const fail=await readConversationContext({threadId:'t',scan:true,request:async(method)=>{if(method==='thread/goal/get')return {goal:null};if(n++)throw Error('timed out');return {data:[{id:'t',items:[userItem('u','latest','t').item]}],nextCursor:'more'};}});
  assert.equal(fail.partial,true);assert.equal(fail.errors.items,'timed out');assert.equal(fail.userMessages[0].id,'u');
 });

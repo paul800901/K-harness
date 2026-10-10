@@ -167,6 +167,18 @@ internal sealed class KLauncherContext : ApplicationContext
             bool confirmed = Regex.IsMatch(line, "\"confirmed\"\\s*:\\s*true");
             lock (supervisorSync) { closeConfirmed = confirmed; closeFailed = !confirmed; }
             Log(confirmed ? "isolated supervisor confirmed close" : "isolated supervisor could not confirm close");
+            if (!confirmed) {
+                string code = JsonString(line, "code");
+                string stage;
+                switch (code) {
+                    case "K_SHUTDOWN_RPC_TIMEOUT": case "K_SHUTDOWN_DISCONNECTED": stage = "owner-rpc"; break;
+                    case "K_SHUTDOWN_RESOURCE_FAILURE": stage = "owner-resources"; break;
+                    default: code = "K_SHUTDOWN_UNCONFIRMED"; stage = "owner-close"; break;
+                }
+                long elapsed;
+                if (!Int64.TryParse(JsonNumber(line, "elapsedMs"), out elapsed) || elapsed < 0) elapsed = -1;
+                Log("shutdown diagnostic stage=" + stage + " code=" + code + " elapsedMs=" + elapsed);
+            }
             return;
         }
         Log("unrecognized supervisor output omitted");
@@ -253,6 +265,7 @@ internal sealed class KLauncherContext : ApplicationContext
         }
         try {
             lock (supervisorSync) { closeConfirmed = false; closeBlocked = false; closeFailed = false; }
+            var closeStarted = Stopwatch.StartNew();
             SendCommand("close");
             for (int attempt = 0; attempt < 150; attempt++) {
                 bool confirmed, blocked, failed;
@@ -264,7 +277,10 @@ internal sealed class KLauncherContext : ApplicationContext
             bool refused;
             bool failedClose;
             lock (supervisorSync) { closed = closeConfirmed; refused = closeBlocked; failedClose = closeFailed; }
-            if (!closed) return ForceStop(current, refused ? "仍有工作或待核准事項" : failedClose ? "服務回報關閉失敗" : "等候逾時或無法確認");
+            if (!closed) {
+                if (!refused && !failedClose) Log("shutdown diagnostic stage=tray-wait code=" + (HasExited(current) ? "K_SHUTDOWN_DISCONNECTED" : "K_SHUTDOWN_TRAY_TIMEOUT") + " elapsedMs=" + closeStarted.ElapsedMilliseconds);
+                return ForceStop(current, refused ? "仍有工作或待核准事項" : failedClose ? "服務回報關閉失敗" : "等候逾時或無法確認");
+            }
             for (int attempt = 0; attempt < 50 && IsPortOpen(); attempt++) Thread.Sleep(100);
             if (IsPortOpen()) {
                 return ForceStop(current, "服務回報關閉，但連接埠尚未釋放");
@@ -272,9 +288,9 @@ internal sealed class KLauncherContext : ApplicationContext
             Log("isolated K stopped by owner supervisor");
             if (notify) Notify("K 已停止", "隔離服務已確認安全關閉。", ToolTipIcon.Info);
             return true;
-        } catch (Exception error) {
-            Log("isolated K stop command failed: " + error.Message);
-            return ForceStop(current, error.Message);
+        } catch (Exception) {
+            Log("shutdown diagnostic stage=tray-command code=K_SHUTDOWN_UNCONFIRMED");
+            return ForceStop(current, "關閉控制通道失敗或無法確認");
         }
     }
 

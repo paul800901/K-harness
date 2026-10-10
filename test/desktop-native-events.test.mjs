@@ -1,13 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir} from 'node:fs/promises';
+import {mkdtemp,mkdir,rename} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 
-async function fixture({readiness='ready',gatewayFactory}={}){
+async function fixture({readiness='ready',gatewayFactory,bridgeFactory}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'desktop-native-events-')),calls=[],connections=[];
  const host={closed:new Promise(()=>{}),notify(){},waitForMcp:async()=>{},close:async()=>{},request:async(method,params,timeoutMs)=>{
@@ -23,25 +23,30 @@ async function fixture({readiness='ready',gatewayFactory}={}){
   if(method==='account/rateLimits/read')return {};
   return {};
  }};
- const c=createDesktopController({root,executable:'fixture',gatewayFactory,hostFactory:options=>{connections.push(options);return host;}});
+ const c=createDesktopController({root,executable:'fixture',gatewayFactory,bridgeFactory,hostFactory:options=>{connections.push(options);return host;}});
  return {c,calls,connections,root,host};
 }
 
 test('context hook reads only its own main room and hook metadata cannot mutate goals',async()=>{
  let api;const f=await fixture({gatewayFactory:async options=>{api=options;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:9999/mcp',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
  const original=f.host.request;
- f.host.request=async(method,p,...rest)=>method==='thread/items/list'?{data:[{turnId:'accepted',item:{type:'userMessage',id:'original',content:[{type:'text',text:'latest accepted correction'}]}}],nextCursor:null}:original(method,p,...rest);
+ const accepted={type:'userMessage',id:'original',content:[{type:'text',text:'latest accepted correction'}]};
+ f.host.request=async(method,p,...rest)=>method==='thread/items/list'?{data:[{turnId:'accepted',item:accepted}],nextCursor:null}:method==='thread/turns/list'?{data:[{id:'accepted',items:[accepted]}],nextCursor:null}:original(method,p,...rest);
  try{
   await f.c.open({model:'gpt-6-astra'});const before=f.calls.length;
   for(const [sessionId,meta] of [['other',{threadId:'other'}],['child',{threadId:'child'}],['native-events-thread',{threadId:'child'}],['native-events-thread',{}]])await assert.rejects(api.readContext({hook:true,sessionId},meta),/own main/);
   assert.equal(f.calls.length,before);
   const wire=await api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
   assert.equal(wire.hookSpecificOutput.hookEventName,'SessionStart');assert.match(wire.hookSpecificOutput.additionalContext,/latest accepted correction/);
+  await assert.rejects(api.readContext({hook:true,sessionId:'native-events-thread',original:{messageId:'original',turnId:'accepted',offset:0}},{threadId:'native-events-thread'}),/own main/);
   await assert.rejects(api.editGoal({objective:'override'},{threadId:'native-events-thread'}),/只能/);
   await assert.rejects(api.resumeGoal({},{threadId:'native-events-thread'}),/只能/);
   f.connections.at(-1).onEvent({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'live'}}});
   const context=await api.readContext({}, {'x-codex-turn-metadata':{thread_id:'native-events-thread',turn_id:'live'}});
   assert.equal(context.userMessages[0].id,'original');assert.equal(context.goal,null);
+  const full=await api.readContext({original:{messageId:'original',turnId:'accepted',offset:7}}, {'x-codex-turn-metadata':{thread_id:'native-events-thread',turn_id:'live'}});
+  assert.equal(full.original.text,'accepted correction');assert.equal(full.original.charCount,26);assert.equal(full.original.nextOffset,null);
+  await assert.rejects(api.readContext({original:{messageId:'original',turnId:'accepted',offset:0}}, {'x-codex-turn-metadata':{thread_id:'child',turn_id:'live'}}),/只能/);
   await assert.rejects(api.readContext({}, {'x-codex-turn-metadata':{thread_id:'child',turn_id:'live'}}),/只能/);
  }finally{await f.c.close();}
 });
@@ -50,10 +55,10 @@ test('context RPC failure stays UNKNOWN and a switched room discards a pending s
  let api;const f=await fixture({gatewayFactory:async options=>{api=options;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:9999/mcp',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
  try{
   await f.c.open({model:'gpt-6-astra'});const original=f.host.request;
-  f.host.request=async(method,p,...rest)=>method==='thread/items/list'?Promise.reject(Error('native timeout')):original(method,p,...rest);
+  f.host.request=async(method,p,...rest)=>method==='thread/turns/list'?Promise.reject(Error('native timeout')):original(method,p,...rest);
   const wire=await api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
   assert.match(wire.hookSpecificOutput.additionalContext,/UNKNOWN/);assert.match(wire.hookSpecificOutput.additionalContext,/native timeout/);
-  let release;f.host.request=async(method,p,...rest)=>method==='thread/items/list'?new Promise(r=>release=r):original(method,p,...rest);
+  let release;f.host.request=async(method,p,...rest)=>method==='thread/turns/list'?new Promise(r=>release=r):original(method,p,...rest);
   const pending=api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
   await new Promise(r=>setImmediate(r));f.c.state.threadId='changed';release({data:[],nextCursor:null});
   await assert.rejects(pending,/changed/);f.c.state.threadId='native-events-thread';
@@ -423,5 +428,52 @@ test('a cancelled goal read cannot poison stop while native interruption is stil
    assert.equal(result.error,undefined);assert.equal(f.c.state.goalError,null);assert.equal(f.c.state.status,'interrupted');assert.equal(f.c.state.goal.status,'paused');
    assert(!f.calls.some(c=>c.method==='thread/goal/set'));
   }finally{releaseRead?.();releaseInterrupt?.();await f.c.close();}
+ }
+});
+
+const streamError={message:'stream disconnected before completion: synthetic request ID',codexErrorInfo:'other',additionalDetails:null};
+async function streamFixture(bridgeFactory){
+ let gateway;const f=await fixture({bridgeFactory,gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/fake',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}};}});
+ let close;f.host.closed=new Promise(r=>close=r);
+ await f.c.open({model:'gpt-6-astra'});
+ const emit=(method,params={})=>f.connections.at(-1).onEvent({method,params:{threadId:f.c.state.threadId,...params}});
+ const finish=(id='stream-turn',error=streamError)=>{emit('turn/started',{turn:{id}});emit('item/agentMessage/delta',{turnId:id,itemId:'answer-'+id,delta:'saved partial'});emit('error',{turnId:id,willRetry:false,error});emit('turn/completed',{turn:{id,status:error?'failed':'completed',error}});};
+ return {...f,gateway,emit,finish,close};
+}
+const nextTick=()=>new Promise(r=>setImmediate(r));
+test('terminal native error stays primary when worker settlement lookup fails and secondary failure remains visible',async()=>{
+ let rejectList=false;const f=await streamFixture(async()=>({list:async()=>{if(rejectList)throw Error('fixture-worker-read-failed');return [];},close:async()=>{}}));
+ try{await f.gateway.bridge.list();rejectList=true;f.finish();for(let i=0;i<5;i++)await nextTick();
+  assert.equal(f.c.state.error,streamError.message);assert.deepEqual(f.c.state.turnError.error,streamError);
+  assert(f.c.state.messages.some(m=>m.text==='saved partial'&&m.partial));
+  assert(visibleNativeNotices(f.c.state.notices,f.c.state.error).some(n=>/fixture-worker-read-failed/.test(n.message)));
+  assert(!f.calls.some(c=>c.method==='turn/interrupt'||c.method==='turn/start'));
+ }finally{rejectList=false;await f.c.close();}
+});
+test('activity save failure cannot overwrite terminal native error',async()=>{
+ const f=await streamFixture();
+ try{const file=path.join(f.root,'.runtime/main-sessions',f.c.state.threadId+'-current.json');await rename(file,file.replace('-current.json','-prior.json'));await mkdir(file);
+  f.finish();for(let i=0;i<100&&!f.c.state.notices.some(n=>/活動時間保存失敗/.test(n.message));i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(f.c.state.error,streamError.message);assert.deepEqual(f.c.state.turnError.error,streamError);
+  assert(visibleNativeNotices(f.c.state.notices,f.c.state.error).some(n=>/活動時間保存失敗/.test(n.message)));
+ }finally{await f.c.close();}
+});
+test('late worker settlement failure from old native turn cannot contaminate newer completed turn',async()=>{
+ let held=false,rejectOld;const f=await streamFixture(async()=>({list:async()=>held?new Promise((_r,j)=>rejectOld=j):[],close:async()=>{}}));
+ try{await f.gateway.bridge.list();held=true;f.finish('old-turn');for(let i=0;i<3;i++)await nextTick();assert(rejectOld);
+  held=false;f.emit('turn/started',{turn:{id:'new-turn'}});f.emit('turn/completed',{turn:{id:'new-turn',status:'completed',error:null}});
+  rejectOld(Error('old-turn-read-failed'));for(let i=0;i<5;i++)await nextTick();
+  assert.equal(f.c.state.error,null);assert.equal(f.c.state.status,'completed');assert(!f.c.state.notices.some(n=>/old-turn-read-failed/.test(n.message)));
+ }finally{held=false;await f.c.close();}
+});
+test('host loss after drained terminal error preserves native primary; newer active or completed turn still reports loss',async()=>{
+ for(const newer of [null,'active','completed']){
+  const f=await streamFixture();try{f.finish();for(let i=0;i<3;i++)await nextTick();
+   if(newer){f.emit('turn/started',{turn:{id:'new-turn'}});if(newer==='completed')f.emit('turn/completed',{turn:{id:'new-turn',status:'completed',error:null}});}
+   f.close();for(let i=0;i<3;i++)await nextTick();
+   assert.equal(f.c.state.status,'offline');assert.equal(f.c.state.busy,false);
+   if(!newer){assert.equal(f.c.state.error,streamError.message);assert.deepEqual(f.c.state.turnError.error,streamError);}
+   else{assert.match(f.c.state.error,/斷線/);assert.equal(f.c.state.turnError,null);}
+  }finally{await f.c.close();}
  }
 });

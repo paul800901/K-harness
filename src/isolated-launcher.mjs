@@ -87,11 +87,19 @@ export function runIsolatedLauncherProtocol({app,input=process.stdin,output=proc
   const ready=()=>issue('ready');
   const close=()=>{
     if(closePromise)return closePromise;
+    const started=Date.now();
+    const rejected=error=>{
+      // Only fixed categories cross the launcher boundary; never error text or cause.
+      const stages={K_SHUTDOWN_RPC_TIMEOUT:'owner-rpc',K_SHUTDOWN_RESOURCE_FAILURE:'owner-resources',K_SHUTDOWN_DISCONNECTED:'owner-rpc'};
+      const code=Object.hasOwn(stages,error?.code)?error.code:'K_SHUTDOWN_UNCONFIRMED';
+      emit({type:'closed',confirmed:false,pid:process.pid,diagnostic:{stage:stages[code]??'owner-close',code,elapsedMs:Math.max(0,Date.now()-started)}});
+      closing=false;closePromise=null;return {closed:false};
+    };
     closePromise=(async()=>{
     closing=true;
       try{await app.close();emit({type:'closed',confirmed:true,pid:process.pid});onExit(0);resolveDone({closed:true});lines.close();return {closed:true};}
-      catch{emit({type:'closed',confirmed:false,pid:process.pid});closing=false;closePromise=null;return {closed:false};}
-    })().catch(()=>{emit({type:'closed',confirmed:false,pid:process.pid});closing=false;closePromise=null;return {closed:false};});return closePromise;
+      catch(error){return rejected(error);}
+    })().catch(rejected);return closePromise;
   };
   lines.on('line',line=>{if(line==='open'&&!closing){Promise.resolve(onOpen?.()).then(()=>issue('open')).catch(()=>emit({type:'error',code:'native-open-failed'}));}else if(line==='close')void close();else emit({event:'error',code:'unknown-command'});});
   lines.once('close',()=>{if(!closing)void close();});

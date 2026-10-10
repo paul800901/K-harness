@@ -6,7 +6,7 @@ const root=path.resolve(__dirname,'..');
 const requireFromRuntime=createRequire(path.join(root,'package.json'));
 let ownerWorkbench=null,shuttingDown=false,ownerClosed=false,ownerClosePromise=null,electronApp=requireFromRuntime('electron').app,ownerServices=null;
 
-function reply(id,ok,value){if(process.connected)process.send({type:'owner-response',id,ok,...(ok?{value}:{})});}
+function reply(id,ok,value){if(process.connected)process.send({type:'owner-response',id,ok,...(ok?{value}:value?{diagnostic:value}:{})});}
 async function closeOwner(){
  if(ownerClosed)return;
  if(ownerClosePromise)return ownerClosePromise;
@@ -69,7 +69,7 @@ function pathToFileUrl(value){return require('node:url').pathToFileURL(value).hr
 async function handleOwnerRequest({id,method}){
  try{
   if(method==='show'){ownerWorkbench.show();return reply(id,true,{shown:true});}
-  if(method==='close'){shuttingDown=true;try{await closeOwner();reply(id,true,{closed:true});setImmediate(()=>{try{electronApp?.quit();}catch{}});}catch{shuttingDown=false;reply(id,false);}return;}
+  if(method==='close'){shuttingDown=true;try{await closeOwner();reply(id,true,{closed:true});setImmediate(()=>{try{electronApp?.quit();}catch{}});}catch(error){shuttingDown=false;reply(id,false,{code:error?.code==='K_SHUTDOWN_PARTIAL'?'K_SHUTDOWN_RESOURCE_FAILURE':'K_SHUTDOWN_UNCONFIRMED'});}return;}
   reply(id,false);
  }catch{reply(id,false);}
 }

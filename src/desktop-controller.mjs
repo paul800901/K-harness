@@ -338,14 +338,16 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }
   if(e.method==='turn/completed'){
    const completedAt=new Date().toISOString(),completedTurnId=p.turn?.id??turnId;
+   const completedHost=host,completedThread=state.threadId,completedView=viewEpoch,completedEpoch=requestEpoch,completedActivity=state.activity;
+   const completionCurrent=()=>host===completedHost&&state.threadId===completedThread&&viewEpoch===completedView&&requestEpoch===completedEpoch&&state.activity===completedActivity;
    const final=[...state.messages].reverse().find(m=>m.role==='assistant'&&(!completedTurnId||m.turnId===completedTurnId));
-   if(final){void saveMainSessionActivity(root,state.threadId,completedAt).catch(error=>{state.error=`對話活動時間保存失敗：${error.message}`;changed();});final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
+   if(final){void saveMainSessionActivity(root,state.threadId,completedAt).catch(error=>{if(completionCurrent()){addNotice('warning',`對話活動時間保存失敗：${error.message}`,'activity-save',completedTurnId);changed();}});final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
    turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
    if(onConversationSettled)queueMicrotask(()=>onConversationSettled({threadId:p.threadId,turnId:p.turn.id,status:stopping?'interrupted':p.turn.status}));
    state.turnError=p.turn.error?{threadId:state.threadId,turnId:completedTurnId,status:p.turn.status,error:structuredClone(p.turn.error)}:null;
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
    settlingWorkers++;
-   void workers().then(()=>deliverFlashResults()).catch(e=>{state.error='主回合已結束，但工人狀態查詢失敗：'+e.message;}).finally(()=>{settlingWorkers--;changed();});void usage();
+   void workers().then(()=>deliverFlashResults()).catch(e=>{if(completionCurrent())addNotice('warning','主回合已結束，但工人狀態查詢失敗：'+e.message,'worker-attention',completedTurnId);}).finally(()=>{settlingWorkers--;changed();});void usage();
   }
   changed();
  }
@@ -456,10 +458,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,readContext:async(args,meta)=>{
    const active=host,id=nativeId(state.threadId),epoch=hostEpoch;
    if(args.hook){
-    if(!active||closing||stopping||opening||meta?.threadId!==id||args.sessionId!==id||args.cursor)throw Error('Compact context is restricted to its own main thread.');
+    if(!active||closing||stopping||opening||meta?.threadId!==id||args.sessionId!==id||args.cursor||args.source||args.original)throw Error('Compact context is restricted to its own main thread.');
    }else{assertMainGoalCaller(meta);if(args.sessionId)throw Error('Model calls cannot choose another context session.');}
    const deadline=Date.now()+8000;
-   const snapshot=await readConversationContext({threadId:id,cursor:args.cursor,scan:args.hook===true,
+   const snapshot=await readConversationContext({threadId:id,cursor:args.cursor,scan:args.hook===true,source:args.hook?'turns':args.source,original:args.original,
     request:(method,p)=>active.request(method,p,Math.max(1,Math.min(5000,deadline-Date.now()))),workers:state.workers.filter(w=>w.settled!==true),
     compactions:{count:state.progress.compactions,complete:state.progress.compactionsComplete}});
    if(host!==active||hostEpoch!==epoch||nativeId(state.threadId)!==id||opening||closing||stopping)throw Error('Conversation changed during read.');
@@ -787,7 +789,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(transport.supportsHookOverrides)transport=await prepareCompactionHost({initial:transport,factory:options=>hostFactory({...hostOptions,...options}),cwd:workspace});
      state.capabilities.compactionAssist=transport.initialized===true;
      const active={...transport,close:()=>transport.close(),notify:message=>transport.notify(message),request:async(method,params,...args)=>localRefs(await transport.request(method,params?.threadId?{...params,threadId:nativeId(params.threadId)}:params,...args)),...(transport.waitForMcp?{waitForMcp:(id,...args)=>transport.waitForMcp(nativeId(id),...args)}:{})};host=active;createdHost=active;
-      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;state.error='主控已斷線；先重開原對話查明工作，不要直接重送。';changed();}}});
+      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;const disconnected='主控已斷線；先重開原對話查明工作，不要直接重送。';if(state.turnError?.error)addNotice('warning',disconnected,'host-disconnected',state.turnError.turnId);else state.error=disconnected;changed();}}});
      if(!transport.initialized){await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});}
      }
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');

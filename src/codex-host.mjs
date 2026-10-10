@@ -18,33 +18,44 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
   const diagnostics=createCodexHostDiagnostics({home:env?.CODEX_HOME,pid:child.pid,executable});
   child.stderr.on('data',diagnostics.stderr);
   child.stderr.resume();
-  const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false;
+  const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false,processExited=false;
   const startup = new Map(); const startupWaiters = new Set();
   const lines = createInterface({ input: child.stdout });
-  function failAll() {
-    stopped = true;
+  function failAll(stopReading=true) {
+    if(stopReading)stopped = true;
     serverRequests.clear();
     for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error('Codex host stopped; inspect existing work before retrying.')); }
     pending.clear();
     for (const waiter of startupWaiters) waiter.fail();
   }
   async function terminateChild(){
-    if(processClosed)return;
+    if(processClosed||processExited)return;
     if(typeof child.terminate==='function'){await child.terminate();return;}
     if(child.kill()===false&&!processClosed)throw new Error('Codex host process termination was not accepted.');
   }
   const exited = new Promise(resolve => {
-    const settled=(code,signal)=>{if(processClosed)return;processClosed=true;failAll();resolve({code,signal});};
-    child.once('exit', (code,signal) => settled(code,signal));
+    let drainTimer;
+    const settled=(code,signal)=>{if(processClosed)return;clearTimeout(drainTimer);processClosed=true;processExited=true;failAll();resolve({code,signal});};
+    child.once('exit', (code,signal) => {
+      if(processClosed)return;
+      processExited=true;serverRequests.clear();
+      // Exit precedes stdio close. Keep reading already-written output, but do
+      // not let an inherited pipe hold cleanup open indefinitely.
+      drainTimer=setTimeout(()=>{
+        processError??=new Error('Codex host exited but output drain could not be confirmed; inspect existing work before retrying.');
+        child.stdout.destroy();child.stderr.destroy();child.stdin.destroy();lines.close();
+        settled(code,signal);
+      },3000);
+    });
     child.once('close', (code,signal) => settled(code,signal));
-    child.once('error', error => { failAll();processError=Object.assign(new Error('Codex host process could not start or continue.'),{cause:error}); });
+    child.once('error', error => { processError=Object.assign(new Error('Codex host process could not start or continue.'),{cause:error});failAll(false); });
   });
   const abort=()=>{failAll();abortClose=terminateChild();void abortClose.catch(()=>{});};
   signal?.addEventListener('abort',abort,{once:true});
   void exited.then(()=>signal?.removeEventListener('abort',abort));
   child.once('spawn',()=>{didSpawn=true;if(signal?.aborted)abort();});
-  child.stdin.on('error',failAll);
-  const send = message => { if (stopped) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
+  child.stdin.on('error',error=>{processError??=Object.assign(new Error('Codex host input failed; inspect existing work before retrying.'),{cause:error});failAll(false);});
+  const send = message => { if (stopped||processExited||processError) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
   lines.on('line', line => {
     if(stopped)return;
     let message; try { message = JSON.parse(line); } catch { return; }
@@ -56,12 +67,13 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
       }
       // No invisible approvals. Unsupported server requests fail closed.
       if (message.id !== undefined) {
+        if(processExited||processError)return;
         serverRequests.add(message.id);
-        Promise.resolve().then(()=>onRequest?.(message)).then(result=>{
-          if(!serverRequests.delete(message.id)||stopped)return;
+        Promise.resolve().then(()=>{if(!stopped&&!processExited&&!processError&&serverRequests.has(message.id))return onRequest?.(message);}).then(result=>{
+          if(!serverRequests.delete(message.id)||stopped||processExited||processError)return;
           if(result===undefined)send({id:message.id,error:{code:-32601,message:'This K client does not grant this request.'}});
           else send({id:message.id,result});
-        }).catch(()=>{if(serverRequests.delete(message.id)&&!stopped)send({id:message.id,error:{code:-32603,message:'K request handler failed; permission not granted.'}});});
+        }).catch(()=>{if(serverRequests.delete(message.id)&&!stopped&&!processExited&&!processError)send({id:message.id,error:{code:-32603,message:'K request handler failed; permission not granted.'}});});
       }
       else { diagnostics.warning(message); onEvent(message); }
       return;
@@ -80,7 +92,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
     closed: exited,
     notify: send,
     waitForMcp(threadId, name, timeoutMs=35000) {
-      if(stopped)return Promise.reject(new Error('Codex host is closed.'));
+      if(stopped||processExited||processError)return Promise.reject(new Error('Codex host is closed.'));
       return new Promise((resolve,reject)=>{
         let timer;
         const end=(error,value)=>{clearTimeout(timer);startupWaiters.delete(waiter);error?reject(error):resolve(value);};
@@ -93,7 +105,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
       });
     },
     request(method, params, timeoutMs = 30000) {
-      if (stopped) return Promise.reject(new Error('Codex host is closed.'));
+      if (stopped||processExited||processError) return Promise.reject(new Error('Codex host is closed.'));
       return new Promise((resolve,reject) => {
         const id=++nextId;
         const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Codex ${method} timed out; do not replay automatically.`));},timeoutMs);
@@ -102,7 +114,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
     },
     async close() {
       if(abortClose)await abortClose;
-      if(!processClosed)try{child.stdin.end();}catch{}
+      if(!processClosed&&!processExited)try{child.stdin.end();}catch{}
       if(processError){
         if(!processClosed&&(didSpawn||typeof child.terminate==='function'))try{await terminateChild();}catch(terminationError){throw new AggregateError([processError,terminationError],'Codex host reported a process error and its runner could not confirm termination.');}
         await exited;
