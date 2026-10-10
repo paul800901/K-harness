@@ -1,5 +1,8 @@
 # K 最新工程交接索引
 
+- 2026-10-10：[K輔助原生壓縮正式更新](compaction-assist-candidate-20261010.md)：固定a454a8b已套用南區，1146/1146／653來源／真正Opus複查通過；正式owner雙尺寸＋新假資料compact及原桌面啟動讀回完成。保留原生壓縮與退版，不恢復原工作；只Codex接通、不宣稱上百次／長小說已治癒、不push／東區。
+
+
 - 2026-10-10：[K 輔助原生壓縮產品候選](compaction-assist-candidate-20261010.md)：同房唯讀原文／目標及同步SessionStart MCP，保留原生壓縮；controller實測8次＋null修正3次壓縮，舊取消／新合法暫停判斷與最新術語保留，1146/1146；續讀／既有hook保留原生證據補齊。真正Opus三輪程式／差異／信任證據複查後無blocking；僅Codex候選、不宣稱上百次實務偏移已解決，正式433e7f未變、不部署／重播／push。
 
 - 2026-10-10：[K 輔助原生壓縮：同步入口實測與最小候選](compaction-assist-probe-20261010.md)：保留原生壓縮；六個新假資料 thread／真订閱驗證事後注入競態、SessionStart compact 同步 command／MCP 原型與 goal 自行續行；真 Opus 兩輪修正後定案同 gateway 唯讀資料＋同步重錨。僅隔離原型，未產品整合／正式修復／部署／停止現行K／push。

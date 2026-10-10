@@ -67,3 +67,26 @@
 - 只讀輔助是事實恢復＋規則提醒，不保證模型始終正確理解，不是禁止合法暫停，也不是修復原生串流／服務內部錯誤。
 - 精確信任前需要空主控初始化與讀回；這是已觀察的thread-level信任限制，非新工作retry。沒有成本／啟動效能優勢宣稱。若原生協定／定義不能核對，拒絕開啟候選工作，不bypass信任或暗中切換供應商。
 - 此批只到候選驗證，不排程／自動恢復工作；正式更新仍另按當輪範圍及實際工作停止讀回處理。
+
+
+## 2026-10-10 正式更新收尾（取代上方僅候選狀態）
+
+本人本輪明確要求「好，那就把它更新好吧」。更新前實際47831無監聽、無K Node／Electron／啟動器程序；沒有強制停止工作。
+
+- 固定正式程式 **a454a8bb82663441fbca9d8b1ff648795d8b1fcb**，從433e7f23459eebf4fa7b1183cba495f39cf12e3d更新；只用Git archive固定候選，不套用根工作樹未提交修改。
+- 沿用相同lock的既有依賴，獨立複製到候選；未安裝套件、更新核心、改登入、全域設定、原生權限或API計費。UI／擴充／啟動器建置通過，固定候選完整 **1146/1146、0 fail**（約63秒）；653個archive來源最後逐位元組吻合。5個產品檔案與真正Opus最新程式複查封包一致（Git archive CRLF轉換以換行正規化核對）。
+- 初版部署核對腳本用git blob與archive直接比位元組而拒絕CRLF差異；沒有改產品或覆寫來源來掩蓋。改用既有archive來源讀回流程，只有擴充build產生的protocol換行還原成archive來源。此為驗證腳本假警報，不是产品錯誤。
+- 真正Opus三輪複查沿用上文原始證據；部署未改產品，沒有另宣稱Opus核准正式操作。
+- **18:19:21臺灣時間正式套用**；程式／啟動器退版位置 **D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791627561466**。只退程式，不是對話備份還原。四份非秘密設定hash、五個目錄身分／第一層項目與原Node／語音設定核對不變；不掃憑證內容。
+- 正式owner health200、未認證state403；實際JS／CSS資產一致，1440×960與390×844認證畫面、無pageerror、無POST；22個原有聊天室可列，未打開小說房或恢復原目標。截圖已實際檢視。
+- 正式安裝新假資料案例：thread **01a12553-6cc6-73f1-a28a-3f836731c684**，gpt-6.1-sol medium／read-only；走正式startIsolatedOwner→共用Conversation／Codex控制器，新fake workspace。compactionAssist=true，1次原生compact完成，壓縮後只讀conversation_context回報術語赤焰騎士、oldPauseCanReactivate=false、goalIsNull=true。無goal、Shell、檔案、派工或舊任務操作；這是兩個合成回合，不是長小說驗收。新假資料專案／聊天室保留供複查，不刪除。
+- 首次formal smoke把fake workspace指定到owner根外，被原有路徑限制在owner啟動前拒絕，未建立native thread／送模型。保留native-start／native-error及脚本；改在正式base/workspace下新案例後成功，不放寬產品限制、不重送未知工作。
+- 用原本Start-K-Desktop.ps1安全系統匣入口啟動正式K，**18:20:50 Electron PID21772＋health200讀回**；沒有恢復或重送原工作。桌面服務現已開啟。
+
+證據：**D:/K-harness/.runtime/compaction-assist-deploy-20261010**（candidate、build logs、full-test、fixed-source-readback、validation、activation、preserved、formal-readback及雙尺寸截圖、native-v2-result、restart-readback）。工作樹預存node_modules-root-link保留；只提交本批工程文件收尾，文件SHA另列，不因此重部署。
+
+### 保留邊界
+
+原生壓縮保持啟用。新增能力只涵蓋Codex 0.161.0；Claude／Gemini不宣稱已有同等接入。正式安裝的合成壓縮與候選8次實測不能證明上百次壓縮、長小說品質或原生stream錯誤已解決。原文長度／頁面上限、UNKNOWN及模型解讀風險仍按上文。
+
+東區未更新；沿用本批先前不push限制，沒有把包含前批未發布工程的分支整串推上GitHub。正式本機更新不等於遠端發布。
