@@ -1,5 +1,5 @@
 import path from 'node:path';
-import {access,stat,readFile} from 'node:fs/promises';
+import {access,stat} from 'node:fs/promises';
 import {loadAttachment,readPresentedFile} from './desktop-files.mjs';
 import {checkedPath} from './files.mjs';
 
@@ -26,16 +26,11 @@ export async function sessionAttachment(workspace,previousWorkspaces,threadId,id
  throw Error('找不到這個對話的附件；原檔案未搬移或刪除。');
 }
 
-// Only called for a copied native user turn inside the saved fork boundary.
-// The marker locates an upload; the upload record, not the marker, owns it.
-export async function inheritedAttachment({id,originalPath}){
- if(typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/u.test(id)||typeof originalPath!=='string'||!path.isAbsolute(originalPath))throw Error('繼承附件參照無效。');
- const folder=path.dirname(originalPath),uploads=path.dirname(folder),runtime=path.dirname(uploads),workspace=path.dirname(runtime);
- if(path.basename(folder)!==id||path.basename(uploads)!=='uploads'||path.basename(runtime)!=='.runtime'||!path.basename(originalPath).startsWith('source'))throw Error('繼承附件路徑無效。');
- const record=JSON.parse(await readFile(await checkedPath(workspace,`.runtime/uploads/${id}/attachment.json`,false),'utf8'));
- if(typeof record.threadId!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/u.test(record.threadId))throw Error('繼承附件擁有者無效。');
- const item=await loadAttachment(workspace,record.threadId,id);
- if(path.relative(path.resolve(workspace,item.path),originalPath)!=='')throw Error('繼承附件原檔路徑不符。');
+// A K-projected card reference, never a user-authored context marker.
+export async function inheritedAttachment({id,threadId,workspace,path:originalPath}){
+ if(typeof threadId!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/u.test(threadId)||typeof workspace!=='string'||!path.isAbsolute(workspace)||typeof originalPath!=='string')throw Error('繼承附件參照無效。');
+ const item=await loadAttachment(workspace,threadId,id);
+ if(path.relative(path.resolve(workspace,item.path),path.resolve(workspace,originalPath))!=='')throw Error('繼承附件原檔路徑不符。');
  return {...item,workspace};
 }
 

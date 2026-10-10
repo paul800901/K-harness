@@ -29,6 +29,61 @@ function codexInput(text,attachments=[]){
  return [{type:'text',text:text+(context?'\n\n<K_ATTACHMENT_CONTEXT>\n'+context+'\n</K_ATTACHMENT_CONTEXT>':'')},...attachments.filter(a=>a.kind==='image').map(a=>({type:'localImage',path:path.join(a.workspace,a.path)}))];
 }
 
+const attachmentReference=({id,threadId,workspace,path})=>({id,threadId,workspace,path});
+const attachmentReloadError='部分附件無法重新載入；原始對話內容與檔案均未刪除。';
+// Native text locates this room's own upload, but cannot authorize inherited
+// cards. Only K's source projection supplies those message-scoped references.
+async function projectUserAttachments(root,record,thread,readThread,seen=new Set()){
+ const users=new Map();if(!record||seen.has(record.threadId))return {users,inheritedAttachments:null};
+ seen.add(record.threadId);
+ const index=record.forkThroughTurnId?thread.turns?.findIndex(t=>t.id===record.forkThroughTurnId)??-1:-1;
+ let inherited=index>=0?record.inheritedAttachments:null;
+ if(index>=0&&record.parentThreadId&&(inherited==null||Object.values(inherited).some(refs=>refs===null))){
+  const copied=thread.turns.slice(0,index+1).flatMap(t=>(t.items??[]).filter(i=>i.type==='userMessage'));
+  inherited=inherited==null?Object.fromEntries(copied.map(i=>[i.id,null])):{...inherited};
+  const parent=(await listMainSessions(root,{threadId:record.parentThreadId})).sessions[0];
+  const parentNativeId=parent?.codexSession?.nativeThreadId??parent?.threadId;
+  if(index>=0&&parent&&thread.forkedFromId===parentNativeId){
+   try{
+    const source=(await readThread(parentNativeId)).thread,cut=source.turns?.findIndex(t=>t.id===record.forkThroughTurnId)??-1;
+    if(cut>=0&&source.turns[cut].status==='completed'){
+     const projected=await projectUserAttachments(root,parent,source,readThread,seen);
+     const sourceIds=new Set(source.turns.slice(0,cut+1).flatMap(t=>(t.items??[]).filter(i=>i.type==='userMessage').map(i=>i.id)));
+     for(const item of copied)if(inherited[item.id]===null&&sourceIds.has(item.id))inherited[item.id]=projected.users.get(item.id)?.references??null;
+    }
+   }catch{/* Missing legacy source evidence stays unknown, never an owner guess. */}
+  }
+ }
+ for(const turn of thread.turns??[])for(const item of turn.items??[])if(item.type==='userMessage'){
+  const raw=(item.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');
+  let text=raw,error=null;const attachments=[],references=[];
+  const match=raw.match(/\n\n<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>$/);
+  let context;try{context=match?JSON.parse(match[1]):null;}catch{/* Ordinary user text. */}
+  if(context?.instruction===ATTACHMENT_INSTRUCTION&&Array.isArray(context.files)){
+   const copied=inherited!=null&&Object.hasOwn(inherited,item.id),trusted=copied?inherited[item.id]:null;
+   if(copied&&trusted===null)error=attachmentReloadError+' 附件來源尚無法驗證。';
+   for(const a of context.files){
+    try{
+     let card;
+     if(copied){
+      const reference=trusted?.find(ref=>ref.id===a.id);if(!reference){error??=attachmentReloadError;continue;}
+      references.push(reference);card=await inheritedAttachment(reference);
+     }else{
+      card=await sessionAttachment(record.workspace,record.previousWorkspaces,record.threadId,a.id);
+      if(typeof a.originalPath!=='string'||path.relative(path.resolve(card.workspace,card.path),a.originalPath)!=='')throw Error('附件原檔路徑不符。');
+      references.push(attachmentReference(card));
+     }
+     attachments.push(card);
+    }catch{error??=attachmentReloadError;}
+   }
+   // Rejected or unreadable markers remain native text, not silently erased.
+   if(context.files.length&&attachments.length===context.files.length)text=raw.slice(0,match.index);
+  }
+  users.set(item.id,{text,attachments,references:inherited!=null&&Object.hasOwn(inherited,item.id)&&inherited[item.id]===null?null:references,error});
+ }
+ return {users,inheritedAttachments:inherited??null};
+}
+
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({root,executable,hostFactory=openCodexHost,bridgeFactory=createLunaBridge,gatewayFactory,geminiOptions={},workerCatalog,onChange=()=>{},onContinueConversation,onConversationSettled,browserConfig=async()=>null,browserRequest,closeBrowser=async()=>{}}) {
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,turnError:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
@@ -746,11 +801,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      // Legacy/attempted conversations always read their original native history.
      const prior=forkSource?await call('thread/read',{threadId:forkSource.nativeSourceId,includeTurns:true}):threadId&&!prepared?await call('thread/read',{threadId,includeTurns:true}):null;
      if(continuation&&(prior?.thread?.turns?.at(-1)?.id!==continuation.throughTurnId||prior.thread.turns.at(-1).status!=='completed'))throw Object.assign(Error('來源歷史已變更；未建立新聊天室。'),{notCreated:true});
+     const projectionRecord=forkSource?(await listMainSessions(root,{threadId:forkSource.forkFrom})).sessions[0]:saved;
+     const projected=prior?await projectUserAttachments(root,{...projectionRecord,...(!forkSource?{workspace,previousWorkspaces:relocation?.previousWorkspaces??saved?.previousWorkspaces??[]}: {})},prior.thread,id=>call('thread/read',{threadId:id,includeTurns:true})):{users:new Map(),inheritedAttachments:null};
      if(manualFork){
       const index=prior.thread.turns.findIndex(turn=>turn.id===manualFork.throughTurnId);
       if(index<0||prior.thread.turns[index].status!=='completed')throw Error('分支結論已變更或尚未完成；未建立新聊天室。');
       prior.thread.turns=prior.thread.turns.slice(0,index+1);
      }
+     const inheritedAttachments=forkSource?Object.fromEntries((prior?.thread.turns??[]).flatMap(turn=>(turn.items??[]).filter(i=>i.type==='userMessage').map(i=>[i.id,projected.users.get(i.id)?.references??null]))):projected.inheritedAttachments;
      // Persist the copied-history boundary; reopening needs no parent read and
      // never transfers execution ownership of the source's agents.
      const inheritedTurns=new Set(),forkBoundary=forkSource?.throughTurnId??saved?.forkThroughTurnId;
@@ -771,12 +829,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       // Native history materializes completed compactions, not item/started.
       if(i.type==='contextCompaction')recordCompaction(i.id);
       if(i.type==='userMessage'){
-       let text=(i.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n');const attachments=[];
-       const match=text.match(/\n\n<K_ATTACHMENT_CONTEXT>\n([\s\S]+)\n<\/K_ATTACHMENT_CONTEXT>$/);
-       if(match){try{const context=JSON.parse(match[1]);if(context.instruction===ATTACHMENT_INSTRUCTION&&Array.isArray(context.files)){
-        text=text.slice(0,match.index);
-        for(const a of context.files){try{attachments.push(await (inheritedTurns.has(turn.id)?inheritedAttachment(a):sessionAttachment(workspace,state.previousWorkspaces,threadId,a.id)));}catch{state.error='部分附件無法重新載入；原始對話內容與檔案均未刪除。';}}
-       }}catch{/* User-authored text resembling a marker is still ordinary text. */}}
+       const {text,attachments,error}=projected.users.get(i.id)??{text:(i.content??[]).filter(c=>c.type==='text').map(c=>c.text).join('\n'),attachments:[],error:null};
+       if(error)state.error=error;
         const timing=historyMessageTiming(i.id,'user',turn.id),groupId=timing.groupId??turnGroupId(turn.id);
         message(i.id,'user',text,attachments,turn.id,undefined,{historical:true,persist:false,groupId,...timing});
        }
@@ -808,7 +862,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       forkCreatedId=session.thread.id;state.threadId=forkCreatedId;state.parentThreadId=forkSource.forkFrom;state.parentTitle=forkSource.parentTitle??'';
       state.title=manualFork?(forkSource.parentTitle?`${forkSource.parentTitle} · 分支`:'新分支'):(forkSource.parentTitle?`${forkSource.parentTitle} · 接續`:'接續工作');
       // Persist the human-visible identity before readiness can fail.
-      await saveMainSession(root,{threadId:state.threadId,model,workspace,accessMode:access,effort,serviceTier:selectedServiceTier,workerPolicy:policy,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,title:state.title,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId,codexSession:{nativeThreadId:state.threadId,hasSubmitted:true}});
+      await saveMainSession(root,{threadId:state.threadId,model,workspace,accessMode:access,effort,serviceTier:selectedServiceTier,workerPolicy:policy,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,title:state.title,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId,inheritedAttachments,codexSession:{nativeThreadId:state.threadId,hasSubmitted:true}});
       await onCreated?.({threadId:state.threadId});
      }else if(unsent&&unsent.selection===selection)session=unsent.session;
      else if(threadId&&!prepared){
@@ -844,7 +898,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       if(!forkSource&&(!threadId||prepared))unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access,state.serviceTier)});
       state.goal=null;state.goalError=null;state.goalPending=false;
       try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch(error){state.goalError=`原生目標暫時無法讀回：${error.message}`;}
-      await saveMainSession(root,{...saved,...relocation,...(forkSource?{title:state.title,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId}:{}),threadId:state.threadId,model,workspace,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!forkSource||!!threadId&&!prepared}});
+      await saveMainSession(root,{...saved,...relocation,...(forkSource?{title:state.title,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId}:{}),threadId:state.threadId,model,workspace,inheritedAttachments,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!forkSource||!!threadId&&!prepared}});
      state.workerConnection='ready';
      signal.throwIfAborted();
      if(!state.busy&&!turnId){

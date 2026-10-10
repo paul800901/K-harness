@@ -116,3 +116,21 @@ test('native stream failures are localized without guessing a cause or changing 
  assert.match(nativeNotices.localizeNativeNotice(message,'codex',{message,codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
  assert.equal(nativeNotices.localizeNativeNotice('unrelated displayed error','codex',error),'unrelated displayed error');
 });
+
+test('the exact native remote compaction stream wrapper keeps its phase and raw diagnostics',()=>{
+ const message='Error running remote compact task: stream disconnected before completion: An error occurred while processing your request. Please include the request ID fake-compact-request-id in your message.';
+ const error={message,codexErrorInfo:'other',additionalDetails:null},before=structuredClone(error);
+ const expected='Codex 原生壓縮在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
+ assert.equal(nativeNotices.codexErrorKind(error),'stream');
+ assert.equal(nativeNotices.localizeNativeNotice(message,'codex',error),expected);
+ assert.equal(nativeNotices.localizeNativeNotice(message,'codex'),expected);
+ assert.equal(nativeNotices.localizeNativeNotice(message,'codex',{...error,codexErrorInfo:{responseStreamDisconnected:{httpStatusCode:null}}}),expected);
+ assert.equal(nativeNotices.nativeNoticeText({message,error,willRetry:true}),'原生核心正在重試…');
+ assert.deepEqual(error,before);
+ for(const provider of ['claude','gemini'])assert.equal(nativeNotices.localizeNativeNotice(message,provider,error),message);
+ for(const text of ['Tool said '+message,'Error running remote compact task: Unknown failure','Error running remote compact task: stream disconnected before completion',message.toLowerCase()])assert.equal(nativeNotices.localizeNativeNotice(text,'codex',{...error,message:text}),text);
+ for(const code of ['unauthorized','internalServerError',{httpConnectionFailed:{httpStatusCode:500}}])assert.equal(nativeNotices.localizeNativeNotice(message,'codex',{...error,codexErrorInfo:code}),message);
+ assert.match(nativeNotices.localizeNativeNotice(message,'codex',{...error,codexErrorInfo:'serverOverloaded'}),/容量不足/);
+ assert.match(nativeNotices.localizeNativeNotice(message,'codex',{...error,codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
+ assert.equal(nativeNotices.localizeNativeNotice('unrelated displayed error','codex',error),'unrelated displayed error');
+});

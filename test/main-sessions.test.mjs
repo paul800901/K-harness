@@ -5,6 +5,15 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 
+test('inherited card projection distinguishes legacy absence, verified empty and per-item unknown across metadata saves',async()=>{
+ const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'inherited-projection-'));
+ for(const [threadId,inheritedAttachments] of [['legacy',undefined],['empty',{}],['cards',{'native-user':[{id:'upload',threadId:'ancestor',workspace:root,path:'.runtime/uploads/upload/source.txt'}],'unknown-user':null}]]){
+  await saveMainSession(root,{threadId,model:'gpt-6.1-sol',inheritedAttachments});
+  await saveMainSession(root,{threadId,model:'gpt-6.1-sol',title:'renamed'});
+  const saved=(await listMainSessions(root,{threadId})).sessions[0];assert.deepEqual(saved.inheritedAttachments,inheritedAttachments??null);
+ }
+});
+
 test('1000 metadata saves coexist with continuous real listing of 150 conversations',async()=>{
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-listing-')),record={threadId:'active',model:'gpt-6-luna'};

@@ -317,7 +317,7 @@ for(const early of [true,false])test(`steering carries scoped files and images w
  }finally{await f.c.close();}
 });
 
-test('restored attachment display keeps available cards and warns on missing files without exposing internal context',async()=>{
+test('restored attachment display keeps available cards and preserves unreadable native references with a warning',async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});
   const a=await f.c.upload({threadId:'test-thread',name:'kept.txt',base64:'YQ=='});await f.c.send({text:'keep my text',attachmentIds:[a.id]});
@@ -327,7 +327,7 @@ test('restored attachment display keeps available cards and warns on missing fil
   await f.c.stop();const original=f.host.request;
   f.host.request=async(method,p)=>method==='thread/read'?{thread:{turns:[{id:'turn-1',items:[{type:'userMessage',id:'restored',content:input}]}]}}:original(method,p);
   await f.c.open({model:'gpt-6-astra',threadId:'test-thread'});
-  assert.equal(f.c.state.messages[0].text,'keep my text');assert.deepEqual(f.c.state.messages[0].attachments.map(a=>a.id),[a.id]);assert.match(f.c.state.error,/部分附件無法重新載入/);assert.equal(JSON.stringify(input),originalInput);
+  assert.equal(f.c.state.messages[0].text,input[0].text);assert.deepEqual(f.c.state.messages[0].attachments.map(a=>a.id),[a.id]);assert.match(f.c.state.error,/部分附件無法重新載入/);assert.equal(JSON.stringify(input),originalInput);
  }finally{await f.c.close();}
 });
 
