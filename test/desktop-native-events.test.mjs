@@ -27,6 +27,39 @@ async function fixture({readiness='ready',gatewayFactory}={}){
  return {c,calls,connections,root,host};
 }
 
+test('context hook reads only its own main room and hook metadata cannot mutate goals',async()=>{
+ let api;const f=await fixture({gatewayFactory:async options=>{api=options;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:9999/mcp',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
+ const original=f.host.request;
+ f.host.request=async(method,p,...rest)=>method==='thread/items/list'?{data:[{turnId:'accepted',item:{type:'userMessage',id:'original',content:[{type:'text',text:'latest accepted correction'}]}}],nextCursor:null}:original(method,p,...rest);
+ try{
+  await f.c.open({model:'gpt-6-astra'});const before=f.calls.length;
+  for(const [sessionId,meta] of [['other',{threadId:'other'}],['child',{threadId:'child'}],['native-events-thread',{threadId:'child'}],['native-events-thread',{}]])await assert.rejects(api.readContext({hook:true,sessionId},meta),/own main/);
+  assert.equal(f.calls.length,before);
+  const wire=await api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
+  assert.equal(wire.hookSpecificOutput.hookEventName,'SessionStart');assert.match(wire.hookSpecificOutput.additionalContext,/latest accepted correction/);
+  await assert.rejects(api.editGoal({objective:'override'},{threadId:'native-events-thread'}),/只能/);
+  await assert.rejects(api.resumeGoal({},{threadId:'native-events-thread'}),/只能/);
+  f.connections.at(-1).onEvent({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'live'}}});
+  const context=await api.readContext({}, {'x-codex-turn-metadata':{thread_id:'native-events-thread',turn_id:'live'}});
+  assert.equal(context.userMessages[0].id,'original');assert.equal(context.goal,null);
+  await assert.rejects(api.readContext({}, {'x-codex-turn-metadata':{thread_id:'child',turn_id:'live'}}),/只能/);
+ }finally{await f.c.close();}
+});
+
+test('context RPC failure stays UNKNOWN and a switched room discards a pending snapshot',async()=>{
+ let api;const f=await fixture({gatewayFactory:async options=>{api=options;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:9999/mcp',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
+ try{
+  await f.c.open({model:'gpt-6-astra'});const original=f.host.request;
+  f.host.request=async(method,p,...rest)=>method==='thread/items/list'?Promise.reject(Error('native timeout')):original(method,p,...rest);
+  const wire=await api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
+  assert.match(wire.hookSpecificOutput.additionalContext,/UNKNOWN/);assert.match(wire.hookSpecificOutput.additionalContext,/native timeout/);
+  let release;f.host.request=async(method,p,...rest)=>method==='thread/items/list'?new Promise(r=>release=r):original(method,p,...rest);
+  const pending=api.readContext({hook:true,sessionId:'native-events-thread'},{threadId:'native-events-thread'});
+  await new Promise(r=>setImmediate(r));f.c.state.threadId='changed';release({data:[],nextCursor:null});
+  await assert.rejects(pending,/changed/);f.c.state.threadId='native-events-thread';
+ }finally{await f.c.close();}
+});
+
 test('Codex work telemetry follows current native turn events, not other rooms, usage, or reads',async()=>{
  const f=await fixture();try{
   await f.c.open({model:'gpt-6-astra'});assert.equal(f.c.state.activity,null);

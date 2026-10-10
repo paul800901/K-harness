@@ -63,6 +63,7 @@ function fakePool({ claudeLoggedIn = false } = {}) {
             if (message.id === undefined) continue;
             let result = {};
             if (message.method === 'config/read') result = { config: {} };
+            if (message.method === 'hooks/list') result = {data:[{hooks:[{key:'flags:session_start:0:0',currentHash:'sha256:'+'1'.repeat(64),source:'sessionFlags',eventName:'sessionStart',handlerType:'mcpTool',server:'k_gemini',tool:'conversation_context',matcher:'^compact$',timeoutSec:10,enabled:true,trustStatus:args.some(a=>a.startsWith('hooks.state='))?'trusted':'untrusted'}]}]};
             if (message.method === 'account/read') result = { account: { type: 'chatgpt' } };
             if (message.method === 'model/list') result = { data: [{ model: 'gpt-6-luna', displayName: 'GPT-6 Luna', hidden: false,
               supportedReasoningEfforts: [{ reasoningEffort: 'high' }] }], nextCursor: null };

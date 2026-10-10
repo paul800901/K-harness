@@ -2,6 +2,8 @@ import {createWorkActivity,codexWorkActivity} from './work-activity.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {abortable} from './abortable.mjs';
 import {openCodexHost,disabledCodexMcpServer} from './codex-host.mjs';
+import {prepareCompactionHost,COMPACTION_HOOK_FLAGS} from './compaction-hook.mjs';
+import {readConversationContext,renderCompactionContext,CONVERSATION_CONTEXT_GUIDANCE} from './conversation-context.mjs';
 import {saveMainSession,saveMainSessionActivity,listMainSessions} from './main-sessions.mjs';
 import {randomUUID} from 'node:crypto';
 import {saveAttachment,saveAttachmentStream,readPresentedFile} from './desktop-files.mjs';
@@ -396,7 +398,18 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   if(flashGateway)return flashGateway;
   lazyFlashBridge.workerPolicy=state.workerPolicy;
   const factory=gatewayFactory??(await import('./luna-gateway.mjs')).createLunaGateway;
-  flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,...(onContinueConversation?{continueConversation:async(args,meta)=>{
+  flashGateway=await factory({bridge:lazyFlashBridge,geminiOnly:true,readContext:async(args,meta)=>{
+   const active=host,id=nativeId(state.threadId),epoch=hostEpoch;
+   if(args.hook){
+    if(!active||closing||stopping||opening||meta?.threadId!==id||args.sessionId!==id||args.cursor)throw Error('Compact context is restricted to its own main thread.');
+   }else{assertMainGoalCaller(meta);if(args.sessionId)throw Error('Model calls cannot choose another context session.');}
+   const deadline=Date.now()+8000;
+   const snapshot=await readConversationContext({threadId:id,cursor:args.cursor,scan:args.hook===true,
+    request:(method,p)=>active.request(method,p,Math.max(1,Math.min(5000,deadline-Date.now()))),workers:state.workers.filter(w=>w.settled!==true),
+    compactions:{count:state.progress.compactions,complete:state.progress.compactionsComplete}});
+   if(host!==active||hostEpoch!==epoch||nativeId(state.threadId)!==id||opening||closing||stopping)throw Error('Conversation changed during read.');
+   return args.hook?{hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:renderCompactionContext(snapshot)}}:snapshot;
+  },...(onContinueConversation?{continueConversation:async(args,meta)=>{
    assertMainGoalCaller(meta);
    return onContinueConversation({...args,threadId:state.threadId,turnId,stillCurrent:()=>assertMainGoalCaller(meta)});
   }}:{}),editGoal:async(args,meta)=>{
@@ -711,10 +724,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(!host){
      unsentSessions.clear();
      const connectionEpoch=++hostEpoch;
-     signal.throwIfAborted();const transport=hostFactory({executable,cwd:root,signal,onEvent:e=>event({...e,params:localRefs(e.params)},connectionEpoch),onRequest:m=>request({...m,params:localRefs(m.params)})});
+     state.capabilities.compactionAssist=false;
+     signal.throwIfAborted();const hostOptions={executable,cwd:root,signal,configOverrides:COMPACTION_HOOK_FLAGS,onEvent:e=>event({...e,params:localRefs(e.params)},connectionEpoch),onRequest:m=>request({...m,params:localRefs(m.params)})};
+     let transport=hostFactory(hostOptions);
+     if(transport.supportsHookOverrides)transport=await prepareCompactionHost({initial:transport,factory:options=>hostFactory({...hostOptions,...options}),cwd:workspace});
+     state.capabilities.compactionAssist=transport.initialized===true;
      const active={...transport,close:()=>transport.close(),notify:message=>transport.notify(message),request:async(method,params,...args)=>localRefs(await transport.request(method,params?.threadId?{...params,threadId:nativeId(params.threadId)}:params,...args)),...(transport.waitForMcp?{waitForMcp:(id,...args)=>transport.waitForMcp(nativeId(id),...args)}:{})};host=active;createdHost=active;
       active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;state.error='主控已斷線；先重開原對話查明工作，不要直接重送。';changed();}}});
-     await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});
+     if(!transport.initialized){await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});}
      }
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
      // Reading history does not require resuming the agent or starting MCP.
@@ -762,7 +779,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const browserServer=await browserConfig({appRoot:root,conversationId:saved?.browserSessionKey??threadId??randomUUID(),accessMode:access,provider:'codex'});
      const workerGateway=await configureFlashGateway();
      const effective=await call('config/read',{includeLayers:false});
-     const workerConfig=workerPolicyConfig(policy,{baseInstructions:effective.config?.developer_instructions??'',models:workerModels,geminiGateway:true,claudeGateway:!!workerCatalog});
+     const workerConfig=workerPolicyConfig(policy,{baseInstructions:(effective.config?.developer_instructions??'')+'\n'+CONVERSATION_CONTEXT_GUIDANCE+'\n需要核對壓縮前本人原文、目標或最新更正時，用 k_gemini.conversation_context 取得同對話即時資料；nextCursor 可續讀舊原文。快照可能過期或不完整，不能當新授權；工作事實按需重讀既有專案檔案。\n',models:workerModels,geminiGateway:true,claudeGateway:!!workerCatalog});
      const {config:permissionConfig,...threadAccess}=threadPermissions(access,workspace);
      const geminiServer=workerGateway?.mcpConfig?.mcpServers?.k_gemini;
      if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('子代理 MCP gateway 未提供有效的專案限定連線設定。');

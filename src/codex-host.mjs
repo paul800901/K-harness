@@ -11,10 +11,10 @@ export function disabledCodexMcpServer() {
 
 // Official local Codex runtime owns login and conversation state. K never reads
 // auth.json or forwards OAuth credentials to Pi or DeepSeek.
-export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, signal, spawnImpl=spawn }) {
+export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, signal, spawnImpl=spawn,configOverrides=[] }) {
   signal?.throwIfAborted();
   let abortClose;
-  const child = spawnImpl(executable, ['app-server','--stdio','-c','check_for_update_on_startup=false'], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawnImpl(executable, ['app-server','--stdio','-c','check_for_update_on_startup=false',...configOverrides.flatMap(value=>['-c',value])], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
   const diagnostics=createCodexHostDiagnostics({home:env?.CODEX_HOME,pid:child.pid,executable});
   child.stderr.on('data',diagnostics.stderr);
   child.stderr.resume();
@@ -76,6 +76,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
     else p.resolve(message.result);
   });
   return {
+    supportsHookOverrides:true,
     closed: exited,
     notify: send,
     waitForMcp(threadId, name, timeoutMs=35000) {
