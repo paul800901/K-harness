@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-11：[附件可信投影／remote compact正式安裝](trusted-attachments-deploy-20261011.md)：本人確認K已關、Sol唯一部署；正式92a11c4（source0b345a0）、665來源零差異、原be1d976程式可退，existing相依無安裝、installed61/61。正式owner雙尺寸/assets、exact書房clone唯讀1附件及remote提示4/4；25房metadata不變、日常K保持關閉。既有Gemini UI額度cache更新如實記錄，未續原書／push／東區；三根因仍UNKNOWN、留下一段。
+
 - 2026-10-11：[前串 BUG／更新／未修項逐項稽核](incident-repair-audit-20261011.md)：分開正式完成、候選與UNKNOWN；確認前批人用分支及附件端到端漏驗、remote compact英文前綴漏修。後者限定兩行呈現補修、精確正式red→30/30聚焦green及桌面／手機4/4，納附件合併候選Opus末審；長任務偏移、上游stream及正常關閉根因仍未解，不部署或重播原工作。
 
 - 2026-10-11：[分支附件可信投影修正候選](fork-attachment-trusted-projection-20261011.md)：Astra 判斷／真Sol實作，兩個 marker 反例與cross-provider own退化red→green；最小可信引用、legacy alias／UNKNOWN下次確認、原文保留。19項附件／最終全套1187/1187、真Codex新鏈／假房與書房只讀、新Claude K卡片不變性；真Opus首審blocking補修後增量無blocking、Astra独立驗收，程式0b345a0。僅候選、不部署／push／重播，長任務／stream／close未知不變。
