@@ -12,6 +12,40 @@ import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 
+test('Claude close drains result persistence before a durable immutable parent fork snapshot',async t=>{
+ const f=await fixture();let blocked,release,patched;
+ const entered=new Promise(resolve=>{blocked=resolve;}),gate=new Promise(resolve=>{release=resolve;});
+ try{
+  const {threadId:parent}=await f.controller.open({accessMode:'claude-plan'});
+  const attachment=await f.controller.upload({threadId:parent,name:'parent.txt',base64:'cGFyZW50'});
+  const attachmentPaths=[path.join(f.root,attachment.path),path.join(f.root,'.runtime/uploads',attachment.id,'attachment.json')];
+  const attachmentBefore=await Promise.all(attachmentPaths.map(p=>readFile(p)));
+  await f.controller.send({text:'parent fake work',attachmentIds:[attachment.id]});
+  f.hostOptions.onMessage({type:'assistant',uuid:'parent-answer',message:{content:[{type:'text',text:'parent answer'}]}});
+  await f.controller.metadata({threadId:parent,title:'stable fake parent'});
+  const file=path.join(f.root,'.runtime/claude-sessions',parent+'.json'),originalRename=fs.rename;let armed=true;
+  patched=t.mock.method(fs,'rename',async(from,to)=>{
+   if(armed&&path.resolve(to)===path.resolve(file)){armed=false;blocked();await gate;}
+   return originalRename(from,to);
+  });syncBuiltinESMExports();
+  f.hostOptions.onMessage({type:'result',is_error:false});await entered;
+  assert.equal(f.controller.state.busy,false);
+  assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true,'result callback is not a disk barrier');
+  let closed=false;const closing=f.controller.close().then(()=>{closed=true;});
+  await new Promise(setImmediate);assert.equal(closed,false,'close must await the blocked atomic write');
+  release();await closing;patched.mock.restore();syncBuiltinESMExports();patched=null;
+  const before=await readFile(file);assert.equal(JSON.parse(before).compactions.inFlight,false);
+  await writeFile(path.join(f.root,'parent-before-forks.json'),before);
+  await f.controller.fork({messageId:'parent-answer',accessMode:'claude-plan'});
+  await f.controller.send({text:'child fake work'});
+  f.hostOptions.onMessage({type:'assistant',uuid:'child-answer',message:{content:[{type:'text',text:'child answer'}]}});
+  f.hostOptions.onMessage({type:'result',is_error:false});await f.controller.close();
+  await f.controller.fork({messageId:'child-answer',accessMode:'claude-plan'});await f.controller.close();
+  assert.deepEqual(await readFile(file),before,'child and grandchild activity must not rewrite the drained parent');
+  assert.deepEqual(await Promise.all(attachmentPaths.map(p=>readFile(p))),attachmentBefore);
+ }finally{release?.();if(patched){patched.mock.restore();syncBuiltinESMExports();}await f.controller.close();}
+});
+
 const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
 
 async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
