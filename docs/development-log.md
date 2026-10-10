@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-10：[聊天室更新鎖／切換回跳修正與原生補查](room-lock-fix-20261010.md)：最新要求先修測、等本人關K；候選修閒置等待／非導航操作競態／明確重開後queue，舊版與追加缺口red保留，103/103聚焦、1098/1098全測、2/2真假資料後端built UI／真Opus三輪通過；固定候選待部署，正式不動、不重播，原生stream根因仍UNKNOWN。
+
 - 2026-10-09：[使用者訊息一鍵複製](user-message-copy-20261009.md)：核對本人Codex截圖与K原碼，UserMessage少了既有CopyFeedback；窄補正常文字／引用／交接可讀複製，9個built UI案例通過，不改後端／OS權限／工作。正式K仍開啟，候選驗證／真Opus後等待更新；正式狀態以末段為準。
 
 - 2026-10-09：[Gemini 原生 disabled 額度正式修正](gemini-disabled-quota-20261009.md)：原生第二列 five_hour=disabled 被丟掉已修正，3bcdde04 正式套用；87/87、1088/1088、6 個 built UI／真 Opus／五帳號實查與正式畫面讀回通過，98774 保留檔一致；帳號還原，K維持關閉，不push／東區。

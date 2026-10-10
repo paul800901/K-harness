@@ -35,7 +35,8 @@ export function createInputQueue({root,getController,onChange=()=>{}}){
  }
  const api={
   get state(){const s=getController().state;return {queuedMessages:rows.map(r=>({...r,...editingWrites.get(r)})),queuePaused:paused,queueWaitingReason:rows.length&&hasWorkers(s)?'等待子代理完成':null};},
-  async load(id){clearTimeout(timer);await chain;threadId=id;rows=[];paused=false;if(id){try{const saved=JSON.parse(await readFile(file(id),'utf8'));rows=(saved.rows??[]).map(r=>({...r,status:r.status==='sending'?'uncertain':r.status}));paused=rows.length>0;}catch(e){if(e.code!=='ENOENT')throw e;}}notify();},
+  // Loading after an explicit native open reuses the queue, never resumes saved rows.
+  async load(id){clearTimeout(timer);await chain;threadId=id;rows=[];paused=false;if(id){try{const saved=JSON.parse(await readFile(file(id),'utf8'));rows=(saved.rows??[]).map(r=>({...r,status:r.status==='sending'?'uncertain':r.status}));paused=rows.length>0;}catch(e){if(e.code!=='ENOENT')throw e;}}closed=false;notify();},
   async enqueue({text='',attachmentIds=[]}){if(typeof text!=='string'||text.length>32000||(!text.trim()&&(!Array.isArray(attachmentIds)||!attachmentIds.length)))throw Error('請輸入 1–32000 字元的訊息。');if(!threadId||getController().state.threadId!==threadId)throw Error('請先開啟對話。');if(!Array.isArray(attachmentIds)||attachmentIds.some(x=>typeof x!=='string'))throw Error('附件格式無效。');const row={id:randomUUID(),text,attachmentIds,createdAt:new Date().toISOString(),status:'queued'};rows.push(row);try{await save();}catch(e){rows=rows.filter(r=>r!==row);throw e;}notify();api.schedule();return {queued:true,id:row.id};},
   schedule(){if(closed||timer)return;timer=setTimeout(()=>{timer=null;if(ready())void deliver(rows[0]).catch(()=>{});},100);},
   async action({id,action,text}){

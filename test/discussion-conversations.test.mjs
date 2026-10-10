@@ -56,6 +56,21 @@ test('an active native goal, queue, or approval prevents a new meeting without s
  const f=await fixture();try{for(const extra of [{busy:true},{questions:[{id:'approval'}]},{queuedMessages:[{text:'waiting'}]},{capabilities:{goalContinuesWhileIdle:true},goal:{status:'active'}}]){const prior=structuredClone(f.owner.state);Object.assign(f.owner.state,extra);await assert.rejects(f.start(),/原工作/);Object.assign(f.owner.state,prior);for(const key of Object.keys(extra))if(!Object.hasOwn(prior,key))delete f.owner.state[key];}assert.equal(f.calls.length,0);}finally{await f.c.close();}
 });
 
+test('discussion preparation does not block plain viewing but keeps mutations locked',async()=>{
+ const f=await fixture(),entered=Promise.withResolvers(),read=Promise.withResolvers();let starting;
+ try{
+  const other=await f.c.open({model:'gpt-6.1-sol'});
+  f.owner.workers=async()=>{entered.resolve();return read.promise;};
+  starting=f.start();await entered.promise;
+  await f.c.open({...f.a,model:'gpt-6.1-sol'});assert.equal(f.c.state.threadId,f.a.threadId);
+  await assert.rejects(f.c.open({...f.a,model:'gpt-6.1-sol',effort:'high'}),/正在更新/);
+  await assert.rejects(f.c.send({...f.a,text:'not sent'}),/重新連線或建立分支/);
+  await f.c.open({...other,model:'gpt-6.1-sol'});assert.equal(f.c.state.threadId,other.threadId);
+  read.resolve([]);await starting;await new Promise(resolve=>setTimeout(resolve,30));
+  assert.equal(f.owner.sent.length,0);assert.equal(f.c.state.threadId,other.threadId);
+ }finally{read.resolve([]);await starting;await f.c.close();}
+});
+
 test('a confirmed not-sent result restores the handoff, while unknown failures do not replay it',async()=>{
  const f=await fixture();try{
   await f.start();await settled(f);const send=f.owner.send;f.owner.send=async()=>({sent:false});await f.c.send({...f.a,text:'已確認未送出'});f.owner.send=send;
@@ -73,4 +88,19 @@ test('a meeting in A survives navigation and idle reclamation; stopping A does n
   assert.equal(f.c.state.threadId,b);assert.equal(f.c.state.busy,false);assert.equal(f.owners.find(o=>o.state.threadId===b).sent.length,0);
   await f.c.open({...f.a,model:'gpt-6.1-sol'});assert.equal(f.c.state.discussion.status,'interrupted');assert(f.c.state.messages.some(m=>m.text==='給 A 的補充'));
  }finally{await f.c.close();}
+});
+
+test('starting discussion in a hidden room cancels its pending idle probe without navigation',async()=>{
+ const f=await fixture({hold:true}),entered=Promise.withResolvers(),read=Promise.withResolvers();let reads=0;
+ try{
+  for(let i=0;i<3;i++)await f.c.open({model:'gpt-6.1-sol'});
+  f.owner.workers=async()=>{if(++reads===1){entered.resolve();return read.promise;}return [];};
+  const other=await f.c.open({model:'gpt-6.1-sol'});await entered.promise;
+  await f.start();assert.equal(f.c.state.threadId,other.threadId);
+  read.resolve([]);await new Promise(resolve=>setTimeout(resolve,40));
+  assert.equal(f.owner.closed,0);assert(f.c.state.conversationActivity.some(row=>row.threadId===f.a.threadId&&row.busy));
+  await f.c.discussionMessage({...f.a,text:'原聊天室補充',target:'p2'});
+  await f.c.stop(f.a);assert.equal(f.c.state.threadId,other.threadId);assert.equal(f.owner.closed,0);
+  assert.equal(f.owner.sent.length,0);assert.equal(f.owners.find(o=>o.state.threadId===other.threadId).sent.length,0);
+ }finally{read.resolve([]);await f.c.close();}
 });

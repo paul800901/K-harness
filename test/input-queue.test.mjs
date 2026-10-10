@@ -36,6 +36,19 @@ async function until(predicate,timeout=2000){
   const start=Date.now();while(Date.now()-start<timeout){if(predicate())return;await new Promise(resolve=>setTimeout(resolve,10));}throw Error('timed out waiting for queue behavior');
 }
 
+test('explicit reload reopens a closed queue without automatically resuming saved input',async()=>{
+ const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);
+ try{
+  await queue.load('queue-session');await queue.enqueue({text:'saved explicit input'});await queue.close();
+  active.state.busy=false;active.state.status='ready';await queue.load('queue-session');queue.schedule();
+  assert.equal(queue.state.queuePaused,true);await new Promise(resolve=>setTimeout(resolve,150));assert.deepEqual(active.calls,[]);
+  await queue.action({action:'resume'});await until(()=>active.calls.length===1);await until(()=>queue.state.queuedMessages.length===0);
+  assert.deepEqual(active.calls,[['send','saved explicit input']]);
+  await queue.close();await queue.load('queue-session');await queue.enqueue({text:'new explicit input'});await until(()=>active.calls.length===2);
+  assert.deepEqual(active.calls,[['send','saved explicit input'],['send','new explicit input']]);
+ }finally{await queue.close();}
+});
+
 test('sending arbitrary C during a busy turn preserves queued B and D order',async()=>{
   const base=await root(),active=controller({busy:true}),queue=queueFor(base,active);await queue.load('queue-session');
   try{

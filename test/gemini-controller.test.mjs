@@ -24,6 +24,15 @@ async function fixture(options={}){
 }
 const finish=async c=>{for(let i=0;c.state.busy&&i<200;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
+test('an offline Gemini owner rejects explicit sends and repeated close does not submit work',async()=>{
+ const f=await fixture();try{
+  const a=await f.controller.open({model:'gemini-3.8-flash',effort:'low'});await f.controller.close();await f.controller.close();
+  for(let i=0;i<2;i++)await assert.rejects(f.controller.send({text:'not submitted offline'}),/請先開啟/);
+  assert.equal(f.controller.state.status,'offline');assert.equal(f.calls.length,0);
+  await f.controller.open({...a,model:'gemini-3.8-flash',effort:'low'});assert.equal(f.controller.state.threadId,a.threadId);assert.equal(f.calls.length,0);
+ }finally{await f.controller.close();}
+});
+
 test('ordinary Gemini main turns wait for native completion without duration or stdout-copy limits',async()=>{
  const f=await fixture();try{
   await f.controller.open({model:'gemini-3.8-flash',effort:'low'});

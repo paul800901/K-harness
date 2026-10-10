@@ -43,6 +43,21 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
 }
 const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date.now()>end)throw Error('condition timed out');await new Promise(r=>setTimeout(r,20));}};
 
+test('a slow scoped submission cancels an idle probe before the native busy flag changes',async()=>{
+ const f=await fixture(),c=f.controller,entered=Promise.withResolvers(),read=Promise.withResolvers(),sending=Promise.withResolvers(),accepted=Promise.withResolvers();let submission;
+ try{
+  const a=await c.open({model:codexModel}),owner=f.room(a.threadId);
+  for(let i=0;i<3;i++)await c.open({model:codexModel});
+  owner.workers=async()=>{entered.resolve();return read.promise;};
+  await c.open({model:codexModel});await entered.promise;
+  const original=owner.send;owner.send=async data=>{sending.resolve();await accepted.promise;return original(data);};
+  submission=c.send({...a,text:'only this explicit submission'});await sending.promise;
+  assert.equal(owner.state.busy,false);read.resolve([]);await new Promise(resolve=>setTimeout(resolve,40));
+  assert.equal(owner.closed,0);accepted.resolve();await submission;
+  assert.equal(owner.calls.filter(([method])=>method==='send').length,1);assert.equal(owner.state.busy,true);
+ }finally{read.resolve([]);accepted.resolve();await submission;await c.close();}
+});
+
 test('global worker count follows live rooms, not the selection, history, or background commands',async()=>{
  const f=await fixture(),c=f.controller;try{
   assert.deepEqual(c.state.workerActivity,{running:0,uncertain:false,unconfirmed:0});
@@ -296,6 +311,52 @@ test('failed idle teardown remains registered and can be retried by a later clea
   fail=false;await c.open({...opened[6],model:codexModel});
   await eventually(()=>oldest.closed===1);
  }finally{await c.close();}
+});
+
+test('navigation preempts a stalled idle read; its late result cannot close the selected room',async()=>{
+ const f=await fixture(),c=f.controller,entered=Promise.withResolvers(),read=Promise.withResolvers();
+ try{
+  const rooms=[];for(let i=0;i<4;i++)rooms.push(await c.open({model:codexModel}));
+  const oldest=f.room(rooms[0].threadId);oldest.workers=async()=>{entered.resolve();return read.promise;};
+  await c.open({model:codexModel});await entered.promise;
+  const opened=await c.open({...rooms[0],model:codexModel});
+  assert.equal(opened.threadId,rooms[0].threadId);assert.equal(c.state.threadId,rooms[0].threadId);
+  assert.equal(oldest.calls.filter(([name])=>name==='open').length,1,'View selection does not reopen or replay');
+  read.resolve([]);await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(oldest.closed,0);assert.ok(c.state.conversationActivity.some(row=>row.threadId===rooms[0].threadId));
+  assert.equal(oldest.calls.some(([name])=>['send','stop'].includes(name)),false);
+ }finally{read.resolve([]);await c.close();}
+});
+
+test('shutdown does not wait on an obsolete idle read and late failure is observed',async()=>{
+ const f=await fixture(),c=f.controller,entered=Promise.withResolvers(),read=Promise.withResolvers();let closed=false;
+ try{
+  const rooms=[];for(let i=0;i<4;i++)rooms.push(await c.open({model:codexModel}));
+  f.room(rooms[0].threadId).workers=async()=>{entered.resolve();return read.promise;};
+  await c.open({model:codexModel});await entered.promise;
+  await c.close();closed=true;
+  assert.ok(f.native.every(owner=>owner.closed===1));
+  read.reject(Error('late read failure'));await new Promise(resolve=>setImmediate(resolve));
+ }finally{read.resolve([]);if(!closed)await c.close();}
+});
+
+test('a room already closing can be viewed without unlocking mutations or losing its owner',async()=>{
+ const f=await fixture(),c=f.controller,entered=Promise.withResolvers(),closing=Promise.withResolvers();
+ try{
+  const rooms=[];for(let i=0;i<4;i++)rooms.push(await c.open({model:codexModel}));
+  const oldest=f.room(rooms[0].threadId),close=oldest.close.bind(oldest);let first=true;
+  oldest.close=async()=>{if(first){first=false;entered.resolve();await closing.promise;}return close();};
+  await c.open({model:codexModel});await entered.promise;
+  await c.open({...rooms[0],model:codexModel});assert.equal(c.state.threadId,rooms[0].threadId);
+  await assert.rejects(c.send({...rooms[0],text:'not sent'}),/重新連線或建立分支/);
+  await assert.rejects(c.open({...rooms[0],model:codexModel,effort:'high'}),/正在更新/);
+  assert.equal(oldest.calls.filter(([name])=>name==='open').length,1);
+  closing.resolve();await eventually(()=>oldest.closed===1);
+  assert.ok(c.state.conversationActivity.some(row=>row.threadId===rooms[0].threadId));
+  await c.open({...rooms[0],model:codexModel});assert.equal(c.state.status,'ready');
+  assert.equal(oldest.calls.filter(([name])=>name==='open').length,2);
+  assert.equal(oldest.calls.some(([name])=>name==='send'),false);
+ }finally{closing.resolve();await c.close();}
 });
 
 test('HTTP desktop routes preserve thread context for stop, approvals, files and switching',async()=>{

@@ -64,6 +64,32 @@ async function fixture(){
  return {root,pool,codexHosts,claudeHosts};
 }
 
+for(const provider of ['codex','claude'])test(`${provider} retained view of an idle-closing owner rejects offline sends without restarting or replaying`,async()=>{
+ const f=await fixture(),model=provider==='codex'?'gpt-6-astra':claudeModel,entered=Promise.withResolvers(),closing=Promise.withResolvers();
+ const hosts=provider==='codex'?f.codexHosts:f.claudeHosts;
+ const submissions=()=>hosts.reduce((n,h)=>n+(provider==='codex'?h.calls.filter(c=>c.method==='turn/start').length:h.startCalls.length),0);
+ try{
+  const a=await f.pool.open({model}),owner=hosts.at(-1),originalClose=owner.close;
+  owner.close=async()=>{entered.resolve();await closing.promise;return originalClose.call(owner);};
+  for(let i=0;i<4;i++)await f.pool.open({model});await entered.promise;
+  await f.pool.open({...a,model});assert.equal(f.pool.state.threadId,a.threadId);
+  await assert.rejects(f.pool.send({...a,text:'not submitted while closing'}),/重新連線或建立分支/);
+  closing.resolve();for(let i=0;f.pool.state.status!=='offline'&&i<100;i++)await new Promise(r=>setTimeout(r,5));
+  assert.equal(f.pool.state.status,'offline');const count=hosts.length;
+  for(let i=0;i<2;i++)await assert.rejects(f.pool.send({...a,text:'not submitted offline'}),/請先開啟/);
+  assert.equal(hosts.length,count);assert.equal(submissions(),0);assert.equal(f.pool.state.threadId,a.threadId);
+  await f.pool.open({...a,model});assert.equal(f.pool.state.threadId,a.threadId);assert.equal(f.pool.state.status,'ready');assert.equal(submissions(),0);
+  await f.pool.send({...a,text:'new explicit first message'});
+  assert.equal((await f.pool.send({...a,text:'new explicit queued message'})).queued,true);
+  const reopened=hosts.at(-1);
+  if(provider==='codex')reopened.options.onEvent({method:'turn/completed',params:{threadId:a.threadId,turn:{id:`turn-${a.threadId}`,status:'completed'}}});
+  else reopened.options.onMessage({type:'result',is_error:false});
+  for(let i=0;submissions()<2&&i<200;i++)await new Promise(r=>setTimeout(r,10));
+  assert.equal(submissions(),2,'explicit reopen must restore ordinary queue delivery, not replay old work');
+  await f.pool.close();await f.pool.close();
+ }finally{closing.resolve();await f.pool.close();}
+});
+
 test('two Claude conversations retain independent native hosts, stream, approval, completion, and stop',async()=>{
  const f=await fixture();
  try{

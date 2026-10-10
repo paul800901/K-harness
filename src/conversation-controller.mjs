@@ -7,6 +7,7 @@ import {createDiscussionController} from './discussion-controller.mjs';
 import {sessionAttachment} from './session-workspace.mjs';
 import {readPresentedFile} from './desktop-files.mjs';
 import {discussionTranscript} from '../shared/discussion.mjs';
+import {abortable} from './abortable.mjs';
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
@@ -25,7 +26,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.held)throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
  const openedOrder=new Map();let openSequence=0;
  let pendingOpen,pendingView,navigationRequest=0;
- let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve();
+ let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve(),idleProbe;
  const create=()=>{
   let controller;
   controller=sessionFactory({...options,root,onChange:()=>{if(!closing){if(controller)attention.observe(projected(controller));onChange();}}});
@@ -85,6 +86,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const controller=typeof data?.threadId==='string'?rooms.get(data.threadId):null;
   if(!controller)throw Error('請指定已開啟的聊天室；未送出操作。');
   if(locked.has(controller))throw Error('此聊天室正在重新連線或建立分支，請稍候。');
+  if(idleProbe?.controller===controller)idleProbe.abort.abort(new DOMException('已讓路給聊天室操作。','AbortError'));
   return controller;
  };
  const focusLock=()=>{if(closing||navigating)throw Error('正在切換聊天室，請稍候。');navigating=true;navigationSettled=new Promise(resolve=>{finishNavigation=resolve;});};
@@ -96,7 +98,9 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const workerRows=async controller=>{
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
- const safelyIdle=async (controller,allowFailed=false)=>{
+ const safelyIdle=async (controller,allowFailed=false,signal)=>{
+  signal?.throwIfAborted();
+  const read=value=>abortable(value,signal);
   if(discussion(controller)?.busy||discussion(controller)?.held)return false;
   const idleStatuses=allowFailed?['ready','completed','interrupted','failed']:['ready','completed','interrupted'];
   const s=controller.state;
@@ -105,19 +109,19 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
      ['offline','error','uncertain','connecting','working'].includes(s.status))return false;
   // Release runtime resources, never the saved room. Adapters persist prepared
   // rooms independently of native history before the first submission.
-  if(!(await listMainSessions(root)).sessions.some(row=>row.threadId===s.threadId))return false;
-  const workers=await workerRows(controller);
+  if(!(await read(listMainSessions(root))).sessions.some(row=>row.threadId===s.threadId))return false;
+  const workers=await read(workerRows(controller));
   if(workers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||
     (row.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(row.status))))return false;
   if(s.browserAccess?.enabled){
    // A registered external gateway with no selected mode has never started a
    // browser. Do not confuse that idle state with lost/unavailable control.
-   const browser=await browserRequest(root,s,s.threadId,'/state');
+   const browser=await read(browserRequest(root,s,s.threadId,'/state'));
    const notStarted=browser?.external===true&&browser.browserMode===null;
    if(browser?.mode!=='ai'||browser?.busy!==false||(!notStarted&&browser?.available!==true)||browser?.recoveryRequired===true)return false;
   }
-  const finalWorkers=await workerRows(controller),latest=controller.state;
-  return !latest.busy&&!latest.goalPending&&!(latest.capabilities?.goalContinuesWhileIdle&&(latest.goalError||['active','unknown'].includes(latest.goal?.status)))&&!latest.questions?.length&&!latest.queuedMessages?.length&&
+  const finalWorkers=await read(workerRows(controller)),latest=controller.state;
+  return !discussion(controller)?.busy&&!discussion(controller)?.held&&!latest.busy&&!latest.goalPending&&!(latest.capabilities?.goalContinuesWhileIdle&&(latest.goalError||['active','unknown'].includes(latest.goal?.status)))&&!latest.questions?.length&&!latest.queuedMessages?.length&&
    idleStatuses.includes(latest.status)&&latest.workerConnection!=='failed'&&
    !finalWorkers.some(row=>row.settled===false||['running','starting','pending','unresolved'].includes(row.status)||
     (row.settled!==true&&!['completed','failed','cancelled','canceled','stopped','interrupted'].includes(row.status)));
@@ -128,16 +132,23 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   // Keep the active controller plus the three most recently opened hidden
   // controllers available. Protected/busy rooms may make the pool larger.
   for(const controller of ordered.slice(3)){
-   if(locked.has(controller))continue;
-   locked.add(controller);
+   if(closing||navigating||controller===active||locked.has(controller))continue;
+   const probe=new AbortController(),request=navigationRequest;idleProbe={controller,abort:probe};let held=false;
    try{
-    if(!await safelyIdle(controller))continue;
+    // Optional read-only checks never lock navigation. A selection cancels our
+    // wait, not the underlying read; late results cannot reach close().
+    if(!await safelyIdle(controller,false,probe.signal)||probe.signal.aborted||!controllers.has(controller)||closing||navigating||controller===active||request!==navigationRequest||locked.has(controller))continue;
+    idleProbe=null;locked.add(controller);held=true;
     const id=controller.state.threadId;
     await controller.close();
-    if(rooms.get(id)===controller)rooms.delete(id);
-    controllers.delete(controller);openedOrder.delete(controller);
+    // A pure view selection may have arrived while close was already running.
+    // Keep its owner visible; a later open can resume the now-offline room.
+    if(controller!==active){
+     if(rooms.get(id)===controller)rooms.delete(id);
+     controllers.delete(controller);openedOrder.delete(controller);
+    }
    }catch{/* Keep failed or uncertain teardown registered for shutdown retry. */}
-   finally{locked.delete(controller);}
+   finally{if(idleProbe?.abort===probe)idleProbe=null;if(held)locked.delete(controller);}
   }
  };
  const api={
@@ -151,6 +162,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    if(closing)throw Error('K 正在關閉。');
    if(navigating&&!pendingOpen)throw Error('正在更新聊天室，請稍候。');
    const request=++navigationRequest;
+   idleProbe?.abort.abort(new DOMException('已讓路給聊天室切換。','AbortError'));
    pendingView={record:data};onChange();
    // A new selection supersedes the view, not another room's native work.
    // Let an accepted opening settle and retain its owner before opening the latest target.
@@ -172,12 +184,18 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     existing=data.threadId?rooms.get(data.threadId):null;
     if(existing){
      const s=existing.state;
-     if(locked.has(existing))throw Error('此聊天室正在更新，請稍候。');
+     const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
+     if(locked.has(existing)){
+      if(configure)throw Error('此聊天室正在更新，請稍候。');
+      // Viewing an owned room needs no native reopen or mutation. Operations
+      // still go through target() and retain the existing lock.
+      if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);
+      return {threadId:s.threadId,...(request!==navigationRequest?{superseded:true}:{})};
+     }
      let recover=s.workerConnection==='failed'||['offline','error','uncertain'].includes(s.status);
      if(s.browserAccess?.enabled&&!s.busy&&!s.questions?.length){
       try{recover||=(await browserRequest(root,s,s.threadId,'/state')).recoveryRequired===true;}catch{/* Missing browser endpoint alone is not proof of a failed native host. */}
      }
-     const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
      if(configure||recover)noDiscussion(existing);
      if((recover||configure)&&!s.busy&&!s.questions?.length){
       locked.add(existing);try{await showHistory(projected(existing));await existing.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
@@ -262,6 +280,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   artifact(name,context){return target(context).artifact(name);},
   async close(){
    closing=true;++navigationRequest;pendingView=null;
+   idleProbe?.abort.abort(new DOMException('K 正在關閉。','AbortError'));
    // A controller still opening may create its native host after close() runs.
    // Settle that already accepted navigation before collecting every owner.
    pendingOpen?.abort(new DOMException('已取消連線。','AbortError'));
@@ -311,6 +330,6 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
  const compact=api.compact;api.compact=data=>{noDiscussion(target(data));return compact(data);};
- api.stop=async data=>{if(data?.cancelOpening===true){++navigationRequest;pendingView=null;if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}onChange();return {cancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
+ api.stop=async data=>{if(data?.cancelOpening===true){++navigationRequest;pendingView=null;idleProbe?.abort.abort(new DOMException('已取消連線。','AbortError'));if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}onChange();return {cancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
  return api;
 }
