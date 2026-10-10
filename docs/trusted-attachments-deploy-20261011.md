@@ -22,7 +22,7 @@
 - `formal-readback.json`：真正正式owner與實際served JS／CSS hash相同，health200、未登入state403；headless桌面1440×960／手機390×844，25房metadata可列出，分支原ID／user／forkThrough／未封存保留。視查兩尺寸截圖正常；controller始終未選房、idle，API POST0、pageerror0，手機只展開側欄，不開小說。這不是啟動日常Electron視窗；無搶前景。
 - `installed-real-branch-readonly/result.json`：使用**已安裝**的controller及host，只把明列Pick parent／child metadata複製工程假根、exact兩ID native thread/read、onHistory截止。只恢復native歷史實際引用第一張附件，preview／完整原檔hash一致，未引用第二張拒絕；原兩房metadata、兩附件bytes與record前後不變，0模型回合、沒有resume/start/stop，未保存或輸出小說原文。沒有把上傳區存在的第二張擅自加回卡片。
 - `installed-stream-ui/result.json`：已安裝built assets，純假snapshot的一般stream／remote compact×桌面1440／手機393共 **4/4**；精確中文「原生壓縮」提示、原始error/request ID、willRetry、部分進度、手機已連線保留，0POST／pageerror。視查手機摘要，原始詳情入口保留；不表示上游stream根因已修。
-- `final-preservation-stopped.json`：**25個main-session metadata hash全部不變**；臨時owner、preview及native唯讀host正常關閉，沒有K程序及47831／5199listener，沒有強制停止，日常K不重開。
+- `final-preservation-stopped.json`：**73個 main-session 檔案 hash 全部不變（正式UI列出25房）**；臨時owner、preview及native唯讀host正常關閉，沒有K程序及47831／5199listener，沒有強制停止，日常K不重開。
 
 ## 失敗／副作用如實保留
 

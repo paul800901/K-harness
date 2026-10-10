@@ -1,6 +1,8 @@
 # K 最新工程交接索引
 
-- 2026-10-11：[附件可信投影／remote compact正式安裝](trusted-attachments-deploy-20261011.md)：本人確認K已關、Sol唯一部署；正式92a11c4（source0b345a0）、665來源零差異、原be1d976程式可退，existing相依無安裝、installed61/61。正式owner雙尺寸/assets、exact書房clone唯讀1附件及remote提示4/4；25房metadata不變、日常K保持關閉。既有Gemini UI額度cache更新如實記錄，未續原書／push／東區；三根因仍UNKNOWN、留下一段。
+- 2026-10-11：[三項深層根因分層查證](three-root-causes-20261011.md)：正式92a安裝後僅診斷；shutdown舊fanout丟333回覆／30s query／15s false→现行12bounded同fake green，非真tray或歷史唯一因果。原生誤pause近因已證、compact未證致因；官方161 signature支持上游error資訊、服務內因UNKNOWN。全新真正Opus5.5小包只讀複查，兩處模型讀錯保留並明確不採。未改產品／再部署／重播／push，日常K關閉；部署母數校準為73metadata檔hash／UI25房。
+
+- 2026-10-11：[附件可信投影／remote compact正式安裝](trusted-attachments-deploy-20261011.md)：本人確認K已關、Sol唯一部署；正式92a11c4（source0b345a0）、665來源零差異、原be1d976程式可退，existing相依無安裝、installed61/61。正式owner雙尺寸/assets、exact書房clone唯讀1附件及remote提示4/4；73個main-session檔案hash不變／UI25房、日常K保持關閉。既有Gemini UI額度cache更新如實記錄，未續原書／push／東區；三根因仍UNKNOWN、留下一段。
 
 - 2026-10-11：[前串 BUG／更新／未修項逐項稽核](incident-repair-audit-20261011.md)：分開正式完成、候選與UNKNOWN；確認前批人用分支及附件端到端漏驗、remote compact英文前綴漏修。後者限定兩行呈現補修、精確正式red→30/30聚焦green及桌面／手機4/4，納附件合併候選Opus末審；長任務偏移、上游stream及正常關閉根因仍未解，不部署或重播原工作。
 
