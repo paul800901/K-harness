@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-11：[長任務可重現 K 缺口修補](long-task-repair-20261011.md)：本人確認K關閉後三組真Sol最小修正；shutdown固定私文安全診斷＋隱藏真C#/Node/Electron正常關閉（非人工tray）；本人原文turn粒度／exact Unicode分段；exit/EPIPE尾端排空與原生錯誤不被secondary覆蓋。1213/1213、三build、真Codex/MCP新假房；真正Opus5.5末審無確定blocking但B1 conditional經正式Node spawn入口／真隱藏鏈解除，Astra獨立驗收通過。尚未部署，歷史上游內因／壓縮致誤pause未證，不重播／push／東區。
+
 - 2026-10-11：[三項深層根因分層查證](three-root-causes-20261011.md)：正式92a安裝後僅診斷；shutdown舊fanout丟333回覆／30s query／15s false→现行12bounded同fake green，非真tray或歷史唯一因果。原生誤pause近因已證、compact未證致因；官方161 signature支持上游error資訊、服務內因UNKNOWN。全新真正Opus5.5小包只讀複查，兩處模型讀錯保留並明確不採。未改產品／再部署／重播／push，日常K關閉；部署母數校準為73metadata檔hash／UI25房。
 
 - 2026-10-11：[附件可信投影／remote compact正式安裝](trusted-attachments-deploy-20261011.md)：本人確認K已關、Sol唯一部署；正式92a11c4（source0b345a0）、665來源零差異、原be1d976程式可退，existing相依無安裝、installed61/61。正式owner雙尺寸/assets、exact書房clone唯讀1附件及remote提示4/4；73個main-session檔案hash不變／UI25房、日常K保持關閉。既有Gemini UI額度cache更新如實記錄，未續原書／push／東區；三根因仍UNKNOWN、留下一段。
