@@ -177,7 +177,8 @@ export function createUnifiedController(options){
     await active.send({text});
     return {...created,parentThreadId:source.threadId,started:true,handoffPath:handoff?.path??null};
    }catch(error){
-    if(created){await queue.load(active.state.threadId).catch(()=>{});throw Error(`分支 ${created.threadId} 已建立，但接續未完成或送出未確認；請查看新對話，不要重複建立或重送。${error.message}`);}
+    const createdId=created?.threadId??error.createdThreadId;
+    if(createdId){await queue.load(createdId).catch(()=>{});throw Error(created?`分支 ${createdId} 已建立，但接續未完成或送出未確認；請查看新對話，不要重複建立或重送。${error.message}`:`分支 ${createdId} 已建立，接續指令尚未送出；請重開這個新對話，不要重複建立分支。${error.message}`);}
     throw error;
    }finally{changing=false;changed();}
   },

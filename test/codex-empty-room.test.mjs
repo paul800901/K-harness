@@ -44,7 +44,7 @@ async function fixture(){
      return {turn};
     }
     if(method==='thread/fork'){
-     assert.ok(durable.has(p.threadId));const thread={...structuredClone(durable.get(p.threadId)),id:`native-${++seq}`,parentThreadId:p.threadId};durable.set(thread.id,thread);return {thread};
+     assert.ok(durable.has(p.threadId));const thread={...structuredClone(durable.get(p.threadId)),id:`native-${++seq}`,forkedFromId:p.threadId};durable.set(thread.id,thread);loaded.set(thread.id,thread);return {thread};
     }
     if(method==='turn/interrupt')hooks.onEvent?.({method:'turn/completed',params:{threadId:p.threadId,turn:{id:'interrupted',status:'interrupted'}}});
     return {};

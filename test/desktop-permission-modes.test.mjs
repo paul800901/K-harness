@@ -87,7 +87,7 @@ test('native fork requires confirmation only when raising permissions',async()=>
    if(method==='account/read')return {account:{type:'chatgpt'}};
    if(method==='thread/fork')return {thread:{id:'fork-child'}};
    if(method==='thread/resume')return {thread:{id:p.threadId}};
-   if(method==='thread/read')return {thread:{turns:[]}};
+   if(method==='thread/read')return {thread:{turns:[{id:'turn-fork',status:'completed',items:[{id:'fork-point',type:'agentMessage',text:'完成'}]}]}};
    if(method==='config/read')return {config:{developer_instructions:''}};
    if(method==='thread/backgroundTerminals/list')return {data:[],nextCursor:null};
    if(method==='model/list')return {data:[{model:'gpt-6-astra',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]}],nextCursor:null};
