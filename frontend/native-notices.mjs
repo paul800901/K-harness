@@ -21,6 +21,10 @@ export function codexErrorKind(error) {
  const info=error?.codexErrorInfo;
  if(info==='serverOverloaded')return 'capacity';
  if(info==='usageLimitExceeded')return 'quota';
+ if(info&&typeof info==='object'&&'responseStreamDisconnected' in info)return 'stream';
+ // The native stream wrapper may arrive with the generic `other` code.
+ // Specific codes still take precedence; transport warnings are not failures.
+ if((info==null||info==='other')&&/^stream disconnected before completion:/.test(error?.message??''))return 'stream';
  // Older records may have only this exact native message. Structured codes
  // take precedence; an arbitrary mention of capacity is not sufficient.
  if(info==null&&/^Selected model is at capacity\.(?: Please try a different model\.)?$/.test(error?.message??''))return 'capacity';
@@ -33,6 +37,7 @@ export function localizeNativeNotice(message,provider,error) {
   const kind=codexErrorKind(error?.message===message?error:{message});
   if(kind==='capacity')return '模型服務容量不足，與剩餘額度不同。請稍後再試，或自行選擇其他模型。';
   if(kind==='quota')return 'Codex 原生回報用量限制，與模型服務容量不足不同；恢復時間以官方額度資訊為準。';
+  if(kind==='stream')return 'Codex 回覆在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
  }
  if(provider!=='claude'||typeof message!=='string')return message;
  const match=/^You've hit your session limit(?: · resets (1[0-2]|[1-9])(?::([0-5]\d))?(am|pm) \(([^()\r\n]+)\))?$/.exec(message);
