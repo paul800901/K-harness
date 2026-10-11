@@ -46,11 +46,17 @@ K 的 `codex-host.mjs` 使用 Node `readline.createInterface` 切分 JSONL。實
 
 ### 正式狀態
 
-**候選已實作及上述驗證，尚未部署此修正**。正式仍為 `3c2b0b5`。本人已明確回覆「已離開並停止 K」，launcher 01:42:36 記錄 confirmed close，CIM／listener 讀回為 0 個 K 自有程序、0 個桌面 listener，外部 Chrome native host 保留。UI 讀回已完成，需固定版本及包裝驗證後才可正式套用，操作前再次核對停止。沒有重送工作或更換原生核心，未 push、未更新東區。
+**已正式更新、正式來源及服務讀回完成；日常 K 留在關閉，沒有恢復工作。**
+
+- 固定程式 SHA：`4af4b7d2bfcbefd8772329270b6432a50f9f44a3`，不是後續文件收尾提交。由既有 Git archive 準備候選，同 package manifests 重用既有獨立相依，沒有安裝套件。
+- 三項建置成功；封裝後相稱回歸 **288/288**（含 framing、tail、Codex/Claude host、desktop open/switch 及原恢復／提醒）。681 份 tracked source 與固定 Git blob 全部相同，Astra 在 prepare 及正式安裝後各自獨立比對。
+- 本人明確回覆「已離開並停止 K」；launcher 01:42:36 confirmed close，部署前再次讀回 0 個 K 自有程序／listener。原 Chrome native host 保留，沒有強制停止。
+- 單次 activation 已完成；前版程式／啟動器保留：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791740919486`。這是程式退版，不是對話回復快照。
+- Astra 以**正式安裝的 host**、正式 Electron 44.4.5／Node 24.21.0 與固定 Codex 0.161.0 再讀隔離歷史：**496 ms、111 turns、5,184 items 全部逐筆 DB deepEqual，turn 順序與 literal Unicode 保留**，host 正常關閉。此為讀取副本，不是對原房 resume／重送。
+- 正式 owner 健康檢查、授權與匿名存取界線、實際 served assets hashes、1440／390 雙尺寸 UI、26 房清單均读回；0 pageerror、0 POST、未選取原房、未發模型回合。驗證服務正常關閉，再讀回 K 自有程序與 listener 均為 0。實體手機與原房續跑不當成這批已驗事項。
+- 74 份 main-session metadata 全 hash 與獨立部署前 baseline 相同；核心選擇、Codex 設定、工作區／Google 工具設定與 runtime 其他設定不變。Gemini 額度快取只有三個原生查詢時間欄更新，內容與帳號不變，無憑證讀取／複製／登入／切換。
+- 未 push、未更新東區；未啟動／恢復／重播原翻譯工作。完整證據在私人 `deployment/`，含 `final-receipt.json`、`astra-installed-acceptance.json` 與 `astra-installed-host-electron.json`（後者在上一層）。
 
 私人證據：`D:\K-harness\.runtime\thread-read-timeout-20261012\`。包含 `read-result.json`（不可採用的舊版探針）、`read-result-0161.json`、`pages-result-second.json`、`pages-result-third.json`、`pages-result-lf.json`、`novel-separator-audit.json`、`electron-framing-runtime.json`、`astra-candidate-host-node.json`、`astra-candidate-host-electron.json`、`framing-{red,focused-green,full-concurrency4}.log`、`framing-source-final.json`、`opus/` 與原始 stdout；真實對話、資料庫副本、截圖不提交 Git。
 
 本修正不宣稱解決所有原生壓縮／供應商斷線，亦不把先前測試通過當成此資料形狀已被驗證。
-
-
-
