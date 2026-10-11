@@ -8,7 +8,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 const error={message:'fixture native remote compact terminal error',codexErrorInfo:'other',additionalDetails:null};
 async function fixture({budget=null,status='active',reject,alias=false,persistGate=false}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'goal-recovery-'));
- const calls=[],children=new Map();let hooks,gateway,close,seq=0,starts=0,gate,goalGate,deliveryGate,rejectGate,readFailure=false,background=false;
+ const calls=[],children=new Map();let hooks,gateway,bridgeHooks,flashRows=[],close,seq=0,starts=0,gate,goalGate,deliveryGate,rejectGate,readFailure=false,background=false,synchronousAuditFailure=false;
  let goal={threadId:'parent',objective:'Complete remaining fake work',status,tokenBudget:budget,tokensUsed:12,timeUsedSeconds:1,createdAt:101,updatedAt:102};
  let parent={id:'parent',status:{type:'idle'},historyMode:'paginated',turns:[]};
  const emit=(method,params={},id=parent.id)=>hooks.onEvent({method,params:{threadId:id,...params}});
@@ -28,9 +28,10 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
   if(method==='thread/backgroundTerminals/list')return {data:background?[{id:'still-running'}]:[],nextCursor:null};
   if(method==='turn/start'){
    if(p.toolOutput&&reject){if(rejectGate)await rejectGate;throw reject;}
-   const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});if(p.toolOutput&&deliveryGate)await deliveryGate;return {turn:{id}};
+   const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});if(p.toolOutput&&synchronousAuditFailure){end();emit('thread/goal/updated',{goal:structuredClone(goal)});}if(p.toolOutput&&deliveryGate)await deliveryGate;return {turn:{id}};
   }
   if(method==='turn/interrupt'){parent.status={type:'idle'};emit('turn/completed',{turn:{id:p.turnId,status:'interrupted'}});}
+  if(method==='turn/steer')return {turnId:p.expectedTurnId};
   return {};
  }};
  let creator=createDesktopController,disk;
@@ -40,15 +41,15 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
   const gatePath=path.join(root,'persist-gate.mjs');await writeFile(gatePath,`let armed=false;export const entered=Promise.withResolvers(),release=Promise.withResolvers();export const arm=()=>armed=true;export async function hold(){if(armed){armed=false;entered.resolve();await release.promise;}}`);disk=await import(pathToFileURL(gatePath).href);
   source=source.replace(/from '(\.\/[^']+)'/g,(_m,relative)=>`from '${new URL(relative,sourceURL).href}'`).replace(needle,needle.replace('\n   if','\n   await hold();\n   if'));const gated=path.join(root,'gated-controller.mjs');await writeFile(gated,`import {hold} from '${pathToFileURL(gatePath).href}';\n`+source);creator=(await import(pathToFileURL(gated).href)).createDesktopController;
  }
- const c=creator({root,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
+ const c=creator({root,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},bridgeFactory:async o=>{bridgeHooks=o;return {start:async()=>({status:'running'}),list:async()=>flashRows,close:async()=>{},cancelGeminiHandoff(){calls.push({method:'cancelGeminiHandoff'});}};},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
  await c.open({model:'gpt-6-astra',effort:'high'});if(alias){await c.close();await c.open({threadId:'parent',model:'gpt-6-astra',effort:'high'});await c.goal({status:'active'});}await c.send({text:'new fake work'});
  const end=(status='failed',err=error,block=true,nativeStatus='idle')=>{const t=parent.turns.at(-1);t.status=status;parent.status={type:nativeStatus};if(nativeStatus==='systemError'){emit('thread/status/changed',{status:structuredClone(parent.status)});emit('error',{turnId:t.id,error:err,willRetry:false});}if(block&&status==='failed'&&goal?.status==='active'){goal.status='blocked';emit('thread/goal/updated',{turnId:t.id,goal:structuredClone(goal)});}emit('turn/completed',{turn:{id:t.id,status,...(status==='failed'?{error:err}:{})}});};
  const child=()=>{children.set('child',{id:'child',parentThreadId:'parent',historyMode:'paginated',status:{type:'active'},turns:[{id:'child-turn',status:'inProgress'}]});emit('item/started',{item:{type:'subAgentActivity',id:'spawn-child',kind:'started',agentThreadId:'child'}});emit('turn/started',{turn:{id:'child-turn'}},'child');};
  const unloadedChildren=async n=>{for(let i=0;i<n;i++){const id='old-child-'+i;children.set(id,{id,parentThreadId:'parent',historyMode:'paginated',status:{type:'notLoaded'},turns:[{id:id+'-turn',status:'completed'}]});emit('item/started',{item:{type:'subAgentActivity',id:'spawn-'+id,kind:'started',agentThreadId:id}});}await c.workers();};
  const blockGoal=()=>{goal.status='blocked';emit('thread/goal/updated',{goal:structuredClone(goal)});};
  const nativeStart=()=>{goal.status='active';emit('thread/goal/updated',{goal:structuredClone(goal)});const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});};
- const finishChild=()=>{const row=children.get('child');row.status={type:'idle'};row.turns[0].status='completed';emit('turn/completed',{turn:{id:'child-turn',status:'completed'}},'child');};
- return {c,calls,root,disk,emit,end,child,finishChild,nativeStart,unloadedChildren,blockGoal,get goal(){return goal;},get gateway(){return gateway;},get currentTurn(){return parent.turns.at(-1).id;},deliveries:()=>calls.filter(x=>x.method==='turn/start'&&x.p.toolOutput),setGate:x=>gate=x,setGoalGate:x=>goalGate=x,setDeliveryGate:x=>deliveryGate=x,setUnknown:x=>readFailure=x,setBackground:x=>background=x,setParentStatus:x=>parent.status=x===undefined?undefined:{type:x},setLatestTurn:x=>Object.assign(parent.turns.at(-1),x),setReject:x=>reject=x,setRejectGate:x=>rejectGate=x,loseHost:()=>close(),cleanup:async()=>{background=false;readFailure=false;gate=null;for(const row of children.values()){row.status={type:'idle'};row.turns[0].status='completed';}if(c.state.status==='uncertain')await c.stop();await c.close();}};
+ const finishChild=(status='completed',nativeStatus='idle')=>{const row=children.get('child');row.status={type:nativeStatus};row.turns[0].status=status;emit('turn/completed',{turn:{id:'child-turn',status,...(status==='failed'?{error}:{})}},'child');};
+ return {c,calls,root,disk,emit,end,child,finishChild,nativeStart,unloadedChildren,blockGoal,get goal(){return goal;},get gateway(){return gateway;},get bridgeHooks(){return bridgeHooks;},get currentTurn(){return parent.turns.at(-1).id;},deliveries:()=>calls.filter(x=>x.method==='turn/start'&&x.p.toolOutput),setSynchronousAuditFailure:x=>synchronousAuditFailure=x,setFlashRows:x=>flashRows=x,setGate:x=>gate=x,setGoalGate:x=>goalGate=x,setDeliveryGate:x=>deliveryGate=x,setUnknown:x=>readFailure=x,setBackground:x=>background=x,setParentStatus:x=>parent.status=x===undefined?undefined:{type:x},setLatestTurn:x=>Object.assign(parent.turns.at(-1),x),setReject:x=>reject=x,setRejectGate:x=>rejectGate=x,loseHost:()=>close(),cleanup:async()=>{background=false;readFailure=false;gate=null;for(const row of children.values()){row.status={type:'idle'};row.turns[0].status='completed';}if(c.state.status==='uncertain')await c.stop();await c.close();}};
 }
 const wait=async predicate=>{const end=Date.now()+3500;while(!predicate()){if(Date.now()>end)throw Error('observable not reached');await new Promise(r=>setTimeout(r,20));}};
 const tick=()=>new Promise(r=>setTimeout(r,60));
@@ -110,10 +111,140 @@ test('systemError does not imply child or background settled; waits then audits 
  const f=await fixture();try{f.child();f.setBackground(true);f.end('failed',error,true,'systemError');await tick();assert.equal(f.deliveries().length,0);f.finishChild();await tick();assert.equal(f.deliveries().length,0);f.setBackground(false);await wait(()=>f.deliveries().length===1);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);assert.equal(f.calls.some(x=>['turn/interrupt','thread/backgroundTerminals/clean'].includes(x.method)),false);}finally{await f.cleanup();}
 });
 
+test('failed systemError child is settled and joins one recovery, not treated as unknown forever',async()=>{
+ const f=await fixture();try{f.child();f.finishChild('failed','systemError');await f.c.workers();f.end('failed',error,true,'systemError');await wait(()=>f.deliveries().length===1);assert.equal(f.c.state.workers.find(w=>w.threadId==='child').settled,true);assert.match(f.deliveries()[0].p.toolOutput.output,/child-turn/);assert.match(f.deliveries()[0].p.toolOutput.output,/failed/);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);assert.equal(f.calls.some(x=>['turn/interrupt','thread/backgroundTerminals/clean'].includes(x.method)),false);}finally{await f.cleanup();}
+});
+
+for(const status of ['completed','failed','interrupted'])test('audit '+status+' resolves in-progress notice without rearming',async()=>{
+ const f=await fixture();try{f.end();await wait(()=>f.deliveries().length===1);const notice=f.c.state.notices.find(n=>n.kind==='goal-recovery'&&n.level==='info');assert.equal(notice.resolved,undefined);f.end(status);await tick();assert.equal(notice.resolved,true);assert.equal(f.c.state.tools.find(t=>t.name==='核對已存成果').status,status);assert.equal(f.c.state.notices.some(n=>n.kind==='goal-recovery'&&n.level==='info'&&!n.resolved),false);if(status==='failed'){assert.match(f.c.state.notices.findLast(n=>n.kind==='goal-recovery'&&!n.resolved).message,/已失敗.*未自動重送/);f.end(status);assert.equal(f.c.state.notices.filter(n=>n.kind==='goal-recovery'&&n.level==='warning'&&!n.resolved).length,1);}assert.equal(f.deliveries().length,1);}finally{await f.cleanup();}
+});
+
+for(const known of [true,false])test('unstarted audit '+(known?'rejection':'ambiguity')+' replaces running notice without claiming terminal success',async()=>{
+ const reject=known?Object.assign(Error('fixture rejected'),{protocolMessage:'rejected'}):Error('fixture delivery unknown');const f=await fixture({reject});try{f.end();await wait(()=>f.deliveries().length===1);await tick();assert.equal(f.c.state.notices.some(n=>n.kind==='goal-recovery'&&n.level==='info'&&!n.resolved),false);assert.equal(f.c.state.tools.find(t=>t.name==='核對已存成果').status,known?'failed':'unresolved');assert.equal(f.c.state.status,known?'failed':'uncertain');assert.equal(f.deliveries().length,1);}finally{await f.cleanup();}
+});
+
 test('systemError alone cannot audit when latest turn is still inProgress or a different id',async()=>{
  for(const latest of [{status:'inProgress'},{id:'different-native-turn'}]){
   const f=await fixture();let release;try{
    const before=f.calls.length;f.setGate(new Promise(r=>release=r));f.end('failed',error,true,'systemError');await wait(()=>f.calls.slice(before).some(x=>x.method==='thread/read'));f.setLatestTurn(latest);release();await wait(()=>f.calls.slice(before).some(x=>x.method==='thread/turns/list'));await tick();assert.equal(f.deliveries().length,0);assert.equal(f.calls.filter(x=>x.method==='turn/start').length,1);assert.equal(f.calls.slice(before).some(x=>['thread/goal/set','turn/interrupt','thread/compact/start'].includes(x.method)),false);
   }finally{release?.();await f.cleanup();}
  }
+});
+
+test('official Gemini ready episode gives a failed audit one new check, not a general failure retry',async()=>{
+ const f=await fixture();try{
+  f.end();await wait(()=>f.deliveries().length===1);await f.gateway.resumeGoal({}, {'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+  await f.gateway.bridge.start({requestId:'quota-a'});await f.gateway.bridge.start({requestId:'quota-b'});
+  const event={parentId:'parent',requestIds:['quota-a','quota-b'],accountId:'new-fake-account'};
+  f.bridgeHooks.onGeminiHandoff({...event,status:'waiting'});f.end();await tick();assert.equal(f.deliveries().length,1);
+  f.setBackground(true);f.bridgeHooks.onGeminiHandoff({...event,status:'ready'});await tick();assert.equal(f.deliveries().length,1);
+  f.setBackground(false);await wait(()=>f.deliveries().length===2);assert.equal(f.deliveries()[1].p.toolOutput.name,'k_native_goal_recovery');assert.match(f.deliveries()[1].p.toolOutput.output,/quota-a.*quota-b/);assert.match(f.deliveries()[1].p.toolOutput.output,/handoffFrom/);
+  f.bridgeHooks.onGeminiHandoff({...event,status:'ready'});f.end();await tick();assert.equal(f.deliveries().length,2);assert.equal(f.calls.some(x=>['turn/interrupt','thread/backgroundTerminals/clean'].includes(x.method)),false);
+ }finally{await f.cleanup();}
+});
+
+test('synchronous failed ready audit cannot rearm the same episode, but later independent ready can',async()=>{
+ const f=await fixture();try{
+  f.end();await wait(()=>f.deliveries().length===1);await f.gateway.resumeGoal({}, {'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+  await f.gateway.bridge.start({requestId:'quota-first'});f.end();await tick();f.setSynchronousAuditFailure(true);
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['quota-first'],status:'ready',accountId:'fake-b'});
+  await wait(()=>f.deliveries().length>=2);await new Promise(r=>setTimeout(r,1250));assert.equal(f.deliveries().length,2);assert.equal(f.c.state.status,'failed');
+  f.setSynchronousAuditFailure(false);await f.gateway.bridge.start({requestId:'quota-second'});
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['quota-second'],status:'ready',accountId:'fake-c'});
+  await wait(()=>f.deliveries().length===3);assert.match(f.deliveries()[2].p.toolOutput.output,/quota-second/);
+ }finally{await f.cleanup();}
+});
+
+for(const action of ['pause','stop','human-send','blocked','budget','unknown'])test('Gemini ready never bypasses '+action,async()=>{
+ const f=await fixture({budget:action==='budget'?10:null});let release;try{
+  await f.gateway.bridge.start({requestId:'quota'});const callback=f.bridgeHooks.onGeminiHandoff,event={parentId:'parent',requestIds:['quota'],accountId:'fake-account'};
+  f.end('completed');callback({...event,status:'waiting'});await tick();
+  if(action==='pause')await f.c.goal({status:'paused'});
+  if(action==='stop')await f.c.stop();
+  if(action==='human-send'){await f.c.send({text:'new human intent'});f.end('completed');}
+  if(action==='unknown')f.setUnknown(true);
+  if(action==='budget'){f.nativeStart();f.end();}
+  callback({...event,status:action==='blocked'?'blocked':'ready',reason:'fixture official check unknown'});await tick();assert.equal(f.deliveries().length,0);
+ }finally{release?.();await f.cleanup();}
+});
+
+test('Gemini ready cancellation is rechecked after awaited native preflight',async()=>{
+ const f=await fixture();let release;try{await f.gateway.bridge.start({requestId:'quota'});f.end('completed');f.setGate(new Promise(r=>release=r));f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['quota'],status:'ready',accountId:'fake'});await tick();await f.c.goal({status:'paused'});release();await tick();assert.equal(f.deliveries().length,0);}finally{release?.();await f.cleanup();}
+});
+
+for(const action of ['native-takeover','human-send','goal-edit'])test('completed Gemini ready preflight '+action+' preserves unsent original results',async()=>{
+ const f=await fixture({persistGate:true});try{
+  await f.gateway.bridge.start({requestId:'quota'});f.end('completed');await tick();
+  const row={parentId:'parent',provider:'gemini',requestId:'quota',status:'failed',settled:true,output:'saved original result'};f.setFlashRows([row]);f.disk.arm();f.bridgeHooks.onChange(row);f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['quota'],status:'ready',accountId:'fake'});
+  await f.disk.entered.promise;
+  if(action==='native-takeover')f.nativeStart();if(action==='human-send')await f.c.send({text:'new human work'});if(action==='goal-edit')await f.c.goal({objective:'new intended objective',editOnly:true});
+  f.disk.release.resolve();await tick();assert.equal(f.deliveries().length,0);assert.equal((await listMainSessions(f.root)).sessions[0].workerNotifications.quota,undefined);
+  if(action!=='goal-edit')f.end('completed');else{await f.c.send({text:'new human work'});f.end('completed');}
+  await wait(()=>f.deliveries().length===1);assert.match(f.deliveries()[0].p.toolOutput.output,/saved original result/);
+ }finally{f.disk.release.resolve();await f.cleanup();}
+});
+
+test('Codex Gemini ready is consumed and its ready info resolved after completed-room notification',async()=>{
+ const f=await fixture();try{await f.gateway.bridge.start({requestId:'quota'});f.end('completed');f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['quota'],status:'ready',accountId:'fake'});await wait(()=>f.deliveries().length===1);assert.equal(f.c.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);f.end('completed');await tick();assert.equal(f.deliveries().length,1);}finally{await f.cleanup();}
+});
+
+test('Codex new human steer suppresses old account-ready callback',async()=>{
+ const f=await fixture();try{await f.gateway.bridge.start({requestId:'quota'});const callback=f.bridgeHooks.onGeminiHandoff;callback({parentId:'parent',requestIds:['quota'],status:'waiting'});assert.equal((await f.c.steer({text:'new human correction'})).steered,true);f.end('completed');callback({parentId:'parent',requestIds:['quota'],status:'ready',accountId:'fake'});await tick();assert.equal(f.deliveries().length,0);}finally{await f.cleanup();}
+});
+
+for(const switched of [false,true])test('Codex Gemini ready account facts match switched='+switched,async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.start({requestId:'not-started'});f.end('completed');
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched,reason:'fixture official account check'});
+  await wait(()=>f.deliveries().length===1);const text=f.deliveries()[0].p.toolOutput.output;
+  assert.match(text,/handoffFrom/);assert.match(text,/新的 requestId/);assert.match(text,/fixture official account check/);
+  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/同一帳號/);assert.match(text,/已執行後失敗/);}
+ }finally{await f.cleanup();}
+});
+
+test('completed Codex ready protocol rejection retains handoff explanation for existing safe requeue',async()=>{
+ const f=await fixture({reject:Object.assign(Error('confirmed not accepted'),{protocolMessage:'rejected'})});try{
+  await f.gateway.bridge.start({requestId:'not-started'});f.end('completed');await tick();
+  const row={parentId:'parent',provider:'gemini',requestId:'not-started',status:'failed',settled:true,output:'saved unsent original result'};f.setFlashRows([row]);f.bridgeHooks.onChange(row);
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});
+  await wait(()=>f.deliveries().length===1&&f.c.state.status==='completed');f.setReject(null);f.nativeStart();f.end('completed');
+  await wait(()=>f.deliveries().length===2);const text=f.deliveries()[1].p.toolOutput.output;assert.match(text,/handoffFrom/);assert.match(text,/not-started/);assert.match(text,/saved unsent original result/);assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);
+ }finally{await f.cleanup();}
+});
+
+test('completed Codex ready transport ambiguity consumes the attempt and does not resend',async()=>{
+ const f=await fixture({reject:Error('transport unknown')});try{
+  await f.gateway.bridge.start({requestId:'not-started'});f.end('completed');f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});
+  await wait(()=>f.deliveries().length===1&&f.c.state.status==='uncertain');f.setReject(null);await f.c.workers();await tick();assert.equal(f.deliveries().length,1);assert.equal(f.c.state.notices.some(n=>n.kind==='gemini-handoff'&&!n.resolved),false);
+ }finally{await f.cleanup();}
+});
+
+test('Codex same-account mixed batch excludes executed failed work from ready scope',async()=>{
+ const f=await fixture();try{
+  for(const requestId of ['rate-failed','not-started'])await f.gateway.bridge.start({requestId});f.end('completed');await tick();
+  const rows=['rate-failed','not-started'].map(requestId=>({parentId:'parent',provider:'gemini',requestId,status:'failed',settled:true,output:'saved '+requestId}));f.setFlashRows(rows);for(const row of rows)f.bridgeHooks.onChange(row);
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});await wait(()=>f.deliveries().length===1);
+  const text=f.deliveries()[0].p.toolOutput.output;assert.match(text,/saved rate-failed/);assert.match(text,/saved not-started/);assert.deepEqual(JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"'))).requestIds,['not-started']);
+  assert.match(text,/本次就緒只涵蓋 event.requestIds 中先前未送出的工作/);assert.match(text,/其他已執行後失敗工單不因本次通知自動重啟/);assert.match(text,/接手僅限通知 requestIds 的剩餘工作/);assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);
+ }finally{await f.cleanup();}
+});
+
+test('confirmed rejected ready waits for a new native turn completion, never timer or readback resend',async()=>{
+ const f=await fixture({reject:Object.assign(Error('still confirmed not accepted'),{protocolMessage:'rejected'})});try{
+  await f.gateway.bridge.start({requestId:'not-started'});f.end('completed');await tick();
+  const row={parentId:'parent',provider:'gemini',requestId:'not-started',status:'failed',settled:true,output:'saved original result'};f.setFlashRows([row]);f.bridgeHooks.onChange(row);
+  f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});await wait(()=>f.deliveries().length===1&&f.c.state.status==='completed');
+  await new Promise(r=>setTimeout(r,1250));assert.equal(f.deliveries().length,1);
+  await f.c.workers();f.emit('thread/goal/updated',{goal:structuredClone(f.goal)});f.end('completed');await tick();assert.equal(f.deliveries().length,1,'readback and duplicate old terminal do not authorize retry');
+  f.nativeStart();f.end('completed');await wait(()=>f.deliveries().length===2&&f.c.state.status==='completed');assert.match(f.deliveries()[1].p.toolOutput.output,/handoffFrom/);
+  await new Promise(r=>setTimeout(r,1250));assert.equal(f.deliveries().length,2,'each new native completion authorizes only one attempt');
+  f.setReject(null);f.nativeStart();f.end('completed');await wait(()=>f.deliveries().length===3);assert.match(f.deliveries()[2].p.toolOutput.output,/saved original result/);assert.match(f.deliveries()[2].p.toolOutput.output,/handoffFrom/);
+ }finally{await f.cleanup();}
+});
+
+test('first ready with unknown workers still reconciles read-only and sends once when verified',async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.start({requestId:'not-started'});f.end('completed');f.setUnknown(true);f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});
+  await new Promise(r=>setTimeout(r,1250));assert.equal(f.deliveries().length,0);f.setUnknown(false);await wait(()=>f.deliveries().length===1);assert.match(f.deliveries()[0].p.toolOutput.output,/handoffFrom/);f.end('completed');await tick();assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
 });

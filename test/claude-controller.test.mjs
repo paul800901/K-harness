@@ -1243,6 +1243,79 @@ test('Claude lazy gateway exposes the same read-only Gemini account list without
  }finally{await f.controller.close();}
 });
 
+test('Claude official Gemini ready notifies once after failed live goal and native backgrounds settle',async()=>{
+ const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>args==='clear'?'Goal cleared: fake goal':args?'Goal set: '+args:'Goal active: fake goal (not yet evaluated)';}});try{
+  await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota-a',model:'gemini-3.8-flash'});await f.gatewayOptions.bridge.start({requestId:'quota-b',model:'gemini-3.8-flash'});
+  const event={parentId:f.controller.state.threadId,requestIds:['quota-a','quota-b'],accountId:'new-fake-account'},emit=f.hostOptions.onMessage;
+  f.bridgeOptions.onGeminiHandoff({...event,status:'waiting'});emit({type:'system',subtype:'task_started',task_type:'local_bash',task_id:'bg',tool_use_id:'bg-tool'});emit({type:'result',is_error:true,subtype:'error_during_execution',result:'fixture stream error'});await tick();assert.equal(f.host.startCalls.length,0);
+  f.bridgeOptions.onGeminiHandoff({...event,status:'ready'});await tick();assert.equal(f.host.startCalls.length,0);
+  emit({type:'system',subtype:'task_notification',task_id:'bg',status:'completed'});await waitFor(()=>f.host.startCalls.length===1);
+  assert.match(f.host.startCalls[0][0].text,/quota-a.*quota-b/);assert.match(f.host.startCalls[0][0].text,/handoffFrom/);assert.match(f.host.startCalls[0][0].text,/已保存成果/);
+  f.bridgeOptions.onGeminiHandoff({...event,status:'ready'});emit({type:'result',is_error:true,result:'fixture audit failed'});await tick();assert.equal(f.host.startCalls.length,1);
+ }finally{await f.controller.close();}
+});
+
+for(const action of ['clear','stop','human-send','blocked','budget','unknown-goal','permission','stale-bridge'])test('Claude Gemini ready does not bypass '+action,async()=>{
+ let nativeGoal='fake goal';const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake goal';}if(args){nativeGoal=args;return 'Goal set: '+args;}return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});try{
+  const {threadId}=await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});
+  const callback=f.bridgeOptions.onGeminiHandoff,event={parentId:threadId,requestIds:['quota'],accountId:'fake-account'};callback({...event,status:'waiting'});
+  f.hostOptions.onMessage({type:'result',is_error:true,result:'fixture failure',subtype:action==='budget'?'error_max_budget_usd':'error_during_execution',...(action==='permission'?{permission_denials:[{tool_name:'Write'}]}:{})});await tick();
+  if(action==='clear')await f.controller.goal({clear:true});
+  if(action==='stop')await f.controller.stop();
+  if(action==='human-send'){await f.controller.send({text:'new human work'});f.hostOptions.onMessage({type:'result',is_error:false});}
+  if(action==='unknown-goal')f.host.goal=async()=>{throw Error('fixture unknown native goal');};
+  if(action==='stale-bridge'){await f.controller.close();await f.controller.open({threadId});}
+  const before=f.host.startCalls.length;callback({...event,status:action==='blocked'?'blocked':'ready',reason:'fixture official result unknown'});await tick();assert.equal(f.host.startCalls.length,before);
+ }finally{await f.controller.close();}
+});
+
+test('Claude Gemini ready rechecks clear after awaited native goal read',async()=>{
+ let nativeGoal='fake goal',release,gate;const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake goal';}if(args){nativeGoal=args;return 'Goal set: '+args;}if(gate)await gate;return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});try{
+  await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:true,result:'fixture failure'});await tick();
+  gate=new Promise(r=>release=r);f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await tick();f.hostOptions.onMessage({type:'assistant',message:{model:'<synthetic>',content:[{type:'text',text:'Goal cleared: fake goal'}]},session_id:f.controller.state.threadId,local_command_run:{command:'goal'}});nativeGoal=null;release();await tick();assert.equal(f.host.startCalls.length,0);
+ }finally{release?.();await f.controller.close();}
+});
+
+for(const action of ['native-takeover','human-send'])test('Claude completed Gemini ready preflight '+action+' preserves original results',async t=>{
+ const f=await fixture();let release,patched,hit=false;const gate=new Promise(r=>release=r);try{
+  await f.controller.open({});await f.controller.send({text:'original work'});f.hostOptions.onMessage({type:'result',is_error:false});await tick();await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});
+  const row={parentId:f.controller.state.threadId,provider:'gemini',requestId:'quota',settled:true,status:'failed',output:'saved original result'};f.bridge.records=[row];
+  const original=fs.rename;patched=t.mock.method(fs,'rename',async(from,to)=>{if(!hit&&String(to).includes('claude-sessions')&&JSON.parse(await readFile(from,'utf8')).workerNotifications?.quota==='delivery-attempted'){hit=true;await gate;}return original(from,to);});syncBuiltinESMExports();
+  f.bridgeOptions.onChange(row);f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await waitFor(()=>hit);
+  let sending;if(action==='native-takeover')f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting'});else sending=f.controller.send({text:'new human work'});
+  release();await sending;await tick();patched.mock.restore();syncBuiltinESMExports();patched=null;
+  assert.equal(f.host.startCalls.length,action==='native-takeover'?1:2);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===(action==='native-takeover'?2:3));assert.match(f.host.startCalls.at(-1)[0].text,/saved original result/);
+ }finally{release?.();if(patched){patched.mock.restore();syncBuiltinESMExports();}await f.controller.close();}
+});
+
+test('Claude completed Gemini ready consumes one episode and resolves ready info',async()=>{
+ const f=await fixture();try{await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await waitFor(()=>f.host.startCalls.length===2&&!f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved));assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,2);}finally{await f.controller.close();}
+});
+
+test('Claude accepted human steer suppresses old account-ready callback',async()=>{
+ const f=await fixture();try{await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});const callback=f.bridgeOptions.onGeminiHandoff;callback({parentId:f.controller.state.threadId,requestIds:['quota'],status:'waiting'});assert.equal((await f.controller.steer({text:'new correction'})).steered,true);const steered=f.controller.state.messages.at(-1);f.hostOptions.onMessage({type:'user',uuid:steered.id,isReplay:true,message:{content:f.host.startCalls[1]}});f.hostOptions.onMessage({type:'result',is_error:false});callback({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await tick();assert.equal(f.host.startCalls.length,2);}finally{await f.controller.close();}
+});
+
+for(const switched of [false,true])test('Claude Gemini ready account facts match switched='+switched,async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'not-started',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});
+  f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['not-started'],status:'ready',accountId:'fake-a',switched,reason:'fixture official account check'});
+  await waitFor(()=>f.host.startCalls.length===2);const text=f.host.startCalls.at(-1)[0].text;
+  assert.match(text,/handoffFrom/);assert.match(text,/新的 requestId/);assert.match(text,/fixture official account check/);
+  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/同一帳號/);assert.match(text,/已執行後失敗/);}
+ }finally{await f.controller.close();}
+});
+
+test('Claude same-account mixed batch excludes executed failed work from ready scope',async()=>{
+ const f=await fixture();try{
+  await f.controller.open({});await f.controller.send({text:'work'});for(const requestId of ['rate-failed','not-started'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  const rows=['rate-failed','not-started'].map(requestId=>({parentId:f.controller.state.threadId,provider:'gemini',requestId,status:'failed',settled:true,output:'saved '+requestId}));f.bridge.records=rows;for(const row of rows)f.bridgeOptions.onChange(row);
+  f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});await waitFor(()=>f.host.startCalls.length===2);
+  const text=f.host.startCalls.at(-1)[0].text;assert.match(text,/saved rate-failed/);assert.match(text,/saved not-started/);assert.deepEqual(JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"'))).requestIds,['not-started']);
+  assert.match(text,/本次就緒只涵蓋 event.requestIds 中先前未送出的工作/);assert.match(text,/其他已執行後失敗工單不因本次通知自動重啟/);assert.match(text,/接手僅限通知 requestIds 的剩餘工作/);assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);
+ }finally{await f.controller.close();}
+});
+
 
 test('Claude receives read-only Google Ops MCP without replacing worker gateway or native mode',async()=>{
  const f=await fixture();

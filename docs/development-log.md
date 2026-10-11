@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-12：[四個翻譯房後續修正與 Flash 等待交接候選](four-room-followup-fixes-20261012.md)：四房唯讀核實、排除學院前 audit 假說；待確認／工作中／等待分開，核對終態撤舊提示。共用 Gemini 自然排空、官方零額才順序切換、positive 僅通知未送出 IDs，主代理核對成果後新 ID 接剩餘；取消與晚登記、mixed 及協議拒絕競態有 RED→GREEN，無監工模型／新排程／舊工單重播。最終 1413/1413、UI 建置及 15 組假資料畫面通過，真正 Opus5.5 初審／增量 R1/R2 均補修後末審接受，Astra 獨立來源／歷史／UI 驗收；正式 4af4b7d／10 項 hash 不變。只固定本機候選，依本人要求修好後停，等醒來再更新；不部署／停止／重啟／push／排程，真帳號及 live 驗收未做，上游 stream／compact 與學院唯一現場因果仍 UNKNOWN。
+
 - 2026-10-12：[子代理終態漏判與重用後舊提示修正候選](native-terminal-state-fix-20261012.md)：systemError＋最新明確終態正確核實；舊提示只靠精確歷史 turn/status 核實，不以新成功代替舊成功、不派回舊工單。停止不翻純顯示歷史；110 focused／最終1314/1314、真固定核心隔離 systemError/cursor、雙尺寸 built UI、真正 Opus5.5末審與Astra獨立驗收完成；先前全測失敗原件及限制留紀錄。本人要求修好後停，K 正在工作，未部署／重啟／停止／push／排程；Flash 待帳號及回通知新需求目前只查明方案。
 
 - 2026-10-12：[原工作與成果核對接連失敗診斷](stream-recurrence-diagnosis-20261012.md)：正式 4af4b7d／Codex0.161，Sol 原工作 failed 後 K 確實送出單次成果核對，但核對也在原生重試後 failed。固定核心 high-demand 是 InternalServerError 文案，不是已證 Luna 容量不足；兩次最終 HTTP200 後流失敗，服務細因仍未知。另確認過期核對提示／requestID 措辭缺口，只讀記錄未改產品，不重啟／部署／原房操作；真正 Opus 同 session 讀三份反證後更正，Astra 已獨立讀回，不據此新增計時重送或聲稱長任務已修復。

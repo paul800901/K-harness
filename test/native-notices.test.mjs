@@ -140,3 +140,22 @@ test('only precisely resolved native terminal attention is hidden and all raw no
  const notices=[{id:'resolved',kind:'worker-attention',message,nativeTerminal:terminal,resolved:true},{id:'unknown',kind:'worker-attention',message,nativeTerminal:{...terminal,threadId:'another'}},{id:'other',kind:'worker-attention',message,resolved:true},{id:'other-kind',kind:'warning',message,nativeTerminal:terminal,resolved:true}];
  const before=structuredClone(notices);assert.deepEqual(nativeNotices.visibleNativeNotices(notices).map(n=>n.id),['unknown','other','other-kind']);assert.deepEqual(notices,before);
 });
+
+test('resolved recovery and Gemini handoff notices leave the banner while real failures and raw records remain',()=>{
+ const active=[
+  {id:'recovery',kind:'goal-recovery',level:'info',turnId:'failed-turn',message:'核對已存成果，確認後接續剩餘工作。'},
+  {id:'handoff',kind:'gemini-handoff',level:'info',message:'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。'},
+ ];
+ assert.deepEqual(visibleNativeNotices(active),active,'live lifecycle notices remain visible');
+ const notices=[
+  ...active.map(n=>({...n,resolved:true})),
+  {id:'recovery-failed',kind:'goal-recovery',level:'warning',message:'成果核對回合已失敗；未自動重送。'},
+  {id:'recovery-unknown',kind:'goal-recovery',level:'warning',resolved:false,message:'成果核對通知未確認；未自動重送。'},
+  {id:'handoff-failed',kind:'gemini-handoff',level:'warning',message:'Gemini 帳號交接未完成：官方額度或停止狀態未確認。'},
+  {id:'native-failed',kind:'nativeError',level:'error',resolved:true,message:'原生主工作失敗'},
+  {id:'other-warning',kind:'warning',level:'warning',resolved:true,message:'其他真正警告'},
+ ];
+ const before=structuredClone(notices);
+ assert.deepEqual(visibleNativeNotices(notices).map(n=>n.id),['recovery-failed','recovery-unknown','handoff-failed','native-failed','other-warning']);
+ assert.deepEqual(notices,before,'hiding a lifecycle banner must not erase or rewrite diagnostics');
+});

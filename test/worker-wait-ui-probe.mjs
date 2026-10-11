@@ -19,11 +19,11 @@ try{
   await page.addInitScript(({base,now,scale,theme})=>{window.testNow=now;Date.now=()=>window.testNow;localStorage.setItem('k-appearance',JSON.stringify({interfaceScale:scale,dialogueFontSize:18}));localStorage.setItem('k-color-theme',theme);window.EventSource=class{constructor(){window.testDisconnect=()=>this.onerror?.();window.testState=s=>{this.onopen?.();this.onmessage?.({data:JSON.stringify({type:'snapshot',state:s})});};setTimeout(()=>window.testState(base),0);}close(){}};},{base,now,scale,theme});
   await page.route('**/api/**',route=>{requests.push(route.request().method());const p=new URL(route.request().url()).pathname;return route.fulfill({json:p==='/api/state'?base:p==='/api/projects'?{projects:[]}:p==='/api/sessions'?{sessions:[]}:p==='/api/models'?{models:[{model:'gemini-3.8-flash',displayName:'Gemini 3.8 Flash',provider:'gemini'},{model:'gpt-6-luna',displayName:'GPT-6 Luna',provider:'codex'}]}:p.endsWith('/auth')?{available:false}:{}});});
   const header=page.locator('header .work-status'),footer=page.locator('.working-indicator'),trigger=page.locator('.worker-activity');
-  await page.goto('http://127.0.0.1:5196');await footer.filter({hasText:'主代理待命 · 子代理未結束：3 個 · 待確認：1'}).waitFor();await trigger.click();
+  await page.goto('http://127.0.0.1:5196');await footer.filter({hasText:'主代理待命 · 子代理 · 等待 2 · 待確認 1'}).waitFor();await trigger.click();
   const quick=page.getByRole('dialog',{name:'子代理狀態'});const initialQuick=await quick.innerText();assert.match(initialQuick,/Gemini 3\.8 Flash|gemini-3\.8-flash/);assert.match(initialQuick,/GPT-6 Luna|gpt-6-luna/);assert.equal(await quick.getByText('等待',{exact:true}).count(),2,'tool-wait and pending are not shown as execution');assert.equal(await quick.getByText('待確認',{exact:true}).count(),1);
   await page.evaluate(now=>window.testNow=now+300000,now);
   await page.waitForFunction(()=>document.querySelectorAll('.worker-activity-row span[data-status="unresolved"]').length===2);assert.doesNotMatch(await quick.innerText(),/5 分|最近活動|無新活動回報/,'quiet status never shows elapsed time or implies completion');
-  await footer.filter({hasText:'久未回報：1'}).waitFor();
+  await footer.filter({hasText:'主代理待命 · 子代理 · 等待 1 · 待確認 2'}).waitFor();
   const checked={...base,workerDetails:details.map(w=>w.requestId==='flash-1'?{...w,lastToolName:'view_file',inspection:{checkedAt:now+300000,lastActivityAt:now-2000,reason:'久無新活動，查詢仍未結束；不能據此判定卡死，未停止或重送。'}}:w)};
   await page.evaluate(s=>window.testState(s),checked);await quick.getByRole('button',{name:'查看詳細',exact:true}).click();
   const panel=page.getByRole(width<700?'dialog':'complementary',{name:'成果與工作面板'});await panel.waitFor();
@@ -37,7 +37,8 @@ try{
   const fresh={...base,workerDetails:details.map(w=>w.requestId==='flash-1'?{...w,activity:{...w.activity,lastEventAt:now+300000}}:w)};
   await page.evaluate(s=>window.testState(s),fresh);await trigger.click();await page.waitForFunction(()=>document.querySelectorAll('.worker-activity-row span[data-status="waiting"]').length===2);
   assert(!(await footer.textContent()).includes('久未回報'));
-  await page.evaluate(()=>window.testDisconnect());await trigger.getByText('子代理 · 狀態待確認',{exact:true}).waitFor();assert.equal(await quick.getByText('待確認',{exact:true}).count(),3);assert.doesNotMatch(await quick.innerText(),/連線未確認|最近活動|分前/);
+  await footer.filter({hasText:'主代理待命 · 子代理 · 等待 2 · 待確認 1'}).waitFor();
+  await page.evaluate(()=>window.testDisconnect());await trigger.getByText('子代理 · 待確認 3',{exact:true}).waitFor();assert.equal(await quick.getByText('待確認',{exact:true}).count(),3);assert.doesNotMatch(await quick.innerText(),/連線未確認|最近活動|分前/);
   await page.keyboard.press('Escape');await quick.waitFor({state:'hidden'});
   await page.evaluate(s=>window.testState({...s,threadId:'room-b',workerDetails:s.workerDetails}),base);await header.waitFor({state:'detached'});await footer.waitFor({state:'detached'});assert.equal(await footer.count(),0,'another room is not waiting on these workers');
   await page.evaluate(s=>window.testState({...s,status:'failed',workers:[],workerDetails:[]}),base);if(width>=700)await header.filter({hasText:'工作失敗'}).waitFor();assert.equal(await footer.count(),0,'no duplicate idle terminal indicator');

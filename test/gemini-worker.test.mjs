@@ -470,3 +470,13 @@ test('Gemini diagnostics reach inspection before terminal result without another
  assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,1);
  child.stdout.write(success('done'));child.emit('close',0);await running;
 });
+
+test('native quota or rate text only requests official checking; DNS, login, cancellation and unknown stop do not',()=>{
+ for(const error of ['RESOURCE_EXHAUSTED quota','rate limit exceeded','credits exhausted']){
+  const outcome=geminiOutcome({result:{status:'ERROR',error}}, {code:1});
+  assert.equal(outcome.quotaCheckNeeded,true);assert.equal(outcome.status,'failed');assert.equal(outcome.settled,true);
+ }
+ for(const [error,process] of [['lookup daily-cloudcode-pa.googleapis.com: no such host',{code:1}],['authentication required; quota unavailable',{code:1}],['rate limit',{reason:'cancelled',code:1}],['quota',{cleanupError:'unknown stop',code:1}]]){
+  assert.equal(geminiOutcome({result:{status:'ERROR',error}},process).quotaCheckNeeded,undefined);
+ }
+});

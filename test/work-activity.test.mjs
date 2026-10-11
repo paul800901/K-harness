@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createWorkActivity,codexWorkActivity,claudeWorkActivity,geminiWorkActivity} from '../src/work-activity.mjs';
-import {workStatus,workerHealth,workerEnded,pendingWorkerSummary,QUIET_WORK_MS} from '../frontend/work-status.mjs';
+import {workStatus,workerHealth,workerEnded,workerPreviewStatus,pendingWorkerSummary,workerSummaryText,QUIET_WORK_MS} from '../frontend/work-status.mjs';
 
 function fixture(){let now=1000;const state={busy:true,status:'working'},activity=createWorkActivity(state,()=>now);activity.begin();return {state,activity,tick(ms=1000){now+=ms;return now;},get now(){return now;}};}
 test('time passing and status reads never masquerade as fresh native activity',()=>{
@@ -61,13 +61,13 @@ test('unowned Gemini history is visible but never counted as current work or rep
  assert.deepEqual(reviewed.reconciliation,note);
  assert.equal(workerHealth(reviewed,true,1000).text,'已留查核註記 · 原執行結果仍未知');
  assert.equal(pendingWorkerSummary([reviewed],true,1000).historicalUnconfirmed,0,'noted unowned history leaves historical confirmation count');
- assert.deepEqual(pendingWorkerSummary([reviewed,ownedWithNote],true,1000),{count:1,unknown:1,quiet:0,confirmation:0,healthy:0,historicalUnconfirmed:0},'a note does not hide or settle a worker that is still owned');
+ assert.deepEqual(pendingWorkerSummary([reviewed,ownedWithNote],true,1000),{count:1,unknown:1,quiet:0,confirmation:0,healthy:0,working:0,waiting:0,historicalUnconfirmed:0},'a note does not hide or settle a worker that is still owned');
  const oldHealth=workerHealth(old,true,1000);
  assert.equal(oldHealth.historicalUnconfirmed,true);
  assert.match(oldHealth.text,/舊工單結果待確認/);
  assert.match(oldHealth.text,/重啟後無法確認執行結果/);
  assert.doesNotMatch(oldHealth.text,/已停止|已結束/);
- assert.deepEqual(pendingWorkerSummary([old],true,1000),{count:0,unknown:0,quiet:0,confirmation:0,healthy:0,historicalUnconfirmed:1});
+ assert.deepEqual(pendingWorkerSummary([old],true,1000),{count:0,unknown:0,quiet:0,confirmation:0,healthy:0,working:0,waiting:0,historicalUnconfirmed:1});
  const idle={threadId:'a',status:'completed',busy:false,workerDetails:[old]};
  const idleStatus=workStatus(idle,true,1000);
  assert.equal(idleStatus.kind,'warning');
@@ -75,7 +75,7 @@ test('unowned Gemini history is visible but never counted as current work or rep
  assert.match(idleStatus.text,/舊工單結果待確認：1 個/);
  assert.doesNotMatch(idleStatus.text,/等待子代理/);
  const mixed=workStatus({...idle,workerDetails:[old,live]},true,1000);
- assert.match(mixed.text,/子代理仍在工作：1 個/);
+ assert.match(mixed.text,/子代理 · 工作中 1/);
  assert.match(mixed.text,/舊工單結果待確認：1 個/);
  assert.doesNotMatch(mixed.text,/子代理未結束：2/);
  assert.equal(pendingWorkerSummary([{...old,settled:true}],true,1000).historicalUnconfirmed,0);
@@ -90,11 +90,11 @@ test('an idle main waits visibly for its own children without changing native bu
   {conversationId:'a',status:'completed',settled:true},
   {conversationId:'b',status:'running',settled:false}
  ]},before=structuredClone(state);
- assert.match(workStatus(state,true,1000).text,/主代理待命 · 子代理未結束：3 個 · 待確認：2/);
+ assert.equal(workStatus(state,true,1000).text,'主代理待命 · 子代理 · 工作中 1 · 待確認 2');
  const quiet=workStatus(state,true,1000+QUIET_WORK_MS);
- assert.match(quiet.text,/久未回報：1（是否卡住待確認）/);assert.equal(quiet.kind,'warning');
+ assert.equal(quiet.text,'主代理待命 · 子代理 · 待確認 3');assert.equal(quiet.kind,'warning');
  assert.deepEqual(state,before,'display clock cannot launch a turn, settle, stop or retry');
- assert.match(workStatus({...state,status:'interrupted'},true).text,/已停止 · 子代理未結束：3/);
+ assert.equal(workStatus({...state,status:'interrupted'},true,1000).text,'已停止 · 子代理 · 工作中 1 · 待確認 2');
  assert.match(workerHealth({status:'failed',settled:false}).text,/停止尚待確認/);
  assert.equal(workerEnded({status:'failed',settled:false}),false);
  assert.match(workerHealth({status:'failed',settled:true}).text,/失敗/);
@@ -107,12 +107,61 @@ test('an idle main waits visibly for its own children without changing native bu
 
 test('idle healthy children are not confused with approval, unknown, or quiet work',()=>{
  const healthy={threadId:'a',status:'completed',busy:false,workerDetails:[{conversationId:'a',status:'running',settled:false,lastActivityAt:1000}]};
- assert.equal(workStatus(healthy,true,1001).text,'子代理仍在工作 · 主代理待命');
+ assert.equal(workStatus(healthy,true,1001).text,'主代理待命 · 子代理 · 工作中 1');
  const mixed={...healthy,workerDetails:[...healthy.workerDetails,{conversationId:'a',status:'running',settled:false,confirmationReason:'原生核准'},{conversationId:'a',status:'unresolved',settled:false}]};
  const mixedStatus=workStatus(mixed,true,1001);
- assert.match(mixedStatus.text,/子代理未結束：3 個/);assert.match(mixedStatus.text,/等待核准：1/);assert.match(mixedStatus.text,/待確認：1/);assert.doesNotMatch(mixedStatus.text,/子代理仍在工作/);
+ assert.equal(mixedStatus.text,'主代理待命 · 子代理 · 工作中 1 · 等待 1 · 待確認 1');
  const quiet=workStatus({...healthy,workerDetails:[{conversationId:'a',status:'running',settled:false,lastActivityAt:1000}]},true,1000+QUIET_WORK_MS);
- assert.match(quiet.text,/久未回報：1/);assert.doesNotMatch(quiet.text,/子代理仍在工作/);
+ assert.equal(quiet.text,'主代理待命 · 子代理 · 待確認 1');assert.doesNotMatch(quiet.text,/工作中/);
+});
+
+test('owned unknown workers stay visible without claiming execution or completion',()=>{
+ const row={conversationId:'a',status:'unresolved',settled:false};
+ const state={threadId:'a',status:'completed',busy:false,workerDetails:[row]},before=structuredClone(state);
+ assert.deepEqual(workStatus(state,true,1000),{kind:'warning',text:'主代理待命 · 子代理 · 待確認 1'});
+ assert.equal(pendingWorkerSummary(state.workerDetails,true,1000).count,1);
+ assert.equal(workerEnded(row),false);
+ assert.deepEqual(state,before,'unknown rendering must not settle, stop, discard or replay a row');
+ assert.doesNotMatch(workStatus(state,true,1000).text,/未結束|仍在工作|工作中|已完成|已停止/);
+ assert.equal(workStatus({...state,status:'interrupted'},true,1000).text,'已停止 · 子代理 · 待確認 1','main stop is not child settlement');
+});
+
+test('worker summary separates native execution, waits, approval, and uncertainty',()=>{
+ const rows=[
+  {status:'running',settled:false,lastActivityAt:1000},
+  {status:'running',settled:false,lastActivityAt:1000,activity:{phase:'tool'}},
+  {status:'running',settled:false,lastActivityAt:1000,activity:{phase:'worker'}},
+  {status:'pending',settled:false},
+  {status:'starting',settled:false},
+  {status:'running',settled:false,confirmationReason:'核准'},
+  {status:'unresolved',settled:false},
+  {status:'failed',settled:false},
+  {status:'running',settled:false,lastActivityAt:0},
+  {status:'completed',settled:true},
+ ];
+ assert.deepEqual(pendingWorkerSummary(rows,true,QUIET_WORK_MS),{count:9,unknown:2,quiet:1,confirmation:1,healthy:5,working:1,waiting:5,historicalUnconfirmed:0});
+ const state={threadId:'a',busy:false,status:'completed',workerDetails:rows.map(row=>({...row,conversationId:'a'}))};
+ assert.equal(workStatus(state,true,QUIET_WORK_MS).text,'主代理待命 · 子代理 · 工作中 1 · 等待 5 · 待確認 3');
+ const disconnected=pendingWorkerSummary(rows,false,QUIET_WORK_MS);
+ assert.equal(disconnected.count,9);assert.equal(disconnected.unknown,9);assert.equal(disconnected.working,0);assert.equal(disconnected.waiting,0);
+});
+
+test('quick and main summaries share wording without changing per-row detail or hiding disconnected rows',()=>{
+ const rows=[{conversationId:'a',status:'running',settled:false,lastActivityAt:1000},{conversationId:'a',status:'pending',settled:false},{conversationId:'a',status:'unresolved',settled:false}];
+ const state={threadId:'a',status:'completed',busy:false,workerDetails:rows};
+ const text=workerSummaryText(pendingWorkerSummary(rows,true,1000));
+ assert.equal(text,'子代理 · 工作中 1 · 等待 1 · 待確認 1');
+ assert.equal(workStatus(state,true,1000).text,`主代理待命 · ${text}`);
+ assert.deepEqual(rows.map(row=>workerPreviewStatus(row,true,1000)),['執行中','等待','待確認']);
+ assert.equal(workerPreviewStatus({...rows[0],confirmationReason:'回答'},true,1000),'待確認','existing approval/answer detail remains distinct from execution');
+ assert.equal(workerSummaryText(pendingWorkerSummary(rows,false,1000)),'子代理 · 待確認 3');
+ assert.equal(workStatus({...state,workerConnection:'failed'},true,1000).text,'主代理待命 · 子代理 · 待確認 3');
+ for(const status of ['offline','error','uncertain','connecting']){
+  const disconnected=workStatus({...state,status},true,1000);
+  assert.match(disconnected.text,/子代理 · 待確認 3$/);
+  assert.doesNotMatch(disconnected.text,/工作中|子代理未結束/);
+ }
+ assert.equal(workerSummaryText(pendingWorkerSummary(rows.map(row=>({...row,settled:true})),true,1000)),'','only native settlement removes rows');
 });
 
 test('unchanged Gemini tool status pulses never refresh worker activity',()=>{

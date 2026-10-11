@@ -91,6 +91,17 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   let currentGroupId=null,activeAssistantId=null,currentTurnId=null;const nativePending=new Set();const nativeStreams=new Map();let streamingNativeId=null;
   const workerArmed=new Set(), workerQueue=new Map(),nativeChildEventIds=new Set();
   let workerNotifications={},notifying=false,usageRequest=null,lastUsageAttempt=0;
+  let geminiHandoff=null,geminiIntentEpoch=0,geminiBridgeEpoch=0,geminiLiveGoal=null,geminiFailedGoal=null;const geminiHandoffJobs=new Set();
+  const cancelGeminiHandoff=()=>{geminiIntentEpoch++;geminiHandoff=null;geminiHandoffJobs.clear();geminiLiveGoal=null;geminiFailedGoal=null;bridgeInstance?.cancelGeminiHandoff?.();for(const n of state.notices)if(n.kind==='gemini-handoff')n.resolved=true;};
+  const recordGeminiHandoff=event=>{
+    if(!event||event.parentId!==state.threadId||opening||closing||stopping||['interrupted','offline','uncertain'].includes(state.status))return;
+    const requestIds=(event.requestIds??[]).filter(id=>geminiHandoffJobs.has(id));if(!requestIds.length)return;
+    for(const n of state.notices)if(n.kind==='gemini-handoff')n.resolved=true;
+    geminiHandoff={...event,requestIds,epoch:geminiIntentEpoch};
+    if(['ready','blocked'].includes(event.status))for(const id of requestIds)geminiHandoffJobs.delete(id);
+    state.notices.push({id:randomUUID(),kind:'gemini-handoff',level:event.status==='blocked'?'warning':'info',message:event.status==='waiting'?'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。':event.status==='ready'?'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。':`Gemini 帳號交接未完成：${event.reason??'官方額度或停止狀態未確認。'}`,createdAt:new Date().toISOString()});
+    if(event.status==='ready')scheduleWorkers();changed();
+  };
   const changed = () => { state.completionPending=notifying||workerQueue.size>0||state.goalPending===true;try { onChange(state); } catch {} };
   async function goalCommand(args=''){
     const active=host,parent=state.threadId;
@@ -99,9 +110,9 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     try{
       const text=await active.goal(args);
       if(host!==active||state.threadId!==parent)throw Error('原對話已變更；目標操作未重送。');
-      state.goal=claudeGoalFromCommand(text,state.goal);await saveCurrent();return {goal:clone(state.goal)};
+      state.goal=claudeGoalFromCommand(text,state.goal);if(state.busy&&state.goal?.status==='active')geminiLiveGoal=clone(state.goal);if(!state.goal)cancelGeminiHandoff();await saveCurrent();return {goal:clone(state.goal)};
     }catch(error){if(host===active&&state.threadId===parent){state.goalError=error.message;if(state.goal)state.goal.status='unknown';}throw error;}
-    finally{finishGoal();if(host===active&&state.threadId===parent){state.goalPending=false;if(goalRefreshNeeded&&!stopping&&!closing){goalRefreshNeeded=false;void goalCommand().catch(()=>{});}else if(state.status==='completed'&&!stopping&&!closing)scheduleWorkers();changed();}}
+    finally{finishGoal();if(host===active&&state.threadId===parent){state.goalPending=false;if(goalRefreshNeeded&&!stopping&&!closing){goalRefreshNeeded=false;void goalCommand().catch(()=>{});}else if((state.status==='completed'||geminiHandoff?.status==='ready')&&!stopping&&!closing)scheduleWorkers();changed();}}
   }
   const markActiveAssistantPartial=()=>{const pendingMessage=activeAssistantId?state.messages.find(m=>m.id===activeAssistantId):null;if(pendingMessage){pendingMessage.partial=true;delete pendingMessage.streaming;nativeStreams.clear();streamingNativeId=null;void saveCurrent().catch(()=>{});}activeAssistantId=null;};
   function settleNativeChildrenAfterHostClose() {
@@ -163,37 +174,54 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   };
   const clearQuestions = () => { for(const [id,item] of pending){item.resolve(item.cancelValue);pending.delete(id);} state.questions=[]; };
   async function deliverWorkers(){
-    if(notifying||!host||state.busy||state.goalPending||opening||closing||stopping||state.status!=='completed'||!workerQueue.size)return;
+    const handoff=geminiHandoff?.status==='ready'&&geminiHandoff.epoch===geminiIntentEpoch?geminiHandoff:null,failed=state.status==='failed';
+    if(notifying||!host||state.busy||state.goalPending||opening||closing||stopping||!(state.status==='completed'||failed&&handoff)||(!workerQueue.size&&!handoff))return;
+    if(failed&&(!geminiFailedGoal||geminiFailedGoal.turnId!==currentTurnId||geminiFailedGoal.objective!==state.goal?.objective||state.goal?.status!=='active'||state.goalError||!state.capabilities.goal)){geminiHandoff=null;for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;state.notices.push({id:randomUUID(),kind:'gemini-handoff',level:'warning',message:'Gemini 帳號已就緒，但主目標不具自動核對資格；未啟動或重播工作。'});changed();return;}
     for(const [id,record] of workerQueue)if(!workerNoticeCurrent(record,state.workers.find(w=>w.requestId===id)))workerQueue.delete(id);
-    if(!workerQueue.size)return;
-    notifying=true;state.busy=true;activity.begin();state.status='working';
-    const active=host,parent=state.threadId;
-    const batch=[...workerQueue.values()];workerQueue.clear();
-    for(const record of batch)if(record.settled)workerArmed.delete(record.requestId);
+    if(!workerQueue.size&&!handoff)return;
+    const active=host,parent=state.threadId,epoch=geminiIntentEpoch,priorStatus=state.status;let batch=[];
+    notifying=true;if(!handoff){state.busy=true;activity.begin();state.status='working';}
+    const current=()=>host===active&&parent===state.threadId&&!opening&&!closing&&!stopping&&(!handoff||geminiHandoff===handoff&&epoch===geminiIntentEpoch&&!state.busy&&!state.questions.length&&!nativePending.size&&!quotaZeroUntil(state.usage.claude)&&state.usage.claude.rateLimitStatus!=='rejected'&&(!failed||geminiFailedGoal?.turnId===currentTurnId&&state.goal?.status==='active'&&state.goal.objective===geminiFailedGoal.objective));
     let sendAttempted=false,sendCompleted=false;
     try{
+      if(handoff){
+        if(!current())return;
+        if(failed){await goalCommand();if(!current()||state.goalError)return;}
+        if(bridgeInstance)for(const record of await bridgeInstance.list())recordWorker(record);
+        if(!current()||state.workers.some(w=>w.settled!==true)||state.tools.some(t=>t.status==='running'))return;
+      }
+      batch=[...workerQueue.values()];workerQueue.clear();for(const record of batch)if(record.settled)workerArmed.delete(record.requestId);
       const results=await Promise.all(batch.map(lunaResult));
-      if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
+      if(!current())return;
       // Mark before writing to the native stream: an uncertain send must never replay automatically.
       for(const record of batch)workerNotifications[workerNoticeKey(record)]='delivery-attempted';
       await saveCurrent();
-      if(host!==active||parent!==state.threadId||opening||closing||stopping)return;
-      const text=workerNoticeText(batch)+JSON.stringify(results);
-      const event=appendMessage('user',text,`luna-completion-${batch.map(workerNoticeKey).join('-')}`);
+      if(!current())return;
+      const text=(handoff?(handoff.switched===true?'Gemini 官方額度確認歸零，現有工人已自然結束，帳號已查核切換就緒。':handoff.switched===false?'Gemini 官方確認同一帳號仍有額度；本次就緒只涵蓋 event.requestIds 中先前未送出的工作；其他已執行後失敗工單不因本次通知自動重啟，不立即重派／恢復。':'Gemini 帳號已就緒，待核對本房工人與成果。')+'這是一次系統接手通知，不是本人新指令或原工單重播。先讀本對話最新本人意圖，再讀已保存成果及以下原工單結果；已完成不要重做，副作用未知不要重送。本次就緒接手僅限通知 requestIds 的剩餘工作；只有原目標仍適用且本次範圍確有剩餘工作，才以新的 requestId、handoffFrom 原工單 ID 接手；不得重派相同 ID、換模型、預算或擴張權限。本人停止／清除／更改目標優先。\n'+JSON.stringify(handoff)+'\n':'')+workerNoticeText(batch)+JSON.stringify(results);
+      if(handoff){state.busy=true;activity.begin();state.status='working';geminiLiveGoal=clone(state.goal);currentGroupId=randomUUID();}
+      const event=appendMessage('user',text,handoff?`gemini-ready-${randomUUID()}`:`luna-completion-${batch.map(workerNoticeKey).join('-')}`);
       event.kind='worker-completion';event.summary=`${batch.every(r=>r.provider==='codex')?'Codex':'K'} 子代理${batch.some(r=>!r.settled)?'狀態待確認':'工作完成'}：${batch.map(r=>r.requestId).join('、')}`;
       sendAttempted=true;
-      await active.start([{type:'text',text}]);
+      if(handoff)currentTurnId=event.id;
+      await active.start([{type:'text',text}],handoff?{uuid:event.id}:undefined);
       sendCompleted=true;
       await saveCurrent();
     }catch(error){
       if(host===active&&parent===state.threadId&&!stopping&&!closing){
         if(!sendAttempted){
           for(const record of batch)delete workerNotifications[workerNoticeKey(record)];
-          state.busy=false;state.status='completed';state.error=`K 子代理完成通知準備失敗，尚未送出；可用 luna_inspect 查詢原 requestId：${error.message}`;
+          state.busy=false;state.status=priorStatus;state.error=`K 子代理完成通知準備失敗，尚未送出；可用 luna_inspect 查詢原 requestId：${error.message}`;
         }else if(!sendCompleted){state.busy=false;state.status='uncertain';state.error=`K 子代理完成通知未確認；未重送工作或通知：${error.message}`;}
         else state.error=`K 子代理通知已送出，但介面紀錄保存失敗；不重送：${error.message}`;
       }
-    }finally{notifying=false;changed();}
+    }finally{
+      if(handoff&&sendAttempted&&geminiHandoff===handoff){geminiHandoff=null;for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;}
+      if(handoff&&!sendAttempted&&batch.length&&host===active&&state.threadId===parent){
+        for(const record of batch){delete workerNotifications[workerNoticeKey(record)];if(!stopping&&!closing&&state.status!=='interrupted'&&workerNoticeCurrent(record,state.workers.find(w=>w.requestId===record.requestId)))workerQueue.set(record.requestId,record);}
+        await saveCurrent().catch(error=>{state.error=`未送出的子代理通知標記保存失敗；請核對原結果：${error.message}`;});
+      }
+      notifying=false;changed();
+    }
   }
   const scheduleWorkers=()=>queueMicrotask(()=>{void deliverWorkers();});
   const recordWorker = record => {
@@ -303,7 +331,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     if(message?.parent_tool_use_id){recordNativeChild(message);return;} // Child events stay with their native worker, never the main conclusion.
     if(message.type==='assistant'&&message.message?.model==='<synthetic>'&&message.local_command_run?.command==='goal'&&message.session_id===nativeId(state.threadId)){
       // Goal commands are controls, not a new assistant response or model turn.
-      try{state.goal=claudeGoalFromCommand(plainText(message),state.goal);state.goalError=null;}catch(error){state.goalError=error.message;}
+      try{state.goal=claudeGoalFromCommand(plainText(message),state.goal);if(!state.goal)cancelGeminiHandoff();else if(state.busy&&state.goal.status==='active')geminiLiveGoal=clone(state.goal);state.goalError=null;}catch(error){state.goalError=error.message;}
       void saveCurrent().catch(()=>{});changed();return;
     }
     if(message?.type==='system'&&message.subtype==='compact_boundary'){
@@ -321,7 +349,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const nativeTurnActivity=!message?.isReplay&&!stopping&&!closing&&
       !['interrupted','offline','uncertain','idle','error'].includes(state.status)&&
       (message?.type==='assistant'||(message?.type==='stream_event'&&(message.event?.type==='message_start'||(['content_block_start','content_block_delta'].includes(message.event?.type)&&nativeStreams.has(streamingNativeId)&&!nativeStreams.get(streamingNativeId).final)))||(message?.type==='user'&&Array.isArray(content)&&content.some(block=>block?.type==='tool_result')));
-    if(nativeTurnActivity&&!state.busy){activity.begin();state.busy=true;state.status='working';state.error=null;void saveCurrent().catch(()=>{});}
+    if(nativeTurnActivity&&!state.busy){activity.begin();state.busy=true;state.status='working';state.error=null;if(state.goal?.status==='active')geminiLiveGoal=clone(state.goal);void saveCurrent().catch(()=>{});}
     if(state.busy&&!stopping&&!closing)claudeWorkActivity(activity,message);
     if(message?.type==='system'&&message?.subtype==='init') {
       state.nativeCapabilities=nativeCapabilitiesFrom(message);
@@ -413,13 +441,14 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       state.busy=nativePending.size>0; state.status=message.is_error?'failed':state.busy?'working':'completed';
       if(state.progress.compaction==='compacting'){state.progress.compaction=message.is_error?'failed':'idle';if(!message.is_error)state.progress.compactionsComplete=false;}
       if(message.is_error) state.error=message.result??'Claude Code 工具回合失敗；未自動重送。';
+      geminiFailedGoal=message.is_error&&wasBusy&&geminiLiveGoal?.objective===state.goal?.objective&&state.goal?.status==='active'&&!['error_max_budget_usd','error_max_turns'].includes(message.subtype)&&!message.permission_denials?.length?{objective:geminiLiveGoal.objective,turnId:currentTurnId}:null;geminiLiveGoal=null;
       void saveCurrent(last?.completedAt).catch(()=>{});
       const needsGoalRead=wasBusy&&(state.goalError||['active','unknown'].includes(state.goal?.status));
       if(needsGoalRead&&state.goalPending)goalRefreshNeeded=true;
-      if(needsGoalRead&&host?.goal&&!state.goalPending){void goalCommand().catch(()=>{}).finally(()=>{if(!message.is_error)scheduleWorkers();});}
-      else if(!message.is_error)scheduleWorkers();
+      if(needsGoalRead&&host?.goal&&!state.goalPending){void goalCommand().catch(()=>{}).finally(()=>{if(!message.is_error||geminiHandoff?.status==='ready')scheduleWorkers();});}
+      else if(!message.is_error||geminiHandoff?.status==='ready')scheduleWorkers();
     }
-    changed();
+    if(geminiHandoff?.status==='ready')scheduleWorkers();changed();
   }
 
   function codexApproval(request,item) {
@@ -436,6 +465,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   }
 
   async function closeWorkers() {
+    cancelGeminiHandoff();geminiBridgeEpoch++;
     if(bridgeInitPromise) await bridgeInitPromise;
     if(bridgeInstance){
       const active=bridgeInstance;
@@ -461,13 +491,13 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     const workerMode=permissionMode==='bypassPermissions'?'danger-full-access':permissionMode==='plan'?'read-only':'workspace-write';
     const ensureBridge=()=>{
       if(bridgeInstance)return Promise.resolve(bridgeInstance);
-      if(!bridgeInitPromise)bridgeInitPromise=Promise.resolve().then(()=>bridgeFactory({root,workspace:state.workspace,parentId:state.threadId,executable,accessMode:workerMode,workerPolicy:state.workerPolicy,onRequest:codexApproval,onChange:recordWorker})).then(value=>(bridgeInstance=value)).finally(()=>{bridgeInitPromise=null;});
+      if(!bridgeInitPromise){const parent=state.threadId,epoch=geminiBridgeEpoch;bridgeInitPromise=Promise.resolve().then(()=>bridgeFactory({root,workspace:state.workspace,parentId:parent,executable,accessMode:workerMode,workerPolicy:state.workerPolicy,onRequest:codexApproval,onChange:recordWorker,onGeminiHandoff:event=>{if(state.threadId===parent&&epoch===geminiBridgeEpoch)recordGeminiHandoff(event);}})).then(value=>(bridgeInstance=value)).finally(()=>{bridgeInitPromise=null;});}
       return bridgeInitPromise;
     };
     const disarm=requestId=>{workerArmed.delete(requestId);workerQueue.delete(requestId);};
     const lazyBridge={
       workerPolicy:state.workerPolicy,
-      async start(args){workerArmed.add(args.requestId);return (await ensureBridge()).start(args);},
+      async start(args){workerArmed.add(args.requestId);geminiHandoffJobs.add(args.requestId);return (await ensureBridge()).start(args);},
       inspect:args=>ensureBridge().then(value=>value.inspect(args)),
       reconcile:args=>ensureBridge().then(value=>value.reconcile(args)),
       wait:args=>ensureBridge().then(value=>value.wait(args)),
@@ -493,7 +523,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   async function stop() {
     if(opening&&openAbort){openAbort.abort(new DOMException('已取消連線。','AbortError'));await openDone;return {cancelled:true};}
     if(opening||stopping)throw new Error('正在停止，請稍候。');
-    stopping=true;
+    stopping=true;cancelGeminiHandoff();
     for(const id of nativePending){const m=state.messages.find(m=>m.id===id);if(m)m.delivery='uncertain';}nativePending.clear();
     workerArmed.clear();workerQueue.clear();
     try {
@@ -556,7 +586,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       })().finally(()=>{usageRequest=null;});
       return usageRequest;
     },
-    async workers(){ if(bridgeInstance){for(const record of await bridgeInstance.list())recordWorker(record);} return clone(state.workers); },
+    async workers(){ if(bridgeInstance){for(const record of await bridgeInstance.list())recordWorker(record);}if(geminiHandoff?.status==='ready')scheduleWorkers();return clone(state.workers); },
     async directories(parent=state.workspace){return listWorkspaceDirectories(parent);},
     async selectWorkspace({path:requested}){
       if(state.busy||opening||closing||stopping) throw new Error('請先停止目前工作，再切換工作區。');
@@ -659,6 +689,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const nextEffort=effort===undefined?state.effort:effort;
       if(nextEffort!==null&&!state.efforts.includes(nextEffort))throw new Error('指定推理程度目前不可用。');
       if(!Array.isArray(attachmentIds)||attachmentIds.some(id=>typeof id!=='string'))throw new Error('附件格式無效。');
+      cancelGeminiHandoff();if(state.goal?.status==='active')geminiLiveGoal=clone(state.goal);
       let hostAtSend=host;state.busy=true;activity.begin();state.status='working';state.error=null;currentGroupId=randomUUID();const sentMessage=appendMessage('user',text);currentTurnId=sentMessage.id;sentMessage.delivery='queued';changed();
       try {
         const {content,attachmentRecords}=await claudeInput(text,attachmentIds,state);
@@ -717,7 +748,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       const {content,attachmentRecords}=await claudeInput(text,attachmentIds,state);
       if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('附件檢查期間回合已結束或對話已切換；未立即送入。');
       const record=appendMessage('user',text);record.attachments=attachmentRecords;currentTurnId=record.id;record.source='steer';record.delivery='queued';nativePending.add(record.id);changed();
-      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');await active.start(content,{uuid:record.id});void saveCurrent(record.createdAt).catch(()=>{});return {steered:true,delivery:record.delivery};}
+      try{await saveCurrent();if(host!==active||state.threadId!==threadId||!state.busy||stopping||closing||opening)throw Error('立即送入前對話已停止或切換。');cancelGeminiHandoff();await active.start(content,{uuid:record.id});void saveCurrent(record.createdAt).catch(()=>{});return {steered:true,delivery:record.delivery};}
       catch(error){nativePending.delete(record.id);record.delivery='uncertain';state.error='立即送入狀態未確認；未重送。';await saveCurrent().catch(()=>{});throw error;}
       finally{changed();}
     },
@@ -735,6 +766,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       if(!host&&state.status==='interrupted')await this.open({threadId:state.threadId,model:state.model});
       if(!state.capabilities.goal||!host||opening||closing||stopping||state.busy||state.goalPending)throw Error('請先停止目前工作，再設定或清除目標。');
       if(refresh)return goalCommand();
+      cancelGeminiHandoff();
       if(clear)return goalCommand('clear');
       if(typeof objective!=='string'||!objective.trim()||objective.length>4000)throw Error('目標須為 1–4000 字元。');
       if(/^(clear|stop|off|reset|none|cancel)$/i.test(objective.trim()))throw Error('這是 Claude 清除目標的保留指令，請描述完整目標。');
@@ -748,6 +780,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
     },
     async compact(){
       if(!host||state.busy||opening||closing||stopping||!['ready','completed','interrupted','failed'].includes(state.status))throw new Error('請先開啟 Claude 對話，並等待目前工作結束。');
+      cancelGeminiHandoff();
       state.busy=true;activity.begin();state.status='working';state.progress.compaction='compacting';state.error=null;changed();
       try{await enqueuePersist(async()=>{const record=await currentRecord();if(record){record.nativeStarted=true;record.compactions=compactionSnapshot();await saveRecord(root,record);}});await host.start('/compact');return {started:true};}
       catch(error){state.busy=false;state.status='failed';state.progress.compaction='failed';state.error=`Claude Code 原生 /compact 未送出：${error.message}`;changed();throw error;}

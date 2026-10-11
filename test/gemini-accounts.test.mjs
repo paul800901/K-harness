@@ -273,7 +273,7 @@ test('a stale or unknown next account is queried and not assumed available',asyn
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:C,email};await f.accounts.capture();
  await f.accounts.activate({accountId:A});let invoked=0;f.calls.activate.length=0;
  await assert.rejects(f.accounts.run({accountId:C,worker:true},async()=>{invoked++;}),/尚無官方目前額度資料/u);
- assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
+ assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[B,A]);assert.equal(f.current.accountId,A);
 });
 
 test('worker does not rotate on unknown quota; a failed check retains prior official zero until reset',async t=>{
@@ -314,10 +314,11 @@ test('new official exhaustion is checked before selecting a worker account',asyn
  assert.equal((await f.accounts.list()).busy,false);
 });
 
-test('an expired weekly zero is not a reason to change the account',async()=>{
- const now=Date.parse('2026-10-03T12:00:00Z');
- const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',windows:[{key:'seven_day',remainingPercent:0,resetsAt:now/1000-1}]})});
+test('an expired cached weekly zero is refreshed; official replenishment keeps the account',async()=>{
+ const now=Date.parse('2026-10-03T12:00:00Z');let remaining=0;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',windows:[{key:'seven_day',remainingPercent:remaining,resetsAt:now/1000-1}]})});
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+ remaining=80;
  const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);
 });
 
@@ -531,7 +532,7 @@ test('manual account activation waits for a background quota refresh instead of 
 test('next account with no usable official windows is not assumed available',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
  f.login.status=async()=>authStatus({status:'ready',windows:f.current.accountId===A?[{remainingPercent:0,resetsAt:future}]:[]});
- await f.accounts.refresh();await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/);assert.deepEqual(f.calls.activate,[A,B]);
+ await f.accounts.refresh();await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/);assert.deepEqual(f.calls.activate,[A,B,A]);assert.equal(f.current.accountId,A);
 });
 test('fresh positive balance after a past reset remains usable for the next saved account',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
@@ -648,4 +649,240 @@ test('sequential worker handoff accepts an explicitly disabled limit only alongs
   if(scenario==='disabled'){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();}
   else await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/u);
  }
+});
+
+const handoffOptions=(parentId,requestId,events)=>({worker:true,parentId,requestId,onHandoff:event=>events.push(event)});
+const limitFailure={status:'failed',settled:true,quotaCheckNeeded:true,error:'native quota or rate limit',output:'partial result'};
+async function handoffFixture(statusFor){
+ const f=await fixture({identity:{accountId:A,email}});
+ await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
+ f.calls.activate.length=0;
+ if(statusFor)f.login.status=async()=>{f.calls.status++;return statusFor(f.current);};
+ return f;
+}
+const officialBalance=(remainingPercent,resetsAt=future)=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent,resetsAt}],checkedAt:'2026-10-03T11:59:30.000Z'});
+
+test('shared-account drain aggregates failed and not-started jobs per room after the last natural release',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80));
+ const active=await f.accounts.acquire(),events=[];const before=f.calls.status;
+ const failed=await f.accounts.run(handoffOptions('room-A','failed-A',events),async()=>limitFailure);
+ assert.equal(failed.accountId,A);assert.equal(f.calls.status,before);assert.deepEqual(f.calls.activate,[]);
+ let started=0;
+ await assert.rejects(f.accounts.run(handoffOptions('room-A','not-started-A',events),async()=>{started++;}),/未送出本工作/);
+ await assert.rejects(f.accounts.run(handoffOptions('room-B','not-started-B',events),async()=>{started++;}),/未送出本工作/);
+ assert.equal(started,0);assert.equal(events.some(event=>event.status==='ready'),false);
+ await active.release();
+ assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
+ const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,2);
+ assert.deepEqual(ready.find(event=>event.parentId==='room-A').requestIds,['failed-A','not-started-A']);
+ assert.deepEqual(ready.find(event=>event.parentId==='room-B').requestIds,['not-started-B']);
+ assert(ready.every(event=>event.accountId===B));assert.equal((await f.accounts.list()).busy,false);
+});
+
+test('rate limit and unknown official usage end the wait without switching or automatic polling',async t=>{
+ for(const mode of ['rate','unknown','stale-zero','non-subscription-zero'])await t.test(mode,async()=>{
+  const f=await handoffFixture(()=>mode==='rate'?officialBalance(70):mode==='stale-zero'?authStatus({status:'stale',windows:[{key:'five_hour',remainingPercent:0,resetsAt:future}]}):mode==='non-subscription-zero'?authStatus({status:'ready',windows:[{key:'requests',remainingPercent:0,resetsAt:future}]}):{auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}});
+  const active=await f.accounts.acquire(),events=[];
+  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
+  assert.deepEqual(f.calls.activate,[]);assert.equal(f.current.accountId,A);
+  assert.equal(events.filter(event=>event.status==='blocked').length,1);assert.equal(events.some(event=>event.status==='ready'),false);
+  const before=f.calls.status;await f.accounts.list();await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.status,before);
+ });
+});
+
+test('official zero with unknown reset is exhausted, not usable, and does not require a fabricated reset',async t=>{
+ await t.test('original zero can hand off to an official positive account',async()=>{
+  const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:75,null));const active=await f.accounts.acquire(),events=[];
+  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
+  assert.deepEqual(f.calls.activate,[B]);assert.equal(events.at(-1).status,'ready');
+ });
+ await t.test('zero candidate with unknown reset never becomes ready',async()=>{
+  const f=await handoffFixture(()=>officialBalance(0,null)),active=await f.accounts.acquire(),events=[];
+  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
+  assert.deepEqual(f.calls.activate,[B,A]);assert.equal(f.current.accountId,A);assert.equal(events.at(-1).status,'blocked');assert.equal(events.at(-1).nextQueryAt,null);
+ });
+});
+
+test('no waiter, DNS failure, cancelled work or unknown settlement cannot initiate an account switch',async t=>{
+ for(const outcome of [{status:'completed',settled:true},{status:'failed',settled:true,error:'DNS no such host'},{...limitFailure,status:'cancelled'},{...limitFailure,settled:false}])await t.test(JSON.stringify(outcome),async()=>{
+  const f=await handoffFixture(()=>officialBalance(0)),active=await f.accounts.acquire(),events=[];
+  await f.accounts.run(handoffOptions('room','job',events),async()=>outcome);await active.release();
+  assert.deepEqual(f.calls.activate,[]);assert.deepEqual(events,[]);
+ });
+});
+
+test('cancelled last waiter while another room works leaves the account untouched',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80)),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);
+ f.accounts.cancelWorkerHandoff({parentId:'room'});await active.release();
+ assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(event=>event.status!=='waiting'),false);
+});
+
+test('cancelling the last waiter during the final official query prevents rotation and callbacks',async()=>{
+ const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];let resolveQuery,started;
+ const queryStarted=new Promise(resolve=>{started=resolve;});
+ f.login.status=async()=>{started();return new Promise(resolve=>{resolveQuery=resolve;});};
+ await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);
+ const release=active.release();await queryStarted;f.accounts.cancelWorkerHandoff({parentId:'room'});resolveQuery(officialBalance(0));await release;
+ assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(event=>event.status!=='waiting'),false);
+});
+
+test('unknown candidate and switch failure restore the original identity before reporting blocked',async t=>{
+ for(const mode of ['unknown','switch-failed','cancel-during-candidate','restore-failed'])await t.test(mode,async()=>{
+  const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
+  f.login.status=async()=>{
+   if(f.current.accountId===A)return officialBalance(0);
+   if(mode==='cancel-during-candidate')f.accounts.cancelWorkerHandoff({parentId:'room'});
+   return {auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}};
+  };
+  const activate=f.vault.activate;
+  f.vault.activate=async(id,options)=>{
+   if(mode==='restore-failed'&&id===A)throw Error('fixture restore failed');
+   const result=await activate(id,options);if(mode==='switch-failed'&&id===B)throw Error('fixture partial switch failed');return result;
+  };
+  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
+  if(mode==='restore-failed'){assert.equal(f.current.accountId,B);assert.equal((await f.accounts.list()).uncertain,true);assert.equal(events.at(-1).accountId,null);assert.match(events.at(-1).reason,/還原尚未確認/);}
+  else {assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[B,A]);}
+  if(mode==='cancel-during-candidate')assert.equal(events.some(event=>event.status!=='waiting'),false);
+  else assert.equal(events.at(-1).status,'blocked');
+  assert.equal(events.some(event=>event.status==='ready'),false);
+ });
+});
+
+test('ready callback can acquire the new account after the drain lock is released, without replaying old work',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80)),active=await f.accounts.acquire();let next;
+ const options=handoffOptions('room','failed',[]);options.onHandoff=event=>{if(event.status==='ready')next=f.accounts.acquire({worker:true});};
+ await f.accounts.run(options,async()=>limitFailure);await active.release();const lease=await next;assert.equal(lease.accountId,B);await lease.release();
+ assert.deepEqual(f.calls.activate,[B]);
+});
+
+test('a final native model or auth inspection also wakes waiting rooms after natural completion',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80)),events=[];let finish,started;
+ const began=new Promise(resolve=>{started=resolve;});const inspection=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;started();}));await began;
+ await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);assert.equal(events.some(event=>event.status==='ready'),false);
+ finish('models');assert.equal(await inspection,'models');assert.deepEqual(f.calls.activate,[B]);assert.equal(events.at(-1).status,'ready');
+});
+
+test('known exhausted account rejected before dispatch still registers the source and drains after the existing inspection',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80));await f.accounts.refresh();let finish,started;const began=new Promise(resolve=>{started=resolve;});
+ const active=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;started();}));await began;const events=[];let runs=0;
+ await assert.rejects(f.accounts.run(handoffOptions('room','rejected',events),async()=>{runs++;}),/未送出本工作/);assert.equal(runs,0);assert.equal(events.at(-1).status,'waiting');
+ finish();await active;assert.deepEqual(f.calls.activate,[B]);assert.equal(events.at(-1).status,'ready');assert.deepEqual(events.at(-1).requestIds,['rejected']);
+});
+
+test('initial official zero with unknown reset cannot start a main or worker model turn',async t=>{
+ for(const worker of [false,true])await t.test(`worker=${worker}`,async()=>{
+  const f=await fixture({identity:{accountId:A,email},statusFor:()=>officialBalance(0,null)});await f.accounts.capture();let turns=0;
+  await assert.rejects(f.accounts.run({worker},async()=>{turns++;return {settled:true};}),/額度|皆已無/);assert.equal(turns,0);assert.deepEqual(f.calls.activate,[]);
+ });
+});
+
+test('an expired cached zero is rechecked after drain; replenished official quota does not trigger rotation',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),zero=false;
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>officialBalance(zero?0:80)});
+ await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;zero=true;await f.accounts.refresh();
+ let finish,started;const began=new Promise(resolve=>{started=resolve;});const active=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;started();}));await began;const events=[];
+ await assert.rejects(f.accounts.run(handoffOptions('room','rejected',events),async()=>{throw Error('must not start');}),/未送出/);
+ const checks=f.calls.status;now+=120000;zero=false;finish();await active;
+ assert.equal(f.calls.status,checks+1);assert.deepEqual(f.calls.activate,[]);assert.equal(events.at(-1).status,'ready');assert.equal(events.at(-1).switched,false);assert.match(events.at(-1).reason,/仍有可用額度/);
+});
+
+test('a drain decision cannot clear a concurrently held manual account-operation lock',async()=>{
+ const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);
+ let resolveQuery,started;const began=new Promise(resolve=>{started=resolve;});f.login.status=async()=>{started();return new Promise(resolve=>{resolveQuery=resolve;});};
+ // Both operations await load first. The final release makes capture eligible;
+ // capture gets changing before the already queued acquire wakes the drain.
+ const capture=f.accounts.capture();const queued=f.accounts.acquire().catch(error=>error);const release=active.release();await began;await queued;await release;
+ assert.equal((await f.accounts.list()).busy,true,'manual capture still owns changing');
+ await assert.rejects(f.accounts.acquire(),/正在切換|登入/);assert.equal(events.at(-1).status,'blocked');assert.deepEqual(f.calls.activate,[]);
+ resolveQuery(officialBalance(80));await capture;assert.equal((await f.accounts.list()).busy,false);
+});
+
+test('disabled usage windows and unverified authentication cannot authorize a drain rotation',async t=>{
+ for(const mode of ['disabled','unknown-auth','signed-out'])await t.test(mode,async()=>{
+  const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
+  f.login.status=async()=>mode==='disabled'?authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:0,disabled:true,resetsAt:null},{key:'seven_day',remainingPercent:80,resetsAt:future}]}):{auth:{status:mode==='unknown-auth'?'unknown':'signed-out'},quota:{status:'ready',windows:[{key:'five_hour',remainingPercent:0,resetsAt:future}]}};
+  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();assert.deepEqual(f.calls.activate,[]);assert.equal(events.at(-1).status,'blocked');assert.equal(events.some(event=>event.status==='ready'),false);
+ });
+});
+
+test('official positive quota releases only not-started rooms on the same account, without recovering the rate-failed room',async()=>{
+ const f=await handoffFixture(()=>officialBalance(80)),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('rate-room','rate-failed',events),async()=>limitFailure);
+ await assert.rejects(f.accounts.run(handoffOptions('new-room','not-started',events),async()=>{throw Error('must not start');}),/未送出/);
+ await active.release();
+ const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,1);assert.equal(ready[0].parentId,'new-room');assert.equal(ready[0].switched,false);assert.equal(ready[0].accountId,A);assert.deepEqual(ready[0].requestIds,['not-started']);
+ assert.equal(events.find(event=>event.parentId==='rate-room'&&event.status==='blocked')?.accountId,A);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('mixed same-room rate failure and unstarted work receive one same-account ready for unstarted IDs only',async()=>{
+ const f=await handoffFixture(()=>officialBalance(80)),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('mixed','rate-failed',events),async()=>limitFailure);
+ await assert.rejects(f.accounts.run(handoffOptions('mixed','unstarted',events),async()=>{throw Error('must not start');}),/未送出/);
+ await active.release();const terminal=events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,1);assert.equal(terminal[0].status,'ready');assert.equal(terminal[0].switched,false);assert.deepEqual(terminal[0].requestIds,['unstarted']);assert.match(terminal[0].reason,/失敗工單.*不|不.*失敗工單/);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('a rejected acquisition registered after the last release still starts one drain without a timer',async()=>{
+ const f=await handoffFixture(()=>officialBalance(80)),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('old','rate-failed',events),async()=>limitFailure);
+ const acquire=f.accounts.acquire;let gaps=0,resolveTerminal;const terminal=new Promise(resolve=>{resolveTerminal=resolve;});
+ f.accounts.acquire=async options=>{
+  try{return await acquire(options);}catch(error){
+   if(error.code==='GEMINI_HANDOFF_WAIT'){
+    f.accounts.cancelWorkerHandoff({parentId:'old'});await active.release();await Promise.resolve();gaps++;
+   }throw error;
+  }
+ };
+ const options=handoffOptions('late','not-started',events);options.onHandoff=event=>{events.push(event);if(event.status!=='waiting')resolveTerminal(event);};
+ await assert.rejects(f.accounts.run(options,async()=>{throw Error('must not start');}),/未送出/);
+ const observed=await Promise.race([terminal,new Promise(resolve=>setTimeout(()=>resolve(null),200))]);
+ assert.equal(gaps,1);assert.notEqual(observed,null,'a live waiter must not be stranded after no lease remains');assert.equal(observed.status,'ready');assert.equal(observed.switched,false);assert.deepEqual(f.calls.activate,[]);
+});
+
+test('a failed later candidate restores the original even when identity remains on an earlier attempted zero candidate',async()=>{
+ const f=await handoffFixture();f.current={accountId:C,email:'c@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+ const active=await f.accounts.acquire(),events=[];f.login.status=async()=>officialBalance(0);
+ const activate=f.vault.activate;f.vault.activate=async(id,options)=>{if(id===C)throw Error('candidate C switch failed before changing identity');return activate(id,options);};
+ await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
+ assert.equal(f.current.accountId,A);assert.equal((await f.accounts.list()).uncertain,false);assert.deepEqual(f.calls.activate,[B,A]);assert.equal(events.at(-1).status,'blocked');assert.equal(events.at(-1).accountId,A);
+});
+
+test('late unstarted registration after an earlier zero drain attaches to the newly current account and wakes once',async()=>{
+ const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:80)),active=await f.accounts.acquire(),events=[];
+ await f.accounts.run(handoffOptions('old','failed',events),async()=>limitFailure);
+ const acquire=f.accounts.acquire;let resolveTerminal;const terminal=new Promise(resolve=>{resolveTerminal=resolve;});
+ f.accounts.acquire=async options=>{try{return await acquire(options);}catch(error){if(error.code==='GEMINI_HANDOFF_WAIT'){await active.release();await Promise.resolve();}throw error;}};
+ const options=handoffOptions('late','not-started',events);options.onHandoff=event=>{events.push(event);if(event.status!=='waiting')resolveTerminal(event);};
+ await assert.rejects(f.accounts.run(options,async()=>{throw Error('must not start');}),/就緒時 K 會通知，勿立即重派/);
+ const observed=await Promise.race([terminal,new Promise(resolve=>setTimeout(()=>resolve(null),200))]);assert.notEqual(observed,null);assert.equal(observed.status,'ready');assert.equal(observed.accountId,B);assert.equal(observed.switched,false);assert.deepEqual(observed.requestIds,['not-started']);assert.deepEqual(f.calls.activate,[B]);
+ const prior=events.filter(event=>event.parentId==='old'&&event.status==='ready');assert.equal(prior.length,1);assert.equal(prior[0].switched,true);
+});
+
+test('an already rejected acquisition registered in cancelled-drain finally is not orphaned before pending clears',async()=>{
+ const f=await handoffFixture();let accounts,phase='init',resolveQuery,started,lateRun,resolveTerminal,triggered=false;const events=[],trace=[];
+ const began=new Promise(resolve=>{started=resolve;}),terminal=new Promise(resolve=>{resolveTerminal=resolve;});
+ const login={status:async()=>{if(phase==='await-query'){started();return new Promise(resolve=>{resolveQuery=resolve;});}return officialBalance(80);}};
+ accounts=createGeminiAccounts({root:f.root,vault:f.vault,login,enabled:true,clock:()=>Date.parse('2026-10-03T12:00:00Z'),onChange:()=>{
+  if(phase==='query-resolved'){trace.push('query-save');phase='query-saved';}
+  else if(phase==='query-saved'&&!triggered){
+   triggered=true;phase='late';trace.push('drain-finally');const acquire=accounts.acquire;
+   accounts.acquire=options=>options.parentId==='late'?Promise.reject(Object.assign(Error('controlled already-rejected acquire'),{code:'GEMINI_HANDOFF_WAIT',accountId:A})):acquire(options);
+   lateRun=accounts.run({worker:true,parentId:'late',requestId:'unstarted',onHandoff:event=>{events.push(event);trace.push(`late-${event.status}`);if(event.status!=='waiting')resolveTerminal(event);}},async()=>{throw Error('must not start');}).catch(error=>error);
+  }
+ }});
+ const active=await accounts.acquire();await accounts.run({worker:true,parentId:'old',requestId:'failed',onHandoff:event=>events.push(event)},async()=>limitFailure);
+ phase='await-query';const release=active.release();await began;accounts.cancelWorkerHandoff({parentId:'old'});phase='query-resolved';resolveQuery(officialBalance(80));
+ await release;trace.push('outer-returned');await lateRun;
+ const observed=await Promise.race([terminal,new Promise(resolve=>setTimeout(()=>resolve(null),200))]);
+ assert(trace.indexOf('late-waiting')<trace.indexOf('outer-returned'),'controlled catch must register before outer cleanup');assert.notEqual(observed,null);assert.equal(observed.status,'ready');assert.equal(observed.switched,false);
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(events.filter(event=>event.parentId==='late'&&event.status!=='waiting').length,1);assert.deepEqual(f.calls.activate,[]);
+ const lease=await accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();
+});
+
+test('cancelled drain with no new waiter finishes once without another query or self-spin',async()=>{
+ const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];let resolveQuery,started,checks=0;
+ const began=new Promise(resolve=>{started=resolve;});f.login.status=async()=>{checks++;started();return new Promise(resolve=>{resolveQuery=resolve;});};
+ await f.accounts.run(handoffOptions('old','failed',events),async()=>limitFailure);const release=active.release();await began;f.accounts.cancelWorkerHandoff({parentId:'old'});resolveQuery(officialBalance(0));await release;
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(checks,1);assert.equal(events.filter(event=>event.status!=='waiting').length,0);assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
 });

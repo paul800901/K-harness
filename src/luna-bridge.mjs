@@ -102,7 +102,7 @@ function extractThread(thread, workspace, record) {
   }
 }
 
-export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, geminiFactory=createGeminiWorker, geminiOptions={}, claudeFactory=createClaudeWorker, claudeOptions={}, geminiOnly=false, onRequest, onChange=()=>{}, watchOptions={}}) {
+export async function createLunaBridge({root, workspace, parentId, executable, accessMode='workspace-write', workerPolicy, hostFactory=openCodexHost, geminiFactory=createGeminiWorker, geminiOptions={}, claudeFactory=createClaudeWorker, claudeOptions={}, geminiOnly=false, onRequest, onChange=()=>{}, onGeminiHandoff=()=>{}, watchOptions={}}) {
   if (!root || !path.isAbsolute(workspace??'') || !safeId(parentId)) throw new Error('root、workspace 與 parentId 必須有效。');
   const directory = path.join(root, '.runtime', 'luna-bridge', parentId);
   let requestGuard=()=>undefined;
@@ -114,6 +114,24 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   const persistTails = new Map();
   const ownedRequests=new Set(), revisions=new Map(),waiters=new Map();
   let closed = false, closing = false, closePromise, models;
+  let handoffEpoch=0,pendingHandoff;
+  function flushHandoff(){
+    if(!pendingHandoff||closed||closing||pendingHandoff.epoch!==handoffEpoch)return;
+    const event=pendingHandoff.event;
+    // Account release precedes the worker result. Notify only after every old
+    // record in the room has its persisted settled result ready for inspection.
+    if(event.requestIds.some(id=>records.get(id)?.settled!==true))return;
+    pendingHandoff=null;try{onGeminiHandoff(clone(event));}catch{}
+  }
+  function receiveHandoff(event,epoch){
+    if(closed||closing||epoch!==handoffEpoch||event.parentId!==parentId)return;
+    if(event.status==='waiting'){try{onGeminiHandoff(clone(event));}catch{}return;}
+    pendingHandoff={event,epoch};flushHandoff();
+  }
+  function cancelGeminiHandoff(){
+    handoffEpoch++;pendingHandoff=null;
+    geminiOptions.accounts?.cancelWorkerHandoff?.({parentId});
+  }
   const defaults=normalizeWorkerPolicy(workerPolicy);
   const watch=createWorkerWatch({...watchOptions,inspect,publish:(id,inspection)=>{
     const record=records.get(id);if(!record||record.settled||record.cancelRequested||closed||closing)return;
@@ -343,7 +361,8 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       await persist(record);changed(record);
       try{
         const worker=provider==='gemini'?(gemini??=geminiFactory({...geminiOptions,root,workspace,accessMode})):(claude??=claudeFactory({...claudeOptions,root,workspace,accessMode}));
-        handle.completion=Promise.resolve().then(()=>worker.run({task,model,effort,sessionId:record.threadId,accountId,signal:controller.signal,onPermission:async value=>{
+        const epoch=handoffEpoch;
+        handle.completion=Promise.resolve().then(()=>worker.run({task,model,effort,sessionId:record.threadId,accountId,parentId,requestId,onHandoff:event=>receiveHandoff(event,epoch),handoffCurrent:()=>!closed&&!closing&&!record.cancelRequested&&epoch===handoffEpoch,signal:controller.signal,onPermission:async value=>{
           record.waitingForApproval=(record.waitingForApproval??0)+1;changed(record);
           try{return await onRequest?.({method:'k/claude/requestApproval',params:{threadId:record.threadId,parentId,requestId,...value}});}
           finally{if(--record.waitingForApproval===0)delete record.waitingForApproval;record.lastActivityAt=Date.now();changed(record);}
@@ -354,7 +373,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
           Object.assign(record,{status:error.settled===false?'unresolved':controller.signal.aborted?'cancelled':'failed',settled:error.settled!==false,error:error.message});
         }).then(async()=>{
           record.acceptance='not-reviewed';record.endedAt=new Date().toISOString();
-          await persist(record);changed(record);return clone(record);
+          await persist(record);changed(record);flushHandoff();return clone(record);
         }).finally(()=>processRuns.delete(requestId));
         // The completion promise owns persistence and notification, even if start
         // returns before agy emits output. No task retry or provider fallback.
@@ -388,6 +407,8 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     try{return await operation;}finally{if(operations.get(requestId)===operation)operations.delete(requestId);}
   }
   async function cancel({requestId}) {
+    geminiOptions.accounts?.cancelWorkerHandoff?.({parentId,requestId});
+    if(pendingHandoff){pendingHandoff.event.requestIds=pendingHandoff.event.requestIds.filter(id=>id!==requestId);if(!pendingHandoff.event.requestIds.length)pendingHandoff=null;else flushHandoff();}
     watch.forget(requestId);
     const current = await inspect({requestId});
     if (!current) return null;
@@ -435,7 +456,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   async function close() {
     if(closed)return;
     if(closing)return closePromise;
-    closing=true;watch.clear();
+    closing=true;watch.clear();cancelGeminiHandoff();
     closePromise=(async()=>{
       try {
         const records=await bridgeList(false);
@@ -472,7 +493,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     return Promise.all([...ids].map(requestId => refresh?inspect({requestId}):load(requestId)));
   }
   return {
-    start, inspect, cancel, reconcile, workerPolicy:clone(defaults),
+    start, inspect, cancel, reconcile, cancelGeminiHandoff, workerPolicy:clone(defaults),
      accounts:()=>geminiOptions.accounts?.refreshAll({force:false})??{enabled:false,accounts:[]},
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');

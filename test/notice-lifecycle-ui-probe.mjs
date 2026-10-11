@@ -10,7 +10,7 @@ const server=await preview({preview:{host:'127.0.0.1',port:5194,strictPort:true}
 let browser;
 try{
  browser=await chromium.launch({headless:true,executablePath:process.env.K_TEST_CHROME??'C:/Program Files/Google/Chrome/Application/chrome.exe'});
- for(const [width,height,scale,theme]of [[1920,1080,100,'warm'],[1100,760,125,'light'],[900,700,150,'dark']]){
+ for(const [width,height,scale,theme]of [[1920,1080,100,'warm'],[1100,760,125,'light'],[900,700,150,'dark'],[390,844,100,'warm']]){
   const page=await browser.newPage({viewport:{width,height}}),requests=[];page.setDefaultTimeout(6000);page.on('pageerror',e=>errors.push(e.message));
   const state={threadId:'room-a',title:'假資料通知驗證',workspace:root,provider:'codex',model:'gpt-6-luna',status:'working',busy:true,messages:[],tools:[],questions:[],notices:[],artifacts:[],capabilities:{},conversationActivity:[],workerActivity:{running:0}};
   await page.addInitScript(({state,scale,theme})=>{localStorage.setItem('k-appearance',JSON.stringify({interfaceScale:scale,dialogueFontSize:18}));localStorage.setItem('k-color-theme',theme);window.EventSource=class{constructor(){window.testState=s=>this.onmessage?.({data:JSON.stringify({type:'snapshot',state:s})});setTimeout(()=>window.testState(state),0);}close(){}};},{state,scale,theme});
@@ -37,6 +37,33 @@ try{
   const fresh={...retry(1),id:'new-retry',retryKey:'episode-2'};
   await update({...state,notices:[...retries.map(n=>({...n,resolved:true})),fresh]});await page.getByText('正在重新連線（1/5）',{exact:true}).waitFor();
   await update({...state,notices:[{...fresh,resolved:true}]});assert.equal(await page.locator('.native-notices').isVisible(),false);
+  const lifecycle=[
+   {id:'goal-recovery-fixture',kind:'goal-recovery',level:'info',message:'核對已存成果，確認後接續剩餘工作。'},
+   {id:'gemini-handoff-fixture',kind:'gemini-handoff',level:'info',message:'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。'},
+  ];
+  await update({...state,notices:lifecycle});
+  for(const notice of lifecycle)await page.getByText(notice.message,{exact:true}).waitFor();
+  assert.equal(await page.locator('.native-notices > *').count(),2,'both ongoing lifecycle notices are visible');
+  await page.screenshot({path:path.join(out,`${width}-${scale}-lifecycle-active.png`)});
+  await update({...state,notices:lifecycle.map(n=>({...n,resolved:true}))});
+  assert.equal(await page.locator('.native-notices > *').count(),0,'resolved recovery and handoff no longer claim ongoing work');
+  assert.equal(await page.locator('.native-notices').boundingBox(),null,'resolved lifecycle notices leave no empty banner');
+  for(const notice of lifecycle)assert.equal(await page.getByText(notice.message,{exact:true}).count(),0);
+  await page.screenshot({path:path.join(out,`${width}-${scale}-lifecycle-resolved.png`)});
+  const lifecycleFailures=[
+   {id:'goal-failed-fixture',kind:'goal-recovery',level:'warning',message:'成果核對回合已失敗；未自動重送。'},
+   {id:'goal-unknown-fixture',kind:'goal-recovery',level:'warning',resolved:false,message:'成果核對通知未確認；未自動重送。'},
+   {id:'handoff-failed-fixture',kind:'gemini-handoff',level:'warning',message:'Gemini 帳號交接未完成：官方額度或停止狀態未確認。'},
+   {id:'native-failed-fixture',kind:'nativeError',level:'error',resolved:true,message:'原生主工作失敗'},
+   {id:'other-warning-fixture',kind:'warning',level:'warning',resolved:true,message:'其他真正警告'},
+  ];
+  await update({...state,status:'failed',busy:false,notices:[...lifecycle.map(n=>({...n,resolved:true})),...lifecycleFailures]});
+  for(const notice of lifecycleFailures)await page.getByText(notice.message,{exact:true}).waitFor();
+  assert.equal(await page.locator('.native-notices > *').count(),5,'failed and unconfirmed lifecycle warnings and other real errors remain');
+  assert.equal(await page.locator('.native-notices [role="alert"]').count(),1,'unrelated native error is not hidden by lifecycle settlement');
+  await page.screenshot({path:path.join(out,`${width}-${scale}-lifecycle-failures.png`)});
+  await page.locator('.native-notices').evaluate(el=>{el.scrollTop=el.scrollHeight;});
+  await page.screenshot({path:path.join(out,`${width}-${scale}-lifecycle-other-errors.png`)});
   const message='連線失敗：'+('原始錯誤詳細資料_'.repeat(60));
   await update({...state,status:'failed',busy:false,notices:[{id:'fatal',kind:'nativeError',level:'error',message}]});
   assert.equal(await page.locator('.native-notices [role="alert"]').count(),1);assert.equal(await page.locator('.native-notices pre').isVisible(),false);
@@ -48,7 +75,7 @@ try{
   await update({...state,status:'completed',busy:false,notices:[],messages:[user,{...answer,partial:false,completedAt:new Date(started+(86400+2*3600+3*60+4)*1000).toISOString()}]});
   await page.locator('.turn-process summary').filter({hasText:'處理了 1 天 2 小時 3 分 4 秒'}).waitFor();
   assert.equal(requests.includes('POST'),false,'display/dismiss/room switch must not send or replay work');
-  results.push({width,scale,passed:true,layout,checks:['vertical notices','room-specific dismissal','single retry episode','same episode stays dismissed','new incident visible','recovery clears notice','fatal detail retained','hour/day duration','no POST']});await page.close();
+  results.push({width,scale,passed:true,layout,checks:['vertical notices','room-specific dismissal','single retry episode','same episode stays dismissed','new incident visible','recovery clears notice','goal/Gemini lifecycle active then resolved hidden','failed/unconfirmed lifecycle and real native errors retained','fatal detail retained','hour/day duration','no POST']});await page.close();
  }
  assert.deepEqual(errors,[]);await writeFile(path.join(out,'result.json'),JSON.stringify({results,errors},null,2));console.log(JSON.stringify({results,errors}));
 }finally{await browser?.close();await new Promise(resolve=>server.httpServer.close(resolve));}

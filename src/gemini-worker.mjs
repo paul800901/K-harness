@@ -121,14 +121,14 @@ export function geminiOutcome({result,toolErrors=[],deniedTools=[]}, {code,stder
   if(cleanupError)return {...base,status:'unresolved',settled:false,error:cleanupError};
   if(reason)return {...base,status:reason==='cancelled'?'cancelled':'failed',settled:true,error:reason==='timeout'?'K 指定的等待時限已到，已停止程序；不是網路或額度耗盡的證據。可能已有檔案成果，須先讀回，不得直接重做。':reason};
   const diagnostic=`${errorText(result?.error)}\n${stderr}`;
-  let error;
+  let error,quotaCheckNeeded=false;
   if(/no output produced/iu.test(diagnostic))error='agy no output produced（headless 無法核准工具）。';
   else if(/authentication required|not (?:logged|signed) in|unauthenticated|login required/iu.test(diagnostic))error='agy 未登入；請由使用者操作官方登入。';
-  else if(/quota|resource.exhausted|rate.limit|credits?.*(?:exhausted|insufficient)/iu.test(diagnostic))error='agy 額度或速率限制；未重試或換模。';
+  else if(/quota|resource.exhausted|rate.limit|credits?.*(?:exhausted|insufficient)/iu.test(diagnostic)){error='agy 額度或速率限制；未重試或換模。';quotaCheckNeeded=true;}
   else if(code!==0)error=`agy 退出碼 ${code ?? 'unknown'}。`;
   else if(result?.status!=='SUCCESS'||result?.error)error=errorText(result?.error).slice(0,400)||`agy result ${result?.status??'missing'}。`;
   else if(!output.trim())error='agy no output produced（沒有最終回答）。';
-  return {...base,status:error?'failed':'completed',settled:true,...(error?{error}:{})};
+  return {...base,status:error?'failed':'completed',settled:true,...(error?{error}:{}),...(quotaCheckNeeded?{quotaCheckNeeded:true}:{})};
 }
 
 export async function killGeminiTree(pid,{execImpl=exec,platform=process.platform,env=process.env}={}) {
@@ -254,7 +254,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
       catch(error){throw Object.assign(Error(`Flash 瀏覽器停止尚未確認：${error.message}；不得重播。`),{settled:false});}
     }
   }};
-  if(accounts){const run=worker.run;worker.run=options=>accounts.run({accountId:options?.accountId,worker:true},async lease=>{
+  if(accounts){const run=worker.run;worker.run=options=>accounts.run({accountId:options?.accountId,worker:true,...(options?.parentId?{parentId:options.parentId,requestId:options.requestId,onHandoff:options.onHandoff,handoffCurrent:options.handoffCurrent,signal:options.signal}:{})},async lease=>{
     // Catalog availability may differ across subscriptions; never carry A's
     // cached model catalog into B's worker. The settings home remains shared.
     catalog=null;options?.onAccount?.(lease);return run(options);
