@@ -35,7 +35,7 @@ export async function checkNativeWorkers(host,parentThreadId,ids,{stop=false}={}
    const last=thread.turns?.at(-1);
    if(typeof last?.id==='string')metadata.turnId=last.id;
    if(thread.status?.type==='active'||last?.status==='inProgress')return {...result,...metadata,lastReadAt,status:'running'};
-   if(['idle','notLoaded'].includes(thread.status?.type)){
+   if(['idle','notLoaded','systemError'].includes(thread.status?.type)){
     if(['completed','interrupted','failed'].includes(last?.status))return {...result,...metadata,lastReadAt,status:last.status==='interrupted'?'cancelled':last.status,settled:true};
     return {...result,...metadata,lastReadAt,error:'原生子代理最後回合狀態未確認。'};
    }

@@ -114,3 +114,15 @@ test('native overload stays unresolved with original diagnostic; no hidden retry
 test('paginated newest summary overrides stale embedded historical turns',async()=>{
  const rows=await checkNativeWorkers({async request(method){return method==='thread/read'?{thread:{parentThreadId:'main',historyMode:'paginated',status:{type:'idle'},turns:[{id:'old',status:'completed'}]}}:{data:[{id:'new',status:'inProgress'}]};}},'main',['child']);assert.equal(rows[0].turnId,'new');assert.equal(rows[0].status,'running');assert.equal(rows[0].settled,false);
 });
+
+test('systemError settles only an owned explicit terminal latest turn, not an Error alone',async()=>{
+ for(const status of ['failed','completed','interrupted','inProgress','unknown',null]){
+  const calls=[];const host={async request(method,p){calls.push(method);return method==='thread/read'?{thread:{parentThreadId:'parent',historyMode:'paginated',status:{type:'systemError'}}}:{data:status?[{id:'latest',status}]:[]};}};
+  const [row]=await checkNativeWorkers(host,'parent',['child']);
+  const terminal=['failed','completed','interrupted'].includes(status);
+  assert.equal(row.settled,terminal,String(status));assert.equal(row.status,terminal?status==='interrupted'?'cancelled':status:status==='inProgress'?'running':'unresolved',String(status));
+  assert.deepEqual(calls,['thread/read','thread/turns/list']);
+ }
+ const [foreign]=await checkNativeWorkers({async request(){return {thread:{parentThreadId:'foreign',status:{type:'systemError'},turns:[{id:'latest',status:'failed'}]}};}},'parent',['child']);
+ assert.equal(foreign.settled,false);
+});

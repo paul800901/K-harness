@@ -1,5 +1,9 @@
 # K 最新工程交接索引
 
+- 2026-10-12：[子代理終態漏判與重用後舊提示修正候選](native-terminal-state-fix-20261012.md)：systemError＋最新明確終態正確核實；舊提示只靠精確歷史 turn/status 核實，不以新成功代替舊成功、不派回舊工單。停止不翻純顯示歷史；110 focused／最終1314/1314、真固定核心隔離 systemError/cursor、雙尺寸 built UI、真正 Opus5.5末審與Astra獨立驗收完成；先前全測失敗原件及限制留紀錄。本人要求修好後停，K 正在工作，未部署／重啟／停止／push／排程；Flash 待帳號及回通知新需求目前只查明方案。
+
+- 2026-10-12：[原工作與成果核對接連失敗診斷](stream-recurrence-diagnosis-20261012.md)：正式 4af4b7d／Codex0.161，Sol 原工作 failed 後 K 確實送出單次成果核對，但核對也在原生重試後 failed。固定核心 high-demand 是 InternalServerError 文案，不是已證 Luna 容量不足；兩次最終 HTTP200 後流失敗，服務細因仍未知。另確認過期核對提示／requestID 措辭缺口，只讀記錄未改產品，不重啟／部署／原房操作；真正 Opus 同 session 讀三份反證後更正，Astra 已獨立讀回，不據此新增計時重送或聲稱長任務已修復。
+
 - 2026-10-12：[聊天室載入逾時的 JSONL 分界根因](native-jsonl-framing-20261012.md)：學院合法 U+2028 被 Node readline 當訊息分界，K 丟棄已抵達 JSON 後才報 30 秒逾時。隔離固定 0.161、此房限定 DB/rollout、無憑證／模型／原房操作；只改 LF framing，全量 111 turns／5,184 items／25 MB 回覆 1.683 秒成功，不加 timeout／paging UI／歷史裁切。兩JSONL host最小修正、1303/1303、真Opus5.5；Astra實際host以正式Electron讀回111/5184並逐筆比對DB、builtUI雙尺寸載入/切換通過。本人正常停止後，固定4af4b7d已單次正式套用；package288/288、三build、681來源零差異、74metadata不變；正式installed host約496ms完整讀回隔離副本、正式owner双尺寸/資源讀回後正常關閉，原工作未恢復。不push/東區；舊0.159錯誤探針保留且不採用。
 
 - 2026-10-12：[失敗接續／工作列提醒正式更新](native-recovery-recurrence-20261012.md#本人授權後正式更新與-astra-獨立讀回2026-10-12)：本人允許正式套用、01:02正常關閉實證；固定3c2b0b5已單次交易套用、舊程式可退。678來源零差異、三build、完整1296/1296；package首輪254/255既有40ms等待測試失敗保留，原樣診斷及一次完整重跑255/255，不宣稱延遲內因已證。正式owner1440/390與assets、74metadata/穩定設定保留、Astra獨立讀回；原工作未恢復、K保持關閉、不push／東區。Windows工作列實際圖示、provider失敗內因未驗界線保留，取代下筆候選停等狀態。

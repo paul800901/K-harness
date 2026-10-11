@@ -428,6 +428,37 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const flash=flashBridge?await flashBridge.list():[];
   if(host!==active||threadId!==state.threadId||epoch!==viewEpoch)return result;
   const rows=[...result.map(row=>({...row,activity:childActivities.get(row.threadId)?.holder.activity})),...flash];
+  // Reusing a child retires its dispatch intent, not the saved old terminal fact.
+  // Verify only outstanding display facts; never enqueue or replay old work.
+  const verifiedNotices=new Set(),current=()=>host===active&&threadId===state.threadId&&epoch===viewEpoch&&noticeEpoch===requestEpoch&&read===workerRead;
+  const oldNotices=stop?[]:state.notices.filter(n=>n.kind==='worker-attention'&&n.nativeTerminal&&!n.resolved&&result.some(w=>w.threadId===n.nativeTerminal.threadId&&w.turnId&&w.turnId!==n.nativeTerminal.turnId));
+  for(const childId of new Set(oldNotices.map(n=>n.nativeTerminal.threadId))){
+   if(!current())return rows;
+   try{
+    const notices=oldNotices.filter(n=>n.nativeTerminal.threadId===childId);
+    let thread=(await active.request('thread/read',{threadId:childId,includeTurns:false}))?.thread;
+    if(!current())return rows;
+    if(thread?.parentThreadId!==threadId)continue;
+    const verify=turns=>{for(const n of notices)if(turns.some(t=>t.id===n.nativeTerminal.turnId&&['completed','failed','interrupted'].includes(t.status)&&(t.status==='interrupted'?'cancelled':t.status)===n.nativeTerminal.status))verifiedNotices.add(n);};
+    if(thread.historyMode==='paginated'){
+     let cursor;const cursors=new Set(),seenTurns=new Set();
+     while(current()){
+      const page=await active.request('thread/turns/list',{threadId:childId,limit:100,sortDirection:'desc',itemsView:'summary',...(cursor?{cursor}:{})});
+      if(!current())return rows;
+      if(!Array.isArray(page?.data))break;
+      verify(page.data);
+      if(notices.every(n=>verifiedNotices.has(n)))break;
+      const progressed=page.data.some(t=>typeof t.id==='string'&&!seenTurns.has(t.id));for(const t of page.data)seenTurns.add(t.id);
+      if(!progressed||!page.nextCursor||typeof page.nextCursor!=='string'||cursors.has(page.nextCursor))break;
+      cursor=page.nextCursor;cursors.add(cursor);
+     }
+    }else{
+     thread=(await active.request('thread/read',{threadId:childId,includeTurns:true}))?.thread;
+     if(!current())return rows;
+     if(thread?.parentThreadId===threadId&&Array.isArray(thread.turns))verify(thread.turns);
+    }
+   }catch{/* An unavailable old terminal remains UNKNOWN; latest work stays untouched. */}
+  }
   // A delayed read must not replace a newer completion; callers still receive
   // their full result, including Flash, for existing stop/idle checks.
   if(read===workerRead){
@@ -436,7 +467,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const terminal=notice.kind==='worker-attention'&&notice.nativeTerminal;
     if(!terminal||notice.resolved)continue;
     const row=result.find(w=>w.threadId===terminal.threadId);
-    if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status)notice.resolved=true;
+    if(verifiedNotices.has(notice)||row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status)notice.resolved=true;
    }
    syncArtifacts();changed();
   }

@@ -557,3 +557,61 @@ test('unverified owner or different final turn/status and stale matching reads c
   a.mode='confirmed';await f.c.workers();assert.equal(raw.resolved,true);
  }finally{await f.close();}
 });
+
+test('reused child resolves only the exact saved old terminal, even while its new turn is running',async()=>{
+ const f=await terminalNoticeFixture();try{
+  const a=f.rows.get('child-a');a.mode='missing';await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal);
+  const old={id:a.turnId,status:a.status};a.turnId='reused-turn';a.mode='running';
+  const original=f.host.request;let historyReads=0;
+  f.host.request=async(method,p,...rest)=>{if(method==='thread/turns/list'&&p.threadId==='child-a'&&p.limit!==1){historyReads++;return p.cursor?{data:[old],nextCursor:null}:{data:[{id:a.turnId,status:'inProgress'}],nextCursor:'old-page'};}return original(method,p,...rest);};
+  f.emit({method:'turn/started',params:{threadId:'child-a',turn:{id:a.turnId}}});await f.c.workers();
+  assert.equal(f.c.state.workers[0].status,'running');assert.equal(raw.resolved,true);assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,0);
+  assert.equal(historyReads,2);await f.c.workers();assert.equal(historyReads,2,'resolved facts are not repeatedly reread');
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{await f.close();}
+});
+
+for(const variant of ['wrong-status','foreign','throw','missing','stale','repeated-cursor','no-progress'])test(`reused child old terminal remains unknown on ${variant} history`,async()=>{
+ const f=await terminalNoticeFixture(),original=f.host.request;let release,held=false;try{
+  const a=f.rows.get('child-a');a.mode='missing';await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal),old=a.turnId;
+  a.turnId='reused-turn';a.mode='running';
+  f.host.request=async(method,p,...rest)=>{
+   if(method==='thread/read'&&p.threadId==='child-a'&&variant==='foreign')return {thread:{parentThreadId:'foreign',historyMode:'paginated',status:{type:'active'}}};
+   if(method==='thread/turns/list'&&p.threadId==='child-a'&&p.limit!==1){if(variant==='throw')throw Error('synthetic history read failed');const page={data:variant==='missing'?[]:[{id:old,status:variant==='wrong-status'?'failed':'completed'}],nextCursor:null};if(variant==='repeated-cursor'||variant==='no-progress'){page.data=p.cursor?variant==='no-progress'?[]:[{id:'other-old',status:'completed'}]:[{id:a.turnId,status:'inProgress'}];page.nextCursor='same-cursor';}if(variant==='stale'&&!held){held=true;return new Promise(r=>release=()=>r(page));}return page;}
+   return original(method,p,...rest);
+  };
+  if(variant==='stale'){
+   // Keep the new child identity without an event-triggered concurrent read.
+   const pending=f.c.workers();await new Promise(r=>setImmediate(r));assert.equal(typeof release,'function');
+   a.mode='missing';const latest=f.c.workers();await latest;release();await pending;
+  }else{f.emit({method:'turn/started',params:{threadId:'child-a',turn:{id:a.turnId}}});await f.c.workers();}
+  assert.equal(raw.resolved,undefined);assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,1);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{release?.();f.host.request=original;await f.close();}
+});
+
+test('nonpaginated reused child verifies the exact old turn without replacing current running work',async()=>{
+ const f=await terminalNoticeFixture(),original=f.host.request;try{
+  const a=f.rows.get('child-a');a.mode='missing';await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal),old=a.turnId;
+  a.turnId='reused-turn';a.mode='running';
+  f.host.request=async(method,p,...rest)=>method==='thread/read'&&p.threadId==='child-a'?{thread:{parentThreadId:'native-events-thread',status:{type:'active'},turns:p.includeTurns?[{id:old,status:'completed'},{id:a.turnId,status:'inProgress'}]:[]}}:original(method,p,...rest);
+  f.emit({method:'turn/started',params:{threadId:'child-a',turn:{id:a.turnId}}});await f.c.workers();
+  assert.equal(raw.resolved,true);assert.equal(f.c.state.workers[0].status,'running');assert.equal(f.c.state.workers[0].turnId,a.turnId);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{f.host.request=original;await f.close();}
+});
+
+test('worker stop does not page old terminal notices; a later ordinary read can still resolve them',async()=>{
+ const f=await terminalNoticeFixture(),original=f.host.request;try{
+  const a=f.rows.get('child-a');a.mode='missing';await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal),old=a.turnId;
+  a.turnId='reused-turn';a.mode='confirmed';let historyReads=0;
+  f.host.request=async(method,p,...rest)=>{
+   if(method==='thread/turns/list'&&p.threadId==='child-a'&&p.limit!==1){historyReads++;return {data:[{id:old,status:'completed'}],nextCursor:null};}
+   return original(method,p,...rest);
+  };
+  const stopped=await f.c.workers(true);assert.equal(stopped[0].settled,true);assert.equal(stopped[0].turnId,a.turnId);
+  assert.equal(historyReads,0);assert.equal(raw.resolved,undefined);assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,1);
+  await f.c.workers();assert.equal(historyReads,1);assert.equal(raw.resolved,true);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{f.host.request=original;await f.close();}
+});
