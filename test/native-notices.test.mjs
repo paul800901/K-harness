@@ -134,3 +134,9 @@ test('the exact native remote compaction stream wrapper keeps its phase and raw 
  assert.match(nativeNotices.localizeNativeNotice(message,'codex',{...error,codexErrorInfo:'usageLimitExceeded'}),/用量限制/);
  assert.equal(nativeNotices.localizeNativeNotice('unrelated displayed error','codex',error),'unrelated displayed error');
 });
+
+test('only precisely resolved native terminal attention is hidden and all raw notices remain intact',()=>{
+ const terminal={threadId:'child',turnId:'child-turn',status:'completed'},message='同文未確認';
+ const notices=[{id:'resolved',kind:'worker-attention',message,nativeTerminal:terminal,resolved:true},{id:'unknown',kind:'worker-attention',message,nativeTerminal:{...terminal,threadId:'another'}},{id:'other',kind:'worker-attention',message,resolved:true},{id:'other-kind',kind:'warning',message,nativeTerminal:terminal,resolved:true}];
+ const before=structuredClone(notices);assert.deepEqual(nativeNotices.visibleNativeNotices(notices).map(n=>n.id),['unknown','other','other-kind']);assert.deepEqual(notices,before);
+});

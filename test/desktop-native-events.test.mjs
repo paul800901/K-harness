@@ -477,3 +477,83 @@ test('host loss after drained terminal error preserves native primary; newer act
   }finally{await f.c.close();}
  }
 });
+
+for(const stopped of [false,true])test(`native terminal uncertainty resolves after exact readback with stopRequested=${stopped} without dispatch`,async()=>{
+  const f=await fixture(),original=f.host.request;let missing=false;
+  f.host.request=async(method,p,...rest)=>method==='thread/read'&&p.threadId==='child'
+   ?{thread:{id:'child',parentThreadId:'native-events-thread',status:{type:'idle'},turns:missing?[]:[{id:'child-turn',status:'completed'}]}}
+   :original(method,p,...rest);
+  try{
+   await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+   emit({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'parent-turn'}}});
+   emit({method:'item/completed',params:{threadId:'native-events-thread',item:{id:'spawn-child',type:'collabAgentToolCall',receiverThreadIds:['child']}}});await f.c.workers();
+   emit({method:'turn/started',params:{threadId:'child',turn:{id:'child-turn'}}});await f.c.workers();missing=true;
+   emit({method:'turn/completed',params:{threadId:'child',turn:{id:'child-turn',status:'completed'}}});await f.c.workers();
+   assert.equal(f.c.state.notices.filter(n=>n.nativeTerminal&&!n.resolved).length,1);
+   emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'parent-turn',status:'failed'}}});await f.c.workers();
+   f.c.state.goal={status:'paused'};missing=false;
+   if(stopped)await f.c.stop();await f.c.workers();
+   const raw=f.c.state.notices.find(n=>n.nativeTerminal);assert.equal(raw.resolved,true,'Verified display facts resolve independently of paused/stop dispatch guard');
+   assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,0);
+   assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+  }finally{missing=false;await f.c.close();}
+});
+
+async function terminalNoticeFixture(ids=['child-a']){
+ const f=await fixture(),original=f.host.request,rows=new Map(ids.map(id=>[id,{mode:'running',turnId:id+'-turn',status:'completed'}]));
+ let release;
+ f.host.request=async(method,p,...rest)=>{
+  const row=rows.get(p?.threadId);
+  if(method==='thread/read'&&row){if(row.mode==='throw')throw Error('synthetic transient read failure');return {thread:{id:p.threadId,parentThreadId:row.parent??'native-events-thread',historyMode:'paginated',status:{type:row.mode==='running'?'active':'idle'}}};}
+  if(method==='thread/turns/list'&&row){const page={data:row.mode==='missing'?[]:[{id:row.readTurn??row.turnId,status:row.mode==='running'?'inProgress':row.readStatus??row.status,items:[]}],nextCursor:null};if(row.mode==='hold'){row.mode='confirmed';return new Promise(r=>release=()=>r(page));}return page;}
+  return original(method,p,...rest);
+ };
+ await f.c.open({model:'gpt-6-astra'});const emit=f.connections.findLast(x=>x.onEvent).onEvent;
+ emit({method:'turn/started',params:{threadId:'native-events-thread',turn:{id:'parent-turn'}}});
+ emit({method:'item/completed',params:{threadId:'native-events-thread',turnId:'parent-turn',item:{id:'spawn',type:'collabAgentToolCall',receiverThreadIds:ids}}});await f.c.workers();
+ for(const id of ids){emit({method:'turn/started',params:{threadId:id,turn:{id:rows.get(id).turnId}}});await f.c.workers();}
+ const complete=async id=>{const row=rows.get(id);emit({method:'turn/completed',params:{threadId:id,turn:{id:row.turnId,status:row.status}}});await f.c.workers();};
+ const close=async()=>{for(const row of rows.values()){row.mode='confirmed';delete row.parent;delete row.readTurn;delete row.readStatus;}emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'parent-turn',status:'failed'}}});await f.c.workers();await f.c.close();};
+ return {...f,rows,emit,complete,close,release:()=>release?.()};
+}
+
+for(const mode of ['missing','throw'])test(`native terminal ${mode} warning resolves after exact later read while preserving raw and primary failure`,async()=>{
+ const f=await terminalNoticeFixture();try{
+  f.rows.get('child-a').mode=mode;await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal);
+  assert.deepEqual(raw.nativeTerminal,{threadId:'child-a',turnId:'child-a-turn',status:'completed'});assert.equal(raw.turnId,'child-a-turn');
+  assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,1);
+  f.emit({method:'turn/completed',params:{threadId:'native-events-thread',turn:{id:'parent-turn',status:'failed',error:{message:'synthetic primary failure',codexErrorInfo:'other'}}}});await f.c.workers();
+  f.rows.get('child-a').mode='confirmed';await f.c.workers();
+  assert.equal(f.c.state.workers[0].settled,true);assert.equal(f.c.state.status,'failed');assert.equal(f.c.state.error,'synthetic primary failure');
+  assert.equal(raw.resolved,true);assert.equal(f.c.state.notices.includes(raw),true);assert.equal(visibleNativeNotices(f.c.state.notices).filter(n=>n.nativeTerminal).length,0);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{await f.close();}
+});
+
+test('native terminal notices deduplicate only exact child turn status and never globally collapse distinct uncertainty',async()=>{
+ const f=await terminalNoticeFixture(['child-a','child-b']);try{
+  for(const id of f.rows.keys()){f.rows.get(id).mode='missing';await f.complete(id);}
+  await f.complete('child-a');assert.equal(f.c.state.notices.filter(n=>n.nativeTerminal).length,2);
+  const a=f.rows.get('child-a');a.turnId='child-a-new';a.status='failed';
+  f.emit({method:'turn/started',params:{threadId:'child-a',turn:{id:a.turnId}}});await f.c.workers();await f.complete('child-a');
+  a.status='completed';await f.complete('child-a');assert.equal(f.c.state.notices.filter(n=>n.nativeTerminal).length,4);
+  a.mode='confirmed';await f.c.workers();const raw=f.c.state.notices.filter(n=>n.nativeTerminal);
+  assert.equal(raw.filter(n=>n.resolved).length,1);assert.equal(visibleNativeNotices(raw).length,3);
+  assert.equal(raw.find(n=>n.nativeTerminal.threadId==='child-b').resolved,undefined);
+  assert.equal(raw.find(n=>n.nativeTerminal.turnId==='child-a-turn').resolved,undefined);
+  assert.equal(raw.find(n=>n.nativeTerminal.turnId==='child-a-new'&&n.nativeTerminal.status==='failed').resolved,undefined);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start').length,0);
+ }finally{await f.close();}
+});
+
+test('unverified owner or different final turn/status and stale matching reads cannot resolve terminal warning',async()=>{
+ const f=await terminalNoticeFixture();try{
+  const a=f.rows.get('child-a');a.mode='missing';await f.complete('child-a');const raw=f.c.state.notices.find(n=>n.nativeTerminal);
+  a.mode='confirmed';a.parent='foreign-parent';await f.c.workers();assert.equal(raw.resolved,undefined);delete a.parent;
+  a.readTurn='other-turn';await f.c.workers();assert.equal(raw.resolved,undefined);delete a.readTurn;
+  a.readStatus='failed';await f.c.workers();assert.equal(raw.resolved,undefined);delete a.readStatus;
+  a.mode='hold';const old=f.c.workers();await new Promise(r=>setImmediate(r));a.mode='missing';await f.c.workers();f.release();await old;
+  assert.equal(raw.resolved,undefined);assert.equal(f.c.state.workers[0].settled,false);
+  a.mode='confirmed';await f.c.workers();assert.equal(raw.resolved,true);
+ }finally{await f.close();}
+});

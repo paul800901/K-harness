@@ -407,7 +407,16 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const rows=[...result.map(row=>({...row,activity:childActivities.get(row.threadId)?.holder.activity})),...flash];
   // A delayed read must not replace a newer completion; callers still receive
   // their full result, including Flash, for existing stop/idle checks.
-  if(read===workerRead){state.workers=rows;syncArtifacts();changed();}
+  if(read===workerRead){
+   state.workers=rows;
+   if(noticeEpoch===requestEpoch)for(const notice of state.notices){
+    const terminal=notice.kind==='worker-attention'&&notice.nativeTerminal;
+    if(!terminal||notice.resolved)continue;
+    const row=result.find(w=>w.threadId===terminal.threadId);
+    if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status)notice.resolved=true;
+   }
+   syncArtifacts();changed();
+  }
   // Only live, armed child terminals can request acceptance; history reads cannot.
   if(read===workerRead&&!stopRequested&&!opening&&!stopping&&!closing&&noticeEpoch===requestEpoch&&state.goal?.status!=='paused'){
    for(const [key,terminal] of nativeTerminals){
@@ -415,7 +424,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(terminal.epoch!==requestEpoch||flashNotifications[key])continue;
     const row=result.find(w=>w.threadId===terminal.threadId);
     if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status){flashQueue.set(row.requestId,{...row,epoch:requestEpoch});queueMicrotask(()=>void deliverFlashResults());}
-    else addNotice('warning','原生子代理已送出終止事件，但來源或最後回合讀回未確認；未自動接續或重送。','worker-attention');
+    else if(!state.notices.some(n=>n.kind==='worker-attention'&&n.nativeTerminal?.threadId===terminal.threadId&&n.nativeTerminal.turnId===terminal.turnId&&n.nativeTerminal.status===terminal.status))addNotice('warning','原生子代理已送出終止事件，但來源或最後回合讀回未確認；未自動接續或重送。','worker-attention',terminal.turnId,{nativeTerminal:{threadId:terminal.threadId,turnId:terminal.turnId,status:terminal.status}});
    }
   }
   changed();return rows;
