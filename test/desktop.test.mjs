@@ -424,7 +424,7 @@ test('Codex browser config follows effective access mode and refreshes native th
   assert.equal(resumes.length,1,'mode change reconfigures the same native thread');
   assert.deepEqual(resumes.at(-1).p.config.mcp_servers.k_browser,{enabled:false,command:process.execPath,args:['--version']});
   assert.equal(f.c.state.browserAccess.enabled,false);
-  assert.equal(f.calls.filter(x=>x.method==='thread/read').length,1,'native history is read, not replayed');
+  assert.equal(f.calls.filter(x=>x.method==='thread/read'&&x.p.includeTurns===true).length,1,'native history is read, not replayed');
   assert.equal(f.calls.filter(x=>x.method==='thread/start').length,1);
   assert.equal(f.calls.filter(x=>x.method==='turn/start').length,2);
  }finally{await f.c.close();}

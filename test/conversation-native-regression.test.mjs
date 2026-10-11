@@ -82,7 +82,7 @@ for(const provider of ['codex','claude'])test(`${provider} retained view of an i
   await f.pool.send({...a,text:'new explicit first message'});
   assert.equal((await f.pool.send({...a,text:'new explicit queued message'})).queued,true);
   const reopened=hosts.at(-1);
-  if(provider==='codex')reopened.options.onEvent({method:'turn/completed',params:{threadId:a.threadId,turn:{id:`turn-${a.threadId}`,status:'completed'}}});
+  if(provider==='codex')reopened.options.onEvent({method:'turn/completed',params:{threadId:a.threadId,turn:{id:`turn-${reopened.calls.findLast(c=>c.method==='turn/start').params.threadId}`,status:'completed'}}});
   else reopened.options.onMessage({type:'result',is_error:false});
   for(let i=0;submissions()<2&&i<200;i++)await new Promise(r=>setTimeout(r,10));
   assert.equal(submissions(),2,'explicit reopen must restore ordinary queue delivery, not replay old work');

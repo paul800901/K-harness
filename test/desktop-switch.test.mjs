@@ -235,7 +235,7 @@ test('an unsent new conversation can leave and return on the same host without r
   assert.equal(f.c.state.threadId,blankId);
   assert.equal(f.c.state.status,'ready');
   assert.deepEqual(f.c.state.messages,[]);
-  const blankReads=f.activeHost.calls.filter(call=>call.method==='thread/read'&&call.p.threadId===blankId);
+  const blankReads=f.activeHost.calls.filter(call=>call.method==='thread/read'&&call.p.threadId===blankId&&call.p.includeTurns===true);
   assert.deepEqual(blankReads,[],'explicit never-submitted marker needs no nonexistent history read');
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/resume'&&call.p.threadId===blankId).length,0);
   assert.equal(f.activeHost.calls.filter(call=>call.method==='thread/start').length,1);

@@ -26,7 +26,7 @@ async function fixture(){
      const thread={id:`native-${++seq}`,status:{type:'idle'},turns:[]};loaded.set(thread.id,thread);return {thread};
     }
     if(method==='thread/read'||method==='thread/resume'){
-     const thread=durable.get(p.threadId);
+     const thread=method==='thread/read'&&p.includeTurns===false?(loaded.get(p.threadId)??durable.get(p.threadId)):durable.get(p.threadId);
      if(!thread){const e=Error('no native history');e.protocolMessage=`no rollout found for thread id ${p.threadId}`;throw e;}
      if(method==='thread/resume')loaded.set(thread.id,thread);
      return {thread:structuredClone(thread)};

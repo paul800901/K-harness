@@ -92,7 +92,7 @@ test('inherited source workers remain historical tools, not child-owned workers,
   assert.equal(workers[0].settled,true);
   assert.ok(f.c.state.tools.some(t=>t.id==='old-dispatch'));
   assert.equal(f.calls.some(x=>x.method==='turn/interrupt'),false);
-  assert.equal(f.calls.filter(x=>x.method==='thread/read'&&x.p.threadId==='parent').length,2,'one source open, one fork preparation; reopening child never reads parent');
+  assert.equal(f.calls.filter(x=>x.method==='thread/read'&&x.p.threadId==='parent'&&x.p.includeTurns===true).length,2,'one source open, one fork preparation; reopening child never reads parent history');
  }finally{await f.c.close();}
 });
 
