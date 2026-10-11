@@ -3,7 +3,7 @@ import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 import { access } from 'node:fs/promises';
 import path from 'node:path';
-import { createInterface } from 'node:readline';
+import {readNativeJsonl} from './native-jsonl.mjs';
 import { randomUUID } from 'node:crypto';
 import {MODEL_ROLE_GUIDANCE} from './worker-policy.mjs';
 
@@ -313,7 +313,6 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
   });
   child.stderr?.resume?.();
 
-  const lines = createInterface({ input: child.stdout });
   let stopped = false,didSpawn=false,processError=null,processClosed=false;
   let initialized = false;
   let nativeCapabilities = null;
@@ -364,7 +363,7 @@ export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sou
   void exited.then(resolveClosed);
   child.stdin.on('error', () => { stopped = true; failPending(); });
 
-  lines.on('line', line => {
+  const lines = readNativeJsonl(child.stdout, line => {
     let message;
     try { message = JSON.parse(line); } catch { return; }
     if(goalCommand&&message.session_id===sessionId){

@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-12：[聊天室載入逾時的 JSONL 分界根因](native-jsonl-framing-20261012.md)：學院合法 U+2028 被 Node readline 當訊息分界，K 丟棄已抵達 JSON 後才報 30 秒逾時。隔離固定 0.161、此房限定 DB/rollout、無憑證／模型／原房操作；只改 LF framing，全量 111 turns／5,184 items／25 MB 回覆 1.683 秒成功，不加 timeout／paging UI／歷史裁切。兩JSONL host最小修正、1303/1303、真Opus5.5；Astra實際host以正式Electron讀回111/5184並逐筆比對DB、builtUI雙尺寸載入/切換通過。本人已正常停止K；固定候選包裝中、尚未部署，舊0.159錯誤探針保留且不採用。
+
 - 2026-10-12：[失敗接續／工作列提醒正式更新](native-recovery-recurrence-20261012.md#本人授權後正式更新與-astra-獨立讀回2026-10-12)：本人允許正式套用、01:02正常關閉實證；固定3c2b0b5已單次交易套用、舊程式可退。678來源零差異、三build、完整1296/1296；package首輪254/255既有40ms等待測試失敗保留，原樣診斷及一次完整重跑255/255，不宣稱延遲內因已證。正式owner1440/390與assets、74metadata/穩定設定保留、Astra獨立讀回；原工作未恢復、K保持關閉、不push／東區。Windows工作列實際圖示、provider失敗內因未驗界線保留，取代下筆候選停等狀態。
 
 - 2026-10-12：[不到三小時再失敗／工作列漏提醒修正候選](native-recovery-recurrence-20261012.md)：正式4ba2d5b確實在跑，Pick23:19／拳王23:56 failed；真原生Error留下systemError，K只收idle導致永不核對。最小接續條件修正＋既有未讀/工作列加入失敗需注意，真固定核心與loopback假Responses驗systemError→單次audit／再失敗不連鎖；真隱藏Electron通知鏈、五組builtUI及真正Opus5.5複查。正式其他房仍跑；本人明確「K還在工作，先不要更新」，候選保留、不停止／重啟／部署／排程／push，工作列實際像素與正式讀回待更新，供應商內因仍UNKNOWN。
@@ -439,3 +441,4 @@
 
 
 - 2026-10-10：[三聊天室固定來源整合正式更新](integrated-update-20261010.md)：433e7f2正式套用，1133/1133／六組built UI／647来源／真正Opus通過，正式owner雙尺寸、資產／認證及本人桌面啟動讀回完成。本人確認強制結束舊K自有程序後才更新；不重播、不push／東區，記憶方案仍研究未實作、長任務關閉根因仍未知。
+

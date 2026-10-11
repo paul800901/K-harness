@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import {readNativeJsonl} from './native-jsonl.mjs';
 import {createCodexHostDiagnostics} from './codex-host-diagnostics.mjs';
 
 // Codex validates the transport even for disabled MCP entries. A bare
@@ -20,7 +20,6 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
   child.stderr.resume();
   const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false,processExited=false;
   const startup = new Map(); const startupWaiters = new Set();
-  const lines = createInterface({ input: child.stdout });
   function failAll(stopReading=true) {
     if(stopReading)stopped = true;
     serverRequests.clear();
@@ -56,7 +55,7 @@ export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequ
   child.once('spawn',()=>{didSpawn=true;if(signal?.aborted)abort();});
   child.stdin.on('error',error=>{processError??=Object.assign(new Error('Codex host input failed; inspect existing work before retrying.'),{cause:error});failAll(false);});
   const send = message => { if (stopped||processExited||processError) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
-  lines.on('line', line => {
+  const lines = readNativeJsonl(child.stdout, line => {
     if(stopped)return;
     let message; try { message = JSON.parse(line); } catch { return; }
     if (message.method) {
