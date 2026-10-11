@@ -1,5 +1,7 @@
 # Codex 目標：本人操作的原生意圖記錄補接
 
+正式狀態追加：本批已於 2026-10-11 納入 cfd4eba 正式更新並讀回；下方候選敘述保留為歷史。見 [正式部署與未完成界線](native-coordination-deploy-20261011.md)。
+
 ## 狀態及範圍
 
 候選修正，source commit `e3f2ecd263b1dfd854ea10acdbb31a86b54ae713`，Astra 獨立驗收及索引已完成，**尚未部署**。本項不是服務端 remote compact 失敗根因修復，不新增恢復、重試、換模、timer 或 wakeup 策略。下方保留各階段當時的失敗與待驗證狀態，以最後整合讀回為準。

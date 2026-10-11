@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-11：[原生調度／本人目標意圖正式更新](native-coordination-deploy-20261011.md)：本人確認 K 關閉後，正式 cfd4eba（產品 e3f2ecd）已單次套用、保留退版；包含子代理自主核實、過期警告及人類 goal provenance。完整1251/1251、prepared228/228、三build、674來源零差異、真Opus末審及Astra獨立讀回；74對話metadata不變，雙尺寸服務UI／26房側欄、0原房操作／新模型回合，日常K維持關閉。不push／東區；失敗主回合自動核對接續已允許但仍僅方案，未納本次功能。以下較早候選／e171狀態為歷史，以本筆為準。
+
 - 2026-10-11：[本人目標意圖原生記錄與必要調度整合候選](native-goal-provenance-20261011.md#astra-最後整合驗收與正式狀態)：人類 goal set/edit/resume/clear 補 origin:user、AI lexical automatic，不新增 failed-parent 自動回合。真正 fixed core paused 三次 user.goal 持久化、零模型呼叫；真 Opus 5.5 增量無 blocking、Astra 獨立讀回。整合既有自主核實 source，固定 e3f2ecd；完整固定4並行1251/1251＋UI build，預設並行失敗及未知 input-queue 負載原因保留，未宣稱已全治。正式 e1712d1／K 仍開，未停止、部署、恢復書房、push／東區；極長記憶偏移與服務端 compact 內因未解。
 
 - 2026-10-11：[原生子代理自主核實與必要調度候選](native-terminal-autonomous-reconciliation-20261011.md)：新需求超出前UI-only候選；已arm live pending精準核實前不消耗，單timer不重疊1→2→…30s只查pending、不限次數，UNKNOWN不稱running／不同persisted ID不猜newturn。159/159＋Astra全套1240/1240（追加test前）、最終wakeup39/39；真正Sol低＋Luna低新假鏈，3輪探針後terminal→7.084秒單次parent acceptance、0child重派、正常close。真Opus5.5末審無blocking、產品SHA不變／末審後只加pause-resume test；不改failed-parent復活／goal、不部署／stop原房。
