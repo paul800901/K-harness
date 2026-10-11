@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-11：[本人目標意圖原生記錄與必要調度整合候選](native-goal-provenance-20261011.md#astra-最後整合驗收與正式狀態)：人類 goal set/edit/resume/clear 補 origin:user、AI lexical automatic，不新增 failed-parent 自動回合。真正 fixed core paused 三次 user.goal 持久化、零模型呼叫；真 Opus 5.5 增量無 blocking、Astra 獨立讀回。整合既有自主核實 source，固定 e3f2ecd；完整固定4並行1251/1251＋UI build，預設並行失敗及未知 input-queue 負載原因保留，未宣稱已全治。正式 e1712d1／K 仍開，未停止、部署、恢復書房、push／東區；極長記憶偏移與服務端 compact 內因未解。
+
 - 2026-10-11：[原生子代理自主核實與必要調度候選](native-terminal-autonomous-reconciliation-20261011.md)：新需求超出前UI-only候選；已arm live pending精準核實前不消耗，單timer不重疊1→2→…30s只查pending、不限次數，UNKNOWN不稱running／不同persisted ID不猜newturn。159/159＋Astra全套1240/1240（追加test前）、最終wakeup39/39；真正Sol低＋Luna低新假鏈，3輪探針後terminal→7.084秒單次parent acceptance、0child重派、正常close。真Opus5.5末審無blocking、產品SHA不變／末審後只加pause-resume test；不改failed-parent復活／goal、不部署／stop原房。
 
 - 2026-10-11：[原生子代理stale／重複警告候選與學院再次失敗](native-terminal-notice-reconciliation-20261011.md)：正式其他房正在跑，僅候選2產品＋2測試；exact child/turn/status去重與latest settled解除、paused/stop顯示和dispatch分離，raw留後台、不補送模型。red→focused44／相稱139、真bundle雙尺寸假資料UI；真Opus5.5（1Glob＋3Read）無blocking、Astra獨立驗收，未部署/stop/resume。限定盤點4活躍＋5封存：學院新compact terminal error、另外3房原生續行；Pick同turn retry恢復，鐵血0336原安全過濾failed保留但已有正式裁定＋hash匹配補救，內因/成果各自分層。

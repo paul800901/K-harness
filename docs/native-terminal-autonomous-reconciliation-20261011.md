@@ -64,6 +64,34 @@ Opus packet缺pause-handler片段，提出有條件提醒：實際controller299�
 
 其餘非blocking：新pending可能等已排的最多30秒timer；永久UNKNOWN保留每30秒只讀；既有receipt寫入前重複event窗口非本次新增，不擴一般框架。Opus是靜態審查，沒有親跑模型／測試。
 
+## 使用者方向澄清與 Codex App 比較
+
+2026-10-11 本人澄清：要求薄接殼，是避免 K 太厚而妨礙原生工作；不是因擔心重送製造問題，更不是要求 K 出錯後放著。本人以 Codex App 能正常處理同類長工作作為驗收基準。主代理先前把 10/9 原始要求「照原生的做什麼就做什麼」概括成「你指定原生最終失敗後不自動接續」，沒有交代原容量／Luna→Sol 取捨前因，已在聊天更正；不得拿這個摘要當作不修漏接或調度的理由。
+
+本候選解決已觀察終態未被核實／交付的 K 缺口；原生回合已最終 failed 後另開核對／接續模型回合，不在此候選中，已另外向本人確認。未把本人提問當同意，也未恢復任何真實書房。新增的本人 goal 意圖記錄修正另見 [native-goal-provenance-20261011.md](native-goal-provenance-20261011.md)，不把兩者當成原生 compact 內因已修。
+
+本機只讀比較：K core 0.161.0，Codex App active／bundled core 0.162.0-alpha.17.2。exact 官方 tags 限定比對發現 remote compact request/retry 函式逐字相同、cap 都為 2，goal runtime 只有返回型別 pattern 差異；新版壓縮後 context 組裝及條件式 incremental-tools prompt 有變更，與本次事故因果仍 UNKNOWN。`prefer_mxc` 已由官方 feature／config/backend callsite 證實是 Windows sandbox backend 偏好，不是記憶／壓縮傳輸開關，未照抄旗標或升級核心。
+
+限定證據：`D:/K-harness/.runtime/native-coordination-repair-20261011/comparison/{report,prefer-mxc-note}.md` 及固定 tag source receipts。未讀 App 私人歷史／設定／登入；不把使用者的實測線索誇稱成 App 永不出錯，也不把 upstream generic error 當作 K 可以不處理協調的理由。
+
 ## 固定候選與作者交接
 
 source commit `3b91482f45e23d7a1ceaa43eb0fdd41931e66348` 僅controller＋native-wakeup test；文件索引另docs-only commit。controller作者權已讓出給Astra下一段調度，不自行碰human goal origin。isolated-close-readback.json確認兩次Opus自有PID均已退出、自有evidence程序0；原生host正常close見native-autonomous/close.json，沒有停止或探查正式host。原兩untracked及新增他人goal-provenance.test.mjs未納本commit、不清理。
+
+## 整合負載下的測試觀察校正（末審後，僅 test）
+
+Astra 整合全套實跑 1251 項、1250 通過／1 失敗：第一個 idle native refusal/completed 測試只固定等 40ms，在平行負載下 receipt／通知尚未完成便觀察到 0。原始 `D:/K-harness/.runtime/native-coordination-repair-20261011/root-integrated-tests-green.log` 雖檔名含 green，實際是失敗紀錄，完整保留。只把該 case 第一次成功通知的等待改為既有 bounded observable `waitRecheck`；once、ID、模型／權限、禁止重派 assertions 全保留，未改產品或其他固定等待。追加發生在 Opus 末審之後，不宣稱已送審；單檔再跑 39/39、0 skip，證據 `terminal/full-load-observable-wait-green.log`。整合全套待 Astra 重驗，尚未 commit／部署。
+
+## Astra 最後整合驗收與失敗保留
+
+後續預設並行完整執行的 `root-integrated-final-tests.log` 為 **1251 項、1248 pass／3 fail**，不是完成證據，原檔保留：
+
+1. `native-wakeup` missing terminal 案已讀回 settled，但通知需經 queueMicrotask、持久化 receipt、markSubmitted 才送出；固定 40ms 不是這條完成邊界。僅把 missing/throw loop 的首次成功通知改等既有 bounded delivery predicate，settled 斷言仍在等待之前，once／禁止重派不變。
+2. `luna-bridge` quiet test 的 onChange 原本接任意 inspection，可能在 start 尚未完成時先收到舊 quiet；之後 commandExecution 新活動使它正常失效。精確控制 thread/start 等待首次 quiet 的複本成功 red→green：舊版本接 starting／null tool 而讀到 undefined；只把接收條件限定 commandExecution 且 inspection 與 activity 同時間，原後續 running／不重啟斷言通過。產品與 30ms 測試時鐘不改。
+3. `input-queue` 的 2 秒 predicate 等待逾時。該檔未修改，獨立及固定 4 並行完整測試皆通過；歷史失敗是否僅 I/O 負載仍 UNKNOWN，不冒稱已找到或修掉唯一根因，也沒有任意放大期限。
+
+三檔修改前、修改後均各 97/97；真正 quiet red／green 及完整原失敗見證據根下 `terminal/async-observation/`、`terminal/three-async-baseline.log`。該目錄另有 receipt 延遲診斷在 preload 因 ESM URL 失敗、未進入測試，保留但不採為產品重現證據。Astra 獨立讀 code diff、quiet red／green；末審後只改測試，沒有再次改動產品或宣稱 Opus 已審這些後加測試。
+
+Astra 最後在固定資源並行下執行完整 suite：`node --test --test-concurrency=4 test/*.test.mjs`，**1251/1251、0 skipped、exit 0**，61.472 秒，證據 `root-integrated-bounded-tests.log`。UI build 同樣 exit 0；未更改 package 的預設 test 指令，不把此通過寫成預設高並行也已全部修復。
+
+整合 source commit `e3f2ecd263b1dfd854ea10acdbb31a86b54ae713` 含本段 test-only 差異及獨立的原生 goal provenance 三處補接，見 [本人意圖記錄候選](native-goal-provenance-20261011.md)。正式 runtime 仍是 `e1712d117d3c7f2d4f1df7ffd0b2beb94ffa15e1`，K 程序仍開著；未部署、停止、恢復／重送原房或 push。failed-parent 新模型核對／接續決定仍待本人答覆，未把最新同意驗收標準擴成這項實作或正式操作。
