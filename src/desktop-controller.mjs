@@ -89,7 +89,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  const state={status:'idle',threadId:null,model:null,modelDisplayName:null,inputModalities:[],serviceTier:'default',effectiveServiceTier:null,fastTier:null,workerPolicy:normalizeWorkerPolicy(),accessMode:'workspace-write',browserAccess:{enabled:false,networkAccess:false},title:'',efforts:[],effort:null,lastUsedModel:null,modelChanges:[],messages:[],tools:[],workers:[],artifacts:[],questions:[],notices:[],reasoning:[],turnDiffs:[],sandboxReadiness:null,goal:null,progress:{plan:[],explanation:null,compaction:'idle',compactions:null,compactionsComplete:false,tokenUsage:null},error:null,turnError:null,busy:false,workspace:root,usage:{codex:{status:'unavailable',windows:[],checkedAt:null}}};
  let host,turnId,submission,pendingSteer,stopRequested=false,opening=false,stopping=false,closing=false,requestEpoch=0,viewEpoch=0,hostEpoch=0,browserRecoveryThreadId=null,flashBridge=null,flashBridgeInit=null,flashGateway=null,flashNotifications={},flashArmed=new Set(),flashQueue=new Map(),flashNotifying=false,flashDeliveryUncertain=null;const items=new Map(),pending=new Map(),unsentSessions=new Map(),reasoningParts=new Map(),fileChangePatches=new Map();
  const activity=createWorkActivity(state),childActivities=new Map(),nativeTerminals=new Map(),inheritedWorkerItems=new Set();
- const clearNativeResults=()=>{nativeTerminals.clear();for(const [id,row] of flashQueue)if(row.provider==='codex')flashQueue.delete(id);for(const child of childActivities.values())delete child.epoch;};
+ let nativeRecheckTimer=null,nativeRecheckDelay=1000,nativeRecheckRunning=false;
+ const clearNativeResults=()=>{clearTimeout(nativeRecheckTimer);nativeRecheckTimer=null;nativeRecheckDelay=1000;nativeTerminals.clear();for(const [id,row] of flashQueue)if(row.provider==='codex')flashQueue.delete(id);for(const child of childActivities.values())delete child.epoch;};
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
  // protocol identity fields are translated; content, tools and child ids are not.
@@ -147,7 +148,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   const [oldId,metadata]=matches[0];transferTiming('messages',oldId,id);return metadata;
  };
  let settlingWorkers=0;
- const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying||nativeTerminals.size>0||state.goalPending===true;onChange(state);};
+ const changed=()=>{state.completionPending=settlingWorkers>0||flashQueue.size>0||flashNotifying||[...nativeTerminals.values()].some(terminal=>!terminal.unconfirmed)||state.goalPending===true;onChange(state);};
  const persistFlashNotifications=async()=>{
   if(!state.threadId)return;
   const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);
@@ -247,7 +248,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!opening&&!closing&&!stopping){
     let child=childActivities.get(p.threadId);
     if(!child){const holder={};child={holder,activity:createWorkActivity(holder)};childActivities.set(p.threadId,child);}
-    if(e.method==='turn/started'){child.turnId=p.turn?.id;child.ended=false;if(!stopRequested&&state.goal?.status!=='paused')child.epoch=requestEpoch;}
+    if(e.method==='turn/started'){for(const [key,terminal] of nativeTerminals)if(terminal.threadId===p.threadId&&terminal.turnId!==p.turn?.id)nativeTerminals.delete(key);child.turnId=p.turn?.id;child.ended=false;if(!stopRequested&&state.goal?.status!=='paused')child.epoch=requestEpoch;scheduleNativeRecheck();}
     if(e.method==='turn/completed'&&child.turnId===p.turn?.id&&child.epoch===requestEpoch&&!stopRequested&&state.goal?.status!=='paused'&&['completed','failed','interrupted'].includes(p.turn.status)){
      const terminal={provider:'codex',requestId:`codex:${p.threadId}`,threadId:p.threadId,turnId:p.turn.id,status:p.turn.status==='interrupted'?'cancelled':p.turn.status,epoch:requestEpoch};
      if(!flashNotifications[workerNoticeKey(terminal)])nativeTerminals.set(workerNoticeKey(terminal),terminal);
@@ -420,14 +421,34 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   // Only live, armed child terminals can request acceptance; history reads cannot.
   if(read===workerRead&&!stopRequested&&!opening&&!stopping&&!closing&&noticeEpoch===requestEpoch&&state.goal?.status!=='paused'){
    for(const [key,terminal] of nativeTerminals){
-    nativeTerminals.delete(key);
-    if(terminal.epoch!==requestEpoch||flashNotifications[key])continue;
+    if(terminal.epoch!==requestEpoch||flashNotifications[key]){nativeTerminals.delete(key);continue;}
     const row=result.find(w=>w.threadId===terminal.threadId);
-    if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status){flashQueue.set(row.requestId,{...row,epoch:requestEpoch});queueMicrotask(()=>void deliverFlashResults());}
-    else if(!state.notices.some(n=>n.kind==='worker-attention'&&n.nativeTerminal?.threadId===terminal.threadId&&n.nativeTerminal.turnId===terminal.turnId&&n.nativeTerminal.status===terminal.status))addNotice('warning','原生子代理已送出終止事件，但來源或最後回合讀回未確認；未自動接續或重送。','worker-attention',terminal.turnId,{nativeTerminal:{threadId:terminal.threadId,turnId:terminal.turnId,status:terminal.status}});
+    if(row?.settled&&row.turnId===terminal.turnId&&row.status===terminal.status){nativeTerminals.delete(key);flashQueue.set(row.requestId,{...row,epoch:requestEpoch});queueMicrotask(()=>void deliverFlashResults());}
+    else {if(!terminal.unconfirmed)nativeRecheckDelay=1000;terminal.unconfirmed=true;if(!state.notices.some(n=>n.kind==='worker-attention'&&n.nativeTerminal?.threadId===terminal.threadId&&n.nativeTerminal.turnId===terminal.turnId&&n.nativeTerminal.status===terminal.status))addNotice('warning','原生子代理已送出終止事件，但來源或最後回合讀回未確認；未自動接續或重送。','worker-attention',terminal.turnId,{nativeTerminal:{threadId:terminal.threadId,turnId:terminal.turnId,status:terminal.status}});}
    }
   }
-  changed();return rows;
+  scheduleNativeRecheck();changed();return rows;
+ }
+ // Only a live observed terminal can arm this read-only reconciliation.
+ function hasNativeRecheck(){return !!host&&!opening&&!closing&&!stopping&&!stopRequested&&state.goal?.status!=='paused'&&[...nativeTerminals.values()].some(t=>t.epoch===requestEpoch&&t.unconfirmed&&!flashNotifications[workerNoticeKey(t)]);}
+ function scheduleNativeRecheck(){
+  if(!hasNativeRecheck()){clearTimeout(nativeRecheckTimer);nativeRecheckTimer=null;nativeRecheckDelay=1000;return;}
+  if(nativeRecheckTimer||nativeRecheckRunning)return;
+  const active=host,parent=state.threadId,epoch=requestEpoch,view=viewEpoch;
+  const current=()=>host===active&&state.threadId===parent&&requestEpoch===epoch&&viewEpoch===view&&hasNativeRecheck();
+  nativeRecheckTimer=setTimeout(async()=>{
+   nativeRecheckTimer=null;nativeRecheckRunning=true;
+   try{
+    if(!current())return;
+    const pending=[...nativeTerminals].filter(([,t])=>t.epoch===epoch&&t.unconfirmed);
+    const rows=await checkNativeWorkers(active,parent,[...new Set(pending.map(([,t])=>t.threadId))]);
+    if(!current())return;
+    // An older persisted turn is not proof of a newer live turn: stay UNKNOWN.
+    if(pending.some(([key,t])=>nativeTerminals.get(key)===t&&rows.some(r=>r.threadId===t.threadId&&r.settled&&r.turnId===t.turnId&&r.status===t.status)))await workers();
+   }catch{/* A read failure keeps UNKNOWN; never replay a model or child work. */}
+   finally{nativeRecheckRunning=false;nativeRecheckDelay=Math.min(30000,nativeRecheckDelay*2);scheduleNativeRecheck();}
+  },nativeRecheckDelay);
+  nativeRecheckTimer.unref?.();
  }
  const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
  const recordFlash=record=>{
@@ -798,7 +819,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(transport.supportsHookOverrides)transport=await prepareCompactionHost({initial:transport,factory:options=>hostFactory({...hostOptions,...options}),cwd:workspace});
      state.capabilities.compactionAssist=transport.initialized===true;
      const active={...transport,close:()=>transport.close(),notify:message=>transport.notify(message),request:async(method,params,...args)=>localRefs(await transport.request(method,params?.threadId?{...params,threadId:nativeId(params.threadId)}:params,...args)),...(transport.waitForMcp?{waitForMcp:(id,...args)=>transport.waitForMcp(nativeId(id),...args)}:{})};host=active;createdHost=active;
-      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;const disconnected='主控已斷線；先重開原對話查明工作，不要直接重送。';if(state.turnError?.error)addNotice('warning',disconnected,'host-disconnected',state.turnError.turnId);else state.error=disconnected;changed();}}});
+      active.closed.then(()=>{if(host===active){markAssistantPartial(turnId);host=null;hostEpoch++;clearNativeResults();if(!opening&&!closing){clearQuestions();state.status='offline';state.busy=false;state.progress.compactionsComplete=false;const disconnected='主控已斷線；先重開原對話查明工作，不要直接重送。';if(state.turnError?.error)addNotice('warning',disconnected,'host-disconnected',state.turnError.turnId);else state.error=disconnected;changed();}}});
      if(!transport.initialized){await call('initialize',{clientInfo:{name:'k_harness_desktop',version:'0.1.0'},capabilities:{experimentalApi:true}});host.notify({method:'initialized',params:{}});}
      }
      const auth=await call('account/read',{refreshToken:false});if(auth.account?.type!=='chatgpt')throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
