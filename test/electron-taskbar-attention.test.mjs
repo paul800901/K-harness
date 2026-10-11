@@ -150,3 +150,13 @@ test('focus notifications are read-only, reflect native focused and visible stat
  unsubscribe();ipcListeners.get('k-native-window-focus')({}, {focused:false});
  assert.deepEqual(seen,[false,true],'unsubscribed renderer callback is no longer called');
 });
+
+test('failed attention uses the existing background flash, never labels failure as completion, and changes same-count description',()=>{
+ const f=harness();f.app.emit({completionAttention:{sequence:1,unread:[{threadId:'a',sequence:1}]}});
+ f.app.emit({completionAttention:{sequence:2,unread:[{threadId:'b',sequence:2,kind:'attention'}]}});
+ assert.equal(f.window.overlays.at(-1).description,'1 個未讀工作（含需注意）');assert.equal(f.window.flashes.at(-1),true);
+ f.app.emit({completionAttention:{sequence:3,unread:[{threadId:'b',sequence:2,kind:'attention'},{threadId:'c',sequence:3}]}});
+ assert.equal(f.window.overlays.at(-1).description,'2 個未讀工作（含需注意）');
+ assert.equal('focus' in f.window,false);assert.equal('show' in f.window,false);
+ f.controller.dispose();assert.equal(f.window.overlays.at(-1).icon,null);
+});

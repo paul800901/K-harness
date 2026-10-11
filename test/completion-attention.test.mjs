@@ -55,8 +55,8 @@ test('queued work, delivery, questions, unknown children and errors are not succ
   const a=createCompletionAttention();a.observe(working());a.observe(completed('a',extra));assert.equal(a.state.sequence,0,JSON.stringify(extra));
  }
 });
-test('failure, interruption and stopping disarm a run instead of creating a completion notification',()=>{
- for(const status of ['failed','interrupted','stopping','offline','error','uncertain']){
+test('interruption, stopping and offline disarm a run without notifying',()=>{
+ for(const status of ['interrupted','stopping','offline']){
   const a=createCompletionAttention();a.observe(working());a.observe({threadId:'a',status,busy:false});a.observe(completed());assert.equal(a.state.sequence,0,status);
  }
 });
@@ -67,4 +67,28 @@ test('native goal continuation and unknown outcomes do not publish completion be
 
 test('retained ended and paused goal records do not suppress later ordinary completion',()=>{
  for(const status of ['paused','blocked','ended','failed','interrupted','budgetLimited','usageLimited']){const a=createCompletionAttention();a.observe(working());a.observe(completed('a',{goal:{status}}));assert.equal(a.state.sequence,1,status);}
+});
+
+for(const status of ['failed','error','uncertain'])test(`live idle ${status} is attention, not successful completion or historical failure`,()=>{
+ const a=createCompletionAttention();a.observe({threadId:'history',status,busy:false});assert.equal(a.state.sequence,0);
+ a.observe(working());a.observe({threadId:'a',status,busy:true});assert.equal(a.state.sequence,0,'still running is not a terminal warning');
+ a.observe({threadId:'a',status,busy:false,completionPending:true,workers:[{status:'running',settled:false}],error:'PRIVATE_FAKE_ERROR'});
+ assert.deepEqual(a.state,{sequence:1,unread:[{threadId:'a',sequence:1,kind:'attention'}]});
+ a.observe({threadId:'a',status,busy:false});a.observe(completed());assert.equal(a.state.sequence,1,'same failed run cannot turn into a successful completion');
+ assert.equal(JSON.stringify(a.state).includes('PRIVATE_FAKE_ERROR'),false);
+});
+
+test('native retry remains running; later failure attention is cleared by new work and exact source ACK',()=>{
+ const a=createCompletionAttention();a.observe(working());a.observe(working('a',{error:'native retry',turnError:{willRetry:true}}));assert.equal(a.state.sequence,0);
+ a.observe({threadId:'a',status:'failed',busy:false});a.observe(working('b'));a.observe({threadId:'b',status:'uncertain',busy:false});
+ assert.equal(a.markViewed({threadId:'a',sequence:2}),false);assert.equal(a.markViewed({threadId:'b',sequence:2}),true);
+ a.observe(working());assert.deepEqual(a.state.unread,[]);a.observe(completed());
+ assert.equal(a.markViewed({threadId:'a',sequence:1}),false);assert.deepEqual(a.state.unread,[{threadId:'a',sequence:3}]);
+});
+
+test('explicit stopping suppresses later stop uncertainty and interruption; a new genuine failure still notifies',()=>{
+ for(const status of ['uncertain','interrupted','failed']){
+  const a=createCompletionAttention();a.observe(working());a.observe({threadId:'a',status:'stopping',busy:true});a.observe({threadId:'a',status,busy:false});assert.equal(a.state.sequence,0,status);
+  a.observe(working());a.observe({threadId:'a',status:'failed',busy:false});assert.equal(a.state.sequence,1);
+ }
 });

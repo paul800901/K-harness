@@ -1,5 +1,7 @@
 # K 最新工程交接索引
 
+- 2026-10-12：[不到三小時再失敗／工作列漏提醒修正候選](native-recovery-recurrence-20261012.md)：正式4ba2d5b確實在跑，Pick23:19／拳王23:56 failed；真原生Error留下systemError，K只收idle導致永不核對。最小接續條件修正＋既有未讀/工作列加入失敗需注意，真固定核心與loopback假Responses驗systemError→單次audit／再失敗不連鎖；真隱藏Electron通知鏈、五組builtUI及真正Opus5.5複查。正式其他房仍跑；本人明確「K還在工作，先不要更新」，候選保留、不停止／重啟／部署／排程／push，工作列實際像素與正式讀回待更新，供應商內因仍UNKNOWN。
+
 - 2026-10-11：[原生失敗後核對成果再接續正式更新](native-goal-recovery-20261011.md#正式更新與獨立驗收2026-10-11)：本人授權後，live active無顯式預算目標→exact failed／same blocked／idle／相關工人與原生背景確證結束，單dispatch同模型一次先核對保存成果再goal_resume，程式等待不叫監工模型，不重送未知結果／無限核對／歷史復活。正式version／source `4ba2d5b6987cd44b3e684cd05b45a5477685b15b` 已單次套用，677來源零差異、1287/1287全測／228/228 package／三build、真正Opus5.5末審＋fixture複核、controlled-failure真原生E2Ev4／零模型空房close通過；正式owner1440／390 UI與assets、74metadata全hash／設定／launcher／rollback皆由Astra獨立讀回，原翻譯未恢復、K保持關閉、不push／東區。保留null tokenBudget only／StartOrSteer非CAS／provider內因UNKNOWN界線，不宣稱極長任務或壓縮永不再失敗；原始失敗／掛起與早期完整log誤覆蓋仍據實記錄。
 
 - 2026-10-11：[原生調度／本人目標意圖正式更新](native-coordination-deploy-20261011.md)：本人確認 K 關閉後，正式 cfd4eba（產品 e3f2ecd）已單次套用、保留退版；包含子代理自主核實、過期警告及人類 goal provenance。完整1251/1251、prepared228/228、三build、674來源零差異、真Opus末審及Astra獨立讀回；74對話metadata不變，雙尺寸服務UI／26房側欄、0原房操作／新模型回合，日常K維持關閉。不push／東區；失敗主回合自動核對接續已允許但仍僅方案，未納本次功能。以下較早候選／e171狀態為歷史，以本筆為準。

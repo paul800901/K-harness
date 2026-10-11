@@ -33,7 +33,7 @@ const isFocusedAndVisible=window=>{
 
 export function createTaskbarAttentionController({window,electron,app,platform=process.platform,flashDurationMs=3000,setTimeoutFn=setTimeout,clearTimeoutFn=clearTimeout}){
  if(platform!=='win32'||typeof window?.setOverlayIcon!=='function'||typeof app?.onStateChange!=='function')return {dispose(){}};
- let disposed=false,hasSnapshot=false,lastSequence=0,lastUnreadCount=null,timer=null;
+ let disposed=false,hasSnapshot=false,lastSequence=0,lastUnreadCount=null,lastDescription=null,timer=null;
  const stopFlash=()=>{
   if(timer===null)return;
   clearTimeoutFn(timer);timer=null;
@@ -45,11 +45,12 @@ export function createTaskbarAttentionController({window,electron,app,platform=p
   const sequence=Number.isFinite(attention?.sequence)?attention.sequence:0;
   const unread=Array.isArray(attention?.unread)?attention.unread:[];
   const unreadCount=unread.length;
-  if(unreadCount!==lastUnreadCount){
-   lastUnreadCount=unreadCount;
+  const description=unreadCount?unread.some(item=>item.kind==='attention')?`${unreadCount} 個未讀工作（含需注意）`:`${unreadCount} 個未讀完成工作`:'';
+  if(unreadCount!==lastUnreadCount||description!==lastDescription){
+   lastUnreadCount=unreadCount;lastDescription=description;
    try{
     const icon=unreadCount?badgeBitmap(electron,unreadCount):null;
-    window.setOverlayIcon(icon,unreadCount?`${unreadCount} 個未讀完成工作`:'' );
+    window.setOverlayIcon(icon,description);
    }catch{}
   }
   if(!hasSnapshot){hasSnapshot=true;lastSequence=sequence;return;}

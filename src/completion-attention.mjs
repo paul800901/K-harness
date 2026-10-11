@@ -12,7 +12,11 @@ export function createCompletionAttention(){
     unread.delete(id);return;
    }
    if(!run?.armed)return;
-   if(['failed','interrupted','stopping','offline','error','uncertain'].includes(state.status)){run.armed=false;return;}
+   if(['interrupted','stopping','offline'].includes(state.status)){run.armed=false;return;}
+   if(['failed','error','uncertain'].includes(state.status)){
+    if(state.busy)return;
+    run.armed=false;unread.set(id,{sequence:++sequence,kind:'attention'});return;
+   }
    if(state.status!=='completed'||state.busy)return;
    if(state.completionPending||state.goalError||['starting','active','unknown'].includes(state.goal?.status))return;
    const waiting=(state.workers??[]).some(w=>w.executionUnowned!==true&&(w.settled===false||
@@ -21,12 +25,12 @@ export function createCompletionAttention(){
    // A child settling is not the parent's final response. Wait for the parent
    // to resume and finish rather than announce its earlier waiting message.
    if(run.waitingForMain||state.workerConnection==='failed'||state.questions?.length||state.queuedMessages?.length||state.error)return;
-   run.armed=false;unread.set(id,++sequence);
+   run.armed=false;unread.set(id,{sequence:++sequence});
   },
-  get state(){return {sequence,unread:[...unread].map(([threadId,sequence])=>({threadId,sequence}))};},
+  get state(){return {sequence,unread:[...unread].map(([threadId,item])=>({threadId,...item}))};},
   markViewed({threadId,sequence:seen}={}){
    // A delayed acknowledgement must not clear a newer completion.
-   if(unread.has(threadId)&&unread.get(threadId)===seen){unread.delete(threadId);return true;}
+   if(unread.has(threadId)&&unread.get(threadId).sequence===seen){unread.delete(threadId);return true;}
    return false;
   },
   forget(id){runs.delete(id);unread.delete(id);},

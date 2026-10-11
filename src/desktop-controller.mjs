@@ -573,7 +573,8 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const thread=(await active.request('thread/read',{threadId:parent,includeTurns:false})).thread;
     if(!current())return;
     if(thread?.status?.type==='active'){invalidateRecovery();return;}
-    if(thread?.status?.type!=='idle')return;
+    // Native terminal Error leaves systemError until the next turn; it is not an active turn.
+    if(!['idle','systemError'].includes(thread?.status?.type))return;
     const latest=(await active.request('thread/turns/list',{threadId:parent,limit:1,sortDirection:'desc',itemsView:'summary'})).data?.[0];
     if(!current())return;
     if(!latest)return;
