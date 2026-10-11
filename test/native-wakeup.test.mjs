@@ -53,7 +53,7 @@ async function fixture({reject,history=[]}={}){
 
 test('idle native refusal/completed wakes once, using IDs not body and unchanged model/permissions',async()=>{
  const f=await fixture();try{
-  f.child();f.finish();await f.tick();f.terminal();await f.tick();
+  f.child();f.finish();await f.tick();f.terminal();await waitRecheck(()=>f.delivered().length===1);
   const [call]=f.delivered();assert.equal(f.delivered().length,1);assert.equal(call.p.threadId,'parent');
   assert.equal(call.p.toolOutput.name,'k_native_subagent_terminal');assert.equal(call.p.turnTrigger,'subagent');assert.deepEqual(call.p.input,[]);
   assert.match(call.p.toolOutput.output,/child-turn/);assert.match(call.p.toolOutput.output,/終止不等於交付成功/);assert.doesNotMatch(call.p.toolOutput.output,/PRIVATE_REFUSAL_BODY/);
@@ -172,7 +172,7 @@ test('delayed read cannot revive a stopped terminal on reopening the room',async
  }finally{release?.();await f.c.close();}
 });
 
-for(const mode of ['missing','throw'])test('later exact native settlement recovers a consumed '+mode+' terminal once',async()=>{const f=await fixture();try{f.child();await f.tick();f.finish();await f.tick();f.setReadMode(mode);f.terminal();await f.c.workers();await f.tick();assert.equal(f.delivered().length,0);assert.equal(f.c.state.completionPending,false,'Unknown terminal is attention, not running work');f.setReadMode('ready');await f.c.workers();await f.tick();assert.equal(f.c.state.workers[0].settled,true);assert.equal(f.delivered().length,1);f.terminal();await f.c.workers();await f.tick();assert.equal(f.delivered().length,1);}finally{f.setReadMode('ready');await f.c.close();}});
+for(const mode of ['missing','throw'])test('later exact native settlement recovers a consumed '+mode+' terminal once',async()=>{const f=await fixture();try{f.child();await f.tick();f.finish();await f.tick();f.setReadMode(mode);f.terminal();await f.c.workers();await f.tick();assert.equal(f.delivered().length,0);assert.equal(f.c.state.completionPending,false,'Unknown terminal is attention, not running work');f.setReadMode('ready');await f.c.workers();assert.equal(f.c.state.workers[0].settled,true);await waitRecheck(()=>f.delivered().length===1);assert.equal(f.delivered().length,1);f.terminal();await f.c.workers();await f.tick();assert.equal(f.delivered().length,1);}finally{f.setReadMode('ready');await f.c.close();}});
 
 for(const action of ['pause','stop','new-child-turn'])test('unconfirmed native terminal is invalidated by '+action,async()=>{const f=await fixture();try{f.child();await f.tick();f.finish();await f.tick();f.setReadMode('missing');f.terminal();await f.c.workers();await f.tick();if(action==='pause')f.emit('thread/goal/updated','parent',{goal:{status:'paused'}});if(action==='new-child-turn')f.emit('turn/started','child',{turn:{id:'new-child-turn'}});f.setReadMode('ready');if(action==='stop')await f.c.stop();await f.c.workers();await f.tick();assert.equal(f.delivered().length,0);assert.equal(f.c.state.completionPending,false);}finally{f.setReadMode('ready');await f.c.close();}});
 

@@ -349,7 +349,7 @@ test('Codex AI and human edit the same native goal without resume, replay or cro
   for(const bad of [undefined,{}, {'x-codex-turn-metadata':'bad'},{'x-codex-turn-metadata':{thread_id:'child',turn_id:'edit-turn'}},{'x-codex-turn-metadata':{thread_id:threadId,turn_id:'old'}}])await assert.rejects(gateway.editGoal({objective:'not applied'},bad),/目前主對話/);
   await assert.rejects(f.c.goal({objective:'bad',editOnly:true,status:'active'}),/只修改文字/);
   assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count);
-  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,objective:'AI edited'},{threadId,objective:'human edited'}]);
+  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,origin:'automatic',objective:'AI edited'},{threadId,origin:'user',objective:'human edited'}]);
   assert(!f.calls.some(c=>c.method==='turn/start'||c.method==='turn/steer'));
   nativeGoal=null;await assert.rejects(gateway.editGoal({objective:'not new'},meta),/沒有可修改/);
   emit({method:'turn/completed',params:{threadId,turn:{id:'edit-turn',status:'completed'}}});await assert.rejects(gateway.editGoal({objective:'late'},meta),/目前主對話/);
@@ -368,7 +368,7 @@ test('stopping during a goal edit read does not apply the pending objective',asy
 test('Codex main AI resumes an existing paused or blocked goal during its turn without replay or limit bypass',async()=>{
  let gateway;const f=await fixture({gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/mcp',headers:{Authorization:'Bearer fixture'}}}},close:async()=>{}};}}),original=f.host.request;
  let nativeGoal=null;
- f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set'))nativeGoal={...nativeGoal,...params};return {goal:structuredClone(nativeGoal)};}return original(method,params);};
+ f.host.request=async(method,params)=>{if(method.startsWith('thread/goal/')){f.calls.push({method,params});if(method.endsWith('/set')){const {origin,...goalParams}=params;nativeGoal={...nativeGoal,...goalParams};}return {goal:structuredClone(nativeGoal)};}return original(method,params);};
  try{
   const {threadId}=await f.c.open({model:'gpt-6-astra'});await f.c.goal({objective:'discussed goal',status:'paused',tokenBudget:500});Object.assign(nativeGoal,{tokensUsed:42,timeUsedSeconds:60,createdAt:123});
   const emit=f.connections.at(-1).onEvent;emit({method:'turn/started',params:{threadId,turn:{id:'resume-turn'}}});
@@ -377,7 +377,7 @@ test('Codex main AI resumes an existing paused or blocked goal during its turn w
   const before=structuredClone(nativeGoal),result=await gateway.resumeGoal({},meta);assert.deepEqual(result.goal,{...before,status:'active'});assert.equal(f.c.state.busy,true);assert.equal(f.c.state.questions.length,0);
   const count=f.calls.filter(c=>c.method==='thread/goal/set').length;
   assert.deepEqual((await gateway.resumeGoal({},meta)).goal,result.goal);assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count,'already active is a readback, not another set');
-  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,status:'active'}]);
+  assert.deepEqual(f.calls.filter(c=>c.method==='thread/goal/set').slice(1).map(c=>c.params),[{threadId,origin:'automatic',status:'active'}]);
   nativeGoal.status='blocked';const blockedBefore=structuredClone(nativeGoal),blockedResult=await gateway.resumeGoal({},meta);assert.deepEqual(blockedResult.goal,{...blockedBefore,status:'active'});assert.equal(f.calls.filter(c=>c.method==='thread/goal/set').length,count+1);
   for(const status of ['complete','usageLimited','budgetLimited','unknown']){nativeGoal.status=status;await assert.rejects(gateway.resumeGoal({},meta),/並非已暫停或受阻/);assert.equal(nativeGoal.status,status);}
   for(const extra of [{objective:'changed'},{tokenBudget:999},{editOnly:true},{refresh:true},{clear:true},{status:'paused'}])await assert.rejects(f.c.goal({status:'active',resumeOnly:true,...extra}));

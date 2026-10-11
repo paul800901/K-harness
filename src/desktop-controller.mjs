@@ -606,7 +606,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   }catch(e){markAssistantPartial(turnId);state.status='uncertain';state.busy=false;state.error='回合已要求中止，但背景工作未確認停止：'+e.message;throw e;}
   finally{stopping=false;changed();}
  }
- async function goal({objective,status,clear=false,refresh=false,tokenBudget,editOnly=false,resumeOnly=false,expectedObjective}={}){
+ async function goal({objective,status,clear=false,refresh=false,tokenBudget,editOnly=false,resumeOnly=false,expectedObjective}={},origin='automatic'){
    if(!host||!state.threadId||opening||closing||stopping||state.goalPending||submission)throw new Error('請先開啟對話，或等待目前操作完成。');
    if(objective!==undefined&&(typeof objective!=='string'||!objective.trim()||objective.length>4000))throw new Error('目標須為 1–4000 字元。');
    if(editOnly&&(objective===undefined||status!==undefined||tokenBudget!==undefined||clear||refresh))throw Error('儲存目標只修改文字，不變更執行狀態或預算。');
@@ -630,7 +630,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     // thread as native history, never recreate it as an unsent empty room.
     if(!refresh&&!clear&&!editOnly)await markSubmitted();
     if(host!==active||state.threadId!==threadId||epoch!==requestEpoch||stopping||closing)throw Error('對話已停止或切換，目標尚未送出。');
-    task=active.request(refresh?'thread/goal/get':clear?'thread/goal/clear':'thread/goal/set',{threadId,...(!refresh&&!clear?{...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status}),...(tokenBudget===undefined?{}:{tokenBudget})}:{})});submission=task;
+    task=active.request(refresh?'thread/goal/get':clear?'thread/goal/clear':'thread/goal/set',{threadId,...(refresh?{}:{origin}),...(!refresh&&!clear?{...(objective===undefined?{}:{objective:objective.trim()}),...(status===undefined?{}:{status}),...(tokenBudget===undefined?{}:{tokenBudget})}:{})});submission=task;
     const result=await task;
     if(host!==active||state.threadId!==threadId)throw Error('原對話已變更；目標操作未重送。');
     state.goal=clear?null:result.goal??null;if(state.goal?.status==='paused')clearNativeResults();return {goal:state.goal};
@@ -1007,7 +1007,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     return {steered:true,turnId:expected};
    }finally{if(pendingSteer===attempt)pendingSteer=null;}
   },
-  goal,
+  goal:args=>goal(args,'user'),
   async compact(){
    if(!host||!state.threadId||opening||closing||stopping||state.busy)throw new Error('請在回合結束後再開始壓縮。');
    state.progress.compaction='requested';changed();

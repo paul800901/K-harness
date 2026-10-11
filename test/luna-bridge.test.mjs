@@ -439,7 +439,7 @@ test('wait deadline ends only the wait; event completion wakes all listeners wit
 
 test('runtime quiet check exposes genuine activity without changing or restarting the native work',async()=>{
  let wake;const attention=new Promise(r=>{wake=r;});
- const {bridge,fixture}=await make({watchOptions:{quietMs:30},onChange:r=>{if(r.inspection)wake(r);}});
+ const {bridge,fixture}=await make({watchOptions:{quietMs:30},onChange:r=>{if(r.inspection&&r.activity?.lastToolName==='commandExecution'&&r.inspection.lastActivityAt===r.activity.lastEventAt)wake(r);}});
  try{
   const started=await bridge.start({requestId:'quiet-bridge',task:'synthetic long work'});
   fixture.host.emit({method:'item/started',params:{threadId:started.threadId,item:{id:'tool-live',type:'commandExecution'}}});
