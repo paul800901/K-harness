@@ -1,6 +1,6 @@
 # 長任務再次失敗：原生錯誤狀態與 Windows 工作列漏通知
 
-狀態：候選修正已完成，正式仍為 `4ba2d5b6987cd44b3e684cd05b45a5477685b15b`。2026-10-12 本人回報兩房不到三小時再次失敗，並指出 Windows 工作列沒有提示。本人其後明確回覆「K 還在工作，先不要更新」；本批只保存候選，不停止、重啟、重送、部署或排程更新，等本人另行通知。
+最新狀態：本人後續明確要求「可以正式套用」，已正常套用 `3c2b0b53a2642a2dd68bb274d5e2edc90cec5760`，正式來源、介面、資料保留與服務關閉皆完成独立讀回，詳見文末。Windows 工作列實際圖示仍未目視驗收，供應商斷線內因仍未知。下方候選階段與當時「先不要更新」的限制保留為歷史，不代表仍未部署。
 
 ## 現場唯讀證據
 
@@ -35,6 +35,17 @@
 - 採納 Opus 的既有 UI 覆蓋恢復及非終局 systemError 負向回歸；停止失敗提醒及可自動核對失敗先提醒保留。systemError **本身不是**主回合確定结束的充分條件，非終局 Error 也可能設該旗標；原 exact latest failed 等檢查仍必要。
 - 曾試作 preflight 例外的額外黃色通知，但本事故沒有該例外證據，且可能在成功後留下過期提示，Astra 不採納；相關暫時39項測試與 RED 原文保留，但不在最後產品。最小修正只改四個產品檔：desktop-controller、completion-attention、taskbar-attention、project-sidebar，沒有新增服務、設定或重送迴圈。
 
-## 部署界線與未完成
+## 候選驗收時的部署界線（歷史）
 
 本批未套用正式 K，沒有停止／重啟、修改原翻譯工作或對話 metadata、push、東區更新、帳號／計費／核心升級。本人最新指示是不更新，待另行通知後才進行正式套用與讀回；工作列實際桌面呈現也留待屆時確認。本候選解決已證 K 的接續門檻與失敗通知缺漏，不能宣稱供應商串流／壓縮錯誤、極長記憶偏移或其他歷史問題全部根治。
+
+## 本人授權後正式更新與 Astra 獨立讀回（2026-10-12）
+
+- 本人明確要求「可以正式套用」。launcher 紀錄 01:02:32（臺灣）正常確認關閉／exit0，fresh CIM 與 47831／5199 listeners 皆空；不是工程代理強制停止。Chrome native host 29932／20088 原樣保留。部署前 Astra 另存 `astra-predeploy-baseline.json`，不是僅採子代理結論。
+- GPT-6.1 Sol 作唯一部署執行者；Astra 核對準備來源、三 build、實際 package 回歸、既有交易腳本與保存基線後才放行一次 activateRuntime。正式 version／sourceVersion 為 `3c2b0b53a2642a2dd68bb274d5e2edc90cec5760`；舊程式與啟動器保留於 `D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791738693948`。這是程式退版，不是對話資料快照。
+- canonical archive 與安裝後 **678個 tracked 檔案逐位元組零差異**；package manifests 相同，沿用既有 standalone dependencies，沒有安裝／升級相依。UI、extension、launcher 三 build 成功，工程完整1296/1296、package最終12檔255/255。
+- package 首輪為254/255，唯一失敗是未改動的 `native-wakeup.test.mjs:215`：205歷史child後，初始單一probe的214斷言已通過；release readGate後固定等待40ms，交付尚為0。該fixture與舊正式相同且無active goal，沒有走本批systemError恢復條件。單項原樣1/1通過後，Astra只允許一次完整同4並行重跑；未改產品、fixture、timeout或斷言，第二輪255/255。保留首輪、診斷及第二輪log；這支持時序敏感跡象，但未證明該次延遲內因，不能稱所有執行從未失敗。詳見 `deployment/validation-first-failure.json`／`validation.json`。
+- 真正式 owner 的 served UI／assets 實讀：桌面1440×960、手機390×844，26房側欄；selectedThread=null、0 API POST、0原房開啟或新模型回合。Astra 親眼確認 `formal-ui-1440.png`／`formal-ui-390.png`，另獨立比對安裝JS／CSS、八個關鍵來源、啟動器／入口與舊版controller可退回性。這不是觸發真實失敗或目視 Windows 工作列的驗證。
+- **74份 main-session metadata inventory及全部hash不變**；核心選擇、原生config、projects、其他穩定設定與runtime非版本欄位保留。Gemini快取以真實before/after內容逐欄比較，只變 accounts/4 的 auth.checkedAt、quota.checkedAt、lastQueryAt；不是登入／帳號／憑證或計費修改。
+- 正式驗證 owner／headless browser 正常關閉，Astra 再次 fresh CIM／ports確認無殘留；日常 K 保持關閉，可由本人原捷徑開啟。不恢復／重送翻譯工作、不push、不更新東區。
+- 本輪部署證據在 `D:/K-harness/.runtime/native-recovery-recurrence-20261012/deployment/`，`final-receipt.json` 是執行收據，`astra-installed-acceptance.json`／`astra-final-stop-check.json` 是主代理獨立驗收。只有這兩個 K 缺口已正式套用；原生服務失敗內因、極長記憶偏移及 Windows 工作列實際圖示的未驗界線不改。
