@@ -1,6 +1,6 @@
 # 原生主回合失敗後：先核對成果再接續
 
-狀態：候選已實作；正式仍 cfd4eba（產品 e3f2ecd），本功能未部署。工程基底 8b75fbc。上一個產品凍結版的真正原生假資料 E2E v2 已由 Astra 獨立讀回通過；真正 Opus 5.5 首次 code review 找到三項阻擋，已最小補修並凍結，目前產品凍結20a540f0已通過真正 Opus 最後產品複查、E2Ev4及零模型空房正常關閉，完整1287/1287、必要fixture短複查亦通過，Astra已獨立接受本批候選；先前 Opus 只有只讀方案討論，不當成本批 code review。未操作原小說房、換模型／帳號、變更核心／計費／全域設定、push 或更新東區。
+狀態：正式版本／sourceVersion `4ba2d5b6987cd44b3e684cd05b45a5477685b15b` 已單次套用並完成 Astra 獨立正式驗收，K 維持關閉。677 個來源檔零差異、完整1287/1287、package228/228、真正 Opus 5.5複查、controlled-failure 原生 E2Ev4與正式雙尺寸 UI 讀回通過；74份對話 metadata 與設定保留。未恢復任何原翻譯工作，未換模型／帳號、變更核心／計費／全域設定、push 或更新東區。下方候選／未部署敘述保留當時驗證時序，正式狀態以最後結案段為準。
 
 ## 使用者要求與改變
 
@@ -85,4 +85,14 @@
 - 唯一mock補正：thread/read includeTurns:false可讀loaded runtime，thread/resume與includeTurns:true仍durable-only，unknown首次送出不重建等全部assertion保持。空房單檔9/9。後續完整1287／1284pass／3fail／0cancel自然結束（`full-concurrency4-opus-acceptance.log`），失敗全是舊history read count把新增metadata算成history。
 - 完整失敗run結束後才補3個精確filter includeTurns===true：desktop-switch保留history []、desktop保留history1、manual-fork保留history2並明示不重讀parent history，原no-replay/no-interrupt斷言不動；連同empty-room共四個test-only差異存 `metadata-fixture-final.diff`，四檔81/81（`metadata-fixture-contract-green.log`）。最終純快照固定4並行 **1287/1287**（`full-concurrency4-final.log`，62.90秒），0 fail/skip/cancel；不把混合快照或掛起run標成全綠。官方訂閱真正 Opus 5.5短fixture複核 `opus-test-fixture/result.json` session `13bd175d-2235-4232-83cd-41f5c0bfc16b` 無阻擋，Astra獨立接受四個test-only差異。未採非必要的 !==false 建議，保留 ===true。產品20a540f0未變，候選驗收完成、正式仍未部署。
 
-全部 evidence 在 `D:/K-harness/.runtime/native-goal-recovery-20261011/`。正式狀態以 Astra 最終追加與 runtime 讀回為準；候選目前不自行部署、push 或操作原工作。
+全部 evidence 在 `D:/K-harness/.runtime/native-goal-recovery-20261011/`；以下為本輪正式結案讀回。
+
+## 正式更新與獨立驗收（2026-10-11）
+
+- 本人要求修完更新並表示暫時不用 K；Astra 接受固定來源與候選後，由單一部署者正常執行既有 activateRuntime 交易一次。正式 version／sourceVersion 均為 `4ba2d5b6987cd44b3e684cd05b45a5477685b15b`，原 cfd4eba 程式／啟動器退版保留於 `D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791714519135`；不是對話資料快照。
+- canonical archive 候選與安裝後 **677 個 tracked source 零差異**；相同 package manifests 才沿用既有 standalone dependencies，未安裝／升級套件。UI、extension、launcher 三 build 成功；工程完整固定4並行 **1287/1287**、package十檔實測 **228/228**。來源／候選／正式讀回分別有 `astra-source-acceptance.json`、`deployment/astra-candidate-acceptance.json`、`deployment/astra-installed-acceptance.json`。
+- 真正官方訂閱 Opus 5.5產品末審與必要 fixture短複核皆無阻擋；當前產品 controlled-failure 真原生 E2Ev4先讀保存A、trusted goal_resume、只寫剩餘B，A hash/mtime不變，另零模型空房正常close通過。這是 K 邊界故障注入與真模型接線驗收，不是 provider 真compact故障重現。
+- 正式 owner實際served UI／assets讀回：桌面1440×960、手機390×844，26房側欄、selectedThread=null，0 API POST／0新模型回合；未選取、讀回內容或恢復任何原翻譯房。截圖 `deployment/formal-ui-1440.png`、`deployment/formal-ui-390.png` 已由 Astra 親眼確認，JS/CSS bytes與安裝資產相同。
+- **74份 main-session metadata檔案 inventory／全部hash不變**，core selectors、原生config、projects、其他命名設定與runtime非版本欄位保留；launcher／入口匹配。Gemini cache以本次before／after實際內容比對，僅accounts/4的auth.checkedAt、quota.checkedAt、lastQueryAt改變，未搬憑證或改登入／帳號／計費。詳見 `deployment/final-preservation.json`、`deployment/gemini-cache-field-diff.json`。
+- 自有驗證browser／owner正常close，最後CIM與47831／5199 listeners皆空，日常K保持關閉；Chrome native host保留，未強制停止正式程序。正式收據 `deployment/final-receipt.json`，Astra再次獨立查installed critical8對Git、74metadata、設定、launcher、rollback與雙尺寸截圖，接受本次正式更新。未push／更新東區。
+- 限制不變：自動核對僅本次live歸屬且無顯式tokenBudget的合格目標；有預算保留既有人為恢復，不在budget外自動生成。StartOrSteer非CAS／外部client競態仍有公開協定限制；provider compact／stream內部失敗原因仍UNKNOWN。本次未操作原長篇翻譯，不證明極長任務或原生壓縮問題永不再發生，也不從歷史／重啟復活原failed工作。
