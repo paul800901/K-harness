@@ -1,6 +1,6 @@
 # K 最新工程交接索引
 
-- 2026-10-12：[真正空白新聊天室與 AI 交接](fresh-chat-handoff-20261012.md)：新增 Codex conversation_create→thread/start，舊 conversation_continue 仍 fork；同專案設定／單次交接／原房與未知結果不重播。真原生新假鏈 source compact1→child0、child僅1turn、實讀handoff、重開及雙尺寸UI通過；真Opus5.5無blocking、Astra獨立核實。本人確認K關閉並允許驗收後直接更新，正式進度見該紀錄最後追加，不push／東區。
+- 2026-10-12：[真正空白新聊天室與 AI 交接正式更新](fresh-chat-handoff-20261012.md#正式更新與-astra-獨立讀回2026-10-12)：本人關閉並授權後固定5a25586已單次套用；Codex conversation_create→thread/start，舊 conversation_continue 仍 fork。真原生新假鏈 source compact1→child0、child僅1turn、實讀handoff、重開及雙尺寸UI通過；真Opus5.5無blocking、Astra獨立核實。1422/1422全測、291/291封裝、三build、687安裝來源零差異；正式owner雙尺寸／assets／27房／0POST，75metadata及穩定設定保留，Gemini四欄查詢cache差異逐項讀回。正常關閉後K維持關閉、原房不開／不恢復／不重播，不push／東區；不宣稱上游斷流或所有長任務記憶已解。
 
 - 2026-10-12：[四房後續修正與 Flash 等待交接正式更新](four-room-followup-fixes-20261012.md#本人授權後正式更新與-astra-獨立讀回2026-10-12)：本人確認停止後，Astra單次套用固定a075a59；685安裝來源零差異、三build、封裝551/551，工程1413/1413及真Opus5.5已驗。74metadata及穩定設定保留，formal-owner1440/390與assets／26房／0POST／0頁面錯誤，驗證後服務關閉。更新前正常關閉失敗與本人強制停止如實分開；quota-reset exact cache差異經Astra獨立核對後接受，原拒絕證據保留。原房不開／不恢復／不重播，不push／東區；真帳號輪換／單一跨雙controller E2E及上游内因未驗界線保留。
 

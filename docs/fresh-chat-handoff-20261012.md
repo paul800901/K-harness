@@ -39,4 +39,17 @@
 
 ## 正式狀態
 
-目前完成候選、整合全測、上述原生／UI 與 Opus 複查；固定版本部署讀回將在下方追加。此段不是正式已更新證據。
+候選完成整合全測、上述原生／UI 與 Opus 複查後，依本人「修完直接改好，我關 K 了」授權正式更新，結果如下。
+
+### 正式更新與 Astra 獨立讀回（2026-10-12）
+
+- 固定產品版本 **`5a2558633bdb040af2c8a26265f1fcfb2e5ad569`**。Astra 核對 K 自有程序與 47831／5199 listener 均為 0 後，單次呼叫既有 installer activation；沒有強制結束、沒有重送 activation。正式 `.local/runtime.json` 與 installed runtime 已讀回相同版本。
+- 前版程式可退回：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791784429349`。這是程式退版，不宣稱是使用者資料快照。
+- 封裝三項 build 成功、focused **291/291**；Astra 再核對準備版及安裝後 **687/687 Git 來源 bytes 一致**。沿用獨立複製的既有 dependencies，package／lock 三方一致，未安裝或更新套件／原生核心；本次沒有回復任何生成來源換行。
+- 真正式 owner 啟動、health 200、未授權 state 403；實際送出的 JS／CSS 與安裝檔 hash 一致。1440×960／390×844 介面讀回及 Astra 看圖完成，側欄讀回 **27 房**；未選取既有房、busy=false、**0 POST／0 page error／0 新工作**。此為正式服務與瀏覽器雙尺寸，不冒稱手機 USB 實機或使用者捷徑點擊驗收。
+- **75 個既有 main-session metadata 的完整清單及 hashes 未變**；五個穩定資料目錄位置與第一層清單未變。selected cores、Codex config、projects、google-ops 四項設定 hash 不變。
+- 正常啟動查詢更新 Gemini 額度 cache 的四個欄位：帳號 0 的 auth.checkedAt、quota.checkedAt、lastQueryAt，以及 five_hour.resetsAt（1791800915→1791802548）。Astra 逐欄讀回；帳號身分／登入狀態、每週剩餘 78%、五小時剩餘 100% 及其餘欄位均未變。這不是換帳號或移轉登入，不把動態查詢 cache 宣稱完全不變，也不倒寫舊 cache。
+- 測試 browser／正式 owner 正常關閉；最後再次確認 K 自有程序與上述 listeners 均為 0，沒有 force stop。既有兩個瀏覽器 native host 保留、不碰。**原翻譯房未開啟、未恢復、未重播工作，K 維持關閉，使用者可用原捷徑開啟。**
+- 證據位於 `D:\K-harness\.runtime\fresh-chat-handoff-20261012\deployment`：`activation.json`、`preserved.json`、`validation.json`、`installed-source.json`、`formal-readback.json`、兩張 `formal-ui-*.png`、`post-readback-preservation.json`、`stopped-after-readback.json`。完整回歸 1422/1422 與 genuine Opus 複查證據見上文。
+
+未 push、未更新東區。此正式功能限 Codex 主代理的真正新房交接；既有歷史分支保留。沒有將上游斷流／壓縮、所有長任務記憶問題、真 Gemini 跨帳號輪換或歷史正常關閉內因宣稱為本次已解決。
