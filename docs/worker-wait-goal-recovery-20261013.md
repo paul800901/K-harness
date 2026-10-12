@@ -76,3 +76,21 @@
 尚未部署或做正式版實際翻譯長跑。既有已 blocked 的原房不會因更新自動復活；本次沒有代替本人恢復它。遠端無活動的根因仍未知；本批解決可驗證的通知／恢復協調缺口，不宣稱所有長任務、上游容量或壓縮故障從此不再發生。
 
 固定候選程式版本：`a0662c581e31f92f0225f447b924f5f44734dd4d`；本行為後續純文件追加。既有未追蹤 `node_modules-root-link/`、`test/fixtures/descendant.pid` 原樣保留。
+
+## 本人授權後正式更新與讀回（2026-10-13）
+
+本人本輪明確通知「可以更新了，我关掉了」，取代上節當時候選停等限制。本次只套用已完成的工人等待／晚到完成恢復與前批長訊息收合／模型提示去重，不新增功能，不停止或重播原翻譯，不 push、不更新東區。
+
+- 部署前及替換前核對：日常 K 自有程序為 0，47831／5199 無監聽。兩個既有 Chrome 原生 host 獨立留存，未關閉或強制結束。
+- 固定來源 `a0662c581e31f92f0225f447b924f5f44734dd4d` 獨立封裝，697 個 Git 來源檔逐位元組一致；package／lock 與舊正式相同，沿用現有相依，沒有安裝、升級套件或更動全域設定。
+- UI／extension／Windows launcher 三建置通過。封裝首輪完整測試為 **1543/1544**：既有 `browser-native-profiles.test.mjs` 假資料 reconnect 未能發布新 descriptor，讀回仍為舊 token。fixture 診斷為 `descriptor_write_failed`，新暫存檔存在而原 target 未被替換；既有診斷未保存底層 OS error，**未能證明是哪個 Windows 程序或錯誤造成**，不得寫成已修復此間歇問題。這兩個相關來源檔與舊正式相同。
+- 原失敗 log、fixture 及 `validation-first-failure.json` 保留。未改產品碼、斷言、等待或測試並行度：單獨原樣 **3/3**，第二次完整封裝回歸 **1544/1544**，0 fail／cancel／skip；三尺寸 built UI 探針 **3/3**。Astra 查看桌面／手機尺寸收合畫面。這是複驗通過，不是根因已確診。
+- 臺灣時間約 02:19 單次程式替換成功，正式 `.local/runtime.json` 為上述 `a0662c5`；已安裝 697 檔再次零差異。舊正式 `f5ef4ab0ca87cd14679b63ef278af00a2db2e5ff` 程式及入口保留於 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791829165192`。退版只退程式與入口，不宣稱為對話備份。
+- 真正正式 owner 啟動後，health 200、未授權 state 403；實際服務的 JS／CSS 與已安裝 build hash 相同。1440×960 與 390×844 已登入正式頁可載入 **31 房**清單，0 頁面錯誤、0 POST，未選取原房、未送出新任務。Astra 已查看兩張正式截圖；不是實體手機、日常 Windows 捷徑像素或正式翻譯長跑驗收。
+- **79 個 main-session metadata** 檔案及清單 hash 未變；provider／登入／瀏覽器資料根目錄原位保留，原生核心設定、Codex config、projects、Google 操作設定不變。正式頁正常額度查詢只更新第一 Gemini 帳號的 `auth.checkedAt`、`quota.checkedAt`、`lastQueryAt` 三欄；其餘帳號資料、數值、reset、activeAccountId 逐欄不變，未切帳或搬憑證。
+- 啟動入口／打包入口及旧入口退版 hash 讀回成功，非版本 runtime 設定不變。正式測試 owner 正常關閉後再次確認 K 無自有程序／監聽；既有 Chrome host 仍在。K 留在關閉狀態供本人自行開啟。
+- 本次沒有新的 Opus 複查；先前真正 Opus 週額度失敗紀錄與本人額度不足可略過的決定保留，由 Astra 驗收，不宣稱已審。
+
+本次獨立封裝、失敗紀錄、安裝與正式讀回證據：`D:\K-harness\.runtime\worker-wait-deploy-20261013\`。核心收據為 `validation.json`、`installed-source.json`、`activation.json`、`formal-readback.json`、`post-readback-preservation.json`、`launcher-rollback-readback.json` 及 `stopped-after-readback.json`。
+
+**本批已正式更新並停止。** 原來已 blocked 的房間不因安裝自行復活；由本人下一次「繼續」才恢復。前段真正原生測試仍是 Sol 搭配可控假工人，沒有把它誤稱為真 Gemini 無心跳重現或正式長跑保證。
