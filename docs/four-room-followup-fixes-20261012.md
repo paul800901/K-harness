@@ -1,5 +1,7 @@
 # 四個翻譯聊天室後續修正與 Flash 等待交接（2026-10-12）
 
+**最新狀態：已於本人通知後正式更新為 `a075a59`，完成來源與服務／介面讀回；K 留在關閉、原工作未恢復。以下候選停等為當時紀錄，正式結果見文末。**
+
 ## 範圍及正式狀態
 
 - 本人最新要求：「找出問題後修好放著等我醒來再更新」。只做候選修正、驗證及真正 Opus 5.5 複查；不停止、重啟、更新正式 K，不 push、不排程更新，也不恢復／重送原翻譯工作。
@@ -66,3 +68,19 @@
 - 查核的工人停止狀態只涵蓋原生已登記工人及背景命令，不等於列舉電腦上任意程序。原始失敗與所有 RED 日誌保留，不以介面隱藏宣稱上游成功。
 
 本機證據：`D:\K-harness\.runtime\four-room-readonly-audit-20261012`、`D:\K-harness\.runtime\four-room-fixes-20261012`。原始對話、帳號及本機日誌只留本機，不納公開來源。
+
+
+## 本人授權後正式更新與 Astra 獨立讀回（2026-10-12）
+
+本人醒來確認 K 已關閉並允許變更後，Astra 已單次交易套用固定候選 `a075a5925eca629ef6a7aa9df2c6a9e7ac099cde`，原 `4af4b7d2bfcbefd8772329270b6432a50f9f44a3` 的程式與啟動器保留可退回版本。這取代本文件先前「候選放著等待、正式未更新」的當時狀態；不追溯改寫歷史授權或失敗紀錄。
+
+- 停止事實分開記錄：更新前原正常關閉曾有 owner-resources／K_SHUTDOWN_RESOURCE_FAILURE；本人確認強制停止後，Astra 重新確認 0 K 程序／0 listeners。本次更新没有代理強制關閉程序，也未順手修正原關閉路徑。完整私有 launcher 片段只留本機。
+- 固定 Git archive 封裝，三 build 成功、封裝 focused 551/551；package.json/lock 與既有正式相同，僅複製獨立既有相依，不安裝／升級原生核心。685 個安裝來源逐檔與固定 Git bytes 零差異。完整工程 regression 1413/1413與真正 Opus5.5的結果沿用前節已獨立確認證據，不冒稱部署時又重跑完整套件。
+- 74 份 main-session metadata 全部 hash 保持；核心選擇、Codex 設定、projects及Google Ops設定不變，runtime除version/previous外保持。正式啟動器與入口和編譯候選相同。
+- 正式 owner 暫時啟動作讀回：實際 served assets hash、1440與390兩個headless viewport通過，26房列表，0 POST／0頁面錯誤、selectedThread始終null；未開原房／原目標／真模型回合。驗證服務已正常結束，再讀回0程序／0listeners，日常K維持關閉。這不是實體手機或真正桌面啟動器互動驗證。
+- Gemini 快取嚴格檢查先據實中止，原allowed:false證據保留。唯一非查詢時間差異是同一5小時視窗的reset時間前進751秒，約等同兩次查詢間隔；key／300分鐘／remaining100%、帳號身分及其餘值不變。既有解析器原樣保存官方查詢reset欄位，為本次快取新鮮度差異，不預先稱產品bug。Astra審閱綁定before/current bytes的exact delta後，才接受本次單一欄位例外，不泛化放行其他欄位，也未修改正式快取、再查帳號或切换身分。
+- 本輪不push／東區不動、原翻譯工作未恢復或重播。真帳號輪換及兩controller共用manager的單一完整E2E未在本次重驗；現場及供應商內部故障原因UNKNOWN的界線不變。
+
+程式退版位置：`D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791776793115`。這是程式／啟動器退版，不是對話備份。
+
+部署及獨立验收證據：`D:\K-harness\.runtime\four-room-fixes-20261012\deployment`，包括 `final-receipt.json`、`astra-installed-acceptance.json`、固定來源比較、原快取檢查失敗及明確差異核實。
