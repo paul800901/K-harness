@@ -11,7 +11,7 @@ import {checkedPath} from './files.mjs';
 import {createGeminiWorker} from './gemini-worker.mjs';
 import {createClaudeWorker} from './claude-worker.mjs';
 import {randomUUID} from 'node:crypto';
-import {createWorkerWatch} from './worker-watch.mjs';
+import {createWorkerWatch,workerObservation,workerNeedsAttention} from './worker-watch.mjs';
 
 import {normalizeWorkerPolicy,validateWorkerPolicy} from './worker-policy.mjs';
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
@@ -20,7 +20,7 @@ const clone = value => structuredClone(value);
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','observation','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
   if(record.executionUnowned===true)result.task=record.task;
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
@@ -108,6 +108,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   let requestGuard=()=>undefined;
   let host, codexError, gemini, claude;
   const processRuns=new Map();
+  const snapshotRecord=record=>record?{...clone(record),...(['gemini','claude'].includes(record.provider)?{observation:workerObservation(record,{owned:processRuns.has(record.requestId),quietMs:watchOptions.quietMs})}:{})}:null;
   const records = new Map(),activities=new Map();
   const approvalItems = new Map();
   const operations = new Map(), ownedThreads=new Set();
@@ -251,7 +252,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
         await persist(record);changed(record);
       }
       record.lastReadAt=new Date().toISOString();
-      return clone(record);
+      return snapshotRecord(record);
     }
     if (!record.threadId) return clone(record);
     const revision=revisions.get(requestId);
@@ -499,17 +500,17 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
       const readSnapshot=async()=>{
         if(records.get(requestId)?.settled){await processRuns.get(requestId)?.completion;await persistTails.get(requestId);}
-        return clone(records.get(requestId)??null);
+        return snapshotRecord(records.get(requestId));
       };
       const snapshot=await inspect({requestId});
-      if(!snapshot||snapshot.settled||snapshot.status==='unresolved'||timeoutMs===0)return readSnapshot();
+      if(!snapshot||snapshot.settled||workerNeedsAttention(snapshot)||timeoutMs===0)return readSnapshot();
       // Subscribe before rechecking the record so a completion at the read/
       // subscription boundary cannot be lost. Timeout only ends this wait.
       return new Promise((resolve,reject)=>{
         let done=false;
         const listeners=waiters.get(requestId)??new Set();waiters.set(requestId,listeners);
         const finish=()=>{if(done)return;done=true;clearTimeout(timer);listeners.delete(wake);if(!listeners.size)waiters.delete(requestId);readSnapshot().then(resolve,reject);};
-        const wake=()=>{const record=records.get(requestId);if(!record||record.settled||record.status==='unresolved')finish();};
+        const wake=()=>{const record=records.get(requestId);if(!record||record.settled||workerNeedsAttention(record))finish();};
         const timer=setTimeout(finish,timeoutMs);listeners.add(wake);wake();
       });
     },

@@ -47,7 +47,7 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
   const gatePath=path.join(root,'persist-gate.mjs');await writeFile(gatePath,`let armed=false;export const entered=Promise.withResolvers(),release=Promise.withResolvers();export const arm=()=>armed=true;export async function hold(){if(armed){armed=false;entered.resolve();await release.promise;}}`);disk=await import(pathToFileURL(gatePath).href);
   source=source.replace(/from '(\.\/[^']+)'/g,(_m,relative)=>`from '${new URL(relative,sourceURL).href}'`).replace(needle,needle.replace('\n   if','\n   await hold();\n   if'));const gated=path.join(root,'gated-controller.mjs');await writeFile(gated,`import {hold} from '${pathToFileURL(gatePath).href}';\n`+source);creator=(await import(pathToFileURL(gated).href)).createDesktopController;
  }
- const c=creator({root,onContinueConversation,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},bridgeFactory:async o=>{bridgeHooks=o;return {start:async()=>({status:'running'}),list:async()=>flashRows,close:async()=>{},cancelGeminiHandoff(){calls.push({method:'cancelGeminiHandoff'});}};},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
+ const c=creator({root,onContinueConversation,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},bridgeFactory:async o=>{bridgeHooks=o;return {start:async()=>({status:'running'}),cancel:async()=>({status:'cancelled',settled:true}),list:async()=>flashRows,close:async()=>{},cancelGeminiHandoff(){calls.push({method:'cancelGeminiHandoff'});}};},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
  await c.open({model:'gpt-6-astra',effort:'high'});if(alias){await c.close();await c.open({threadId:'parent',model:'gpt-6-astra',effort:'high'});await c.goal({status:'active'});}await c.send({text:'new fake work'});if(responseFirst){await new Promise(r=>setTimeout(r,10));emit('turn/started',{turn:{id:parent.turns.at(-1).id}});}
  const end=(status='failed',err=error,block=true,nativeStatus='idle')=>{const t=parent.turns.at(-1);t.status=status;parent.status={type:nativeStatus};if(nativeStatus==='systemError'){emit('thread/status/changed',{status:structuredClone(parent.status)});emit('error',{turnId:t.id,error:err,willRetry:false});}if(block&&status==='failed'&&goal?.status==='active'){goal.status='blocked';emit('thread/goal/updated',{turnId:t.id,goal:structuredClone(goal)});}emit('turn/completed',{turn:{id:t.id,status,...(status==='failed'?{error:err}:{})}});};
  const child=()=>{children.set('child',{id:'child',parentThreadId:'parent',historyMode:'paginated',status:{type:'active'},turns:[{id:'child-turn',status:'inProgress'}]});emit('item/started',{item:{type:'subAgentActivity',id:'spawn-child',kind:'started',agentThreadId:'child'}});emit('turn/started',{turn:{id:'child-turn'}},'child');};
@@ -59,6 +59,72 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
 }
 const wait=async predicate=>{const end=Date.now()+3500;while(!predicate()){if(Date.now()>end)throw Error('observable not reached');await new Promise(r=>setTimeout(r,20));}};
 const tick=()=>new Promise(r=>setTimeout(r,60));
+
+async function waitingWorker(f,id='late-worker'){
+ await f.gateway.bridge.start({requestId:id});
+ const row={parentId:'parent',provider:'gemini',requestId:id,status:'running',settled:false,output:''};
+ f.setFlashRows([row]);f.bridgeHooks.onChange(row);return row;
+}
+test('live active goal blocked while awaiting a worker receives one trusted audit after its late completion',async()=>{
+ const f=await fixture();try{
+  const row=await waitingWorker(f),blockedTurn=f.currentTurn;f.blockGoal();f.end('completed');await tick();assert.equal(f.deliveries().length,0);
+  Object.assign(row,{status:'completed',settled:true,output:'saved output'});f.bridgeHooks.onChange(row);
+  await wait(()=>f.deliveries().length===1);await tick();const p=f.deliveries()[0].p;
+  assert.equal(p.toolOutput.name,'k_native_goal_recovery');assert.match(p.toolOutput.output,/等待工人/);assert.match(p.toolOutput.output,/其他阻礙/);assert.match(p.toolOutput.output,/late-worker/);
+  assert.equal(f.calls.some(x=>x.method==='thread/goal/set'),false);assert.equal(f.goal.status,'blocked');
+  assert.equal(f.c.state.notices.some(n=>n.kind==='nativeError'),false,'normal blocked turn is not a native failure');
+  assert.equal(f.c.state.tools.find(t=>t.name==='核對已存成果').details.workerWait.turnId,blockedTurn);
+  await f.gateway.resumeGoal({}, {'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+  assert.equal(f.goal.status,'active');assert.equal(f.goal.createdAt,101);assert.equal(f.goal.tokensUsed,12);
+  f.end('completed');f.bridgeHooks.onChange(row);await tick();assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
+});
+test('worker wait recovery holds partial completions and unknown workers until all are settled',async()=>{
+ const f=await fixture();try{
+  const a=await waitingWorker(f,'a');await f.gateway.bridge.start({requestId:'b'});const b={...a,requestId:'b'};f.setFlashRows([a,b]);f.bridgeHooks.onChange(b);
+  f.blockGoal();f.end('completed');Object.assign(a,{status:'completed',settled:true});f.bridgeHooks.onChange(a);await tick();assert.equal(f.deliveries().length,0);
+  Object.assign(b,{status:'unresolved',inspection:{noticeId:'quiet',lastActivityAt:0}});f.bridgeHooks.onChange(b);await tick();assert.equal(f.deliveries().length,0);
+  Object.assign(b,{status:'completed',settled:true});f.bridgeHooks.onChange(b);await wait(()=>f.deliveries().length===1);assert.equal(f.deliveries()[0].p.toolOutput.name,'k_native_goal_recovery');
+ }finally{await f.cleanup();}
+});
+for(const action of ['paused','new-human','changed-goal','budget','already-blocked','cancelled-worker'])test('worker completion cannot authorize recovery after '+action,async()=>{
+ const f=await fixture({budget:action==='budget'?100:null,status:action==='already-blocked'?'blocked':'active'});try{
+  const row=await waitingWorker(f);f.blockGoal();f.end('completed');await tick();
+  if(action==='paused')await f.c.goal({status:'paused'});
+  if(action==='new-human'){await f.c.send({text:'wait for my decision'});f.end('completed');}
+  if(action==='changed-goal')await f.c.goal({objective:'different task',editOnly:true});
+  if(action==='cancelled-worker')await f.gateway.bridge.cancel({requestId:row.requestId});
+  Object.assign(row,{status:'completed',settled:true});f.bridgeHooks.onChange(row);await tick();
+  assert.equal(f.deliveries().some(x=>x.p.toolOutput.name==='k_native_goal_recovery'),false);assert.equal(f.calls.some(x=>x.method==='thread/goal/set'&&x.p.status==='active'),false);
+ }finally{await f.cleanup();}
+});
+
+for(const changed of ['paused-during-read','different-turn','missing-worker','unowned-worker'])test('late worker recovery rechecks '+changed+' before model delivery',async()=>{
+ const f=await fixture();let release;try{
+  const row=await waitingWorker(f);f.blockGoal();f.end('completed');await tick();
+  if(changed==='paused-during-read')f.setGoalGate(new Promise(r=>release=r));
+  if(changed==='different-turn')f.setLatestTurn({id:'other-turn'});
+  Object.assign(row,{status:'completed',settled:true});f.bridgeHooks.onChange({...row});
+  if(changed==='missing-worker')f.setFlashRows([]);
+  if(changed==='unowned-worker')f.setFlashRows([{...row,executionUnowned:true}]);
+  if(release){await tick();f.emit('thread/goal/updated',{goal:{...f.goal,status:'paused'}});release();f.setGoalGate(null);}
+  await tick();assert.equal(f.deliveries().length,0);
+ }finally{release?.();await f.cleanup();}
+});
+test('uncertain late worker audit submission is not resent or directly resumed',async()=>{
+ const f=await fixture({reject:Error('transport lost')});try{
+  const row=await waitingWorker(f);f.blockGoal();f.end('completed');await tick();
+  Object.assign(row,{status:'completed',settled:true});f.bridgeHooks.onChange(row);await wait(()=>f.deliveries().length===1);await tick();
+  f.bridgeHooks.onChange(row);await tick();assert.equal(f.deliveries().length,1);assert.equal(f.c.state.status,'uncertain');assert.equal(f.goal.status,'blocked');
+ }finally{await f.cleanup();}
+});
+test('failed late worker audit does not generate another audit',async()=>{
+ const f=await fixture();try{
+  const row=await waitingWorker(f);f.blockGoal();f.end('completed');await tick();
+  Object.assign(row,{status:'completed',settled:true});f.bridgeHooks.onChange(row);await wait(()=>f.deliveries().length===1);await tick();
+  f.end();f.bridgeHooks.onChange(row);await tick();assert.equal(f.deliveries().length,1);assert.equal(f.goal.status,'blocked');
+ }finally{await f.cleanup();}
+});
 
 test('only the live rate-only audit can link its exact latest failed human turn; model arguments cannot spoof it',async()=>{
  let data;const f=await fixture({status:'blocked',rateCooldownMs:10,onContinueConversation:async args=>{data=args;args.stillCurrent();return {accepted:args.authorizedHumanTurnId!==undefined};}});try{

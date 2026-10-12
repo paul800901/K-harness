@@ -52,7 +52,8 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  function assertEnabled(){if(!enabled)throw Error('本候選尚未允許真實 Gemini 帳號管理。');}
  async function exclusive(fn,{waitForRefresh=false}={}){
   await load();if(waitForRefresh&&refreshPending)await refreshPending.catch(()=>{});
-  if(changing||running)throw Error('Gemini 正在工作或處理登入，請等全部 Gemini 工作停止後再操作。');
+  if(running)throw Error('Gemini 正在工作或執行原生查詢，本次帳號操作未執行；這不是額度耗盡。請等全部 Gemini 工作結束後再操作。');
+  if(changing)throw Error('另一個 Gemini 帳號操作正在進行，本次未執行；這不是額度耗盡，請等該操作結束。');
   changing=true;onChange();let result;try{result=await fn();}finally{changing=false;onChange();}
   return result?.accounts?{...result,busy:running>0||data.uncertain}:result;
  }

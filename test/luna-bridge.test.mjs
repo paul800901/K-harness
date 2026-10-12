@@ -43,6 +43,22 @@ async function make({accountType,models,onStart,threadRead,onChange=()=>{},onReq
 }
 const noWrite = () => ({status:'not-written'});
 
+test('Gemini wait wakes on quiet attention with current observation, then preserves the same late completion',async()=>{
+ let finish,started;const ready=new Promise(r=>started=r);let runs=0;
+ const bridge=await createLunaBridge({root,workspace,parentId:randomUUID(),geminiOnly:true,watchOptions:{quietMs:100},
+  geminiFactory:()=>({models:async()=>[{model:'gemini-3.8-flash',supportedReasoningEfforts:[{reasoningEffort:'high'}]}],run:async({onStart,onActivity})=>{runs++;onStart(123);onActivity({startedAt:Date.now(),lastEventAt:Date.now(),phase:'tool',lastToolName:'run_command'});started();return new Promise(r=>finish=r);}})});
+ try{
+  await bridge.start({requestId:'quiet-gemini',task:'fake delayed task',model:'gemini-3.8-flash',effort:'high'});await ready;
+  const waiting=await lunaResult(await bridge.wait({requestId:'quiet-gemini',timeoutMs:3000}));
+  assert.equal(waiting.status,'running');assert.equal(waiting.settled,false);assert.ok(waiting.inspection);assert.equal(waiting.observation.execution,'owned-pending');assert.equal(waiting.observation.activity,'quiet');assert.ok(waiting.observation.quietForMs>=100);
+  finish({status:'completed',settled:true,output:'original final output',outputFiles:[]});
+  const done=await bridge.wait({requestId:'quiet-gemini',timeoutMs:3000});
+  // An already-known quiet result may return before the final promise settles.
+  if(!done.settled)await new Promise(r=>setTimeout(r,50));
+  const final=await bridge.inspect({requestId:'quiet-gemini'});assert.equal(final.status,'completed');assert.equal(final.output,'original final output');assert.equal(final.inspection,undefined);assert.equal(final.observation.execution,'settled');assert.equal(runs,1);
+ }finally{finish?.({status:'completed',settled:true,output:'cleanup'});await bridge.close();}
+});
+
 test('rejects non-subscription account and validates the requested worker against the catalog before a turn',async()=>{
  let f;
  const unavailable=await createLunaBridge({root,workspace,parentId:randomUUID(),executable:'codex',hostFactory:o=>{f=fakeHost({accountType:'apiKey'});f.setOptions(o);return f.host;}});

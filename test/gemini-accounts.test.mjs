@@ -28,6 +28,23 @@ function authStatus(quota={status:'available',windows:[{remainingPercent:80,rese
  return {auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota};
 }
 
+test('active work refusal is not reported as login or exhausted quota',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
+ let finish;const pending=f.accounts.inspect(()=>new Promise(r=>finish=r));while(!finish)await new Promise(r=>setImmediate(r));
+ try{
+  const before=structuredClone(f.calls),quota=(await f.accounts.list()).accounts[0].quota;
+  await assert.rejects(f.accounts.refreshAll(),e=>/正在工作/.test(e.message)&&/不是額度耗盡/.test(e.message)&&!/登入/.test(e.message));
+  assert.deepEqual(f.calls,before);assert.deepEqual((await f.accounts.list()).accounts[0].quota,quota);assert.equal((await f.accounts.list()).loginPending,false);
+ }finally{finish();await pending;}
+});
+test('concurrent account operation refusal is distinct from running work or exhausted quota',async()=>{
+ let finish;const f=await fixture({identity:{accountId:A,email},statusFor:()=>new Promise(r=>finish=()=>r(authStatus()))});
+ const pending=f.accounts.capture();while(!finish)await new Promise(r=>setImmediate(r));
+ try{
+  await assert.rejects(f.accounts.startLogin(),/另一個 Gemini 帳號操作.*不是額度耗盡/);assert.equal(f.calls.start,0);assert.equal(f.calls.prepareLogin,0);
+ }finally{finish();await pending;}
+});
+
 test('known weekly or five-hour zero suppresses UI, AI and worker checks across the TTL',async t=>{
  for(const key of ['five_hour','seven_day'])await t.test(key,async()=>{
   let now=Date.parse('2026-10-03T12:00:00Z');

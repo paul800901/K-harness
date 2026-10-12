@@ -2,6 +2,15 @@ import {createHash} from 'node:crypto';
 
 const time=value=>typeof value==='number'?value:Date.parse(value);
 const progress=record=>time(record.lastActivityAt??record.activity?.lastEventAt??record.startedAt);
+// A fresh read is an observation, never a synthetic heartbeat or proof that
+// the remote model is alive. Keep execution ownership separate from progress.
+export function workerObservation(record,{owned=false,now=Date.now(),quietMs=300000}={}) {
+ const at=progress(record),quietForMs=Number.isFinite(at)?Math.max(0,now-at):null;
+ return {observedAt:now,execution:record.settled?'settled':owned?'owned-pending':'unconfirmed',
+  activity:record.settled?'terminal':record.waitingForApproval?'approval':quietForMs===null?'unknown':quietForMs>=quietMs?'quiet':'recent',
+  lastActivityAt:record.lastActivityAt??record.activity?.lastEventAt??null,quietForMs,
+  guidance:record.settled?'原工作已結束；先核對成果，不重播。':'仍在等待原工單；本機持有執行不代表遠端仍有進展，久無活動不等於卡死或可重派。不要因等待逾時或重複回合次數就把目標判成受阻；無其他可做工作時等待既有完成事件，不輪詢。'};
+}
 export const workerNeedsAttention=record=>!record.settled&&!!(record.inspection||['failed','unresolved'].includes(record.status));
 const nativeNotice=record=>record.provider==='codex'&&record.requestId===`codex:${record.threadId}`;
 export const workerNoticeKey=record=>nativeNotice(record)?`codex.${record.threadId}.${record.turnId}`:record.settled?record.requestId:record.inspection?.noticeId??`unconfirmed:${record.requestId}`;

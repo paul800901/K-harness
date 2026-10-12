@@ -101,7 +101,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  };
  const recoveryCurrent=(r,allowOpening=false)=>goalRecovery===r&&!r.cancelled&&host===r.host&&state.threadId===r.thread&&requestEpoch===r.epoch&&(allowOpening||!opening)&&!closing&&!stopping&&!stopRequested&&sameGoal(r.goal,state.goal)&&selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)===r.selection;
  const auditCurrent=r=>recoveryCurrent(r)&&turnId===r.turnId&&state.busy;
- const pendingRecovery=()=>!!goalRecovery&&!goalRecovery.attempted&&recoveryCurrent(goalRecovery)&&state.status==='failed'&&!state.busy&&!turnId;
+ const waitingWorkerRecovery=()=>!!goalRecovery?.workerWait&&!goalRecovery.attempted&&recoveryCurrent(goalRecovery);
+ const waitedWorkersSettled=()=>goalRecovery.workerWait.requestIds.every(id=>state.workers.some(w=>w.requestId===id&&w.executionUnowned!==true&&w.settled===true));
+ const recoverySource=r=>r.workerWait??r.failed;
+ const pendingRecovery=()=>!!goalRecovery&&!goalRecovery.attempted&&recoveryCurrent(goalRecovery)&&state.status===(goalRecovery.workerWait?'completed':'failed')&&!state.busy&&!turnId&&(!goalRecovery.workerWait||waitedWorkersSettled());
  const recoveryErrorClass=error=>{
   if(typeof error?.message!=='string')return 'unknown';
   const info=error.codexErrorInfo,details=error.additionalDetails,codes=typeof info==='string'?[info]:info&&typeof info==='object'?Object.keys(info):[];
@@ -320,7 +323,14 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    else state.tools.push({id:p.itemId,name:'檔案變更',status:'running',details:structuredClone(changes),output:'',patchChanges:changes,turnId:p.turnId,groupId:turnGroupId(p.turnId)});
    changed();return;
   }
-  if(e.method==='thread/goal/updated'){const previous=state.goal;state.goal=p.goal;if(previous&&!sameGoal(previous,p.goal))cancelGeminiHandoff();if(p.goal?.status==='paused')clearNativeResults();else if(goalRecovery&&(!sameGoal(goalRecovery.goal,p.goal)||!goalRecovery.attempted&&p.goal?.status==='active'))invalidateRecovery();rememberActiveGoal();state.goalError=null;changed();void deliverFlashResults();return;}
+  if(e.method==='thread/goal/updated'){const previous=state.goal;state.goal=p.goal;
+   // Only the live active -> blocked transition can bind an outstanding owned
+   // worker to this goal. Historical blocked goals and user pauses never qualify.
+   if(previous?.status==='active'&&p.goal?.status==='blocked'&&sameGoal(previous,p.goal)&&previous.tokenBudget===null&&recoveryArmed&&goalTurn?.turnId===turnId&&goalTurn.epoch===requestEpoch&&!stopRequested&&!stopping&&!closing){
+    const requestIds=state.workers.filter(w=>flashArmed.has(w.requestId)&&['gemini','claude'].includes(w.provider)&&w.settled===false&&w.executionUnowned!==true&&!w.cancelRequested).map(w=>w.requestId);
+    if(requestIds.length)goalRecovery={host,thread:state.threadId,epoch:requestEpoch,goal:structuredClone(previous),selection:selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier),workerWait:{turnId,requestIds},attempted:false,cancelled:false,turnId:null};
+   }
+   if(previous&&!sameGoal(previous,p.goal))cancelGeminiHandoff();if(p.goal?.status==='paused')clearNativeResults();else if(goalRecovery&&(!sameGoal(goalRecovery.goal,p.goal)||!goalRecovery.attempted&&p.goal?.status==='active'))invalidateRecovery();rememberActiveGoal();state.goalError=null;changed();void deliverFlashResults();return;}
   if(e.method==='thread/goal/cleared'){invalidateRecovery();cancelGeminiHandoff();state.goal=null;state.goalError=null;changed();return;}
   if(e.method==='turn/plan/updated'){state.progress.plan=p.plan??[];state.progress.explanation=p.explanation??null;changed();return;}
   if(e.method==='thread/tokenUsage/updated'){state.progress.tokenUsage=p.tokenUsage??null;changed();return;}
@@ -367,7 +377,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(turnId&&geminiHandoff?.waitForNativeTurn)delete geminiHandoff.waitForNativeTurn;
    const ownership=goalTurn;goalTurn=null;const audit=goalRecovery?.turnId===completedTurnId;
    if(audit){
-    const failedTurnId=goalRecovery.failed.turnId,record=state.tools.find(t=>t.id===`goal-recovery:${failedTurnId}`);if(record)record.status=p.turn.status;
+    const failedTurnId=recoverySource(goalRecovery).turnId,record=state.tools.find(t=>t.id===`goal-recovery:${failedTurnId}`);if(record)record.status=p.turn.status;
     for(const notice of state.notices)if(notice.kind==='goal-recovery'&&notice.turnId===failedTurnId&&notice.level==='info')notice.resolved=true;
     if(p.turn.status==='failed'&&!state.notices.some(n=>n.kind==='goal-recovery'&&n.turnId===failedTurnId&&n.message==='成果核對回合已失敗；未自動重送。'))addNotice('warning','成果核對回合已失敗；未自動重送。','goal-recovery',failedTurnId);
    }
@@ -553,7 +563,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   async start(args){if(opening||closing||stopping)throw new Error('Codex 對話正在切換或停止；子代理未啟動。');flashArmed.add(args.requestId);geminiHandoffJobs.add(args.requestId);return (await ensureFlashBridge()).start(args);},
   inspect:args=>ensureFlashBridge().then(value=>value.inspect(args)),wait:args=>ensureFlashBridge().then(value=>value.wait(args)),
   reconcile:args=>ensureFlashBridge().then(value=>value.reconcile(args)),
-  async cancel(args){disarmFlash(args.requestId);return (await ensureFlashBridge()).cancel(args);},
+  async cancel(args){if(goalRecovery?.workerWait?.requestIds.includes(args.requestId))invalidateRecovery();disarmFlash(args.requestId);return (await ensureFlashBridge()).cancel(args);},
   resultReady(args,result){if(result?.settled)disarmFlash(args.requestId);else if(workerNeedsAttention(result??{})){flashNotifications[workerNoticeKey(result)]='delivery-attempted';const queued=flashQueue.get(args.requestId);if(queued&&workerNoticeKey(queued)===workerNoticeKey(result))flashQueue.delete(args.requestId);void persistFlashNotifications().catch(()=>{});}},
   list:args=>ensureFlashBridge().then(value=>value.list(args)),
   async close(){const value=flashBridge??(flashBridgeInit?await flashBridgeInit.catch(()=>null):null);if(value){await value.close();if(flashBridge===value)flashBridge=null;}}
@@ -581,9 +591,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   },...(onContinueConversation?{continueConversation:async(args,meta)=>{
    assertMainGoalCaller(meta);
    const sourceHost=host,sourceEpoch=requestEpoch,sourceSelection=selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier);
-   const recovery=goalRecovery?.turnId===turnId&&recoveryErrorClass(goalRecovery.failed.error)==='rate'?goalRecovery:null;
+   const recovery=goalRecovery?.turnId===turnId&&recoveryErrorClass(goalRecovery.failed?.error)==='rate'?goalRecovery:null;
    const latestHuman=state.messages.findLast(m=>m.role==='user'&&['local','native','steer'].includes(m.source));
-   const authorizedHumanTurnId=recovery&&auditCurrent(recovery)&&latestHuman?.turnId===recovery.failed.turnId?recovery.failed.turnId:undefined;
+   const authorizedHumanTurnId=recovery&&auditCurrent(recovery)&&latestHuman?.turnId===recoverySource(recovery).turnId?recoverySource(recovery).turnId:undefined;
    const humanCurrent=()=>!authorizedHumanTurnId||state.messages.findLast(m=>m.role==='user'&&['local','native','steer'].includes(m.source))?.turnId===authorizedHumanTurnId;
    const stillCurrent=()=>{assertMainGoalCaller(meta);if(recovery&&(!auditCurrent(recovery)||!humanCurrent()))throw Error('真人授權的核對回合已停止或變更；未受理交接。');};
    // prepareContinuation owns a read-only opening reservation; every identity/intent guard remains live.
@@ -636,6 +646,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   flashGateway=null;
  }
  async function deliverFlashResults(){
+  // Do not spend model turns on partial/quiet notifications while the same
+  // blocked goal is still waiting. Existing worker events wake this path.
+  if(waitingWorkerRecovery()&&!waitedWorkersSettled())return;
   const handoff=geminiHandoff?.status==='ready'&&geminiHandoff.epoch===requestEpoch&&!stopRequested&&state.goal?.status!=='paused'?geminiHandoff:null;
   if(handoff?.waitForNativeTurn)return;
   if(handoff&&!flashNotifying&&!submission&&state.status==='failed'&&!state.busy&&!turnId&&!pendingRecovery()&&(!flashFailedGoal||!sameGoal(flashFailedGoal.goal,state.goal)||state.goal?.tokenBudget!==null||!recoverableError(state.turnError?.error)||flashFailedGoal.failed.turnId!==state.turnError?.turnId)){geminiHandoff=null;for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;addNotice('warning','Gemini 帳號已就緒，但主目標不具自動核對資格；未啟動或重播工作。','gemini-handoff');changed();return;}
@@ -664,15 +677,16 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     const latest=(await active.request('thread/turns/list',{threadId:parent,limit:1,sortDirection:'desc',itemsView:'summary'})).data?.[0];
     if(!current())return;
     if(!latest)return;
-    if(latest.id!==recovery.failed.turnId){invalidateRecovery();return;}
-    if(latest.status!=='failed'||!recoverableError(latest.error??recovery.failed.error))return;
+    if(latest.id!==recoverySource(recovery).turnId){invalidateRecovery();return;}
+    if(recovery.workerWait){if(latest.status!=='completed'){invalidateRecovery();return;}}
+    else if(latest.status!=='failed'||!recoverableError(latest.error??recovery.failed.error))return;
    }
    if(recovery||handoff){
     if(!recovery){const thread=(await active.request('thread/read',{threadId:parent,includeTurns:false})).thread;if(!current()||!['idle','systemError'].includes(thread?.status?.type))return;}
     const page=await active.request('thread/loaded/list',{});if(!current())return;
     if(!Array.isArray(page.data)||page.data.some(id=>typeof id!=='string')||page.nextCursor)throw Error('原生已載入對話清單未確認。');
     const loaded=new Set(page.data);if(!loaded.has(nativeId(parent)))return;
-    const checking=workers(false,loaded);recoveryRead=workerRead;const rows=await checking;if(!current()||rows.some(w=>w.settled!==true))return;
+    const checking=workers(false,loaded);recoveryRead=workerRead;const rows=await checking;if(!current()||rows.some(w=>w.settled!==true)||recovery?.workerWait&&!recovery.workerWait.requestIds.every(id=>rows.some(w=>w.requestId===id&&w.executionUnowned!==true&&w.settled===true)))return;
     for(const id of [parent,...rows.filter(w=>w.provider==='codex'&&loaded.has(nativeId(w.threadId))).map(w=>w.threadId)]){const terminals=await listTerminals(active,id);if(!current()||terminals.length)return;}
     if(state.questions.length)return;
    }
@@ -685,13 +699,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!current())return;
    let text=workerNoticeText(batch)+(native?'原生子代理終止不等於交付成功（failed／cancelled 也不是成功）。請用原生工具與實際成果獨立核對；已處理就不要重做，不要重送或重派原工作，也不要自行換模型、權限或帳號。原生最終訊息由核心保存，必要時用原生工具讀回；以下只含識別碼與狀態。\n':'')+JSON.stringify(results);
    if(handoff)text=(handoff.switched===true?'Gemini 官方額度確認歸零，現有工人已自然結束，帳號已查核切換就緒。':handoff.switched===false?'Gemini 官方確認同一帳號仍有額度；本次就緒只涵蓋 event.requestIds 中先前未送出的工作；其他已執行後失敗工單不因本次通知自動重啟，不立即重派／恢復。':'Gemini 帳號已就緒，待核對本房工人與成果。')+'這是一次系統接手通知，不是重播原工單。先讀 k_gemini.conversation_context 核對最新本人意圖，再讀已保存成果與以下原工單結果；已完成不要重做，副作用未知不要重送。本次就緒接手僅限通知 requestIds 的剩餘工作；核對後確有本次範圍剩餘工作才以新的 requestId、handoffFrom 原工單 ID 接手；不得重派相同 ID、換模型或擴張權限。本人停止／暫停／更改目標優先。\n'+JSON.stringify(handoff)+'\n'+text;
-   if(recovery)text=(recovery.notBefore?'一般 429／速率限制已完成本機單次冷卻；這不是官方 Retry-After、額度耗盡或恢復／重設時間的證據。\n':'')+'使用者已授權：原生持續目標失敗後，由同一主代理先核對已存成果，再接續剩餘工作。這不是原任務重播。先用 k_gemini.conversation_context 讀最新本人意圖與更正，再用既有工具讀實際保存檔案及已結束工人結果；已完成不要重做，副作用或結果未知不要重送或重派原工單。本人停止／暫停／更改目標優先。只有核對完成、原目標仍適用且確有剩餘工作時，才用 k_gemini.goal_resume 恢復同一目標；不修改預算、模型、帳號或權限。若已全部完成，依原生目標工具記錄完成，不恢復工作。\n原生失敗：'+JSON.stringify(recovery.failed)+'\n'+text;
+   if(recovery)text=(recovery.workerWait?'等待工人的同一目標在本次執行期間被標成受阻；所綁定工人現已確認結束。這不證明受阻原因只有等待工人。必須先核對受阻原因及是否仍有其他阻礙；其他阻礙未解除就保持受阻，不得恢復。\n':'')+(recovery.notBefore?'一般 429／速率限制已完成本機單次冷卻；這不是官方 Retry-After、額度耗盡或恢復／重設時間的證據。\n':'')+'使用者已授權：原生持續目標受阻後，由同一主代理先核對已存成果，再接續剩餘工作。這不是原任務重播。先用 k_gemini.conversation_context 讀最新本人意圖與更正，再用既有工具讀實際保存檔案及已結束工人結果；已完成不要重做，副作用或結果未知不要重送或重派原工單。本人停止／暫停／更改目標優先。只有核對完成、原目標仍適用且確有剩餘工作時，才用 k_gemini.goal_resume 恢復同一目標；不修改預算、模型、帳號或權限。若已全部完成，依原生目標工具記錄完成，不恢復工作。\n核對來源：'+JSON.stringify(recoverySource(recovery))+'\n'+text;
    await markSubmitted();if(!current())return;
    if(recovery){
     recovery.attempted=true;recoveryArmed=false;
-    state.tools.push({id:`goal-recovery:${recovery.failed.turnId}`,name:'核對已存成果',status:'running',details:{failed:structuredClone(recovery.failed),workers:results},output:text.slice(0,20000)});
-    if(!state.notices.some(n=>n.kind==='nativeError'&&n.turnId===recovery.failed.turnId))addNotice('error',recovery.failed.error.message,'nativeError',recovery.failed.turnId,{error:structuredClone(recovery.failed.error)});
-    addNotice('info','核對已存成果，確認後接續剩餘工作。','goal-recovery',recovery.failed.turnId);
+    state.tools.push({id:`goal-recovery:${recoverySource(recovery).turnId}`,name:'核對已存成果',status:'running',details:{...(recovery.workerWait?{workerWait:structuredClone(recovery.workerWait)}:{failed:structuredClone(recovery.failed)}),workers:results},output:text.slice(0,20000)});
+    if(recovery.failed&&!state.notices.some(n=>n.kind==='nativeError'&&n.turnId===recoverySource(recovery).turnId))addNotice('error',recovery.failed.error.message,'nativeError',recoverySource(recovery).turnId,{error:structuredClone(recovery.failed.error)});
+    addNotice('info','核對已存成果，確認後接續剩餘工作。','goal-recovery',recoverySource(recovery).turnId);
    }
    if(recovery||handoff){state.busy=true;state.status='working';activity.begin();}
    attempted=true;
@@ -703,7 +717,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(submission===delivery)submission=null;
    if(host!==active||parent!==state.threadId)return;
    if(epoch!==requestEpoch||opening||closing||stopping||recovery&&!recoveryCurrent(recovery)){if(stopping&&!turnId)turnId=deliveredTurnId;return;}
-   if(recovery){const tool=state.tools.find(t=>t.id===`goal-recovery:${recovery.failed.turnId}`);if(tool)tool.turnId=deliveredTurnId;}
+   if(recovery){const tool=state.tools.find(t=>t.id===`goal-recovery:${recoverySource(recovery).turnId}`);if(tool)tool.turnId=deliveredTurnId;}
    if(state.busy)turnId=deliveredTurnId;
    const attention=batch.some(record=>!record.settled);
    if(batch.length)state.tools.push({id:`flash-completion:${batch.map(workerNoticeKey).join(':')}`,name:attention?'子代理狀態待確認':native?'原生子代理終止':'子代理結果',status:'completed',details:results,output:text.slice(0,20000),...(deliveredTurnId?{turnId:deliveredTurnId}:{})});
@@ -715,10 +729,10 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    submission=null;
    if(recovery){if(!attempted)return;if(error.protocolMessage===undefined&&host===active&&parent===state.threadId&&!closing&&!recovery.turnId&&!turnId)flashDeliveryUncertain=parent;if(recoveryCurrent(recovery)&&host===active&&parent===state.threadId&&!stopping&&!closing){
     if(!recovery.turnId&&!turnId){
-     const record=state.tools.find(t=>t.id===`goal-recovery:${recovery.failed.turnId}`);if(record)record.status=error.protocolMessage===undefined?'unresolved':'failed';
-     for(const notice of state.notices)if(notice.kind==='goal-recovery'&&notice.turnId===recovery.failed.turnId&&notice.level==='info')notice.resolved=true;
+     const record=state.tools.find(t=>t.id===`goal-recovery:${recoverySource(recovery).turnId}`);if(record)record.status=error.protocolMessage===undefined?'unresolved':'failed';
+     for(const notice of state.notices)if(notice.kind==='goal-recovery'&&notice.turnId===recoverySource(recovery).turnId&&notice.level==='info')notice.resolved=true;
     }
-    state.busy=!!turnId;state.status=turnId?'working':error.protocolMessage===undefined?'uncertain':'failed';state.turnError??=structuredClone(recovery.failed);state.error??=recovery.failed.error.message;addNotice('warning',error.protocolMessage===undefined?'成果核對通知未確認；未自動重送。':'成果核對通知被拒絕；未自動重送。','goal-recovery',recovery.failed.turnId,{diagnostic:error.message});
+    state.busy=!!turnId;state.status=turnId?'working':error.protocolMessage===undefined?'uncertain':'failed';if(recovery.failed)state.turnError??=structuredClone(recovery.failed);state.error??=recovery.failed?.error?.message??error.message;addNotice('warning',error.protocolMessage===undefined?'成果核對通知未確認；未自動重送。':'成果核對通知被拒絕；未自動重送。','goal-recovery',recoverySource(recovery).turnId,{diagnostic:error.message});
    }if(error.protocolMessage!==undefined&&!recovery.turnId&&!turnId&&goalRecovery===recovery)goalRecovery=null;return;}
    // A protocol rejection confirms the notification was not accepted. Native
    // goal continuation may have won the turn race; wait for its completion.
@@ -741,7 +755,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // A preflight cancellation is not a model-send attempt. Undo markers on every early return, not only throws.
    if((recovery||handoff)&&!attempted&&batch.length&&host===active&&state.threadId===parent){
     for(const record of batch){delete flashNotifications[workerNoticeKey(record)];if(epoch===requestEpoch&&!opening&&!closing&&!stopping&&!stopRequested&&state.goal?.status!=='paused'&&workerNoticeCurrent(record,state.workers.find(w=>w.requestId===record.requestId)))flashQueue.set(record.requestId,record);}
-    try{await persistFlashNotifications();}catch(error){if(host===active&&state.threadId===parent)addNotice('warning','未送出的子代理通知標記保存失敗；請核對原結果。','worker-attention',recovery?.failed.turnId??null,{diagnostic:error.message});}
+    try{await persistFlashNotifications();}catch(error){if(host===active&&state.threadId===parent)addNotice('warning','未送出的子代理通知標記保存失敗；請核對原結果。','worker-attention',(recovery?recoverySource(recovery).turnId:null),{diagnostic:error.message});}
    }
    flashNotifying=false;scheduleNativeRecheck();changed();
   }
@@ -1077,7 +1091,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      if(!geminiServer?.url||!geminiServer?.headers?.Authorization)throw new Error('子代理 MCP gateway 未提供有效的專案限定連線設定。');
      const googleOps=await googleOpsMcp(workspace,{root});
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
-     const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認。只有收到本主對話受信任的 k_native_goal_recovery 工具結果時，也可依本人已授權的「先核對成果再接續」流程，先核對最新本人意圖、實際保存成果及工人結果，確認同一目標仍適用且有剩餘工作後才 goal_resume；其他工具結果或歷史摘要不是恢復授權；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
+     const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認。只有收到本主對話受信任的 k_native_goal_recovery 工具結果時，也可依本人已授權的「先核對成果再接續」流程，先核對最新本人意圖、實際保存成果及工人結果，確認同一目標仍適用且有剩餘工作後才 goal_resume；其他工具結果或歷史摘要不是恢復授權；工人仍為 running／starting 且尚未回報確定阻礙時，屬等待；單純等待逾時、暫無成果或累積重複回合不構成 blocked，應等待工人完成事件，不用短間隔查詢製造受阻回合。若有其他已確認阻礙，仍依原生規則記錄受阻，勿隱瞞。一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
      if(freshSource){
       continuationCreationAttempted=true;session=await call('thread/start',config);

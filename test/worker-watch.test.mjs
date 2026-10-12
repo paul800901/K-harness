@@ -1,6 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createWorkerWatch,workerNeedsAttention,workerNoticeCurrent,workerNoticeKey,workerNoticeText} from '../src/worker-watch.mjs';
+import {createWorkerWatch,workerNeedsAttention,workerNoticeCurrent,workerNoticeKey,workerNoticeText,workerObservation} from '../src/worker-watch.mjs';
+
+test('worker observations separate local ownership, quiet duration and terminal evidence without a fake heartbeat',()=>{
+ const row={status:'running',settled:false,startedAt:0,lastActivityAt:100};
+ const first=workerObservation(row,{owned:true,now:200});assert.equal(first.execution,'owned-pending');assert.equal(first.activity,'recent');assert.equal(first.quietForMs,100);
+ const quiet=workerObservation(row,{owned:true,now:300100});assert.equal(quiet.activity,'quiet');assert.equal(row.lastActivityAt,100);assert.match(quiet.guidance,/不等於卡死/);
+ const unowned=workerObservation({...row,executionUnowned:true},{now:300100});assert.equal(unowned.execution,'unconfirmed');
+ assert.equal(workerObservation({...row,waitingForApproval:1},{owned:true,now:300100}).activity,'approval');
+ assert.equal(workerObservation({...row,status:'completed',settled:true},{now:300100}).activity,'terminal');
+ assert.equal(workerObservation({status:'unresolved'},{now:1}).quietForMs,null);
+});
 
 const flush=async()=>{for(let i=0;i<6;i++)await Promise.resolve();};
 test('unsettled failure and unresolved records use status-notice identity, not completion identity',()=>{
