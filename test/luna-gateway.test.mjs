@@ -35,6 +35,8 @@ test('main-conversation MCP exposes distinct fresh and history-branch tools with
   await body(await post(url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}}));
   const listed=(await body(await post(url,token,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}}))).result.tools;
   assert.match(listed.find(t=>t.name==='conversation_create').description,/truly blank.*compactions/s);
+  assert.match(listed.find(t=>t.name==='conversation_create').description,/already accepted.*confirmed recoverable native terminal failure/);
+  assert.doesNotMatch(listed.find(t=>t.name==='conversation_continue').description,/already accepted/);
   assert.match(listed.find(t=>t.name==='conversation_continue').description,/ONLY when the human wants to preserve/);
   for(const [name,mode]of [['conversation_create','fresh'],['conversation_continue','fork']]){
    const value=await body(await post(url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name,arguments:{nextInstruction:'explicit handoff'},_meta:{own:'main'}}}));

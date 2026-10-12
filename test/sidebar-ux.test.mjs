@@ -12,7 +12,7 @@ const until=async fn=>{const end=Date.now()+2500;while(!fn()){if(Date.now()>end)
 async function fixture(){
  await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/sidebar-ux-'));
  const gates=new Map(),owners=[],calls=[];
- for(const id of ['A','B','C','D'])await saveMainSession(root,{threadId:id,model,title:`Chat ${id}`,workspace:root});
+ for(const id of ['A','B','C','D','E','F'])await saveMainSession(root,{threadId:id,model,title:`Chat ${id}`,workspace:root});
  const c=createConversationController({root,sessionFactory:({onChange})=>{
   const state={threadId:null,model,workspace:root,messages:[],tools:[],questions:[],workers:[],artifacts:[],status:'idle',busy:false};
   const owner={state,closed:0,async selectWorkspace({path}){state.workspace=path;},async open({threadId},{signal,onHistory}={}){
@@ -42,7 +42,7 @@ test('rapid selection is last-click-wins without aborting an accepted native ope
   const b=f.select('B');await until(()=>f.c.state.historyReady);
   const c=f.select('C'),d=f.select('D');assert.equal(f.c.state.threadId,'D');assert.deepEqual(f.c.state.messages,[]);
   gate.resolve();const result=await Promise.all([b,c,d]);assert.equal(result[0].superseded,true);assert.equal(result[1].superseded,true);assert.equal(result[2].superseded,undefined);assert.equal(f.c.state.threadId,'D');
-  assert.deepEqual(f.calls.filter(([m])=>m==='open').map(([,id])=>id),['A','B','D']);
+  assert.deepEqual(f.calls.filter(([m])=>m==='open').map(([,id])=>id).sort(),['A','B','C','D']);
   const hidden=f.owners.find(o=>o.state.threadId==='B');assert.equal(hidden.state.busy,true);assert.equal(hidden.closed,0);
   assert.ok(f.c.state.conversationActivity.some(s=>s.threadId==='B'&&s.busy));
  }finally{await f.c.close();}
@@ -108,12 +108,71 @@ test('activity-only save cannot overwrite an earlier queued metadata update',asy
 });
 
 
-test('cancelling the latest queued selection clears its preview without opening or stopping that room',async()=>{
- const f=await fixture();try{
-  await f.select('A');const gate=deferred();f.gates.set('B',gate);
-  const b=f.select('B'),rejected=assert.rejects(b,/取消/);await until(()=>f.c.state.historyReady);
-  const d=f.select('D');assert.equal(f.c.state.threadId,'D');const stop=f.c.stop({cancelOpening:true});gate.resolve();
-  await rejected;assert.deepEqual(await d,{superseded:true});await stop;
-  assert.equal(f.c.state.threadId,'A');assert.equal(f.c.state.connectionOpening,false);assert.equal(f.calls.some(([m,id])=>m==='open'&&id==='D'),false);
- }finally{await f.c.close();}
+test('independent loads start every accepted room and fast or opened targets never await a slow room',async()=>{
+ const f=await fixture();const gate=deferred();try{
+  await f.select('C');f.gates.set('A',gate);
+  const a=f.select('A');await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='A'));
+  const b=f.select('B');await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='B'));await b;
+  assert.equal(f.c.state.threadId,'B');assert.equal(f.c.state.connectionOpening,false);
+  await f.select('C');assert.equal(f.c.state.threadId,'C');assert.equal(f.c.state.connectionOpening,false);
+  gate.resolve();assert.equal((await a).superseded,true);assert.ok(f.c.state.conversationActivity.some(s=>s.threadId==='A'));
+ }finally{gate.resolve();await f.c.close();}
+});
+
+test('repeated selection shares one in-flight native owner and latest click receives its history',async()=>{
+ const f=await fixture();const gate=deferred();try{
+  f.gates.set('A',gate);const a=f.select('A');await until(()=>f.c.state.historyReady);
+  const again=f.select('A');await until(()=>f.c.state.historyReady);
+  assert.deepEqual(f.c.state.messages.map(m=>m.text),['History A']);
+  gate.resolve();await Promise.all([a,again]);assert.equal(f.calls.filter(([m,id])=>m==='open'&&id==='A').length,1);
+  assert.equal(f.owners.filter(o=>o.state.threadId==='A').length,1);
+ }finally{gate.resolve();await f.c.close();}
+});
+
+test('cancel latest load only; another accepted load completes and is retained',async()=>{
+ const f=await fixture(),aGate=deferred(),bGate=deferred();try{
+  await f.select('C');f.gates.set('A',aGate);f.gates.set('B',bGate);
+  const a=f.select('A');await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='A'));
+  const b=f.select('B'),cancelled=assert.rejects(b,/取消/);await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='B'));
+  const stop=f.c.stop({cancelOpening:true});bGate.resolve();await Promise.all([stop,cancelled]);
+  aGate.resolve();await a;assert.equal(f.c.state.threadId,'C');assert.ok(f.c.state.conversationActivity.some(s=>s.threadId==='A'));
+  assert.equal(f.owners.find(o=>o.state.threadId==='A').closed,0);
+ }finally{aGate.resolve();bGate.resolve();await f.c.close();}
+});
+
+test('shutdown cancels and settles every accepted opening without orphan owners',async()=>{
+ const f=await fixture(),aGate=deferred(),bGate=deferred();
+ f.gates.set('A',aGate);f.gates.set('B',bGate);const a=f.select('A'),ar=assert.rejects(a,/取消/);
+ await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='A'));
+ const b=f.select('B'),br=assert.rejects(b,/取消/);await until(()=>f.calls.some(([m,id])=>m==='open'&&id==='B'));
+ const closing=f.c.close();aGate.resolve();bGate.resolve();await Promise.all([closing,ar,br]);
+ assert.ok(f.owners.every(o=>o.closed>=1));
+});
+
+test('focus-changing workspace selection supersedes the view without cancelling an accepted load',async()=>{
+ const f=await fixture(),gate=deferred();try{
+  await f.select('C');f.gates.set('A',gate);const a=f.select('A');await until(()=>f.c.state.historyReady);
+  await f.c.selectWorkspace({path:f.root});assert.equal(f.c.state.threadId,null);assert.equal(f.c.state.connectionOpening,false);
+  gate.resolve();await a;assert.equal(f.c.state.threadId,null);assert.ok(f.c.state.conversationActivity.some(s=>s.threadId==='A'));
+ }finally{gate.resolve();await f.c.close();}
+});
+
+test('same-room metadata, movement and deletion refuse an in-flight open without cancelling its view or locking other rooms',async()=>{
+ const f=await fixture(),gate=deferred();try{
+  f.gates.set('A',gate);const a=f.select('A');await until(()=>f.c.state.historyReady);
+  await assert.rejects(f.c.metadata({threadId:'A',title:'changed'}),/正在連線/);
+  await assert.rejects(f.c.moveWorkspace({threadId:'A',workspace:f.root}),/正在連線/);
+  await assert.rejects(f.c.deleteArchived({threadIds:['A'],confirmed:true}),/正在連線/);
+  assert.equal(f.c.state.threadId,'A');await f.select('B');assert.equal(f.c.state.threadId,'B');
+  gate.resolve();await a;assert.equal(f.calls.filter(([m,id])=>m==='open'&&id==='A').length,1);
+ }finally{gate.resolve();await f.c.close();}
+});
+
+test('idle eviction cannot close an in-flight owned room even if its projection becomes idle',async()=>{
+ const f=await fixture(),gate=deferred();try{
+  await f.select('A');const owner=f.owners.find(o=>o.state.threadId==='A');owner.state.status='offline';f.gates.set('A',gate);
+  const a=f.select('A');await until(()=>f.calls.filter(([m,id])=>m==='open'&&id==='A').length===2);owner.state.status='ready';
+  for(const id of ['B','C','D','E','F'])await f.select(id);await new Promise(r=>setTimeout(r,30));assert.equal(owner.closed,0);
+  gate.resolve();await a;assert.equal(f.c.state.threadId,'F');
+ }finally{gate.resolve();await f.c.close();}
 });

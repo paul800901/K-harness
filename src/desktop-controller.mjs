@@ -571,7 +571,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    return args.hook?{hookSpecificOutput:{hookEventName:'SessionStart',additionalContext:renderCompactionContext(snapshot)}}:snapshot;
   },...(onContinueConversation?{continueConversation:async(args,meta)=>{
    assertMainGoalCaller(meta);
-   return onContinueConversation({...args,threadId:state.threadId,turnId,stillCurrent:()=>assertMainGoalCaller(meta)});
+   const sourceHost=host,sourceEpoch=requestEpoch,sourceSelection=selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier);
+   const afterTurnCurrent=()=>{if(host!==sourceHost||requestEpoch!==sourceEpoch||closing||stopping||stopRequested||selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)!==sourceSelection)throw Error('來源已停止或變更；未送出交接。');};
+   return onContinueConversation({...args,threadId:state.threadId,turnId,stillCurrent:()=>assertMainGoalCaller(meta),afterTurnCurrent});
   }}:{}),editGoal:async(args,meta)=>{
    assertMainGoalCaller(meta);
    return goal({objective:args.objective,editOnly:true});
@@ -860,15 +862,20 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    return this.open({model,effort,serviceTier:'default',accessMode:access,permissionConfirmed},
     {manualFork:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:point.turnId,parentTitle:state.title}});
   },
-  async prepareContinuation({turnId:expectedTurnId,mode='fork'}){
-   if(!host||opening||closing||stopping||submission||turnId||state.busy||state.goalPending||state.questions.length||flashQueue.size||flashNotifying||nativeTerminals.size||state.status!=='completed')throw Object.assign(Error('原回合尚未確認正常結束；未建立新聊天室。'),{notCreated:true});
-   const parent=state.threadId;opening=true;
+  async prepareContinuation({turnId:expectedTurnId,mode='fork',sourceCurrent}){
+   const ended=()=>state.status==='completed'||mode==='fresh'&&state.status==='failed'&&typeof sourceCurrent==='function'&&state.turnError?.turnId===expectedTurnId&&state.turnError.status==='failed'&&recoverableError(state.turnError.error);
+   if(!host||opening||closing||stopping||submission||turnId||state.busy||state.goalPending||state.questions.length||flashQueue.size||flashNotifying||nativeTerminals.size||!ended())throw Object.assign(Error('原回合尚未確認正常結束；未建立新聊天室。'),{notCreated:true});
+   const parent=state.threadId,sourceHost=host,sourceEpoch=requestEpoch;opening=true;
    try{
+    sourceCurrent?.();
     const goalResult=await host.request('thread/goal/get',{threadId:parent});
     if(goalResult.goal?.status==='active'||goalResult.goal?.tokenBudget!=null)throw Error('原生目標仍在執行或帶有預算限制，不能另建目標繞過用量；未建立新聊天室。');
-    if((await workers()).some(w=>w.settled!==true)|| (await listTerminals(host,parent)).length)throw Error('原工作或子代理未確認結束；未建立新聊天室。');
+    const currentWorkers=await workers();sourceCurrent?.(goalResult.goal,currentWorkers);
+    if(currentWorkers.some(w=>w.settled!==true)|| (await listTerminals(host,parent)).length)throw Error('原工作或子代理未確認結束；未建立新聊天室。');
     const stored=await host.request('thread/read',{threadId:parent,includeTurns:true}),last=stored.thread?.turns?.at(-1);
-    if(last?.id!==expectedTurnId||last.status!=='completed'||state.busy||turnId||stopping||closing||flashQueue.size||flashNotifying||nativeTerminals.size||state.threadId!==parent)throw Error('已保存的原生回合與接續來源不符；未建立新聊天室。');
+    sourceCurrent?.(goalResult.goal,currentWorkers);
+    const failed=mode==='fresh'&&last?.status==='failed'&&ended()&&recoverableError(last.error)&&JSON.stringify(last.error)===JSON.stringify(state.turnError?.error);
+    if(host!==sourceHost||requestEpoch!==sourceEpoch||last?.id!==expectedTurnId||last.status!==state.status||!(last.status==='completed'||failed)||!ended()||state.busy||turnId||stopping||closing||flashQueue.size||flashNotifying||nativeTerminals.size||state.threadId!==parent)throw Error('已保存的原生回合與接續來源不符；未建立新聊天室。');
     return {...(mode==='fresh'?{mode}:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId}),model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
    }catch(error){error.notCreated=true;throw error;
    }finally{opening=false;}

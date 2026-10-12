@@ -33,7 +33,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.held)throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
  const openedOrder=new Map();let openSequence=0;
- let pendingOpen,pendingView,navigationRequest=0;
+ const openingRooms=new Map(),openingTasks=new Set();let pendingView,navigationRequest=0;
  let active,navigating=false,closing=false,sharedUsage=null,navigationSettled=Promise.resolve(),finishNavigation,releasing=Promise.resolve(),idleProbe;
  const create=()=>{
   let controller;
@@ -109,15 +109,16 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
  const continuationNotice=(controller,receipt)=>{
-  continuationStates.set(controller,{...receipt,nextInstruction:undefined});
+  continuationStates.set(controller,{...receipt,nextInstruction:undefined,sourceCurrent:undefined});
   onChange();
  };
  const cancelContinuation=async(controller,error)=>{
   const pending=continuations.get(controller);if(!pending)return;
+  if(pending.sending)throw Error(`交接已送出或結果待查；請到已知新聊天室 ${pending.newThreadId} 查明。未取消、未重送或強制停止。`);
   continuations.delete(controller);pending.status='cancelled';pending.error=error;
   continuationNotice(controller,pending);await writeContinuation(pending);
  };
- async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,mode='fork'}){
+ async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,afterTurnCurrent,mode='fork'}){
   if(closing||!controller||locked.has(controller)||rooms.get(threadId)!==controller||controller.state.provider!=='codex')throw Error('來源聊天室正在變更或尚未支援此工具。');
   if(typeof nextInstruction!=='string'||!nextInstruction.trim()||nextInstruction.length>16000)throw Error('請提供明確的接續指令，最多 16000 字元。');
   if(!['fork','fresh'].includes(mode))throw Error('未知的換房模式。');
@@ -138,10 +139,21 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   if(s.threadId!==threadId||!s.busy||s.questions?.length||s.queuedMessages?.length||s.goalPending||s.completionPending)throw Error('原聊天室仍有核准、待送或背景工作；請先查明。');
   const goal=await controller.goal({refresh:true});
   if(goal?.goal?.status==='active'||goal?.goal?.tokenBudget!=null)throw Error('請先暫停原生目標；有預算限制的目標不能用換房重設用量。');
-  if((await workerRows(controller)).some(w=>w.settled!==true))throw Error('子代理未確認結束；不能移交或重播。');
+  const acceptedWorkers=await workerRows(controller);
+  if(acceptedWorkers.some(w=>w.settled!==true))throw Error('子代理未確認結束；不能移交或重播。');
   const current=controller.state;
   if(closing||current.threadId!==threadId||!current.busy||current.questions?.length||current.queuedMessages?.length||current.goalPending||current.completionPending)throw Error('來源已變更；未受理換房。');
   const receipt={sourceThreadId:threadId,turnId,mode,status:'pending',nextInstruction:nextInstruction.trim()};
+  const humanIntent=()=>JSON.stringify(controller.state.messages?.filter(m=>m.role==='user').map(m=>[m.turnId,m.text]));
+  const workerIdentity=rows=>JSON.stringify(rows.map(w=>JSON.stringify([w.provider,w.requestId,w.threadId,w.turnId])).sort());
+  const toolIds=()=>JSON.stringify((controller.state.tools??[]).filter(t=>!['conversation_create','conversation_continue'].includes(t.name)).map(t=>t.id).sort());
+  const acceptedTools=toolIds();
+  const goalIdentity=value=>JSON.stringify(value?[value.threadId,value.createdAt,value.objective,value.status,value.tokenBudget]:null);
+  const intent=humanIntent(),acceptedGoal=goalIdentity(goal?.goal),workerIds=workerIdentity(acceptedWorkers);
+  receipt.sourceCurrent=(currentGoal=controller.state.goal,currentWorkers=controller.state.workers??[])=>{
+   afterTurnCurrent?.();const latest=controller.state;
+   if(closing||receipt.status==='cancelled'||latest.threadId!==threadId||humanIntent()!==intent||toolIds()!==acceptedTools||latest.busy||latest.questions?.length||latest.queuedMessages?.length||latest.goalPending||latest.completionPending||goalIdentity(currentGoal)!==acceptedGoal||workerIdentity(currentWorkers)!==workerIds)throw Error('本人意圖、目標或原工作已變更；未送出交接。');
+  };
   await writeContinuation(receipt);
   try{
    stillCurrent?.();const latest=controller.state;
@@ -154,29 +166,34 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  }
  async function finishContinuation(controller,{threadId,turnId,status}){
   const receipt=continuations.get(controller);
-  if(!receipt||receipt.sourceThreadId!==threadId||receipt.turnId!==turnId)return;
-  // Consume before any await. Completion notifications cannot create twice.
-  continuations.delete(controller);
+  if(!receipt||receipt.status!=='pending'||receipt.sourceThreadId!==threadId||receipt.turnId!==turnId)return;
+  // Mark before any await. Duplicate terminal notifications cannot create twice.
+  receipt.status='creating';
   let child,openingChild=false;
   try{
-   if(closing||status!=='completed'||locked.has(controller)||controller.state.busy||controller.state.questions?.length||controller.state.queuedMessages?.length)throw Error('來源回合已停止、失敗或收到新工作；換房已取消，未重送。');
+   if(closing||!(status==='completed'||receipt.mode==='fresh'&&status==='failed')||locked.has(controller)||controller.state.busy||controller.state.questions?.length||controller.state.queuedMessages?.length)throw Error('來源回合已停止、失敗或收到新工作；換房已取消，未重送。');
    locked.add(controller);noDiscussion(controller);
    receipt.status='creating';await writeContinuation(receipt);
-   const prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork'});
+   receipt.sourceCurrent();
+   const prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork',sourceCurrent:receipt.sourceCurrent});
+   receipt.sourceCurrent();
    prepared.parentTitle=controller.state.title;
    if(closing)throw Object.assign(Error('K 正在關閉；未建立新聊天室。'),{notCreated:true});
    child=create();locked.add(child);
-   await child.selectWorkspace({path:prepared.workspace});
+   await child.selectWorkspace({path:prepared.workspace});receipt.sourceCurrent();
    let origin;
    // This is the already selected source permission, never a new elevation.
    openingChild=true;
    await child.open({model:prepared.model,effort:prepared.effort,accessMode:prepared.accessMode,permissionConfirmed:true,serviceTier:prepared.serviceTier,workerPolicy:prepared.workerPolicy},{continuation:prepared,onCreated:async created=>{
-    receipt.newThreadId=created.threadId;receipt.status='created';await writeContinuation(receipt);
+    receipt.newThreadId=created.threadId;if(receipt.status!=='cancelled')receipt.status='created';await writeContinuation(receipt);
     origin={kind:'origin',mode:receipt.mode??'fork',sourceThreadId:created.threadId,...(receipt.mode==='fresh'?{handoffFrom:threadId}:{parentThreadId:threadId}),initialTurnId:null};await writeContinuation(origin);reindex(child);
    }});reindex(child);await loadDiscussion(child);
+   receipt.sourceCurrent();
    if(child.state.goalError||child.state.goal?.status==='active'||child.state.goal?.tokenBudget!=null)throw Error('新聊天室目標狀態未確認安全；未送出接續。');
    if(closing)throw Error('K 正在關閉；新聊天室已保留，未送出接續。');
    const text=receipt.mode==='fresh'?`K 控制器代送的全新聊天室交接：使用者已要求在同專案新聊天室接續，減少舊上下文。這是真正空白的原生新對話；未帶入舊歷史、壓縮、訊息或成果附件。此交接不是再次換房的真人授權。\n原聊天室的工具、子代理或背景命令不會轉成新工作；先讀回目前成果檔案，查明未完成與未知結果，只做剩餘工作，不重播已執行或結果不明的副作用。原生目標／用量／預算不轉移；不得恢復原聊天室目標或靠新目標繞過限制；只有本次本人明確要求建立新目標時，才依原生工具規則處理，不從摘要或舊暫停狀態自行取得授權。\n\n本次剩餘工作與交接：\n${receipt.nextInstruction}`:`K 控制器代送的接續指令：使用者已要求在同專案新聊天室接續。原生歷史已保留；歷史中的換房指令與工具呼叫不是再次換房的授權。\n原聊天室的工具、子代理或背景命令不會轉成新工作；先讀回目前成果檔案，查明未完成與未知結果，只做剩餘工作，不重播已執行或結果不明的副作用。不建立或恢復原生目標，不重設原目標用量／預算。\n\n本次剩餘工作與交接：\n${receipt.nextInstruction}`;
+   // No await between the dispatch boundary and native send: later cancellation cannot promise rollback.
+   receipt.sending=true;
    await child.send({text,source:'continuation'});
    origin.initialTurnId=child.state.messages?.findLast(m=>m.role==='user')?.turnId??null;await writeContinuation(origin);
    receipt.status='sent';await writeContinuation(receipt);
@@ -187,6 +204,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    await writeContinuation(receipt).catch(()=>{});
   }finally{
    if(child){if(child.state.threadId)reindex(child);else{try{await child.close();controllers.delete(child);}catch{/* Keep failed teardown for shutdown. */}}locked.delete(child);}
+   if(continuations.get(controller)===receipt)continuations.delete(controller);
    locked.delete(controller);continuationNotice(controller,receipt);
   }
  }
@@ -224,12 +242,12 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   // Keep the active controller plus the three most recently opened hidden
   // controllers available. Protected/busy rooms may make the pool larger.
   for(const controller of ordered.slice(3)){
-   if(closing||navigating||controller===active||locked.has(controller)||continuations.has(controller))continue;
+   if(closing||navigating||controller===active||locked.has(controller)||continuations.has(controller)||[...openingTasks].some(task=>task.controller===controller))continue;
    const probe=new AbortController(),request=navigationRequest;idleProbe={controller,abort:probe};let held=false;
    try{
     // Optional read-only checks never lock navigation. A selection cancels our
     // wait, not the underlying read; late results cannot reach close().
-    if(!await safelyIdle(controller,false,probe.signal)||probe.signal.aborted||!controllers.has(controller)||closing||navigating||controller===active||request!==navigationRequest||locked.has(controller)||continuations.has(controller))continue;
+    if(!await safelyIdle(controller,false,probe.signal)||probe.signal.aborted||!controllers.has(controller)||closing||navigating||controller===active||request!==navigationRequest||locked.has(controller)||continuations.has(controller)||[...openingTasks].some(task=>task.controller===controller))continue;
     idleProbe=null;locked.add(controller);held=true;
     const id=controller.state.threadId;
     await controller.close();
@@ -243,6 +261,51 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    finally{if(idleProbe?.abort===probe)idleProbe=null;if(held)locked.delete(controller);}
   }
  };
+ const loadRoom=async(data,operation)=>{
+   const abort=operation.abort;let candidate,existing;
+   const showHistory=async history=>{
+    abort.signal.throwIfAborted();
+    await loadDiscussion(candidate??existing,history);abort.signal.throwIfAborted();
+    const d=discussions.get(history.threadId);operation.history={...history,messages:d?d.project(history.messages??[]):history.messages};
+    if(pendingView?.operation===operation){pendingView={record:operation.record,operation,history:operation.history};onChange();}
+   };
+   try{
+    const saved=data.threadId?(await listMainSessions(root,{threadId:data.threadId})).sessions[0]:null;
+    if(data.threadId&&!saved)throw Error('只能開啟 K 清單中的對話。');
+    if(saved&&saved.model!==data.model)throw Error('對話設定已更新，請重新整理清單。');
+    operation.record=saved??data;
+    if(pendingView?.operation===operation){pendingView={record:operation.record,operation};onChange();}
+    existing=data.threadId?rooms.get(data.threadId):null;operation.controller=existing;
+    if(existing){
+     const s=existing.state;
+     const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
+     if(locked.has(existing)){
+      if(configure)throw Error('此聊天室正在更新，請稍候。');
+      return {controller:existing,result:{threadId:s.threadId}};
+     }
+     let recover=s.workerConnection==='failed'||['offline','error','uncertain'].includes(s.status);
+     if(s.browserAccess?.enabled&&!s.busy&&!s.questions?.length){
+      try{recover||=(await browserRequest(root,s,s.threadId,'/state')).recoveryRequired===true;}catch{/* Missing browser endpoint alone is not proof of a failed native host. */}
+     }
+     if(configure||recover)noDiscussion(existing);
+     if((recover||configure)&&!s.busy&&!s.questions?.length){
+      locked.add(existing);try{await showHistory(projected(existing));await existing.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
+     }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
+     abort.signal.throwIfAborted();return {controller:existing,result:{threadId:s.threadId}};
+    }
+    abort.signal.throwIfAborted();candidate=create();operation.controller=candidate;
+    await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
+    abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();
+    if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
+    reindex(candidate);await loadDiscussion(candidate);abort.signal.throwIfAborted();
+    const receipt=candidate.state.provider==='codex'?await readContinuation(candidate.state.threadId):null;
+    if(receipt&&receipt.kind!=='origin'){if(['pending','creating','created'].includes(receipt.status)){receipt.status=receipt.status==='pending'?'cancelled':'uncertain';receipt.error='前次換房在程式關閉前未確認完成；不自動建立或重送。';await writeContinuation(receipt);}continuationNotice(candidate,receipt);}
+    return {controller:candidate,result};
+   }catch(error){
+    if(candidate){try{await candidate.close();controllers.delete(candidate);if(rooms.get(candidate.state.threadId)===candidate)rooms.delete(candidate.state.threadId);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
+    throw error;
+   }
+ };
  const api={
   concurrentConversations:true,
   get discussionBusy(){return locked.size>0||[...discussions.values()].some(d=>d.busy||d.held);},
@@ -253,65 +316,28 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   async usage(refresh=false){sharedUsage=await catalog.usage(refresh);onChange();return api.state.usage;},
   async open(data={}){
    if(closing)throw Error('K 正在關閉。');
-   if(navigating&&!pendingOpen)throw Error('正在更新聊天室，請稍候。');
-   const request=++navigationRequest;
-   idleProbe?.abort.abort(new DOMException('已讓路給聊天室切換。','AbortError'));
-   pendingView={record:data};onChange();
-   // A new selection supersedes the view, not another room's native work.
-   // Let an accepted opening settle and retain its owner before opening the latest target.
-   if(pendingOpen)await navigationSettled;
-   if(request!==navigationRequest)return {superseded:true};
-   try{focusLock();}catch(error){if(request===navigationRequest){pendingView=null;onChange();}throw error;}
-   const abort=new AbortController();pendingOpen=abort;let candidate,existing;
-   const showHistory=async history=>{
-    abort.signal.throwIfAborted();
-    if(request!==navigationRequest)return;
-    await loadDiscussion(candidate??existing,history);abort.signal.throwIfAborted();
-    if(request===navigationRequest){const d=discussions.get(history.threadId);pendingView={record:pendingView.record,history:{...history,messages:d?d.project(history.messages??[]):history.messages}};onChange();}
-   };
+   if(navigating)throw Error('正在更新聊天室，請稍候。');
+   let operation=data.threadId?openingRooms.get(data.threadId):null;
+   if(operation&&['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined))throw Error('此聊天室正在連線，不能同時變更執行設定。');
+   const request=++navigationRequest;idleProbe?.abort.abort(new DOMException('已讓路給聊天室切換。','AbortError'));
+   if(!operation){
+    operation={abort:new AbortController(),record:data};
+    if(data.threadId)openingRooms.set(data.threadId,operation);
+    openingTasks.add(operation);
+    operation.promise=loadRoom(data,operation).finally(()=>{openingTasks.delete(operation);if(openingRooms.get(data.threadId)===operation)openingRooms.delete(data.threadId);});
+   }
+   pendingView={record:operation.record,history:operation.history,operation};onChange();
    try{
-    const saved=data.threadId?(await listMainSessions(root,{threadId:data.threadId})).sessions[0]:null;
-    if(data.threadId&&!saved)throw Error('只能開啟 K 清單中的對話。');
-    if(saved&&saved.model!==data.model)throw Error('對話設定已更新，請重新整理清單。');
-    if(request===navigationRequest){pendingView={record:saved??data};onChange();}
-    existing=data.threadId?rooms.get(data.threadId):null;
-    if(existing){
-     const s=existing.state;
-     const configure=['accessMode','effort','workerPolicy'].some(key=>data[key]!==undefined);
-     if(locked.has(existing)){
-      if(configure)throw Error('此聊天室正在更新，請稍候。');
-      // Viewing an owned room needs no native reopen or mutation. Operations
-      // still go through target() and retain the existing lock.
-      if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);
-      return {threadId:s.threadId,...(request!==navigationRequest?{superseded:true}:{})};
-     }
-     let recover=s.workerConnection==='failed'||['offline','error','uncertain'].includes(s.status);
-     if(s.browserAccess?.enabled&&!s.busy&&!s.questions?.length){
-      try{recover||=(await browserRequest(root,s,s.threadId,'/state')).recoveryRequired===true;}catch{/* Missing browser endpoint alone is not proof of a failed native host. */}
-     }
-     if(configure||recover)noDiscussion(existing);
-     if((recover||configure)&&!s.busy&&!s.questions?.length){
-      locked.add(existing);try{await showHistory(projected(existing));await existing.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();}finally{locked.delete(existing);}
-     }else if(configure)throw Error('此聊天室仍在處理，不能同時變更執行設定。');
-    abort.signal.throwIfAborted();if(request===navigationRequest)active=existing;openedOrder.set(existing,++openSequence);releasing=releasing.then(releaseIdleRooms);return {threadId:s.threadId,...(request!==navigationRequest?{superseded:true}:{})};
-    }
-    abort.signal.throwIfAborted();candidate=create();
-    await candidate.selectWorkspace({path:saved?.workspace??data.workspace??active.state.workspace??root});
-    abort.signal.throwIfAborted();const result=await candidate.open(data,{signal:abort.signal,onHistory:showHistory});abort.signal.throwIfAborted();
-    if(!candidate.state.threadId)throw Error('原生對話尚未建立，未切換聊天室。');
-    reindex(candidate);await loadDiscussion(candidate);
-    const receipt=candidate.state.provider==='codex'?await readContinuation(candidate.state.threadId):null;
-    if(receipt&&receipt.kind!=='origin'){if(['pending','creating','created'].includes(receipt.status)){receipt.status=receipt.status==='pending'?'cancelled':'uncertain';receipt.error='前次換房在程式關閉前未確認完成；不自動建立或重送。';await writeContinuation(receipt);}continuationNotice(candidate,receipt);}
-    if(request===navigationRequest)active=candidate;releasing=releasing.then(releaseIdleRooms);return request===navigationRequest?result:{...result,superseded:true};
-   }catch(error){
-    if(candidate){try{await candidate.close();controllers.delete(candidate);}catch{/* Retain failed teardown for explicit backend shutdown. */}}
-    throw error;
-   }finally{pendingOpen=null;if(request===navigationRequest)pendingView=null;focusDone();}
+    const {controller,result}=await operation.promise;
+    if(request===navigationRequest&&!closing)active=controller;
+    openedOrder.set(controller,++openSequence);releasing=releasing.then(releaseIdleRooms);
+    return request===navigationRequest?result:{...result,superseded:true};
+   }finally{if(request===navigationRequest)pendingView=null;onChange();}
   },
   async selectWorkspace(data){
    // Workspace selection only prepares an empty view; it never repurposes a
    // controller that still owns a conversation, approvals, workers or a queue.
-   focusLock();const candidate=create();
+   focusLock();++navigationRequest;pendingView=null;const candidate=create();
    try{const result=await candidate.selectWorkspace(data);const old=active;if(old!==catalog&&!old.state.threadId){await old.close();controllers.delete(old);}active=candidate;return result;}
    catch(error){await candidate.close().catch(()=>{});controllers.delete(candidate);throw error;}
    finally{focusDone();}
@@ -323,6 +349,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     noDiscussion(controller);
     if(discussion(controller)?.messages.some(m=>m.id===data.messageId))throw Error('這則是共用討論紀錄，不是單一原生分支點；請從一般回覆建立分支。');
     if(controller!==active)throw Error('請先切回要分支的聊天室。');
+    ++navigationRequest;pendingView=null;
     locked.add(controller);
     // Native fork requires a settled source. The existing adapter enforces that
     // invariant and never interrupts a background conversation to create it.
@@ -333,13 +360,15 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    }
   },
   async metadata(data){
-   focusLock();try{const controller=rooms.get(data.threadId)??active;if(data.archived)noDiscussion(controller);const result=await controller.metadata(data);if(data.archived)attention.forget(data.threadId);return result;}finally{focusDone();}
+   focusLock();try{if(openingRooms.has(data.threadId))throw Error('此聊天室正在連線，請稍候再更新。');const controller=rooms.get(data.threadId)??active;if(data.archived)noDiscussion(controller);const result=await controller.metadata(data);if(data.archived)attention.forget(data.threadId);return result;}finally{focusDone();}
   },
   async moveWorkspace(data){
    focusLock();let controller;
    try{
+    if(openingRooms.has(data.threadId))throw Error('此聊天室正在連線，請稍候再移動。');
     const saved=(await listMainSessions(root,{threadId:data.threadId})).sessions.find(s=>s.threadId===data.threadId&&!s.archived);
     if(!saved)throw Error('請指定清單中未封存的聊天室。');
+    ++navigationRequest;pendingView=null;
     controller=rooms.get(data.threadId);
     if(controller&&locked.has(controller))throw Error('此聊天室正在更新，請稍候。');
     if(!controller){controller=create();try{await controller.selectWorkspace({path:saved.workspace});await controller.open({threadId:saved.threadId,model:saved.model});reindex(controller);}catch(error){try{await controller.close();controllers.delete(controller);}catch{/* Keep failed teardown registered for explicit shutdown. */}throw error;}}
@@ -354,6 +383,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    try{
     if(data.confirmed!==true)throw Error('必須明確確認刪除。');
     if(!Array.isArray(data.threadIds)||!data.threadIds.length||data.threadIds.length>500||new Set(data.threadIds).size!==data.threadIds.length||data.threadIds.some(id=>typeof id!=='string'||!/^[a-zA-Z0-9_-]{1,128}$/.test(id)))throw Error('請指定互不重複的有效聊天室 ID。');
+    if(data.threadIds.some(id=>openingRooms.has(id)))throw Error('目標聊天室正在連線，請稍候再刪除。');
     const saved=(await listMainSessions(root)).sessions;
     for(const id of data.threadIds??[]){
      const controller=rooms.get(id);
@@ -382,7 +412,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    await Promise.all([...continuationTasks]);
    // A controller still opening may create its native host after close() runs.
    // Settle that already accepted navigation before collecting every owner.
-   pendingOpen?.abort(new DOMException('已取消連線。','AbortError'));
+   for(const operation of openingTasks)operation.abort.abort(new DOMException('已取消連線。','AbortError'));
+   await Promise.allSettled([...openingTasks].map(operation=>operation.promise));
    await navigationSettled;
    await releasing;
    const stopped=await Promise.allSettled([...discussions.values()].map(d=>d.close()));
@@ -419,7 +450,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  for(const method of ['send','steer','queue','goal','answer','upload','selectModel','review','fuzzyFileSearch'])api[method]=data=>target(data)[method](data);
  for(const method of ['steer','queue','goal','selectModel','review']){const original=api[method];api[method]=data=>{noDiscussion(target(data));return original(data);};}
  api.send=async data=>{
-  const c=target(data);noDiscussion(c);await cancelContinuation(c,'收到新的真人訊息，已取消先前換房要求。');continuationStates.delete(c);const d=discussion(c);
+  const source=rooms.get(data?.threadId);if(source)await cancelContinuation(source,'收到新的真人訊息，已取消先前換房要求。');const c=target(data);noDiscussion(c);continuationStates.delete(c);const d=discussion(c);
   if(!d)return c.send(data);
   locked.add(c);let handoff;
   try{handoff=await d.handoff(data.text);const result=await c.send({...data,text:handoff.text});if(result.sent===false&&!result.queued)await handoff.rejected?.();return result;}
@@ -429,7 +460,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  api.uploadStream=(data,stream)=>target(data).uploadStream(data,stream);
  for(const method of ['compact','workers'])api[method]=data=>target(data)[method]();
  const compact=api.compact;api.compact=data=>{noDiscussion(target(data));return compact(data);};
- api.stop=async data=>{if(data?.cancelOpening===true){++navigationRequest;pendingView=null;idleProbe?.abort.abort(new DOMException('已取消連線。','AbortError'));if(pendingOpen){pendingOpen.abort(new DOMException('已取消連線。','AbortError'));await navigationSettled;}onChange();return {cancelled:true};}const c=target(data);await cancelContinuation(c,'本人停止工作，換房要求已取消。').catch(()=>{});if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
- for(const method of ['steer','queue']){const original=api[method];api[method]=async data=>{const c=target(data);await cancelContinuation(c,'收到新的真人訊息，已取消先前換房要求。');continuationStates.delete(c);return original(data);};}
+ api.stop=async data=>{if(data?.cancelOpening===true){const operation=pendingView?.operation;++navigationRequest;pendingView=null;idleProbe?.abort.abort(new DOMException('已取消連線。','AbortError'));if(operation){operation.abort.abort(new DOMException('已取消連線。','AbortError'));await operation.promise.catch(()=>{});}onChange();return {cancelled:true};}const source=rooms.get(data?.threadId),pending=source&&continuations.get(source);if(pending){await cancelContinuation(source,'本人停止工作，換房要求已取消。');if(locked.has(source)&&!source.state.busy)return {cancelled:true,continuationCancelled:true};}const c=target(data);if(discussion(c)?.busy||discussion(c)?.held)return discussion(c).stop();return c.stop();};
+ for(const method of ['steer','queue']){const original=api[method];api[method]=async data=>{const source=rooms.get(data?.threadId);if(source)await cancelContinuation(source,'收到新的真人訊息，已取消先前換房要求。');const c=target(data);continuationStates.delete(c);return original(data);};}
  return api;
 }
