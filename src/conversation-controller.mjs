@@ -119,15 +119,17 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   pending.cancelWait?.(Error(error));
   continuationNotice(controller,pending);await writeContinuation(pending);
  };
- async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,afterTurnCurrent,authorizedHumanTurnId,mode='fork'}){
+ async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,afterTurnCurrent,authorizedHumanTurnId,mode='fork',model,effort,resolveTarget}){
   if(closing||!controller||locked.has(controller)||rooms.get(threadId)!==controller||controller.state.provider!=='codex')throw Error('來源聊天室正在變更或尚未支援此工具。');
   if(typeof nextInstruction!=='string'||!nextInstruction.trim()||nextInstruction.length>16000)throw Error('請提供明確的接續指令，最多 16000 字元。');
   if(!['fork','fresh'].includes(mode))throw Error('未知的換房模式。');
+  if(mode!=='fresh'&&(model!==undefined||effort!==undefined))throw Error('歷史分支不支援變更模型或推理程度。');
   locked.add(controller);
   try{
   const previous=await readContinuation(threadId);
   if(previous?.turnId===turnId&&previous.kind!=='origin'){
    if((previous.mode??'fork')!==mode)throw Error('同回合換房模式衝突；已受理的模式不變，不建立第二個聊天室。');
+   if(mode==='fresh'&&(previous.requestedModel!==model||previous.requestedEffort!==effort||previous.nextInstruction!==nextInstruction.trim()))throw Error('同回合換房參數衝突；已受理的交接不變，不建立第二個聊天室。');
    return {...previous,nextInstruction:undefined,created:!!previous.newThreadId};
   }
   const humanTurnId=authorizedHumanTurnId??turnId;
@@ -157,6 +159,11 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    afterTurnCurrent?.();const latest=controller.state;
    if(closing||receipt.status==='cancelled'||latest.threadId!==threadId||humanIntent()!==intent||toolIds()!==acceptedTools||latest.busy||latest.questions?.length||latest.queuedMessages?.length||latest.goalPending||latest.completionPending||goalIdentity(currentGoal)!==acceptedGoal||workerIdentity(currentWorkers)!==workerIds)throw Error('本人意圖、目標或原工作已變更；未送出交接。');
   };
+  if(mode==='fresh'){
+   const target=resolveTarget?await resolveTarget():{targetModel:current.model,targetEffort:current.effort??null};
+   if(!resolveTarget&&(model!==undefined||effort!==undefined))throw Error('原生模型目錄不可用；未受理指定模型的換房。');
+   Object.assign(receipt,target,{requestedModel:model,requestedEffort:effort});
+  }
   await writeContinuation(receipt);
   try{
    stillCurrent?.();const latest=controller.state;
@@ -164,7 +171,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   }catch(error){receipt.status='cancelled';receipt.error=error.message;await writeContinuation(receipt);continuationNotice(controller,receipt);throw error;}
   // No await between the final live check and registration: completion cannot be lost.
   continuations.set(controller,receipt);continuationNotice(controller,receipt);
-  return {accepted:true,mode,created:false,started:false,sourceThreadId:threadId,afterTurnId:turnId,action:'End this turn normally. Do not perform more work or call again.'};
+  return {accepted:true,mode,created:false,started:false,sourceThreadId:threadId,afterTurnId:turnId,...(mode==='fresh'?{targetModel:receipt.targetModel,targetEffort:receipt.targetEffort}:{}),action:'End this turn normally. Do not perform more work or call again.'};
   }finally{locked.delete(controller);}
  }
  async function finishContinuation(controller,{threadId,turnId,status}){
@@ -192,6 +199,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
     prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork',sourceCurrent:receipt.sourceCurrent});
     receipt.sourceCurrent();
    }
+   if(receipt.mode==='fresh')Object.assign(prepared,{model:receipt.targetModel,effort:receipt.targetEffort});
    prepared.parentTitle=controller.state.title;
    if(closing)throw Object.assign(Error('K 正在關閉；未建立新聊天室。'),{notCreated:true});
    child=create();locked.add(child);

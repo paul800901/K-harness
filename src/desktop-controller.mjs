@@ -588,7 +588,18 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const stillCurrent=()=>{assertMainGoalCaller(meta);if(recovery&&(!auditCurrent(recovery)||!humanCurrent()))throw Error('真人授權的核對回合已停止或變更；未受理交接。');};
    // prepareContinuation owns a read-only opening reservation; every identity/intent guard remains live.
    const afterTurnCurrent=()=>{if(host!==sourceHost||requestEpoch!==sourceEpoch||closing||stopping||stopRequested||selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)!==sourceSelection||recovery&&(!recoveryCurrent(recovery,true)||!humanCurrent()))throw Error('來源已停止或變更；未送出交接。');};
-   const requestedTurn=turnId,result=await onContinueConversation({...args,authorizedHumanTurnId,threadId:state.threadId,turnId,stillCurrent,afterTurnCurrent});
+   const resolveTarget=async()=>{
+    const model=args.model??state.model;
+    if(typeof model!=='string'||!model.trim()||model.length>256)throw Error('請指定原生目錄中的主代理模型。');
+    const selected=findMainModel(await listMainModels(sourceHost),model);
+    if(!selected)throw Error('指定模型不在本供應商的原生目錄；未受理換房。');
+    const efforts=reasoningEfforts(selected);
+    const effort=args.effort!==undefined?args.effort:model===state.model?state.effort:efforts.includes(selected.defaultReasoningEffort)?selected.defaultReasoningEffort:null;
+    if(effort!==null&&effort!==undefined&&!efforts.includes(effort))throw Error('指定推理程度不在該模型的原生目錄；未受理換房。');
+    if(mainServiceTier(selected,state.serviceTier)!==state.serviceTier)throw Error('指定模型不支援原聊天室的服務等級；未受理換房。');
+    stillCurrent();return {targetModel:model,targetEffort:effort??null};
+   };
+   const requestedTurn=turnId,result=await onContinueConversation({...args,resolveTarget,authorizedHumanTurnId,threadId:state.threadId,turnId,stillCurrent,afterTurnCurrent});
    // A received handoff owns this direct turn's settlement. Never also schedule its goal audit.
    if(result?.accepted===true&&goalTurn?.turnId===requestedTurn)goalTurn=null;
    return result;

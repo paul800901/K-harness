@@ -47,6 +47,23 @@ test('main-conversation MCP exposes distinct fresh and history-branch tools with
  }finally{await gateway.close();}
 });
 
+test('only fresh conversation_create accepts optional target model and effort',async()=>{
+ const f=fixture(),seen=[],gateway=await createLunaGateway({bridge:f.bridge,geminiOnly:true,continueConversation:async args=>{seen.push(args);return {accepted:true};}});
+ try{
+  const {url,headers}=gateway.mcpConfig.mcpServers.k_gemini,token=headers.Authorization.slice(7);
+  await body(await post(url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}}));
+  const listed=(await body(await post(url,token,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}}))).result.tools;
+  const fresh=listed.find(t=>t.name==='conversation_create'),fork=listed.find(t=>t.name==='conversation_continue');
+  assert.ok(fresh.inputSchema.properties.model);assert.ok(fresh.inputSchema.properties.effort);assert.equal(fork.inputSchema.properties.model,undefined);
+  const args={nextInstruction:'remaining',model:'native-target',effort:'high'};
+  const call=async(name,arguments_)=>body(await post(url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name,arguments:arguments_}}));
+  assert.equal((await call('conversation_create',args)).result.isError,undefined);assert.deepEqual(seen.at(-1),{...args,mode:'fresh'});
+  await call('conversation_continue',args);assert.equal(seen.length,1);
+  await call('conversation_create',{...args,effort:null});assert.equal(seen.at(-1).effort,null);
+  await call('conversation_create',{...args,model:''});assert.equal(seen.length,2);
+ }finally{await gateway.close();}
+});
+
 test('context gateway retains item paging and exposes explicit turn cursors and exact original ranges',async()=>{
  const f=fixture(),seen=[];const gateway=await createLunaGateway({bridge:f.bridge,readContext:async(args)=>{seen.push(args);return {original:{text:'中文🙂中段',charCount:6,nextOffset:null}};}});
  try{
