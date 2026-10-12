@@ -52,3 +52,17 @@
 - 正式桌面／手機入口：慢 A 載入中切 B 能先使用 B；切回 A 已完成，不再次重讀；背景工作／草稿／附件／核准沒有串房。
 - 真正新假資料房驗證工具受理、來源終態核對、新房出現、單次交接及重開；上游故障以隔離可控方式注入，不以真實翻譯房製造錯誤。
 - 正式證據未取得前，只能標示候選通過，不能聲稱所有 harness 問題或上游滿載／斷流均已解決。
+
+## 本人授權後正式更新與 Astra 讀回（2026-10-12）
+
+本人本輪明確表示「我關了，可以上線更新」，取代上方候選停等狀態。本輪只套用已固定的候選，沒有改產品、模型、帳號、權限或計費。Sol 接到限定封裝任務即因模型容量不足退出；新證據目錄尚未建立，Astra 核對後接手部署，沒有換模型重派或重送未知操作。
+
+- 正式產品版本：**`c1d5e3807bd223a8c171ac2dadbb8495eb3c4c35`**，舊版 `5a2558633bdb040af2c8a26265f1fcfb2e5ad569`。套用前兩次核對 K 自有程序、47831／5199 listener 均為 0；兩個既有 Chrome native host 保留，沒有強制停止任何程序。
+- 沿用現有部署流程：固定 Git 封包、package／lock 與現用相同，獨立複製既有 dependencies，**未安裝或更新套件／原生核心**。三項 build 成功，封裝相關回歸 **348/348、0 fail／cancelled／skipped**；本批工程全套 1468/1468 與真正 Opus 增量複查沿用前節固定來源證據，不宣稱部署時另跑一次全套。
+- Astra 單次 `activateRuntime`，準備版及正式安裝 **689/689 Git 來源 bytes 相同**，沒有回復生成來源。`.local/runtime.json`、正式入口及啟動器逐項讀回匹配；程式退版保留在 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791792112838`，不是使用者對話備份。
+- 真正式 owner 啟動，health 200、未授權 state 403；正式送出的 JS／CSS 與安裝檔 hash 相同。**1440×960／390×844** UI 讀回成功，清單 **30 房**、未選原房、busy=false、**0 POST／0 page error／0 新工作**。Astra 實際看圖；手機為瀏覽器尺寸驗證，不冒稱 USB 手機實機或使用者捷徑點擊驗收。
+- 安裝版獨立載入操作 **2/2**：實際安裝來源、HTTP/SSE 及建置 UI，只有 provider／聊天室是假資料。B 延遲時 C 可輸入並且訊息只到 C；B 完成不搶焦點，重選 B 不重開；取消 E 不取消 D，A 背景工作未動。證據在 `installed-ui/`；與正式 owner 的只讀驗證分開，不把假 provider 當真原生工作驗收。
+- **78 份原 main-session metadata 清單與 hashes 未變**，五個穩定資料目錄位置及第一層清單未變；selected cores、Codex config、projects、google-ops 四項設定未變。Gemini 正常額度查詢僅更新帳號 0 的 `auth.checkedAt`／`quota.checkedAt`／`lastQueryAt` 三項時間，已逐欄核對，其餘帳號與額度欄位不變；沒有倒寫 cache 或搬移憑證。
+- 驗證 browser／正式 owner 均正常關閉，最後自有程序與兩個 listener 再次為 0，原房未開啟／恢復／重播。**K 維持關閉，可由本人使用原捷徑開啟。**本輪沒有真正模型新工作、沒有對真翻譯房製造失敗；已受理後故障的驗證仍為真 controller 加可控假 provider，使用者實際工作／長時間運行及上游服務內因未因此獲證。
+
+部署證據：`D:\K-harness\.runtime\independent-load-handoff-deploy-20261012`，包含 `validation.json`、`activation.json`、`preserved.json`、`installed-source.json`、`formal-readback.json`、`installed-ui/result.json`、`post-readback-preservation.json`、`launcher-rollback-readback.json` 與 `stopped-after-readback.json`。候選與前輪失敗證據保留。未 push、未更新東區、未安排背景更新；依本輪範圍完成後停止。
