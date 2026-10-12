@@ -42,3 +42,13 @@
 - Opus 增量複查 opus-r1 實際回傳 `You've hit your weekly limit`，exit1／is_error=true，session `db030cd0-fa9b-4266-a8bc-52904fc30e31`，5次只讀工具後停止。**沒有末審通過**。依本人先前「CLAUDE額度應該不足，如果真不夠這次複查就算了，你處理好」的限定豁免，Astra獨立檢查最終diff、兩項阻擋修正、真原生工作順序及全套回歸後接受候選；未切帳號／模型／API計費重試複查。
 - 最終 desktop SHA256：`7c0476b377884c4e0828dd0998d1941fef922088b21a6d12c43c29ef4cacef3c`。沒有新增第三方套件或模型常駐監工。
 - 使用者已關閉並允許直接套用，候選可進正式封裝與獨立讀回；部署尚未由本節宣稱完成。
+
+## 正式更新與獨立讀回（2026-10-12）
+
+- 本人本輪明確表示「可以，现在是关的，等下可以直接更新上去」後，Astra 核對正式程序／監聽埠為0，單次套用固定版本 `2a185098b643d7bea919f6c0d0791405fb1ea1a6`。正式來源為 Git archive 的690個檔案，封裝及安裝後均逐 bytes 核對零差異；三項建置成功，封裝 focused **407/407**。
+- 證據：`D:/K-harness/.runtime/native-429-recovery-deploy-20261012`。`activation.json`、`installed-source.json`、`formal-readback.json`、`launcher-rollback-readback.json` 分別記錄套用、來源、正式服務介面與入口／退版讀回。舊程式 `c1d5e38` 保留於 `D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791795702897`；這是程式退版，不是對話資料快照。
+- 正式 owner 實際啟動，health200、未授權state403、實際送出的JS/CSS與安裝檔一致；1440×960／390×844 介面、30房側欄及截圖由 Astra 讀回，0 POST／0頁面錯誤／未開任何原工作房。這是桌面／手機尺寸瀏覽器驗證，不是實體手機USB或Windows捷徑像素驗收。
+- 78個原metadata完整hash／清單與5個資料位置／清單不變，核心選擇、Codex設定、專案及Google設定不變。Gemini帳號檔僅目前帳號三個正常查詢時間（auth.checkedAt、quota.checkedAt、lastQueryAt）更新，逐欄核對；沒有切帳號、改額度、搬憑證或更改計費。原始cache前後證據均保留。
+- 更新前驗收第一次直接比較 worktree CRLF 與封裝 Git LF 被拒，當時未執行activation；隨後確認差異僅換行且封裝精確等於固定Git，並非產品漂移。正式讀回後停止檢查第一次證據檔名不在腳本既定選項內，被參數檢查拒絕；改用既定名稱完成檢查，沒有改寫產品或繞過停止核實。
+- 正式驗證後正常關閉自有owner，K保持關閉，程序與47831／5199監聽均為0；兩個既有Chrome native host原樣保留。未強制停止、恢復原翻譯房、重播工作、push或更新東區。原房歷史失敗不因安裝自動復活；本人下一次明確接續後才按新版流程處理。
+- **本次429協調修正已正式更新並完成上述讀回**。Opus增量仍是額度不足、沒有末審通過，沿用本人限定豁免與Astra獨立驗收。上游限流仍可能發生；30秒只是本機一次等待，不是官方保證恢復時間。真正成果核對需要模型額度，程式等待不使用模型待命；若核對本身仍失敗，不無限重試。
