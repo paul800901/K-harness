@@ -35,3 +35,13 @@
 **候選已修復並通過自動化與真正原生假房驗收，尚未部署。**正式仍為 `2a185098b643d7bea919f6c0d0791405fb1ea1a6`；工程前後版本設定與三個正式產品檔SHA256逐項相同（`formal-before.json`／`formal-after.json`）。未停止／重啟正式K、未送出真翻譯房交接、未改原房模型或設定、未push／更新東區／設定排程。
 
 沒有改UI資產，本批未另跑UI建置；尚未驗收安裝後的正式人類操作。此修正只解決新空白聊天室無法指定主模型／推理程度，不宣稱上游429或容量問題不再發生，不擴成跨供應商新房或歷史分支改模。
+
+## 本人授權後正式更新與獨立讀回（2026-10-12）
+
+- 本人明確回覆「可以更了」，取代前段候選停等。Astra 先核對正式K自有程序及47831／5199監聽皆為0；保留兩個既有Chrome native host，不強制結束任何工作。
+- 單次套用固定程式 `4595e96011f3e0da7a686aa8cc56a5285ded5929`。Git archive封裝692來源檔，既有獨立相依原樣複用且package manifests相同，沒有安裝／升級相依或原生核心。介面、Chrome擴充與啟動器三項建置通過；封裝focused **425/425**，沿用前節固定來源完整 **1513/1513** 與真正Sol→Luna5.6/high假房驗收。
+- 套用前及安裝後692檔均與固定Git bytes逐項核對零差異。舊 `2a185098b643d7bea919f6c0d0791405fb1ea1a6` 程式與入口保存於 `D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791799425692`；已核對舊版本設定、三變更產品及兩入口hash。這是程式退版，不是對話備份或資料還原。
+- 正式owner實際啟動：health200、未授權state403、實際送出的JS/CSS與安裝檔一致。Astra檢視1440×960／390×844正式介面截圖及30房側欄；無頁面錯誤、0 POST、未選取任何原翻譯房、未送出模型回合。這是正式服務與桌面／手機尺寸瀏覽器讀回，不宣稱實體手機USB或Windows捷徑像素驗收。
+- 78個原對話metadata的完整清單與hash、5個資料位置／清單不變；核心選擇、Codex設定、專案／Google設定以及語音／Node位置保留。Gemini帳號檔僅目前帳號3個正常查詢時間（auth.checkedAt、quota.checkedAt、lastQueryAt）更新，逐欄核對，未切換帳號或改額度／計費。
+- 正式讀回後正常關閉本輪自有owner，再次確認程序與監聽均為0。日常K維持關閉，未恢復／重送翻譯工作、未改原房模型、未push／更新東區／排程；本人可用原捷徑開啟新版。
+- 本輪證據集中於 `D:/K-harness/.runtime/fresh-model-selection-deploy-20261012`：validation、activation、installed-source、formal-readback、post-readback-preservation、launcher-rollback-readback及stopped-after-readback。**本批已正式更新並完成上述讀回**；Opus仍依前節真額度不足與本人豁免處理，不冒稱已完成複查。真正目標模型選擇已由前節同一固定產品的原生假房驗證；原翻譯房實際交接未代替本人執行。
