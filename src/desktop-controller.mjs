@@ -95,16 +95,25 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
  const cancelGeminiHandoff=()=>{geminiHandoff=null;geminiHandoffJobs.clear();flashFailedGoal=null;void flashBridge?.cancelGeminiHandoff?.();for(const n of state.notices)if(n.kind==='gemini-handoff')n.resolved=true;};
  const sameGoal=(a,b)=>!!a&&!!b&&Number.isFinite(a.createdAt)&&a.threadId===b.threadId&&a.createdAt===b.createdAt&&a.objective===b.objective&&a.tokenBudget===b.tokenBudget;
  const invalidateRecovery=()=>{if(goalRecovery)goalRecovery.cancelled=true;goalTurn=null;};
- const rememberActiveGoal=()=>{if(turnId&&state.goal?.status==='active'&&state.goal.threadId===nativeId(state.threadId)&&Number.isFinite(state.goal.createdAt)&&goalRecovery?.turnId!==turnId)goalTurn={turnId,goal:structuredClone(state.goal),epoch:requestEpoch};};
- const recoveryCurrent=r=>goalRecovery===r&&!r.cancelled&&host===r.host&&state.threadId===r.thread&&requestEpoch===r.epoch&&!opening&&!closing&&!stopping&&!stopRequested&&sameGoal(r.goal,state.goal)&&selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)===r.selection;
+ const rateRecoveryDelay=30000;
+ const rememberActiveGoal=()=>{
+  if(turnId&&state.goal?.status==='active'&&state.goal.threadId===nativeId(state.threadId)&&Number.isFinite(state.goal.createdAt)&&goalRecovery?.turnId!==turnId)goalTurn={turnId,goal:structuredClone(state.goal),epoch:requestEpoch};
+ };
+ const recoveryCurrent=(r,allowOpening=false)=>goalRecovery===r&&!r.cancelled&&host===r.host&&state.threadId===r.thread&&requestEpoch===r.epoch&&(allowOpening||!opening)&&!closing&&!stopping&&!stopRequested&&sameGoal(r.goal,state.goal)&&selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)===r.selection;
  const auditCurrent=r=>recoveryCurrent(r)&&turnId===r.turnId&&state.busy;
  const pendingRecovery=()=>!!goalRecovery&&!goalRecovery.attempted&&recoveryCurrent(goalRecovery)&&state.status==='failed'&&!state.busy&&!turnId;
- const recoverableError=error=>{
-  const info=error?.codexErrorInfo,code=typeof info==='string'?info:info&&typeof info==='object'?Object.keys(info)[0]:null;
-  const status=info&&typeof info==='object'?info[code]?.httpStatusCode:null;
-  // Public Other accepts future strings/objects; deny proven hard limits, not unknown service classes.
-  return typeof error?.message==='string'&&![401,403,429].includes(status)&&!['contextWindowExceeded','sessionBudgetExceeded','usageLimitExceeded','rateLimitExceeded','unauthorized','sandboxError','cyberPolicy','misalignmentPolicyViolation','tooManyDenials','badRequest','threadRollbackFailed','activeTurnNotSteerable'].includes(code);
+ const recoveryErrorClass=error=>{
+  if(typeof error?.message!=='string')return 'unknown';
+  const info=error.codexErrorInfo,details=error.additionalDetails,codes=typeof info==='string'?[info]:info&&typeof info==='object'?Object.keys(info):[];
+  const statuses=info&&typeof info==='object'?Object.values(info).map(value=>value?.httpStatusCode):[];
+  const hardCodes=['contextWindowExceeded','sessionBudgetExceeded','usageLimitExceeded','quotaExceeded','budgetExceeded','insufficient_quota','unauthorized','permissionDenied','sandboxError','cyberPolicy','misalignmentPolicyViolation','tooManyDenials','badRequest','threadRollbackFailed','activeTurnNotSteerable'];
+  const detailCodes=[details?.code,details?.error?.code].filter(value=>typeof value==='string');
+  const text=[error.message,typeof details==='string'?details:details?.message,details?.error?.message].filter(value=>typeof value==='string').join('\n');
+  // Proven native hard limits outrank HTTP429. "Retry limit" is not a usage limit.
+  if(statuses.some(value=>[401,403].includes(value))||[...codes,...detailCodes].some(value=>hardCodes.includes(value))||/quota[ _-]+(?:exceeded|exhausted)|insufficient[ _-]+quota|(?:exceeded|reached|exhausted|hit).{0,80}(?:weekly|usage)[ _-]+(?:usage[ _-]+)?limit|(?:weekly|usage)[ _-]+(?:usage[ _-]+)?limit.{0,50}(?:exceeded|reached|exhausted)|(?:token|session)[ _-]+budget[ _-]+(?:exceeded|exhausted)|context[ _-]+window[ _-]+exceeded|permission[ _-]+denied|authentication[ _-]+failed|invalid[ _-]+credentials/i.test(text))return 'hard';
+  return statuses.includes(429)||codes.includes('rateLimitExceeded')||/^(?:exceeded retry limit, last status: )?429 Too Many Requests(?:[.;:].*)?$/i.test(error.message)||/^rate limit (?:reached|exceeded)(?:[.:].*)?$/i.test(error.message)?'rate':'other';
  };
+ const recoverableError=error=>['rate','other'].includes(recoveryErrorClass(error));
  const clearNativeResults=()=>{invalidateRecovery();cancelGeminiHandoff();clearTimeout(nativeRecheckTimer);nativeRecheckTimer=null;nativeRecheckDelay=1000;nativeTerminals.clear();for(const [id,row] of flashQueue)if(row.provider==='codex')flashQueue.delete(id);for(const child of childActivities.values())delete child.epoch;};
  state.capabilities={goal:true,goalEdit:true,goalContinuesWhileIdle:true};
  // K's room id stays stable if an unsent native thread is recreated. Only
@@ -324,7 +333,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const index=state.tools.findIndex(tool=>tool.id===id);if(index<0)state.tools.push(reviewTool);else state.tools[index]=reviewTool;
    changed();return;
   }
-  if(e.method==='turn/started'){const audit=goalRecovery?.attempted&&!goalRecovery.turnId;if(audit)goalRecovery.turnId=p.turn.id;else if(goalRecovery?.turnId!==p.turn.id)invalidateRecovery();state.turnError=null;state.error=null;turnId=p.turn.id;rememberActiveGoal();activeGroupId??=turnGroupId(turnId)??randomUUID();for(const m of state.messages)if(m.role==='user'&&m.turnId===null){m.turnId=turnId;m.groupId??=activeGroupId;updateTiming('messages',m.id,{createdAt:m.createdAt,groupId:m.groupId,turnId});}state.busy=true;state.status='working';}
+  if(e.method==='turn/started'){const owned=goalTurn?.epoch===requestEpoch&&sameGoal(goalTurn.goal,state.goal)&&(goalTurn.turnId===p.turn.id||goalTurn.turnId===null&&submission)?goalTurn:null;const audit=goalRecovery?.attempted&&!goalRecovery.turnId;if(audit)goalRecovery.turnId=p.turn.id;else if(goalRecovery?.turnId!==p.turn.id){invalidateRecovery();goalTurn=owned;}state.turnError=null;state.error=null;turnId=p.turn.id;if(owned?.turnId===null)owned.turnId=turnId;rememberActiveGoal();activeGroupId??=turnGroupId(turnId)??randomUUID();for(const m of state.messages)if(m.role==='user'&&m.turnId===null){m.turnId=turnId;m.groupId??=activeGroupId;updateTiming('messages',m.id,{createdAt:m.createdAt,groupId:m.groupId,turnId});}state.busy=true;state.status='working';}
   if(e.method==='item/agentMessage/delta'){
    const old=state.messages.find(m=>m.id===p.itemId);message(p.itemId,'assistant',(old?.text??'')+p.delta,[],p.turnId??turnId,undefined,{partial:true});
   }
@@ -369,11 +378,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(final){void saveMainSessionActivity(root,state.threadId,completedAt).catch(error=>{if(completionCurrent()){addNotice('warning',`對話活動時間保存失敗：${error.message}`,'activity-save',completedTurnId);changed();}});final.completedAt=completedAt;const partial=p.turn?.status!=='completed';if(partial)final.partial=true;else delete final.partial;updateTiming('messages',final.id,{createdAt:final.createdAt,completedAt,groupId:final.groupId??activeGroupId,turnId:final.turnId??completedTurnId,role:'assistant',partial});}
    turnId=null;flashDeliveryUncertain=null;state.busy=stopping;state.status=stopping?'stopping':p.turn.status;clearQuestions(q=>q.threadId===state.threadId);
    if(onConversationSettled)queueMicrotask(()=>onConversationSettled({threadId:p.threadId,turnId:p.turn.id,status:stopping?'interrupted':p.turn.status}));
-   state.turnError=p.turn.error?{threadId:state.threadId,turnId:completedTurnId,status:p.turn.status,error:structuredClone(p.turn.error)}:null;
+   state.turnError=p.turn.error?{threadId:state.threadId,turnId:completedTurnId,status:p.turn.status,error:structuredClone(p.turn.error),...(recoveryErrorClass(p.turn.error)==='rate'?{observedAt:state.turnError?.turnId===completedTurnId?state.turnError.observedAt??Date.now():Date.now()}:{})}:null;
    if(p.turn.error)state.error=p.turn.error.message??'主回合失敗，未自動重送。';
    const handoffOwnership=ownership??(audit&&!goalRecovery.cancelled?goalRecovery:null);
-   flashFailedGoal=p.turn.status==='failed'&&handoffOwnership&&sameGoal(handoffOwnership.goal,state.goal)&&handoffOwnership.epoch===requestEpoch?{host,thread:state.threadId,epoch:requestEpoch,goal:structuredClone(handoffOwnership.goal),selection:selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier),failed:structuredClone(state.turnError)}:null;
-   if(!audit&&recoveryArmed&&ownership?.turnId===completedTurnId&&ownership.epoch===requestEpoch&&p.turn.status==='failed'&&recoverableError(p.turn.error)&&ownership.goal.tokenBudget===null&&sameGoal(ownership.goal,state.goal)&&!stopRequested&&!stopping&&!closing)goalRecovery={host,thread:state.threadId,epoch:requestEpoch,goal:ownership.goal,selection:selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier),failed:structuredClone(state.turnError),attempted:false,cancelled:false,turnId:null};
+   flashFailedGoal=p.turn.status==='failed'&&handoffOwnership&&sameGoal(handoffOwnership.goal,state.goal)&&handoffOwnership.epoch===requestEpoch?{host,thread:state.threadId,epoch:requestEpoch,goal:structuredClone(handoffOwnership.goal),selection:selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier),failed:structuredClone(state.turnError),notBefore:recoveryErrorClass(p.turn.error)==='rate'?state.turnError.observedAt+rateRecoveryDelay:undefined}:null;
+   if(!audit&&recoveryArmed&&ownership?.turnId===completedTurnId&&ownership.epoch===requestEpoch&&p.turn.status==='failed'&&recoverableError(p.turn.error)&&(!ownership.rateOnly||recoveryErrorClass(p.turn.error)==='rate')&&ownership.goal.tokenBudget===null&&sameGoal(ownership.goal,state.goal)&&!stopRequested&&!stopping&&!closing)goalRecovery={host,thread:state.threadId,epoch:requestEpoch,goal:ownership.goal,selection:selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier),failed:structuredClone(state.turnError),rateOnly:ownership.rateOnly===true,notBefore:recoveryErrorClass(p.turn.error)==='rate'?state.turnError.observedAt+rateRecoveryDelay:undefined,attempted:false,cancelled:false,turnId:null};
    settlingWorkers++;
    void workers().then(()=>deliverFlashResults()).catch(e=>{if(completionCurrent())addNotice('warning','主回合已結束，但工人狀態查詢失敗：'+e.message,'worker-attention',completedTurnId);}).finally(()=>{settlingWorkers--;changed();});void usage();
   }
@@ -509,7 +518,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(pending.some(([key,t])=>nativeTerminals.get(key)===t&&rows.some(r=>r.threadId===t.threadId&&r.settled&&r.turnId===t.turnId&&r.status===t.status)))await workers();
    }catch{/* A read failure keeps UNKNOWN; never replay a model or child work. */}
    finally{nativeRecheckRunning=false;nativeRecheckDelay=Math.min(30000,nativeRecheckDelay*2);scheduleNativeRecheck();}
-  },nativeRecheckDelay);
+  },pendingRecovery()&&goalRecovery.notBefore>Date.now()?goalRecovery.notBefore-Date.now():nativeRecheckDelay);
   nativeRecheckTimer.unref?.();
  }
  const disarmFlash=requestId=>{flashArmed.delete(requestId);flashQueue.delete(requestId);};
@@ -572,8 +581,17 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   },...(onContinueConversation?{continueConversation:async(args,meta)=>{
    assertMainGoalCaller(meta);
    const sourceHost=host,sourceEpoch=requestEpoch,sourceSelection=selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier);
-   const afterTurnCurrent=()=>{if(host!==sourceHost||requestEpoch!==sourceEpoch||closing||stopping||stopRequested||selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)!==sourceSelection)throw Error('來源已停止或變更；未送出交接。');};
-   return onContinueConversation({...args,threadId:state.threadId,turnId,stillCurrent:()=>assertMainGoalCaller(meta),afterTurnCurrent});
+   const recovery=goalRecovery?.turnId===turnId&&recoveryErrorClass(goalRecovery.failed.error)==='rate'?goalRecovery:null;
+   const latestHuman=state.messages.findLast(m=>m.role==='user'&&['local','native','steer'].includes(m.source));
+   const authorizedHumanTurnId=recovery&&auditCurrent(recovery)&&latestHuman?.turnId===recovery.failed.turnId?recovery.failed.turnId:undefined;
+   const humanCurrent=()=>!authorizedHumanTurnId||state.messages.findLast(m=>m.role==='user'&&['local','native','steer'].includes(m.source))?.turnId===authorizedHumanTurnId;
+   const stillCurrent=()=>{assertMainGoalCaller(meta);if(recovery&&(!auditCurrent(recovery)||!humanCurrent()))throw Error('真人授權的核對回合已停止或變更；未受理交接。');};
+   // prepareContinuation owns a read-only opening reservation; every identity/intent guard remains live.
+   const afterTurnCurrent=()=>{if(host!==sourceHost||requestEpoch!==sourceEpoch||closing||stopping||stopRequested||selectionKey(state.model,state.workspace,state.workerPolicy,state.effort,state.accessMode,state.serviceTier)!==sourceSelection||recovery&&(!recoveryCurrent(recovery,true)||!humanCurrent()))throw Error('來源已停止或變更；未送出交接。');};
+   const requestedTurn=turnId,result=await onContinueConversation({...args,authorizedHumanTurnId,threadId:state.threadId,turnId,stillCurrent,afterTurnCurrent});
+   // A received handoff owns this direct turn's settlement. Never also schedule its goal audit.
+   if(result?.accepted===true&&goalTurn?.turnId===requestedTurn)goalTurn=null;
+   return result;
   }}:{}),editGoal:async(args,meta)=>{
    assertMainGoalCaller(meta);
    return goal({objective:args.objective,editOnly:true});
@@ -620,6 +638,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
   let attempted=false,completed=false,requeued=false;
   try{
    if(recovery){
+    if(recovery.notBefore>Date.now())return;
     if(!current()||state.questions.length||quotaZeroUntil(state.usage.codex))return;
     const goal=(await active.request('thread/goal/get',{threadId:parent})).goal;
     if(!current())return;
@@ -655,7 +674,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    if(!current())return;
    let text=workerNoticeText(batch)+(native?'原生子代理終止不等於交付成功（failed／cancelled 也不是成功）。請用原生工具與實際成果獨立核對；已處理就不要重做，不要重送或重派原工作，也不要自行換模型、權限或帳號。原生最終訊息由核心保存，必要時用原生工具讀回；以下只含識別碼與狀態。\n':'')+JSON.stringify(results);
    if(handoff)text=(handoff.switched===true?'Gemini 官方額度確認歸零，現有工人已自然結束，帳號已查核切換就緒。':handoff.switched===false?'Gemini 官方確認同一帳號仍有額度；本次就緒只涵蓋 event.requestIds 中先前未送出的工作；其他已執行後失敗工單不因本次通知自動重啟，不立即重派／恢復。':'Gemini 帳號已就緒，待核對本房工人與成果。')+'這是一次系統接手通知，不是重播原工單。先讀 k_gemini.conversation_context 核對最新本人意圖，再讀已保存成果與以下原工單結果；已完成不要重做，副作用未知不要重送。本次就緒接手僅限通知 requestIds 的剩餘工作；核對後確有本次範圍剩餘工作才以新的 requestId、handoffFrom 原工單 ID 接手；不得重派相同 ID、換模型或擴張權限。本人停止／暫停／更改目標優先。\n'+JSON.stringify(handoff)+'\n'+text;
-   if(recovery)text='使用者已授權：原生持續目標失敗後，由同一主代理先核對已存成果，再接續剩餘工作。這不是原任務重播。先用 k_gemini.conversation_context 讀最新本人意圖與更正，再用既有工具讀實際保存檔案及已結束工人結果；已完成不要重做，副作用或結果未知不要重送或重派原工單。本人停止／暫停／更改目標優先。只有核對完成、原目標仍適用且確有剩餘工作時，才用 k_gemini.goal_resume 恢復同一目標；不修改預算、模型、帳號或權限。若已全部完成，依原生目標工具記錄完成，不恢復工作。\n原生失敗：'+JSON.stringify(recovery.failed)+'\n'+text;
+   if(recovery)text=(recovery.notBefore?'一般 429／速率限制已完成本機單次冷卻；這不是官方 Retry-After、額度耗盡或恢復／重設時間的證據。\n':'')+'使用者已授權：原生持續目標失敗後，由同一主代理先核對已存成果，再接續剩餘工作。這不是原任務重播。先用 k_gemini.conversation_context 讀最新本人意圖與更正，再用既有工具讀實際保存檔案及已結束工人結果；已完成不要重做，副作用或結果未知不要重送或重派原工單。本人停止／暫停／更改目標優先。只有核對完成、原目標仍適用且確有剩餘工作時，才用 k_gemini.goal_resume 恢復同一目標；不修改預算、模型、帳號或權限。若已全部完成，依原生目標工具記錄完成，不恢復工作。\n原生失敗：'+JSON.stringify(recovery.failed)+'\n'+text;
    await markSubmitted();if(!current())return;
    if(recovery){
     recovery.attempted=true;recoveryArmed=false;
@@ -868,15 +887,17 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    const parent=state.threadId,sourceHost=host,sourceEpoch=requestEpoch;opening=true;
    try{
     sourceCurrent?.();
+    if(quotaZeroUntil(state.usage.codex))throw Error('目前官方額度確認為零，未建立或送出交接工作。');
     const goalResult=await host.request('thread/goal/get',{threadId:parent});
     if(goalResult.goal?.status==='active'||goalResult.goal?.tokenBudget!=null)throw Error('原生目標仍在執行或帶有預算限制，不能另建目標繞過用量；未建立新聊天室。');
     const currentWorkers=await workers();sourceCurrent?.(goalResult.goal,currentWorkers);
     if(currentWorkers.some(w=>w.settled!==true)|| (await listTerminals(host,parent)).length)throw Error('原工作或子代理未確認結束；未建立新聊天室。');
     const stored=await host.request('thread/read',{threadId:parent,includeTurns:true}),last=stored.thread?.turns?.at(-1);
     sourceCurrent?.(goalResult.goal,currentWorkers);
+    if(quotaZeroUntil(state.usage.codex))throw Error('目前官方額度確認為零，未建立或送出交接工作。');
     const failed=mode==='fresh'&&last?.status==='failed'&&ended()&&recoverableError(last.error)&&JSON.stringify(last.error)===JSON.stringify(state.turnError?.error);
     if(host!==sourceHost||requestEpoch!==sourceEpoch||last?.id!==expectedTurnId||last.status!==state.status||!(last.status==='completed'||failed)||!ended()||state.busy||turnId||stopping||closing||flashQueue.size||flashNotifying||nativeTerminals.size||state.threadId!==parent)throw Error('已保存的原生回合與接續來源不符；未建立新聊天室。');
-    return {...(mode==='fresh'?{mode}:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId}),model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
+    return {...(mode==='fresh'?{mode,...(failed&&recoveryErrorClass(last.error)==='rate'?{notBefore:state.turnError.observedAt+rateRecoveryDelay}:{})}:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId}),model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
    }catch(error){error.notCreated=true;throw error;
    }finally{opening=false;}
   },
@@ -1139,17 +1160,20 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if(stopRequested){state.busy=false;state.status='interrupted';return {sent:false};}
     activeGroupId=randomUUID();state.status='working';state.error=null;state.turnError=null;const sentMessage=message(randomUUID(),'user',text,attachments,null,source==='continuation'?'continuation':'local',{groupId:activeGroupId});changed();
     const input=codexInput(text,attachments);
-    let wasPrepared=false;
+    let wasPrepared=false,sendOwnership;
     try{
      wasPrepared=await markSubmitted();
      attempted=true;
+     // Bind this live human submission before either response/event order; never borrow history.
+     if(source!=='continuation'&&state.goal?.status==='blocked'&&!state.goalError&&state.goal.threadId===nativeId(state.threadId)&&Number.isFinite(state.goal.createdAt))goalTurn=sendOwnership={turnId:null,goal:structuredClone(state.goal),epoch:requestEpoch,rateOnly:true};
      const result=await startNativeTurn(host,{threadId:state.threadId,model:state.model,...(turnEffort===null||turnEffort===undefined?{}:{effort:turnEffort}),serviceTier:state.serviceTier,input,...turnPermissions(access,state.workspace)});
      const sentTurnId=result.turn.id;message(sentMessage.id,'user',text,attachments,sentTurnId);
+     if(sendOwnership&&goalTurn===sendOwnership){if(sendOwnership.turnId===null)sendOwnership.turnId=sentTurnId;else if(sendOwnership.turnId!==sentTurnId)goalTurn=null;}
      if(state.busy)turnId=sentTurnId;
      if(state.lastUsedModel&&state.lastUsedModel!==state.model)state.modelChanges=[...state.modelChanges,{turnId:sentTurnId,fromModel:state.lastUsedModel,toModel:state.model,at:new Date().toISOString()}];
      state.lastUsedModel=state.model;state.effort=turnEffort??null;state.accessMode=access;
     }
-    catch(e){const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected){state.busy=false;e.notSent=true;}state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
+    catch(e){if(sendOwnership&&goalTurn===sendOwnership)goalTurn=null;const rejected=await restoreRejectedEmpty(wasPrepared,e);markAssistantPartial(turnId);if(rejected){state.busy=false;e.notSent=true;}state.error=rejected?'原生核心拒絕送出；聊天室、設定與附件保留，未自動重送。':'送出結果未確認，未自動重送。請先停止並查原對話。';state.status=rejected?'failed':'uncertain';throw e;}
     {try{const title=state.title||(text.trim()||attachments[0]?.name||'').slice(0,40);const saved=(await listMainSessions(root)).sessions.find(s=>s.threadId===state.threadId);await saveMainSession(root,{...saved,title,model:state.model,workerPolicy:state.workerPolicy,effort:state.effort,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges},{activityAt:sentMessage.createdAt});state.title=title;}catch{state.error='訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';}}
     return {sent:true};
    }finally{finishSubmission();submission=null;changed();void deliverFlashResults();}

@@ -100,6 +100,23 @@ test('Codex capacity and quota are distinct; conflicting codes and unknown error
  assert.equal(nativeNotices.localizeNativeNotice(raw,'claude'),raw);
 });
 
+test('Codex 429 retry exhaustion is not displayed as proven quota exhaustion',()=>{
+ const message='exceeded retry limit, last status: 429 Too Many Requests';
+ const error={message,codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:429}},additionalDetails:null},before=structuredClone(error);
+ for(const value of [error,{message},{message,codexErrorInfo:'other'},{message:'native throttle',codexErrorInfo:'rateLimitExceeded'}]){
+  assert.equal(nativeNotices.codexErrorKind(value),'rate');
+  const text=nativeNotices.localizeNativeNotice(value.message,'codex',value);
+  assert.match(text,/請求.*限制/);assert.match(text,/不能.*額度耗盡/);assert.doesNotMatch(text,/\d+\s*(?:秒|分鐘|小時)|自動重送|一定|保證/);
+ }
+ assert.deepEqual(error,before);
+ assert.equal(nativeNotices.codexErrorKind({...error,codexErrorInfo:'usageLimitExceeded'}),'quota');
+ assert.equal(nativeNotices.codexErrorKind({...error,codexErrorInfo:'unauthorized'}),null);
+ assert.equal(nativeNotices.codexErrorKind({message:'Tool said '+message}),null);
+ assert.equal(nativeNotices.codexErrorKind({...error,codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:503}}}),null);
+ for(const provider of ['claude','gemini'])assert.equal(nativeNotices.localizeNativeNotice(message,provider,error),message);
+ assert.equal(nativeNotices.localizeNativeNotice('unrelated displayed error','codex',error),'unrelated displayed error');
+});
+
 test('native stream failures are localized without guessing a cause or changing raw diagnostics',()=>{
  const message='stream disconnected before completion: An error occurred while processing your request. Please include the request ID fake-request-id in your message.';
  const error={message,codexErrorInfo:'other',additionalDetails:null},before=structuredClone(error);

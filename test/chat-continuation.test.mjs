@@ -312,12 +312,21 @@ async function failedNativeFixture(){
  return {c,history,finish,prepare:()=>c.prepareContinuation({turnId:'transfer-turn',mode:'fresh',sourceCurrent:accepted.afterTurnCurrent}),setTerminals:value=>terminals=value};
 }
 
-for(const code of ['serverOverloaded','streamFailure'])test(`native fresh preparation permits accepted exact failed ${code} but never failed fork`,async()=>{
+for(const code of ['serverOverloaded','streamFailure',{responseTooManyFailedAttempts:{httpStatusCode:429}},'rateLimitExceeded'])test(`native fresh preparation permits accepted exact failed ${JSON.stringify(code)} but never failed fork`,async()=>{
  const f=await failedNativeFixture();try{
-  f.finish('failed',{message:'exact native failure',codexErrorInfo:code});assert.equal((await f.prepare()).mode,'fresh');
+  f.finish('failed',{message:'exact native failure',codexErrorInfo:code});const prepared=await f.prepare();assert.equal(prepared.mode,'fresh');
+  assert.equal(prepared.notBefore,typeof code==='object'||code==='rateLimitExceeded'?f.c.state.turnError.observedAt+30000:undefined);
   await assert.rejects(f.c.prepareContinuation({turnId:'transfer-turn',mode:'fresh'}),/正常結束/);
   await assert.rejects(f.c.prepareContinuation({turnId:'transfer-turn'}),/正常結束/);
   f.history[0].error={message:'different failure',codexErrorInfo:code};await assert.rejects(f.prepare(),/來源不符/);
+ }finally{await f.c.close();}
+});
+
+test('accepted fresh 429 cannot bypass known official zero or quota proof in native details',async()=>{
+ const f=await failedNativeFixture();try{
+  const rate={message:'exceeded retry limit, last status: 429 Too Many Requests',codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:429}}};
+  for(const details of ['You have exceeded your weekly usage limit',{error:{code:'insufficient_quota'}}]){f.finish('failed',{...rate,additionalDetails:details});await assert.rejects(f.prepare(),/正常結束/);}
+  f.finish('failed',rate);f.c.state.usage.codex={status:'ready',windows:[{remainingPercent:0,resetsAt:Math.floor(Date.now()/1000)+3600}]};await assert.rejects(f.prepare(),/官方額度確認為零/);
  }finally{await f.c.close();}
 });
 
@@ -416,4 +425,101 @@ test('late unrelated tool names still cancel an accepted handoff without treatin
   await f.request('fresh');f.source.state.tools=[{id:'late-other',name:'conversation_create_extra',status:'completed'}];await f.finish('failed');
   assert.equal((await f.receipt()).status,'cancelled');assert.equal(f.calls.length,0);
  }finally{await f.c.close();}
+});
+
+for(const action of ['elapsed','stop','close','human-send','source-change'])test('accepted fresh rate cooldown '+action+' never replays or sends before its deadline',async()=>{
+ const f=await fixture();let notBefore,checks=0;const prepare=f.source.prepareContinuation;
+ f.source.prepareContinuation=async data=>{checks++;return {...await prepare(data),notBefore};};
+ try{
+  await f.request('fresh');notBefore=Date.now()+(['elapsed','source-change'].includes(action)?250:30000);
+  f.source.state.busy=false;f.source.state.status='failed';
+  f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'transfer-turn',status:'failed'});
+  await wait(()=>checks===1);await new Promise(r=>setTimeout(r,30));
+  assert.equal(f.calls.filter(c=>c[0]==='start').length,0,'no empty room during local cooldown');
+  assert.equal(f.calls.filter(c=>c[0]==='send').length,0,'no model generation while cooling down');
+  if(action==='elapsed'){
+   await wait(()=>f.calls.filter(c=>c[0]==='send').length===1);
+   assert.ok(Date.now()>=notBefore);assert.equal(checks,2,'fresh native proof again after waiting');
+   await wait(async()=>(await f.receipt()).status==='sent');
+  }else{
+   if(action==='source-change'){
+    // A new worker invalidates the accepted snapshot while the local wait ends.
+    f.source.state.workers=[{provider:'codex',threadId:'new-child',settled:false}];
+    await wait(()=>['cancelled','uncertain'].includes(f.c.state.continuation?.status));
+   }else if(action==='close')await f.c.close();
+   else if(action==='stop')await f.c.stop({threadId:f.opened.threadId});
+   else assert.equal((await f.c.send({threadId:f.opened.threadId,text:'new instruction'})).sent,true);
+   await new Promise(r=>setTimeout(r,30));
+   assert.equal(f.calls.filter(c=>c[0]==='send'&&c[1].source==='continuation').length,0);
+   assert.equal(f.calls.filter(c=>c[0]==='start').length,0,'cancel before creating any child');
+   assert.equal((await f.receipt()).status,'cancelled','known unsent cancellation does not permanently block future handoffs');
+  }
+ }finally{await f.c.close();}
+});
+
+for(const scenario of ['latest','earlier','origin'])test('trusted rate audit handoff human binding '+scenario,async()=>{
+ const f=await fixture();try{
+  if(scenario==='earlier')f.source.state.messages.push({role:'user',turnId:'new-human',source:'local',text:'stop switching'});
+  if(scenario==='origin'){
+   const dir=path.join(f.root,'.runtime/chat-continuations');await mkdir(dir,{recursive:true});
+   await writeFile(path.join(dir,`${f.opened.threadId}.json`),JSON.stringify({kind:'origin',sourceThreadId:f.opened.threadId,initialTurnId:'transfer-turn'}));
+  }
+  const request=()=>f.source.hooks.onContinueConversation({mode:'fresh',threadId:f.opened.threadId,turnId:'audit-turn',authorizedHumanTurnId:'transfer-turn',nextInstruction:'read saved results, remaining only'});
+  if(scenario!=='latest'){await assert.rejects(request(),scenario==='earlier'?/最新真人訊息/:/第一回合/);assert.equal(f.calls.length,0);}
+  else{
+   await assert.rejects(f.source.hooks.onContinueConversation({mode:'fresh',threadId:f.opened.threadId,turnId:'audit-turn',nextInstruction:'unbound background'}),/真人訊息/);
+   assert.equal((await request()).accepted,true);assert.equal((await f.receipt()).turnId,'audit-turn');
+   f.source.state.busy=false;f.source.state.status='completed';f.source.hooks.onConversationSettled({threadId:f.opened.threadId,turnId:'audit-turn',status:'completed'});
+   await wait(async()=>(await f.receipt()).status==='sent');assert.equal(f.calls.filter(x=>x[0]==='start').length,1);assert.equal(f.calls.filter(x=>x[0]==='send').length,1);
+  }
+ }finally{await f.c.close();}
+});
+
+for(const route of ['accepted-before-failure','audit-handoff'])test('real controllers 429 '+route+' chooses one continuation route',async()=>{
+ await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'rate-handoff-integration-'));
+ const sourceURL=new URL('../src/desktop-controller.mjs',import.meta.url);let source=(await readFile(sourceURL,'utf8')).replaceAll('\r\n','\n');
+ assert.equal(source.split('const rateRecoveryDelay=30000;').length-1,1);
+ source=source.replace('const rateRecoveryDelay=30000;','const rateRecoveryDelay=120;').replace(/from '(\.\/[^']+)'/g,(_m,r)=>`from '${new URL(r,sourceURL).href}'`);
+ const injected=path.join(root,'short-cooldown.mjs');await writeFile(injected,source);
+ const {createDesktopController:make}=await import((await import('node:url')).pathToFileURL(injected).href);
+ const native=[],calls=[];let sequence=0,turnSequence=0;
+ const c=createConversationController({root,sessionFactory:options=>{
+  const row={id:null,hooks:null,gateway:null,turns:[],goal:null,status:'idle'};native.push(row);let ended;
+  const emit=(method,params)=>row.hooks.onEvent({method,params:{threadId:row.id,...params}});
+  row.finish=(status,error)=>{const t=row.turns.at(-1);Object.assign(t,{status,...(error?{error}:{})});row.status='idle';emit('turn/completed',{turn:structuredClone(t)});};
+  const host={closed:new Promise(r=>ended=r),notify(){},waitForMcp:async()=>{},close:async()=>ended(),async request(method,p){
+   calls.push([method,structuredClone(p)]);
+   if(method==='model/list')return {data:[{model,supportedReasoningEfforts:[{reasoningEffort:'medium'}],defaultReasoningEffort:'medium'}]};
+   if(method==='account/read')return {account:{type:'chatgpt'}};if(method==='config/read')return {config:{}};
+   if(method==='thread/start'){row.id=`native-${++sequence}`;return {thread:{id:row.id,turns:[]}};}
+   if(method==='thread/goal/get')return {goal:structuredClone(row.goal)};
+   if(method==='thread/goal/set'){row.goal={threadId:row.id,createdAt:101,tokenBudget:null,...row.goal,...p};emit('thread/goal/updated',{goal:structuredClone(row.goal)});return {goal:structuredClone(row.goal)};}
+   if(method==='thread/backgroundTerminals/list')return {data:[]};
+   if(method==='thread/read')return {thread:{id:row.id,status:{type:row.status},historyMode:'paginated',turns:structuredClone(row.turns)}};
+   if(method==='thread/turns/list')return {data:structuredClone(row.turns.slice(-1)),nextCursor:null};
+   if(method==='thread/loaded/list')return {data:native.map(x=>x.id).filter(Boolean),nextCursor:null};
+   if(method==='turn/start'){const t={id:`turn-${++turnSequence}`,status:'inProgress',items:[]};row.turns.push(t);row.status='active';emit('turn/started',{turn:structuredClone(t)});return {turn:{id:t.id}};}
+   return {};
+  }};
+  const owner=make({...options,hostFactory:hooks=>{if(!hooks.onEvent)return {...host,close:async()=>{}};row.hooks=hooks;return host;},gatewayFactory:async gateway=>{row.gateway=gateway;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://fake/mcp',headers:{Authorization:'fake'}}}},close:async()=>{}};}});owner.state.provider='codex';return owner;
+ }});
+ try{
+  const opened=await c.open({model,workspace:root,effort:'medium',accessMode:'read-only'});
+  await c.goal({threadId:opened.threadId,objective:'remaining fake work',status:'blocked'});
+  await c.send({threadId:opened.threadId,text:'open a blank room and continue only remaining fake work'});
+  const row=native.find(x=>x.id===opened.threadId),failed=row.turns.at(-1).id;
+  const move=()=>row.gateway.continueConversation({mode:'fresh',nextInstruction:'Read saved fake results. Continue remaining only.'},{'x-codex-turn-metadata':{thread_id:row.id,turn_id:row.turns.at(-1).id}});
+  if(route==='accepted-before-failure')assert.equal((await move()).accepted,true);
+  row.finish('failed',{message:'exceeded retry limit, last status: 429 Too Many Requests',codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:429}}});
+  if(route==='audit-handoff'){
+   await wait(()=>calls.some(([m,p])=>m==='turn/start'&&p.toolOutput?.name==='k_native_goal_recovery'));
+   await wait(()=>!c.state.completionPending);assert.equal((await move()).accepted,true);row.finish('completed');
+  }
+  const receipt=()=>readFile(path.join(root,'.runtime/chat-continuations',`${opened.threadId}.json`),'utf8').then(JSON.parse);
+  await wait(async()=>{try{return(await receipt()).status==='sent';}catch{return false;}});await new Promise(r=>setTimeout(r,250));
+  assert.equal(calls.filter(([m])=>m==='thread/start').length,2);assert.equal(calls.filter(([m])=>m==='thread/fork').length,0);
+  const audits=calls.filter(([m,p])=>m==='turn/start'&&p.toolOutput?.name==='k_native_goal_recovery');assert.equal(audits.length,route==='audit-handoff'?1:0);
+  assert.equal(calls.filter(([m])=>m==='turn/start').length,route==='audit-handoff'?3:2);
+  assert.equal((await receipt()).turnId,route==='audit-handoff'?row.turns.at(-1).id:failed);
+ }finally{for(const row of native)if(row.status==='active')row.finish('completed');await c.close();}
 });

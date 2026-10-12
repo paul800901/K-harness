@@ -6,7 +6,8 @@ import {fileURLToPath,pathToFileURL} from 'node:url';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 const error={message:'fixture native remote compact terminal error',codexErrorInfo:'other',additionalDetails:null};
-async function fixture({budget=null,status='active',reject,alias=false,persistGate=false}={}){
+const rateError={message:'exceeded retry limit, last status: 429 Too Many Requests',codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:429}},additionalDetails:null,misalignment:null};
+async function fixture({budget=null,status='active',reject,alias=false,persistGate=false,rateCooldownMs,onContinueConversation,responseFirst=false}={}){
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'goal-recovery-'));
  const calls=[],children=new Map();let hooks,gateway,bridgeHooks,flashRows=[],close,seq=0,starts=0,gate,goalGate,deliveryGate,rejectGate,readFailure=false,background=false,synchronousAuditFailure=false;
  let goal={threadId:'parent',objective:'Complete remaining fake work',status,tokenBudget:budget,tokensUsed:12,timeUsedSeconds:1,createdAt:101,updatedAt:102};
@@ -28,31 +29,88 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
   if(method==='thread/backgroundTerminals/list')return {data:background?[{id:'still-running'}]:[],nextCursor:null};
   if(method==='turn/start'){
    if(p.toolOutput&&reject){if(rejectGate)await rejectGate;throw reject;}
-   const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});if(p.toolOutput&&synchronousAuditFailure){end();emit('thread/goal/updated',{goal:structuredClone(goal)});}if(p.toolOutput&&deliveryGate)await deliveryGate;return {turn:{id}};
+   const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});if(!responseFirst||p.toolOutput)emit('turn/started',{turn:{id}});if(p.toolOutput&&synchronousAuditFailure){end();emit('thread/goal/updated',{goal:structuredClone(goal)});}if(p.toolOutput&&deliveryGate)await deliveryGate;return {turn:{id}};
   }
   if(method==='turn/interrupt'){parent.status={type:'idle'};emit('turn/completed',{turn:{id:p.turnId,status:'interrupted'}});}
   if(method==='turn/steer')return {turnId:p.expectedTurnId};
   return {};
  }};
  let creator=createDesktopController,disk;
+ if(rateCooldownMs!==undefined){
+  const sourceURL=new URL('../src/desktop-controller.mjs',import.meta.url);let source=(await readFile(sourceURL,'utf8')).replaceAll('\r\n','\n');
+  source=source.replace('const rateRecoveryDelay=30000;',`const rateRecoveryDelay=${rateCooldownMs};`).replace(/from '(\.\/[^']+)'/g,(_m,relative)=>`from '${new URL(relative,sourceURL).href}'`);
+  const injected=path.join(root,'short-rate-cooldown-controller.mjs');await writeFile(injected,source);creator=(await import(pathToFileURL(injected).href)).createDesktopController;
+ }
  if(persistGate){
   // Exact await fault injection into the real current source, not an unmodified-native claim.
   const sourceURL=new URL('../src/desktop-controller.mjs',import.meta.url),needle='   await persistFlashNotifications();\n   if(!current())return;';let source=(await readFile(sourceURL,'utf8')).replaceAll('\r\n','\n');assert.equal(source.split(needle).length-1,1);
   const gatePath=path.join(root,'persist-gate.mjs');await writeFile(gatePath,`let armed=false;export const entered=Promise.withResolvers(),release=Promise.withResolvers();export const arm=()=>armed=true;export async function hold(){if(armed){armed=false;entered.resolve();await release.promise;}}`);disk=await import(pathToFileURL(gatePath).href);
   source=source.replace(/from '(\.\/[^']+)'/g,(_m,relative)=>`from '${new URL(relative,sourceURL).href}'`).replace(needle,needle.replace('\n   if','\n   await hold();\n   if'));const gated=path.join(root,'gated-controller.mjs');await writeFile(gated,`import {hold} from '${pathToFileURL(gatePath).href}';\n`+source);creator=(await import(pathToFileURL(gated).href)).createDesktopController;
  }
- const c=creator({root,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},bridgeFactory:async o=>{bridgeHooks=o;return {start:async()=>({status:'running'}),list:async()=>flashRows,close:async()=>{},cancelGeminiHandoff(){calls.push({method:'cancelGeminiHandoff'});}};},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
- await c.open({model:'gpt-6-astra',effort:'high'});if(alias){await c.close();await c.open({threadId:'parent',model:'gpt-6-astra',effort:'high'});await c.goal({status:'active'});}await c.send({text:'new fake work'});
+ const c=creator({root,onContinueConversation,executable:'fake-never-spawn',hostFactory:o=>{hooks=o;host.closed=new Promise(r=>close=r);return host;},bridgeFactory:async o=>{bridgeHooks=o;return {start:async()=>({status:'running'}),list:async()=>flashRows,close:async()=>{},cancelGeminiHandoff(){calls.push({method:'cancelGeminiHandoff'});}};},gatewayFactory:async o=>{gateway=o;return {mcpConfig:{mcpServers:{k_gemini:{url:'http://127.0.0.1:1/never',headers:{Authorization:'Bearer fake'}}}},close:async()=>{}};}});
+ await c.open({model:'gpt-6-astra',effort:'high'});if(alias){await c.close();await c.open({threadId:'parent',model:'gpt-6-astra',effort:'high'});await c.goal({status:'active'});}await c.send({text:'new fake work'});if(responseFirst){await new Promise(r=>setTimeout(r,10));emit('turn/started',{turn:{id:parent.turns.at(-1).id}});}
  const end=(status='failed',err=error,block=true,nativeStatus='idle')=>{const t=parent.turns.at(-1);t.status=status;parent.status={type:nativeStatus};if(nativeStatus==='systemError'){emit('thread/status/changed',{status:structuredClone(parent.status)});emit('error',{turnId:t.id,error:err,willRetry:false});}if(block&&status==='failed'&&goal?.status==='active'){goal.status='blocked';emit('thread/goal/updated',{turnId:t.id,goal:structuredClone(goal)});}emit('turn/completed',{turn:{id:t.id,status,...(status==='failed'?{error:err}:{})}});};
  const child=()=>{children.set('child',{id:'child',parentThreadId:'parent',historyMode:'paginated',status:{type:'active'},turns:[{id:'child-turn',status:'inProgress'}]});emit('item/started',{item:{type:'subAgentActivity',id:'spawn-child',kind:'started',agentThreadId:'child'}});emit('turn/started',{turn:{id:'child-turn'}},'child');};
  const unloadedChildren=async n=>{for(let i=0;i<n;i++){const id='old-child-'+i;children.set(id,{id,parentThreadId:'parent',historyMode:'paginated',status:{type:'notLoaded'},turns:[{id:id+'-turn',status:'completed'}]});emit('item/started',{item:{type:'subAgentActivity',id:'spawn-'+id,kind:'started',agentThreadId:id}});}await c.workers();};
  const blockGoal=()=>{goal.status='blocked';emit('thread/goal/updated',{goal:structuredClone(goal)});};
- const nativeStart=()=>{goal.status='active';emit('thread/goal/updated',{goal:structuredClone(goal)});const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});};
+ const nativeStart=(activate=true)=>{if(activate){goal.status='active';emit('thread/goal/updated',{goal:structuredClone(goal)});}const id='turn-'+(++seq);parent.status={type:'active'};parent.turns.push({id,status:'inProgress',items:[]});emit('turn/started',{turn:{id}});};
  const finishChild=(status='completed',nativeStatus='idle')=>{const row=children.get('child');row.status={type:nativeStatus};row.turns[0].status=status;emit('turn/completed',{turn:{id:'child-turn',status,...(status==='failed'?{error}:{})}},'child');};
  return {c,calls,root,disk,emit,end,child,finishChild,nativeStart,unloadedChildren,blockGoal,get goal(){return goal;},get gateway(){return gateway;},get bridgeHooks(){return bridgeHooks;},get currentTurn(){return parent.turns.at(-1).id;},deliveries:()=>calls.filter(x=>x.method==='turn/start'&&x.p.toolOutput),setSynchronousAuditFailure:x=>synchronousAuditFailure=x,setFlashRows:x=>flashRows=x,setGate:x=>gate=x,setGoalGate:x=>goalGate=x,setDeliveryGate:x=>deliveryGate=x,setUnknown:x=>readFailure=x,setBackground:x=>background=x,setParentStatus:x=>parent.status=x===undefined?undefined:{type:x},setLatestTurn:x=>Object.assign(parent.turns.at(-1),x),setReject:x=>reject=x,setRejectGate:x=>rejectGate=x,loseHost:()=>close(),cleanup:async()=>{background=false;readFailure=false;gate=null;for(const row of children.values()){row.status={type:'idle'};row.turns[0].status='completed';}if(c.state.status==='uncertain')await c.stop();await c.close();}};
 }
 const wait=async predicate=>{const end=Date.now()+3500;while(!predicate()){if(Date.now()>end)throw Error('observable not reached');await new Promise(r=>setTimeout(r,20));}};
 const tick=()=>new Promise(r=>setTimeout(r,60));
+
+test('only the live rate-only audit can link its exact latest failed human turn; model arguments cannot spoof it',async()=>{
+ let data;const f=await fixture({status:'blocked',rateCooldownMs:10,onContinueConversation:async args=>{data=args;args.stillCurrent();return {accepted:args.authorizedHumanTurnId!==undefined};}});try{
+  const failed=f.currentTurn;
+  await f.gateway.continueConversation({mode:'fresh',nextInstruction:'human move',authorizedHumanTurnId:'spoof'},{'x-codex-turn-metadata':{thread_id:'parent',turn_id:failed}});assert.equal(data.authorizedHumanTurnId,undefined);
+  f.end('failed',rateError);await wait(()=>f.deliveries().length===1);const audit=f.currentTurn;
+  await assert.rejects(f.gateway.continueConversation({mode:'fresh',nextInstruction:'spoof worker'},{'x-codex-turn-metadata':{thread_id:'worker',turn_id:audit}}),/主對話/);
+  await f.gateway.continueConversation({mode:'fresh',nextInstruction:'explicit same human move',authorizedHumanTurnId:'spoof'},{'x-codex-turn-metadata':{thread_id:'parent',turn_id:audit}});
+  assert.equal(data.authorizedHumanTurnId,failed);assert.equal(data.turnId,audit);assert.doesNotThrow(data.stillCurrent);
+  await wait(()=>!f.c.state.completionPending);f.end('completed');await tick();assert.throws(data.stillCurrent,/主對話|核對/);assert.doesNotThrow(data.afterTurnCurrent);
+  await f.c.prepareContinuation({mode:'fresh',turnId:audit,sourceCurrent:data.afterTurnCurrent});
+  await f.c.goal({status:'paused'});assert.throws(data.afterTurnCurrent,/停止|變更/);
+ }finally{await f.cleanup();}
+});
+
+test('accepted direct fresh handoff consumes that human-turn audit eligibility; an unaccepted promise does not',async()=>{
+ for(const responseFirst of [false,true])for(const accepted of [true,false]){
+  const f=await fixture({status:'blocked',rateCooldownMs:10,responseFirst,onContinueConversation:async()=>({accepted})});try{
+   await f.gateway.continueConversation({mode:'fresh',nextInstruction:'explicit user fresh move'},{'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+   f.end('failed',rateError);await new Promise(r=>setTimeout(r,180));assert.equal(f.deliveries().length,accepted?0:1);
+  }finally{await f.cleanup();}
+ }
+});
+
+test('trusted failed-human audit linkage is revoked by stop, new human steer or goal identity changes',async()=>{
+ for(const action of ['stop','steer','identity']){
+  let data;const f=await fixture({status:'blocked',rateCooldownMs:10,onContinueConversation:async args=>{data=args;return {accepted:true};}});try{
+   f.end('failed',rateError);await wait(()=>f.deliveries().length===1);
+   await f.gateway.continueConversation({mode:'fresh',nextInstruction:'move'},{'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});assert.ok(data.authorizedHumanTurnId);
+   if(action==='stop')await f.c.stop();else if(action==='steer')await f.c.steer({text:'new actual intent'});else{f.goal.createdAt++;f.emit('thread/goal/updated',{goal:structuredClone(f.goal)});}
+   assert.throws(data.stillCurrent);assert.throws(data.afterTurnCurrent);
+  }finally{await f.cleanup();}
+ }
+});
+
+test('active-goal human rate failure also links its audit, but a native background turn cannot borrow the old human',async()=>{
+ for(const background of [false,true]){
+  let data;const f=await fixture({rateCooldownMs:10,onContinueConversation:async args=>{data=args;return {accepted:true};}});try{
+   if(background){f.end('completed');f.nativeStart();}
+   const failed=f.currentTurn;f.end('failed',rateError);await wait(()=>f.deliveries().length===1);
+   await f.gateway.continueConversation({mode:'fresh',nextInstruction:'move',authorizedHumanTurnId:failed},{'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+   assert.equal(data.authorizedHumanTurnId,background?undefined:failed);assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);
+  }finally{await f.cleanup();}
+ }
+});
+
+test('rate classification ignores incidental numeric/text metadata and retains forward-compatible service errors',async()=>{
+ const f=await fixture();try{
+  f.end('failed',{...error,additionalDetails:{diagnostic:'retry 429 seen historically'},misalignment:{rateLimitExceeded:'quoted history'}});
+  await wait(()=>f.deliveries().length===1);assert.doesNotMatch(f.deliveries()[0].p.toolOutput.output,/本機單次冷卻/);
+ }finally{await f.cleanup();}
+});
 test('live active goal failed audits once on same thread with raw error and partial output retained',async()=>{
  const f=await fixture();try{await writeFile(path.join(f.root,'partial.txt'),'saved fixture result');f.emit('item/agentMessage/delta',{itemId:'partial',turnId:f.currentTurn,delta:'partial message'});const failed=f.currentTurn;f.end();await wait(()=>f.deliveries().length===1);
  const p=f.deliveries()[0].p;assert.equal(p.threadId,'parent');assert.equal(p.model,'gpt-6-astra');assert.equal(p.effort,'high');assert.deepEqual(p.input,[]);assert.equal(p.toolOutput.name,'k_native_goal_recovery');assert.match(p.toolOutput.output,/conversation_context/);assert.match(p.toolOutput.output,/goal_resume/);assert.match(p.toolOutput.output,/先/);assert.equal(f.calls.some(x=>x.method==='thread/goal/set'),false);assert.equal(f.c.state.messages.find(x=>x.id==='partial').partial,true);assert.equal(await readFile(path.join(f.root,'partial.txt'),'utf8'),'saved fixture result');assert.deepEqual(f.c.state.tools.find(x=>x.name==='核對已存成果').details.failed.error,error);assert.equal(f.c.state.tools.find(x=>x.name==='核對已存成果').details.failed.turnId,failed);
@@ -63,9 +121,66 @@ test('running child and unknown background delay, then natural settlement merges
  const f=await fixture();try{f.child();f.setBackground(true);f.end();await tick();assert.equal(f.deliveries().length,0);f.finishChild();await tick();assert.equal(f.deliveries().length,0);f.setBackground(false);await wait(()=>f.deliveries().length===1);assert.match(f.deliveries()[0].p.toolOutput.output,/child-turn/);assert.equal(f.calls.some(x=>['turn/interrupt','thread/backgroundTerminals/clean'].includes(x.method)),false);
  }finally{await f.cleanup();}
 });
-for(const options of [{budget:1000},{status:'blocked'}])test('explicit goal budget or already blocked chat does not auto-audit '+JSON.stringify(options),async()=>{const f=await fixture(options);try{f.end();await tick();assert.equal(f.deliveries().length,0);}finally{await f.cleanup();}});
+for(const options of [{budget:1000},{status:'blocked'},{status:'blocked',responseFirst:true}])test('explicit goal budget or already blocked chat does not auto-audit '+JSON.stringify(options),async()=>{const f=await fixture(options);try{f.end();await tick();assert.equal(f.deliveries().length,0);}finally{await f.cleanup();}});
 test('known native hard limits never start audit; generic stream is not guessed from message',async()=>{
- for(const code of ['contextWindowExceeded','sessionBudgetExceeded','usageLimitExceeded','unauthorized','sandboxError',{responseTooManyFailedAttempts:{httpStatusCode:429}}]){const f=await fixture();try{f.end('failed',{...error,codexErrorInfo:code});await tick();assert.equal(f.deliveries().length,0);}finally{await f.cleanup();}}
+ for(const code of ['contextWindowExceeded','sessionBudgetExceeded','usageLimitExceeded','unauthorized','sandboxError']){const f=await fixture();try{f.end('failed',{...error,codexErrorInfo:code});await tick();assert.equal(f.deliveries().length,0);}finally{await f.cleanup();}}
+});
+
+test('ordinary 429 uses one bounded local cooldown then one exact audit, never original turn replay',async()=>{
+ const f=await fixture({rateCooldownMs:120});try{
+  const failed=f.currentTurn;f.end('failed',rateError,true,'systemError');await tick();assert.equal(f.deliveries().length,0);
+  await wait(()=>f.deliveries().length===1);assert.equal(f.c.state.tools.find(t=>t.name==='核對已存成果').details.failed.turnId,failed);
+  assert.match(f.deliveries()[0].p.toolOutput.output,/本機.*冷卻/);assert.match(f.deliveries()[0].p.toolOutput.output,/不是官方/);
+  assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);f.end('failed',rateError);await new Promise(r=>setTimeout(r,1100));assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
+});
+
+test('response-first local human send owns only its exact blocked-goal turn even after submission clears',async()=>{
+ const f=await fixture({status:'blocked',rateCooldownMs:10,responseFirst:true});try{
+  const failed=f.currentTurn;assert.equal(f.c.state.messages.find(m=>m.role==='user').turnId,failed);
+  f.end('failed',rateError);await wait(()=>f.deliveries().length===1);
+  assert.equal(f.c.state.tools.find(t=>t.name==='核對已存成果').details.failed.turnId,failed);
+  assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);
+  f.end('failed',rateError);await new Promise(r=>setTimeout(r,120));assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
+});
+test('response-first blocked human ownership is not retained by a later native background turn',async()=>{
+ const f=await fixture({status:'blocked',rateCooldownMs:10,responseFirst:true});try{
+  f.end('completed');f.nativeStart(false);f.end('failed',rateError);
+  await new Promise(r=>setTimeout(r,160));assert.equal(f.deliveries().length,0);
+ }finally{await f.cleanup();}
+});
+test('a new local human send on the same blocked unbudgeted goal can audit rate failure without auto-resume',async()=>{
+ const f=await fixture({status:'blocked',rateCooldownMs:120});try{
+  f.end('failed',rateError);await wait(()=>f.deliveries().length===1);assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);assert.equal(f.goal.status,'blocked');
+  f.end('failed',{...error,message:'generic audit failed'});await new Promise(r=>setTimeout(r,1100));assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
+});
+
+test('429 cannot override explicit quota, auth, permissions, context or budget proof in code or details',async()=>{
+ for(const detail of [{codexErrorInfo:'usageLimitExceeded'},{codexErrorInfo:{quotaExceeded:{}}},{additionalDetails:'You have exceeded your weekly usage limit'},{additionalDetails:{error:{code:'insufficient_quota'}}},{message:'429: quota exhausted'},{message:'429: token budget exceeded'},{message:'429: permission denied'},{message:'429: context window exceeded'},{codexErrorInfo:{httpConnectionFailed:{httpStatusCode:403}}}]){
+  const f=await fixture({rateCooldownMs:10});try{f.end('failed',{...rateError,...detail});await new Promise(r=>setTimeout(r,1100));assert.equal(f.deliveries().length,0,JSON.stringify(detail));}finally{await f.cleanup();}
+ }
+});
+
+test('rate cooldown cancels on pause, stop, new input, intent change or host loss',async()=>{
+ for(const action of ['pause','stop','send','edit','host']){
+  const f=await fixture({rateCooldownMs:120});try{
+   f.end('failed',rateError);await tick();if(action==='pause')await f.c.goal({status:'paused'});else if(action==='stop')await f.c.stop();else if(action==='send')await f.c.send({text:'new actual intent'});else if(action==='edit')await f.c.goal({objective:'new objective',editOnly:true});else f.loseHost();
+   await new Promise(r=>setTimeout(r,1100));assert.equal(f.deliveries().length,0);
+  }finally{await f.cleanup();}
+ }
+});
+
+test('rate cooldown still refuses official zero, paused/budgeted goals, unknown workers or background commands',async()=>{
+ for(const guard of ['quota','paused','budget','unknown','background','continuation']){
+  const f=await fixture({status:guard==='paused'?'paused':'active',budget:guard==='budget'?100:null,rateCooldownMs:10});try{
+   if(guard==='quota')f.c.state.usage.codex={status:'ready',windows:[{remainingPercent:0,resetsAt:Math.floor(Date.now()/1000)+3600}]};
+   if(guard==='unknown')f.setUnknown(true);if(guard==='background')f.setBackground(true);
+   if(guard==='continuation'){f.end('completed');f.goal.status='blocked';f.emit('thread/goal/updated',{goal:structuredClone(f.goal)});await f.c.send({text:'controller handoff',source:'continuation'});}
+   f.end('failed',rateError);await new Promise(r=>setTimeout(r,1100));assert.equal(f.deliveries().length,0,guard);
+  }finally{await f.cleanup();}
+ }
 });
 test('stop while preflight is delayed cancels queued recovery',async()=>{const f=await fixture();let release;try{f.setGate(new Promise(r=>release=r));f.end();await tick();const stopped=f.c.stop();release();await stopped;await tick();assert.equal(f.deliveries().length,0);}finally{release?.();await f.cleanup();}});
 test('audit identity remains invalid after human pause or edit and its goal_resume is rejected',async()=>{

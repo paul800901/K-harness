@@ -21,6 +21,8 @@ export function codexErrorKind(error) {
  const info=error?.codexErrorInfo;
  if(info==='serverOverloaded')return 'capacity';
  if(info==='usageLimitExceeded')return 'quota';
+ if(info==='rateLimitExceeded'||info?.responseTooManyFailedAttempts?.httpStatusCode===429)return 'rate';
+ if((info==null||info==='other')&&/^exceeded retry limit, last status: 429 Too Many Requests$/.test(error?.message??''))return 'rate';
  if(info&&typeof info==='object'&&'responseStreamDisconnected' in info)return 'stream';
  // The native stream wrapper may arrive with the generic `other` code.
  // Specific codes still take precedence; transport warnings are not failures.
@@ -37,6 +39,7 @@ export function localizeNativeNotice(message,provider,error) {
   const kind=codexErrorKind(error?.message===message?error:{message});
   if(kind==='capacity')return '模型服務容量不足，與剩餘額度不同。請稍後再試，或自行選擇其他模型。';
   if(kind==='quota')return 'Codex 原生回報用量限制，與模型服務容量不足不同；恢復時間以官方額度資訊為準。';
+  if(kind==='rate')return 'Codex 請求受到限制，原生重試已結束；不能僅憑這項錯誤判定每週額度耗盡。恢復時間未確認，請查看原生詳細內容與接續狀態。';
   if(kind==='stream')return message.startsWith('Error running remote compact task: stream disconnected before completion:')?'Codex 原生壓縮在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。':'Codex 回覆在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
  }
  if(provider!=='claude'||typeof message!=='string')return message;

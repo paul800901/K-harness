@@ -109,16 +109,17 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const result=await controller.workers();return Array.isArray(result)?result:result?.workers??[];
  };
  const continuationNotice=(controller,receipt)=>{
-  continuationStates.set(controller,{...receipt,nextInstruction:undefined,sourceCurrent:undefined});
+  continuationStates.set(controller,{...receipt,nextInstruction:undefined,sourceCurrent:undefined,cancelWait:undefined});
   onChange();
  };
  const cancelContinuation=async(controller,error)=>{
   const pending=continuations.get(controller);if(!pending)return;
   if(pending.sending)throw Error(`交接已送出或結果待查；請到已知新聊天室 ${pending.newThreadId} 查明。未取消、未重送或強制停止。`);
   continuations.delete(controller);pending.status='cancelled';pending.error=error;
+  pending.cancelWait?.(Error(error));
   continuationNotice(controller,pending);await writeContinuation(pending);
  };
- async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,afterTurnCurrent,mode='fork'}){
+ async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,afterTurnCurrent,authorizedHumanTurnId,mode='fork'}){
   if(closing||!controller||locked.has(controller)||rooms.get(threadId)!==controller||controller.state.provider!=='codex')throw Error('來源聊天室正在變更或尚未支援此工具。');
   if(typeof nextInstruction!=='string'||!nextInstruction.trim()||nextInstruction.length>16000)throw Error('請提供明確的接續指令，最多 16000 字元。');
   if(!['fork','fresh'].includes(mode))throw Error('未知的換房模式。');
@@ -129,10 +130,12 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    if((previous.mode??'fork')!==mode)throw Error('同回合換房模式衝突；已受理的模式不變，不建立第二個聊天室。');
    return {...previous,nextInstruction:undefined,created:!!previous.newThreadId};
   }
-  const human=controller.state.messages?.find(m=>m.role==='user'&&m.turnId===turnId&&['local','native','steer'].includes(m.source));
+  const humanTurnId=authorizedHumanTurnId??turnId;
+  const human=controller.state.messages?.find(m=>m.role==='user'&&m.turnId===humanTurnId&&['local','native','steer'].includes(m.source));
   if(!human)throw Error('換房需要本回合的真人訊息；背景通知或程式接續不能自行換房。');
+  if(authorizedHumanTurnId&&controller.state.messages?.findLast(m=>m.role==='user')?.turnId!==humanTurnId)throw Error('換房須綁定本次最新真人訊息。');
   if(previous?.kind==='origin'){
-   if(!previous.initialTurnId||turnId===previous.initialTurnId)throw Error('接續的第一回合不能再次換房；須有新的真人訊息。');
+   if(!previous.initialTurnId||turnId===previous.initialTurnId||humanTurnId===previous.initialTurnId)throw Error('接續的第一回合不能再次換房；須有新的真人訊息。');
   }else if(previous&&['pending','creating','created','uncertain'].includes(previous.status))throw Error(`前次換房結果尚未確認${previous.newThreadId?`（新聊天室 ${previous.newThreadId}）`:''}；不能重建或重送。`);
   noDiscussion(controller);
   const s=controller.state;
@@ -169,14 +172,26 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   if(!receipt||receipt.status!=='pending'||receipt.sourceThreadId!==threadId||receipt.turnId!==turnId)return;
   // Mark before any await. Duplicate terminal notifications cannot create twice.
   receipt.status='creating';
-  let child,openingChild=false;
+  let child,openingChild=false,sourceLocked=false;
   try{
    if(closing||!(status==='completed'||receipt.mode==='fresh'&&status==='failed')||locked.has(controller)||controller.state.busy||controller.state.questions?.length||controller.state.queuedMessages?.length)throw Error('來源回合已停止、失敗或收到新工作；換房已取消，未重送。');
-   locked.add(controller);noDiscussion(controller);
+   locked.add(controller);sourceLocked=true;noDiscussion(controller);
    receipt.status='creating';await writeContinuation(receipt);
    receipt.sourceCurrent();
-   const prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork',sourceCurrent:receipt.sourceCurrent});
+   let prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork',sourceCurrent:receipt.sourceCurrent});
    receipt.sourceCurrent();
+   if(prepared.notBefore>Date.now()){
+    locked.delete(controller);sourceLocked=false;
+    let timer;
+    try{await new Promise((resolve,reject)=>{receipt.cancelWait=reject;timer=setTimeout(resolve,prepared.notBefore-Date.now());});}
+    finally{clearTimeout(timer);delete receipt.cancelWait;}
+    if(locked.has(controller))throw Error('來源正在變更；未建立新聊天室。');
+    locked.add(controller);sourceLocked=true;
+    // Waiting is not native proof. Recheck before creating anything or sending work.
+    receipt.sourceCurrent();
+    prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork',sourceCurrent:receipt.sourceCurrent});
+    receipt.sourceCurrent();
+   }
    prepared.parentTitle=controller.state.title;
    if(closing)throw Object.assign(Error('K 正在關閉；未建立新聊天室。'),{notCreated:true});
    child=create();locked.add(child);
@@ -205,7 +220,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   }finally{
    if(child){if(child.state.threadId)reindex(child);else{try{await child.close();controllers.delete(child);}catch{/* Keep failed teardown for shutdown. */}}locked.delete(child);}
    if(continuations.get(controller)===receipt)continuations.delete(controller);
-   locked.delete(controller);continuationNotice(controller,receipt);
+   if(sourceLocked)locked.delete(controller);continuationNotice(controller,receipt);
   }
  }
  const safelyIdle=async (controller,allowFailed=false,signal)=>{
