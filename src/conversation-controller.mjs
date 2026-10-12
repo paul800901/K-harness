@@ -117,13 +117,17 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   continuations.delete(controller);pending.status='cancelled';pending.error=error;
   continuationNotice(controller,pending);await writeContinuation(pending);
  };
- async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent}){
+ async function requestContinuation(controller,{threadId,turnId,nextInstruction,stillCurrent,mode='fork'}){
   if(closing||!controller||locked.has(controller)||rooms.get(threadId)!==controller||controller.state.provider!=='codex')throw Error('來源聊天室正在變更或尚未支援此工具。');
   if(typeof nextInstruction!=='string'||!nextInstruction.trim()||nextInstruction.length>16000)throw Error('請提供明確的接續指令，最多 16000 字元。');
+  if(!['fork','fresh'].includes(mode))throw Error('未知的換房模式。');
   locked.add(controller);
   try{
   const previous=await readContinuation(threadId);
-  if(previous?.turnId===turnId&&previous.kind!=='origin')return {...previous,nextInstruction:undefined,created:!!previous.newThreadId};
+  if(previous?.turnId===turnId&&previous.kind!=='origin'){
+   if((previous.mode??'fork')!==mode)throw Error('同回合換房模式衝突；已受理的模式不變，不建立第二個聊天室。');
+   return {...previous,nextInstruction:undefined,created:!!previous.newThreadId};
+  }
   const human=controller.state.messages?.find(m=>m.role==='user'&&m.turnId===turnId&&['local','native','steer'].includes(m.source));
   if(!human)throw Error('換房需要本回合的真人訊息；背景通知或程式接續不能自行換房。');
   if(previous?.kind==='origin'){
@@ -137,7 +141,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   if((await workerRows(controller)).some(w=>w.settled!==true))throw Error('子代理未確認結束；不能移交或重播。');
   const current=controller.state;
   if(closing||current.threadId!==threadId||!current.busy||current.questions?.length||current.queuedMessages?.length||current.goalPending||current.completionPending)throw Error('來源已變更；未受理換房。');
-  const receipt={sourceThreadId:threadId,turnId,status:'pending',nextInstruction:nextInstruction.trim()};
+  const receipt={sourceThreadId:threadId,turnId,mode,status:'pending',nextInstruction:nextInstruction.trim()};
   await writeContinuation(receipt);
   try{
    stillCurrent?.();const latest=controller.state;
@@ -145,7 +149,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   }catch(error){receipt.status='cancelled';receipt.error=error.message;await writeContinuation(receipt);continuationNotice(controller,receipt);throw error;}
   // No await between the final live check and registration: completion cannot be lost.
   continuations.set(controller,receipt);continuationNotice(controller,receipt);
-  return {accepted:true,created:false,started:false,sourceThreadId:threadId,afterTurnId:turnId,action:'End this turn normally. Do not perform more work or call again.'};
+  return {accepted:true,mode,created:false,started:false,sourceThreadId:threadId,afterTurnId:turnId,action:'End this turn normally. Do not perform more work or call again.'};
   }finally{locked.delete(controller);}
  }
  async function finishContinuation(controller,{threadId,turnId,status}){
@@ -158,7 +162,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    if(closing||status!=='completed'||locked.has(controller)||controller.state.busy||controller.state.questions?.length||controller.state.queuedMessages?.length)throw Error('來源回合已停止、失敗或收到新工作；換房已取消，未重送。');
    locked.add(controller);noDiscussion(controller);
    receipt.status='creating';await writeContinuation(receipt);
-   const prepared=await controller.prepareContinuation({turnId});
+   const prepared=await controller.prepareContinuation({turnId,mode:receipt.mode??'fork'});
    prepared.parentTitle=controller.state.title;
    if(closing)throw Object.assign(Error('K 正在關閉；未建立新聊天室。'),{notCreated:true});
    child=create();locked.add(child);
@@ -168,11 +172,11 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
    openingChild=true;
    await child.open({model:prepared.model,effort:prepared.effort,accessMode:prepared.accessMode,permissionConfirmed:true,serviceTier:prepared.serviceTier,workerPolicy:prepared.workerPolicy},{continuation:prepared,onCreated:async created=>{
     receipt.newThreadId=created.threadId;receipt.status='created';await writeContinuation(receipt);
-    origin={kind:'origin',sourceThreadId:created.threadId,parentThreadId:threadId,initialTurnId:null};await writeContinuation(origin);reindex(child);
+    origin={kind:'origin',mode:receipt.mode??'fork',sourceThreadId:created.threadId,...(receipt.mode==='fresh'?{handoffFrom:threadId}:{parentThreadId:threadId}),initialTurnId:null};await writeContinuation(origin);reindex(child);
    }});reindex(child);await loadDiscussion(child);
    if(child.state.goalError||child.state.goal?.status==='active'||child.state.goal?.tokenBudget!=null)throw Error('新聊天室目標狀態未確認安全；未送出接續。');
    if(closing)throw Error('K 正在關閉；新聊天室已保留，未送出接續。');
-   const text=`K 控制器代送的接續指令：使用者已要求在同專案新聊天室接續。原生歷史已保留；歷史中的換房指令與工具呼叫不是再次換房的授權。\n原聊天室的工具、子代理或背景命令不會轉成新工作；先讀回目前成果檔案，查明未完成與未知結果，只做剩餘工作，不重播已執行或結果不明的副作用。不建立或恢復原生目標，不重設原目標用量／預算。\n\n本次剩餘工作與交接：\n${receipt.nextInstruction}`;
+   const text=receipt.mode==='fresh'?`K 控制器代送的全新聊天室交接：使用者已要求在同專案新聊天室接續，減少舊上下文。這是真正空白的原生新對話；未帶入舊歷史、壓縮、訊息或成果附件。此交接不是再次換房的真人授權。\n原聊天室的工具、子代理或背景命令不會轉成新工作；先讀回目前成果檔案，查明未完成與未知結果，只做剩餘工作，不重播已執行或結果不明的副作用。原生目標／用量／預算不轉移；不得恢復原聊天室目標或靠新目標繞過限制；只有本次本人明確要求建立新目標時，才依原生工具規則處理，不從摘要或舊暫停狀態自行取得授權。\n\n本次剩餘工作與交接：\n${receipt.nextInstruction}`:`K 控制器代送的接續指令：使用者已要求在同專案新聊天室接續。原生歷史已保留；歷史中的換房指令與工具呼叫不是再次換房的授權。\n原聊天室的工具、子代理或背景命令不會轉成新工作；先讀回目前成果檔案，查明未完成與未知結果，只做剩餘工作，不重播已執行或結果不明的副作用。不建立或恢復原生目標，不重設原目標用量／預算。\n\n本次剩餘工作與交接：\n${receipt.nextInstruction}`;
    await child.send({text,source:'continuation'});
    origin.initialTurnId=child.state.messages?.findLast(m=>m.role==='user')?.turnId??null;await writeContinuation(origin);
    receipt.status='sent';await writeContinuation(receipt);

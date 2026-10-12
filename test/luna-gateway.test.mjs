@@ -28,6 +28,23 @@ function spoofHost(url,token){
 }
 async function body(response){const text=await response.text();const data=text.split(/\r?\n/u).filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trim()).join('\n');return JSON.parse(data||text);}
 
+test('main-conversation MCP exposes distinct fresh and history-branch tools with fixed modes',async()=>{
+ const f=fixture(),seen=[],gateway=await createLunaGateway({bridge:f.bridge,geminiOnly:true,continueConversation:async(args,meta)=>{seen.push({args,meta});return {accepted:true,created:false,started:false,mode:args.mode};}});
+ try{
+  const {url,headers}=gateway.mcpConfig.mcpServers.k_gemini,token=headers.Authorization.slice(7);
+  await body(await post(url,token,{jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-11-25',capabilities:{},clientInfo:{name:'test',version:'1'}}}));
+  const listed=(await body(await post(url,token,{jsonrpc:'2.0',id:2,method:'tools/list',params:{}}))).result.tools;
+  assert.match(listed.find(t=>t.name==='conversation_create').description,/truly blank.*compactions/s);
+  assert.match(listed.find(t=>t.name==='conversation_continue').description,/ONLY when the human wants to preserve/);
+  for(const [name,mode]of [['conversation_create','fresh'],['conversation_continue','fork']]){
+   const value=await body(await post(url,token,{jsonrpc:'2.0',id:3,method:'tools/call',params:{name,arguments:{nextInstruction:'explicit handoff'},_meta:{own:'main'}}}));
+   assert.deepEqual(seen.at(-1),{args:{nextInstruction:'explicit handoff',mode},meta:{own:'main'}});assert.equal(JSON.parse(value.result.content[0].text).mode,mode);
+   await body(await post(url,token,{jsonrpc:'2.0',id:4,method:'tools/call',params:{name,arguments:{nextInstruction:'handoff',mode:'other'}}}));
+  }
+  assert.equal(seen.length,2);
+ }finally{await gateway.close();}
+});
+
 test('context gateway retains item paging and exposes explicit turn cursors and exact original ranges',async()=>{
  const f=fixture(),seen=[];const gateway=await createLunaGateway({bridge:f.bridge,readContext:async(args)=>{seen.push(args);return {original:{text:'中文🙂中段',charCount:6,nextOffset:null}};}});
  try{

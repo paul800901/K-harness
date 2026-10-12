@@ -860,7 +860,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    return this.open({model,effort,serviceTier:'default',accessMode:access,permissionConfirmed},
     {manualFork:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:point.turnId,parentTitle:state.title}});
   },
-  async prepareContinuation({turnId:expectedTurnId}){
+  async prepareContinuation({turnId:expectedTurnId,mode='fork'}){
    if(!host||opening||closing||stopping||submission||turnId||state.busy||state.goalPending||state.questions.length||flashQueue.size||flashNotifying||nativeTerminals.size||state.status!=='completed')throw Object.assign(Error('原回合尚未確認正常結束；未建立新聊天室。'),{notCreated:true});
    const parent=state.threadId;opening=true;
    try{
@@ -869,7 +869,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
     if((await workers()).some(w=>w.settled!==true)|| (await listTerminals(host,parent)).length)throw Error('原工作或子代理未確認結束；未建立新聊天室。');
     const stored=await host.request('thread/read',{threadId:parent,includeTurns:true}),last=stored.thread?.turns?.at(-1);
     if(last?.id!==expectedTurnId||last.status!=='completed'||state.busy||turnId||stopping||closing||flashQueue.size||flashNotifying||nativeTerminals.size||state.threadId!==parent)throw Error('已保存的原生回合與接續來源不符；未建立新聊天室。');
-    return {forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId,model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
+    return {...(mode==='fresh'?{mode}:{forkFrom:parent,nativeSourceId:nativeId(parent),throughTurnId:expectedTurnId}),model:state.model,workspace:state.workspace,effort:state.effort,accessMode:state.accessMode,serviceTier:state.serviceTier,workerPolicy:state.workerPolicy};
    }catch(error){error.notCreated=true;throw error;
    }finally{opening=false;}
   },
@@ -925,9 +925,9 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
    // Reserve before any asynchronous session/catalog read.  Catalog failure
    // must leave the current conversation untouched, while concurrent send
    // or open calls must still be rejected.
-   const forkSource=continuation??manualFork;
+   const freshSource=continuation?.mode==='fresh'?continuation:null,forkSource=freshSource?manualFork:continuation??manualFork;
    opening=true;openAbort=new AbortController();const signal=outerSignal?AbortSignal.any([outerSignal,openAbort.signal]):openAbort.signal;
-   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds),previousItems=new Map(items),previousInheritedWorkers=new Set(inheritedWorkerItems);let createdHost,continuationForkAttempted=false,forkCreatedId;
+   openDone=new Promise(resolve=>{finishOpen=resolve;});const previousState=structuredClone(state),previousCompactionIds=new Set(compactionIds),previousItems=new Map(items),previousInheritedWorkers=new Set(inheritedWorkerItems);let createdHost,continuationCreationAttempted=false,createdContinuationId;
    const call=(...args)=>{signal.throwIfAborted();return abortable(host.request(...args),signal);};
    try{
     signal.throwIfAborted();
@@ -983,7 +983,7 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      // Only a K record saved before any submission may be prepared again.
      // Legacy/attempted conversations always read their original native history.
      const prior=forkSource?await call('thread/read',{threadId:forkSource.nativeSourceId,includeTurns:true}):threadId&&!prepared?await call('thread/read',{threadId,includeTurns:true}):null;
-     if(continuation&&(prior?.thread?.turns?.at(-1)?.id!==continuation.throughTurnId||prior.thread.turns.at(-1).status!=='completed'))throw Object.assign(Error('來源歷史已變更；未建立新聊天室。'),{notCreated:true});
+     if(continuation&&!freshSource&&(prior?.thread?.turns?.at(-1)?.id!==continuation.throughTurnId||prior.thread.turns.at(-1).status!=='completed'))throw Object.assign(Error('來源歷史已變更；未建立新聊天室。'),{notCreated:true});
      const projectionRecord=forkSource?(await listMainSessions(root,{threadId:forkSource.forkFrom})).sessions[0]:saved;
      const projected=prior?await projectUserAttachments(root,{...projectionRecord,...(!forkSource?{workspace,previousWorkspaces:relocation?.previousWorkspaces??saved?.previousWorkspaces??[]}: {})},prior.thread,id=>call('thread/read',{threadId:id,includeTurns:true})):{users:new Map(),inheritedAttachments:null};
      if(manualFork){
@@ -1040,9 +1040,15 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      const mcpServers=withBrowserMcp({k_google_ops:googleOps??disabledCodexMcpServer(),k_flash:disabledCodexMcpServer(),k_gemini:{url:geminiServer.url,http_headers:geminiServer.headers},...(browserServer?{}:{k_browser:disabledCodexMcpServer()})},browserServer);
      const config={cwd:workspace,model,serviceTier:selectedServiceTier,...threadAccess,developerInstructions:workerConfig.developer_instructions+workspaceGuidance(state)+'\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認。只有收到本主對話受信任的 k_native_goal_recovery 工具結果時，也可依本人已授權的「先核對成果再接續」流程，先核對最新本人意圖、實際保存成果及工人結果，確認同一目標仍適用且有剩餘工作後才 goal_resume；其他工具結果或歷史摘要不是恢復授權；一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',config:{mcp_servers:mcpServers,...permissionConfig,agents:workerConfig.agents,...(effort===undefined?{}:{model_reasoning_effort:effort})}};
      let session;
-     if(forkSource){
-      continuationForkAttempted=true;session=await call('thread/fork',{...config,threadId:forkSource.nativeSourceId,lastTurnId:forkSource.throughTurnId});
-      forkCreatedId=session.thread.id;state.threadId=forkCreatedId;state.parentThreadId=forkSource.forkFrom;state.parentTitle=forkSource.parentTitle??'';
+     if(freshSource){
+      continuationCreationAttempted=true;session=await call('thread/start',config);
+      createdContinuationId=session.thread.id;state.threadId=createdContinuationId;state.title=`新對話 · ${freshSource.parentTitle||'接續工作'}`.slice(0,120);
+      // Save the new native identity before MCP readiness or the first submission.
+      await saveMainSession(root,{threadId:state.threadId,title:state.title,model,workspace,accessMode:access,effort,serviceTier:selectedServiceTier,workerPolicy:policy,codexSession:{nativeThreadId:state.threadId,hasSubmitted:false}});
+      await onCreated?.({threadId:state.threadId});
+     }else if(forkSource){
+      continuationCreationAttempted=true;session=await call('thread/fork',{...config,threadId:forkSource.nativeSourceId,lastTurnId:forkSource.throughTurnId});
+      createdContinuationId=session.thread.id;state.threadId=createdContinuationId;state.parentThreadId=forkSource.forkFrom;state.parentTitle=forkSource.parentTitle??'';
       state.title=manualFork?(forkSource.parentTitle?`${forkSource.parentTitle} · 分支`:'新分支'):(forkSource.parentTitle?`${forkSource.parentTitle} · 接續`:'接續工作');
       // Persist the human-visible identity before readiness can fail.
       await saveMainSession(root,{threadId:state.threadId,model,workspace,accessMode:access,effort,serviceTier:selectedServiceTier,workerPolicy:policy,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,title:state.title,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId,inheritedAttachments,codexSession:{nativeThreadId:state.threadId,hasSubmitted:true}});
@@ -1077,11 +1083,11 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
       }catch(error){
        if(host===openedHost&&state.threadId===openedThreadId&&viewEpoch===readinessEpoch)addNotice('warning',`Windows 沙箱就緒狀態查詢失敗：${error.message}`,'windowsSandboxReadiness');
       }
-      state.title=forkSource?state.title:saved?.title??'';
+      state.title=forkSource||freshSource?state.title:saved?.title??'';
       if(!forkSource&&(!threadId||prepared))unsentSessions.set(state.threadId,{session,selection:selectionKey(model,workspace,policy,state.effort,access,state.serviceTier)});
       state.goal=null;state.goalError=null;state.goalPending=false;
       try{state.goal=(await call('thread/goal/get',{threadId:state.threadId})).goal??null;}catch(error){state.goalError=`原生目標暫時無法讀回：${error.message}`;}
-      await saveMainSession(root,{...saved,...relocation,...(forkSource?{title:state.title,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId}:{}),threadId:state.threadId,model,workspace,inheritedAttachments,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!forkSource||!!threadId&&!prepared}});
+      await saveMainSession(root,{...saved,...relocation,...(freshSource?{title:state.title}:{}),...(forkSource?{title:state.title,parentThreadId:forkSource.forkFrom,parentTitle:forkSource.parentTitle,...(manualFork?{branchType:'user'}:{}),forkThroughTurnId:forkSource.throughTurnId}:{}),threadId:state.threadId,model,workspace,inheritedAttachments,workerPolicy:policy,effort:state.effort,serviceTier:state.serviceTier,accessMode:access,lastUsedModel:state.lastUsedModel,modelChanges:state.modelChanges,browserSessionKey:state.browserAccess.sessionKey??saved?.browserSessionKey,workerNotifications:flashNotifications,codexSession:{nativeThreadId:nativeId(state.threadId),hasSubmitted:!!forkSource||!!threadId&&!prepared}});
      state.workerConnection='ready';
      signal.throwIfAborted();
      if(!state.busy&&!turnId){
@@ -1089,13 +1095,13 @@ export function createDesktopController({root,executable,hostFactory=openCodexHo
      }
      void usage();return {threadId:state.threadId};
    }catch(e){if(signal.aborted){
-     Object.assign(state,previousState);compactionIds=previousCompactionIds;items.clear();for(const [id,item]of previousItems)items.set(id,item);inheritedWorkerItems.clear();for(const id of previousInheritedWorkers)inheritedWorkerItems.add(id);
+     if(!freshSource||!createdContinuationId)Object.assign(state,previousState);compactionIds=previousCompactionIds;items.clear();for(const [id,item]of previousItems)items.set(id,item);inheritedWorkerItems.clear();for(const id of previousInheritedWorkers)inheritedWorkerItems.add(id);
      // Resume may already have reset the projection, even when reusing the host.
      if(state.threadId){state.status='offline';state.browserAccess={enabled:false,networkAccess:false};}
      if(createdHost){await closeFlashGateway();await createdHost.close();if(host===createdHost)host=null;}throw signal.reason;
     }state.browserAccess={enabled:false,networkAccess:false};if(e.code==='K_STALE_MODEL_SELECTION')throw e;state.status='error';state.error=threadId&&e.protocolMessage===`thread not loaded: ${nativeId(threadId)}`?'無法讀回這個對話；清單與原資料未變，也未重送訊息。若你確認此對話從未送出訊息，可建立新對話。':e.protocolMessage?.includes('no rollout found')?'找不到這個對話的歷史檔。尚未送出訊息的空白對話可能未保存；請建立新工作。舊清單與檔案均未刪除，也未重新送出訊息。':e.message;if(host){await closeFlashGateway();const failed=host;host=null;hostEpoch++;try{await failed.close();}finally{await closeBrowser();}}else await closeFlashGateway();throw new Error(state.error);}
    }
-   catch(error){if(continuation&&!continuationForkAttempted)error.notCreated=true;if(forkCreatedId)error.createdThreadId=forkCreatedId;throw error;}
+   catch(error){if(continuation&&!continuationCreationAttempted)error.notCreated=true;if(createdContinuationId)error.createdThreadId=createdContinuationId;throw error;}
    finally{opening=false;openAbort=null;finishOpen();changed();}
   },
   async send({text='',attachmentIds=[],effort,accessMode,permissionConfirmed,source='local'}){
