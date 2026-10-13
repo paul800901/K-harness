@@ -784,6 +784,42 @@ test('hard acquire rejection is marked not-started without claiming an owned quo
  assert.equal(invoked,0);assert.deepEqual(events,[]);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).busy,false);
 });
 
+test('an acquire released from an in-flight quota check joins the running failure drain instead of switching directly',{timeout:5000},async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const f=await handoffFixture(account=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:80,resetsAt:future}]}),{clock:()=>now});
+ let finishB,startedB,releaseAQuery,startedAQuery,aCalls=0,aInvoked=0;const beganB=new Promise(resolve=>startedB=resolve),beganAQuery=new Promise(resolve=>startedAQuery=resolve),roomX=[],roomY=[];
+ f.vault.queryQuota=async id=>{
+  if(id===A){aCalls++;if(aCalls===1){startedAQuery();return new Promise(resolve=>releaseAQuery=()=>resolve({accountId:A,...officialBalance(0)}));}return {accountId:A,...officialBalance(0)};}
+  return {accountId:id,...officialBalance(80)};
+ };
+ const failedRun=f.accounts.run(handoffOptions('room-X','failed-X',roomX),async()=>{startedB();return new Promise(resolve=>finishB=resolve);});await beganB;
+ now+=61000;
+ const acquiringRun=f.accounts.run(handoffOptions('room-Y','not-started-Y',roomY),async()=>{aInvoked++;return {status:'completed',settled:true};}).then(value=>({value}),error=>({error}));
+ await beganAQuery;finishB(limitFailure);await eventually(()=>roomX.some(event=>event.status==='waiting'));
+ releaseAQuery();const acquisition=await acquiringRun;
+ assert(acquisition.error,'the waiting acquire must not proceed to the target account');assert.equal(acquisition.error.dispatch,'not-started');assert.equal(aInvoked,0);
+ await failedRun;await eventually(()=>roomX.filter(event=>event.status==='ready').length===1&&roomY.filter(event=>event.status==='ready').length===1);
+ assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
+ assert.equal(roomX.filter(event=>event.status==='ready').length,1);assert.deepEqual(roomX.find(event=>event.status==='ready').requestIds,['failed-X']);
+ assert.equal(roomY.filter(event=>event.status==='ready').length,1);assert.deepEqual(roomY.find(event=>event.status==='ready').requestIds,['not-started-Y']);
+});
+
+test('a stale retained official zero can drain to a freshly verified positive candidate',{timeout:5000},async()=>{
+ const now=Date.parse('2026-10-03T12:00:00Z'),timers=[],events=[];const f=await handoffFixture(()=>officialBalance(80),{clock:()=>now,setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;}});let sourceQueries=0,finish,started;
+ f.vault.queryQuota=async id=>{
+  if(id===A){sourceQueries++;if(sourceQueries===1)return {accountId:id,...officialBalance(0)};throw Error('source refresh temporarily failed');}
+  return {accountId:id,...officialBalance(80)};
+ };
+ const began=new Promise(resolve=>started=resolve);
+ const run=f.accounts.run(handoffOptions('stale-zero','failed',events),async lease=>{
+  assert.equal(lease.accountId,A);assert.deepEqual(f.calls.activate,[]);
+  await lease.quotaHint();await f.accounts.refreshAll({force:true});const source=(await f.accounts.list()).accounts.find(row=>row.id===A);
+  assert.equal(source.quota.status,'stale');assert.equal(source.quota.windows[0].remainingPercent,0);
+  const pending=new Promise(resolve=>finish=resolve);started();return pending;
+ });await began;finish(limitFailure);await run;
+ assert.equal(events.at(-1).status,'ready',JSON.stringify(events));assert.equal(events.at(-1).accountId,B);assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
+ f.accounts.cancelWorkerHandoff({parentId:'stale-zero'});
+});
+
 test('rate limits stay terminal while temporary or unknown quota keeps a quiet wait without switching',async t=>{
  for(const mode of ['rate','unknown','stale-zero','non-subscription-zero'])await t.test(mode,async()=>{
   const f=await handoffFixture(()=>mode==='rate'?officialBalance(70):mode==='stale-zero'?authStatus({status:'stale',windows:[{key:'five_hour',remainingPercent:0,resetsAt:future}]}):mode==='non-subscription-zero'?authStatus({status:'ready',windows:[{key:'requests',remainingPercent:0,resetsAt:future}]}):{auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}});

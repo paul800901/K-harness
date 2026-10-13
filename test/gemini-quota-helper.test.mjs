@@ -128,12 +128,12 @@ Write-SafeJson @{grant=$grant;client=$client}
 
 test('unavailable quota endpoint is distinct from transient rate or server failures',{skip:process.platform!=='win32'},async()=>{
  const result=await runWindowsPowerShell(String.raw`
-$out=@();foreach($status in @(403,404,410,429,500)){
+$out=@();foreach($status in @(400,403,404,410,429,500)){
  [KQuotaFakeHttpHandler]::Status=$status;[KQuotaFakeHttpHandler]::Body='{}'
  try{Invoke-GeminiQuotaHttp 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary' 'fake' $null|Out-Null}catch{$out+=@{status=$status;error=$_.Exception.Message}}
 };Write-SafeJson @{errors=$out}
 `);
- assert.deepEqual(result[0].errors.map(row=>({status:row.status,code:row.error.split(':')[0]})),[403,404,410,429,500].map(status=>({status,code:status<429?'QUOTA_CLIENT':'QUOTA_TEMPORARY'})));
+ assert.deepEqual(result[0].errors.map(row=>({status:row.status,code:row.error.split(':')[0]})),[400,403,404,410,429,500].map(status=>({status,code:status<429?'QUOTA_CLIENT':'QUOTA_TEMPORARY'})));
 });
 
 test('invalid live credential preserves independent quota evidence and conservatively requires idle synchronization',{skip:process.platform!=='win32'},async()=>{

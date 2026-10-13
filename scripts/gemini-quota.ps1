@@ -38,6 +38,7 @@ function Invoke-GeminiQuotaHttp([string]$Uri,[string]$Token,$Form) {
   $status=[int]$response.StatusCode
   if($status -eq 401){throw 'QUOTA_AUTH:Saved login needs confirmation.'}
   if($status -in @(403,404,410)){throw 'QUOTA_CLIENT:Official quota endpoint or access unavailable.'}
+  if(-not $Form -and $status -eq 400){throw 'QUOTA_CLIENT:Official quota request rejected.'}
   if($Form -and $status -eq 400){
    $code=(ConvertFrom-Json ($response.Content.ReadAsStringAsync().GetAwaiter().GetResult())).error
    if($code -eq 'invalid_grant'){throw 'QUOTA_AUTH:Saved login needs confirmation.'}

@@ -1,6 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mergeGeminiHandoff,consumeGeminiHandoff,geminiWaitingJobs,geminiAccountWait,geminiHandoffText} from '../src/gemini-handoff.mjs';
+
+test('not-started metadata follows its exact request IDs through merge, replacement and consumption',()=>{
+ const first={epoch:0,status:'ready',requestIds:['failed-a','unsent-a'],notStartedIds:['unsent-a'],queryIds:[]};
+ const second={epoch:0,status:'ready',requestIds:['unsent-b'],notStartedIds:['unsent-b'],queryIds:[]};
+ const merged=mergeGeminiHandoff(mergeGeminiHandoff(null,first),second);
+ assert.deepEqual(merged.notStartedIds,['unsent-a','unsent-b']);
+ const consumed=consumeGeminiHandoff(merged,mergeGeminiHandoff(null,second));
+ assert.deepEqual(consumed.requestIds,first.requestIds);assert.deepEqual(consumed.notStartedIds,['unsent-a']);
+ const replaced=mergeGeminiHandoff(merged,{epoch:0,status:'blocked',requestIds:['unsent-a'],notStartedIds:['unsent-a'],queryIds:[]});
+ assert.deepEqual(replaced.notStartedIds,['unsent-b']);assert.deepEqual(replaced.events[0].notStartedIds,[]);
+ const delivered=consumeGeminiHandoff(merged,{status:'ready',events:[{status:'ready',requestIds:['unsent-a'],queryIds:[]}]});
+ assert.deepEqual(delivered.notStartedIds,['unsent-b']);assert.deepEqual(delivered.events[0].notStartedIds,[]);
+});
 const event=(status,requestIds=[],queryIds=[],extra={})=>({parentId:'room',epoch:1,status,requestIds,queryIds,...extra});
 test('consuming an in-flight receipt leaves later ready and waiting events without replaying delivered IDs',()=>{
  const sent=mergeGeminiHandoff(null,event('ready',['job-a'],['query-a']));

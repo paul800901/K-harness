@@ -5,7 +5,8 @@ function combine(events){
  if(!events.length)return null;
  const status=events.some(e=>e.status==='ready')?'ready':events.some(e=>e.status==='waiting')?'waiting':'blocked';
  const selected=events.filter(e=>e.status===status),last=selected.at(-1);
- return {...last,...Object.fromEntries(keys.map(key=>[key,[...new Set(selected.flatMap(e=>e[key]??[]))]])),events};
+ return {...last,...Object.fromEntries(keys.map(key=>[key,[...new Set(selected.flatMap(e=>e[key]??[]))]])),
+  ...(selected.some(e=>Array.isArray(e.notStartedIds))?{notStartedIds:[...new Set(selected.flatMap(e=>(e.notStartedIds??[]).filter(id=>(e.requestIds??[]).includes(id))))]}:{}),events};
 }
 export function mergeGeminiHandoff(previous,event){
  const {events:ignored,...next}=event;
@@ -13,6 +14,7 @@ export function mergeGeminiHandoff(previous,event){
  if(previous?.epoch===event.epoch)for(const old of previous.events??[previous]){
   const retained={...old};
   for(const key of keys)retained[key]=(old[key]??[]).filter(id=>!(event[key]??[]).includes(id));
+  if(Array.isArray(retained.notStartedIds))retained.notStartedIds=retained.notStartedIds.filter(id=>retained.requestIds.includes(id));
   if(keys.some(key=>retained[key].length))events.push(retained);
  }
  events.push(next);return combine(events);
@@ -23,6 +25,7 @@ export function consumeGeminiHandoff(value,delivered=value){
  return combine((value?.events??[]).flatMap(e=>{
   if(!['ready','blocked'].includes(status)||e.status!==status)return [e];
   const remaining={...e,...Object.fromEntries(keys.map(key=>[key,(e[key]??[]).filter(id=>!sent[key].has(id))]))};
+  if(Array.isArray(remaining.notStartedIds))remaining.notStartedIds=remaining.notStartedIds.filter(id=>remaining.requestIds.includes(id));
   return keys.some(key=>remaining[key].length)?[remaining]:[];
  }));
 }

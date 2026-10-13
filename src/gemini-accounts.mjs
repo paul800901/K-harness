@@ -214,7 +214,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
     if(original.auth?.status==='signed-out')throw Error(authFailure(original));
     if(original.auth?.status!=='authenticated')throw quotaWait(authFailure(original));
     if(original.auth?.requiresActivation)await activate(original.id,{refreshQuota:false});
-    if(!officialZero(original)){
+    if(!exhausted(original)&&!officialZero(original)){
      if(available(original))return {status:'positive',detail:{accountId:original.id}};
      throw quotaWait('官方額度尚未確認；K 保留等待，未換帳號或派工。');
     }
@@ -358,7 +358,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
       if(!cachedExhausted(chosen)&&!quotaCurrent(chosen))await query(chosen);
       if(chosen.auth?.status==='signed-out')throw Error(authFailure(chosen));
       if(exhausted(chosen)||officialZero(chosen)){
-       if(running)throw Object.assign(Error('目前 Gemini 工作尚未結束，不能交接帳號；未送出本工作。就緒時 K 會通知，勿立即重派。'),{code:'GEMINI_HANDOFF_WAIT',accountId:chosen.id});
+       if(running||handoffWaiters.size||handoffPending)throw Object.assign(Error('Gemini 工作或帳號交接尚未結束；未送出本工作。就緒時 K 會通知，勿立即重派。'),{code:'GEMINI_HANDOFF_WAIT',accountId:chosen.id});
        chosen=await nextWorkerAccount(chosen,{recovered});target=chosen.id;
       }else if(accountId&&accountId!==chosen.id){
        // Keep an explicit account expectation intact. Do not switch backwards or
