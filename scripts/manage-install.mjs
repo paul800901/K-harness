@@ -36,9 +36,10 @@ try{
  const ref=options['--ref'];if(!ref)throw Error('請用 --ref 指定 Git 版本（首次可用 HEAD）；不自動追最新版本。');
  if(options['--fetch'])run('git',['fetch','origin','--tags']);
  const version=run('git',['rev-parse','--verify','--end-of-options',`${ref}^{commit}`]);
+ const repository=run('git',['rev-parse','--show-toplevel']);
  const prepared=path.join(p.candidate,`prepare-${Date.now()}`);await mkdir(prepared,{recursive:true});
  const archive=`${prepared}.zip`;
- run('git',['archive','--format=zip',`--output=${archive}`,version]);
+ run('git',['archive','--format=zip',`--output=${archive}`,version],repository);
  const quote=value=>`'${value.replaceAll("'","''")}'`;
  run('powershell.exe',['-NoProfile','-Command',`$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(prepared)}`]);
  // New candidate only: npm never replaces the running runtime's dependencies.
