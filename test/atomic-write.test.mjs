@@ -6,10 +6,11 @@ import {fileURLToPath} from 'node:url';
 import fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
 import {atomicWrite} from '../src/atomic-write.mjs';
+import {scratchBase} from './scratch.mjs';
 const save=(root,record)=>atomicWrite(path.join(root,'one.json'),JSON.stringify(record));
 
 for(const code of ['EPERM','EACCES','EBUSY'])test(`metadata replacement retries transient ${code} without rewriting the snapshot`,async t=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-transient-')),record={threadId:'one',model:'gpt-6-luna'};
  const target=await save(root,{...record,title:'old'}),old=await readFile(target,'utf8');
  const original=fs.rename,attempts=[];let snapshot;
@@ -28,7 +29,7 @@ for(const code of ['EPERM','EACCES','EBUSY'])test(`metadata replacement retries 
 });
 
 test('metadata replacement stops after its lock wait budget and a later save still works',async t=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-exhausted-')),record={threadId:'one',model:'gpt-6-luna'};
  const target=await save(root,{...record,title:'old'}),old=await readFile(target,'utf8');
  const original=fs.rename,attempts=[],error=Object.assign(new Error('target remains locked'),{code:'EPERM'});
@@ -44,7 +45,7 @@ test('metadata replacement stops after its lock wait budget and a later save sti
 });
 
 test('metadata replacement propagates non-lock errors immediately and preserves the old record',async t=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-error-')),record={threadId:'one',model:'gpt-6-luna'};
  const target=await save(root,{...record,title:'old'}),old=await readFile(target,'utf8');
  const original=fs.rename,error=Object.assign(new Error('storage failure'),{code:'EIO'});let attempts=0;

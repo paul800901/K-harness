@@ -5,8 +5,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDiscussionController} from '../src/discussion-controller.mjs';
 import {discussionDecision} from '../shared/discussion.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 const deferred=()=>{let resolve,reject;const promise=new Promise((r,j)=>{resolve=r;reject=j;});return {promise,resolve,reject};};
 const participants=[{id:'p1',model:'gpt-6.1-sol',displayName:'Sol',effort:'medium'},{id:'p2',model:'claude-opus-5-5',displayName:'Opus',effort:'high'}];
 async function fixture({decisions=[{action:'finish',summary:'共識：目標清楚。分歧：保留 Sol 與 Opus 不同主張。未知：待查證。'}],answer,closeFailure=false}={}){

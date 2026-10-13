@@ -6,8 +6,9 @@ import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 const codexModel='gpt-6-astra',claudeModel='claude-opus-5-5';
 async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({available:true,mode:'ai',busy:false}),closeFailure=()=>false,onStateChange=()=>{}}={}){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'concurrent-conversations-'));

@@ -4,12 +4,13 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {mkdir,mkdtemp,writeFile,readFile,stat,readdir} from 'node:fs/promises';
 import {spawnSync} from 'node:child_process';
-import {activateRuntime,rollbackRuntime,installationPaths,readSettings} from '../scripts/install-runtime.mjs';
+import {activateRuntime,rollbackRuntime,installationPaths,readSettings,pruneReleases} from '../scripts/install-runtime.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const checkStopped=async()=>{};
 async function file(name,value){await mkdir(path.dirname(name),{recursive:true});await writeFile(name,value);}
 async function fixture(){
- const base=fileURLToPath(new URL('../.runtime/install-tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=path.join(scratchBase,'install-tests');await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'可搬-')),p=installationPaths(root);
  await file(path.join(p.runtime,'src/electron-isolated-launcher.mjs'),'old');
  await file(path.join(p.runtime,'dist-ui/index.html'),'old-ui');
@@ -31,6 +32,16 @@ test('install exchanges only code; rollback also works for legacy runtime withou
  assert.equal(await readFile(path.join(p.runtime,'src/electron-isolated-launcher.mjs'),'utf8'),'old');
  assert.equal(await readFile(path.join(p.candidate,'agent-home/.codex/fake-login'),'utf8'),'DO NOT CHANGE');
  assert.equal(await readFile(path.join(p.candidate,'vault/private-state/fake-chat'),'utf8'),'KEEP CHAT');
+});
+test('activation keeps only the newest three program copies and never other release folders',async()=>{
+ const {root,p,prepared}=await fixture(),releases=path.join(p.candidate,'releases');
+ for(const time of [100,200,300,400])await file(path.join(releases,`before-${time}`,'runtime/x'),'old');
+ await file(path.join(releases,'browser-program-before-1/x'),'other');
+ const result=await activateRuntime({root,prepared,version:'pruned',checkStopped});
+ const left=(await readdir(releases)).sort();
+ assert.deepEqual(left,['before-300','before-400',path.basename(result.previous),'browser-program-before-1'].sort());
+ assert.equal((await readSettings(root)).previous,result.previous);
+ assert.deepEqual(await pruneReleases(p.candidate),[]);
 });
 test('running work prevents activation, preserving existing code and candidate',async()=>{
  const {root,p,prepared}=await fixture();

@@ -10,8 +10,9 @@ import { fileURLToPath } from 'node:url';
 import { startIsolatedDesktop } from '../src/isolated-desktop.mjs';
 import { startDesktop } from '../src/desktop-server.mjs';
 import { addProject, listProjects, updateProject } from '../src/projects.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const testRoot = fileURLToPath(new URL('../.runtime/tests/', import.meta.url));
+const testRoot = scratchBase;
 const providerExe = path.resolve('test-fixture', 'codex.exe');
 const claudeSpec = { command: process.execPath, argsPrefix: [path.resolve('test/fixtures/claude-inspection.cjs')] };
 const agentEnv = { USERPROFILE: 'C:\\isolated\\home', HOME: 'C:\\isolated\\home', CLAUDE_CONFIG_DIR: 'C:\\isolated\\home\\.claude',

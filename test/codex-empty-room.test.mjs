@@ -6,10 +6,11 @@ import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const MODEL='gpt-6.1-sol',policy={model:'gpt-6-luna',effort:'high'};
 async function fixture(){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'durable-empty-')),workspace=path.join(root,'workspace');await mkdir(workspace);
  const durable=new Map(),hosts=[],calls=[];let seq=0,failSend=false;
  const hostFactory=hooks=>{

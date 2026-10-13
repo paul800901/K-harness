@@ -4,9 +4,10 @@ import {mkdtemp,mkdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture({failThreadStart=false}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-permission-modes-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-permission-modes-'));
  const calls=[];let hooks,close,turnNumber=0,failStart=failThreadStart;
  const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]},{model:'gpt-6-astra',displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']}];
  const host={closed:null,notify(){},waitForMcp:async()=>{},close:async()=>close?.(),request:async(method,p)=>{

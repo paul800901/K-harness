@@ -7,8 +7,9 @@ import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {openCodexHost} from '../src/codex-host.mjs';
 import {openClaudeHost} from '../src/claude-host.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=path.resolve('.runtime/tests');
+const base=scratchBase;
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 // These are literal Unicode characters on the wire, not JSON \u escapes.
 const text='first\u2028second\u2029繁體😀last';

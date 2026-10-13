@@ -5,8 +5,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 const sourceModel='gpt-source',targetModel='gpt-native-target';
 const entry=(model,efforts,defaultReasoningEffort)=>({model,supportedReasoningEfforts:efforts.map(reasoningEffort=>({reasoningEffort})),defaultReasoningEffort});
 async function fixture(){

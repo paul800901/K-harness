@@ -4,8 +4,9 @@ import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {inspectClaude,invalidateClaudeInspection} from '../src/claude-host.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 await mkdir(base,{recursive:true});
 
 async function fixture(){

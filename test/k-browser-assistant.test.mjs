@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {mkdir,writeFile,mkdtemp} from 'node:fs/promises';
 import path from 'node:path';
 import {loadKBrowserAssistant} from '../src/k-browser-assistant.mjs';
+import {scratchBase} from './scratch.mjs';
 
 test('external browser is opt-in through trusted owner configuration, no silent fallback',async()=>{
- const base=path.resolve('.runtime/k-browser-assistant-tests');await mkdir(base,{recursive:true});
+ const base=path.join(scratchBase,'k-browser-assistant-tests');await mkdir(base,{recursive:true});
  const vault=await mkdtemp(path.join(base,'vault-'));
  assert.equal(await loadKBrowserAssistant({vault}),undefined);
  await writeFile(path.join(vault,'k-browser-assistant.json'),JSON.stringify({enabled:true,extensionId:'invalid',chromeExecutable:process.execPath}));

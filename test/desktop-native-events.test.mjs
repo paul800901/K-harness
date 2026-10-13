@@ -6,9 +6,10 @@ import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {visibleNativeNotices} from '../frontend/native-notices.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture({readiness='ready',gatewayFactory,bridgeFactory}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'desktop-native-events-')),calls=[],connections=[];
  const host={closed:new Promise(()=>{}),notify(){},waitForMcp:async()=>{},close:async()=>{},request:async(method,params,timeoutMs)=>{
   calls.push({method,params,timeoutMs});

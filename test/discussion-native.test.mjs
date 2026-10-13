@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {mkdir,mkdtemp,readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {openDiscussionSession} from '../src/discussion-native.mjs';
-const root=path.resolve('.runtime/tests');await mkdir(root,{recursive:true});
+import {scratchBase} from './scratch.mjs';
+const root=scratchBase;await mkdir(root,{recursive:true});
 
 test('Codex discussion disables inherited MCP and execution tools while retaining native turn identity',async()=>{
  const calls=[];let event,resolveClosed;const closed=new Promise(r=>{resolveClosed=r;});

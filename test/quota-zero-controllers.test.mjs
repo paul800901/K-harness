@@ -5,7 +5,8 @@ import {mkdir,mkdtemp} from 'node:fs/promises';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {createClaudeController} from '../src/claude-controller.mjs';
 import {createGeminiController} from '../src/gemini-controller.mjs';
-const root=async()=>{const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'quota-zero-controller-'));};
+import {scratchBase} from './scratch.mjs';
+const root=async()=>{const base=scratchBase;await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'quota-zero-controller-'));};
 
 for(const provider of ['codex','claude','gemini'])test(`${provider} automatic quota reads wait for reset; human refresh bypasses suppression`,async()=>{
  const original=Date.now;let now=original(),queries=0,fail=false;Date.now=()=>now;const reset=now+600000;

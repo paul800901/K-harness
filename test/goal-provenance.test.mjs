@@ -4,10 +4,11 @@ import {mkdir,mkdtemp} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
 // Real K controller, fake native transport: no native process, login or model.
 async function fixture(initialGoal=null){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'goal-provenance-')),calls=[];
  let connection,gateway,nativeGoal=initialGoal?structuredClone(initialGoal):null;
  const host={closed:new Promise(()=>{}),notify(){},waitForMcp:async()=>{},close:async()=>{},async request(method,params){

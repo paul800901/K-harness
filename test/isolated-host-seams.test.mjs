@@ -7,8 +7,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {inspectClaude,invalidateClaudeInspection,openClaudeHost} from '../src/claude-host.mjs';
 import {openCodexHost} from '../src/codex-host.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const testRoot=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const testRoot=scratchBase;
 await mkdir(testRoot,{recursive:true});
 
 function fakeClaudeCapture(calls) {

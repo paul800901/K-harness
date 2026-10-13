@@ -8,8 +8,9 @@ import path from 'node:path';
 import {createGeminiWorker,geminiSettings,geminiEnvironment,geminiProfile,geminiStream,geminiOutcome,geminiProcess,geminiOutputFiles,killGeminiTree,geminiInstruction,GEMINI_BROWSER_GUIDANCE} from '../src/gemini-worker.mjs';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {workerPolicyConfig,availableWorkerModels} from '../src/worker-policy.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const root=path.resolve('.runtime','gemini-tests',randomUUID()),workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
+const root=path.join(scratchBase,'gemini-tests',randomUUID()),workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
 test('browser guidance teaches current tool parameters only when the browser is connected',()=>{
  assert.ok(geminiInstruction('test','workspace-write',{url:'http://127.0.0.1:45678/mcp'}).includes(GEMINI_BROWSER_GUIDANCE));
  assert.ok(!geminiInstruction('test','read-only').includes(GEMINI_BROWSER_GUIDANCE));

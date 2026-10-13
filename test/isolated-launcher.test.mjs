@@ -10,9 +10,10 @@ import {startDesktop} from '../src/desktop-server.mjs';
 import {startIsolatedDesktop} from '../src/isolated-desktop.mjs';
 import {listProjects} from '../src/projects.mjs';
 import {startElectronIsolatedLauncher} from '../src/electron-isolated-launcher.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture(){
- const testRoot=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(testRoot,{recursive:true});
+ const testRoot=scratchBase;await mkdir(testRoot,{recursive:true});
  const base=await mkdtemp(path.join(testRoot,'isolated-launcher-'));
  const p=isolatedLauncherPaths(path.join(base,'candidate'));
  for(const dir of [p.root,p.vault,p.trustedRuntime,p.workspace,p.agentHome,p.browserProfiles,p.browserOutput,
@@ -155,12 +156,12 @@ test('explicit stop delegates queued messages and unsettled workers to owner cle
 test('isolated health is distinguishable and protected root requires bootstrap cookie',async()=>{
  const controller={state:{status:'idle'},async close(){},async sessions(){return {sessions:[]};}};
  const login=()=>({async close(){}});
- const app=await startDesktop({root:path.resolve('.runtime/tests/isolated-health-fixture'),executable:'fixture',port:0,
+ const app=await startDesktop({root:path.join(scratchBase,'isolated-health-fixture'),executable:'fixture',port:0,
   requireLaunchToken:true,deployment:'isolated',controllerFactory:()=>controller,claudeLoginFactory:login,codexLoginFactory:login});
  try{
   const health=await fetch(`${app.origin}/health`).then(r=>r.json());
   assert.equal(health.deployment,'native');
-  assert.equal(health.workspace,path.resolve('.runtime/tests/isolated-health-fixture'));
+  assert.equal(health.workspace,path.join(scratchBase,'isolated-health-fixture'));
   assert.equal((await fetch(`${app.origin}/`)).status,403);
  }finally{await app.close();}
 });

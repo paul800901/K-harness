@@ -7,6 +7,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {loadUiMessageTiming,turnGroupId} from '../src/ui-message-timing.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture(root,{historyTurnStatus}={}){
   let hook,hostFactoryCalls=0;const calls=[];
@@ -40,7 +41,7 @@ async function fixture(root,{historyTurnStatus}={}){
 }
 
 test('live timestamps and groups survive native ID reconciliation and reload without inventing old times',async t=>{
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-timing-'));
+  const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-timing-'));
   const f=await fixture(root);
   try{
     await f.controller.open({model:'gpt-6-astra'});
@@ -82,7 +83,7 @@ test('live timestamps and groups survive native ID reconciliation and reload wit
 });
 
 test('interrupted live answer persists partial without marking an earlier completed answer',async()=>{
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-partial-'));
+  const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-partial-'));
   const f=await fixture(root);
   try{
     await f.controller.open({model:'gpt-6-astra'});await f.controller.send({text:'new turn'});
@@ -98,7 +99,7 @@ test('interrupted live answer persists partial without marking an earlier comple
 });
 
 test('historical assistant is partial only when native turn status proves it',async()=>{
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-history-partial-'));
+  const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-history-partial-'));
   const f=await fixture(root,{historyTurnStatus:'interrupted'});
   try{await saveMainSession(root,{threadId:'timing-thread',model:'gpt-6-astra',workspace:root,accessMode:'workspace-write'});await f.controller.open({model:'gpt-6-astra',threadId:'timing-thread'});assert.equal(f.controller.state.messages.find(m=>m.id==='assistant-final').partial,true);}
   finally{await f.controller.close().catch(()=>{});}
@@ -110,7 +111,7 @@ test('turn fallback group is deterministic and does not imply a timestamp',()=>{
 });
 
 test('quota reads without an active host are throttled for five minutes',async()=>{
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-quota-'));
+  const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-quota-'));
   const f=await fixture(root),realNow=Date.now;
   try{
     await f.controller.open({model:'gpt-6-astra'});await f.controller.usage(true);
@@ -124,7 +125,7 @@ test('quota reads without an active host are throttled for five minutes',async()
 });
 
 test('fresh native completed turn overrides stale partial UI projection',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-native-completed-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'ui-native-completed-'));
  const {saveUiMessageTiming}=await import('../src/ui-message-timing.mjs');await saveUiMessageTiming(root,'timing-thread',{messages:{'assistant-final':{partial:true}},tools:{}});
  await saveMainSession(root,{threadId:'timing-thread',model:'gpt-6-astra',workspace:root});const f=await fixture(root,{historyTurnStatus:'completed'});
  try{await f.controller.open({model:'gpt-6-astra',threadId:'timing-thread'});assert.equal(f.controller.state.messages.find(m=>m.id==='assistant-final').partial,undefined);}finally{await f.controller.close();}

@@ -6,9 +6,10 @@ import {fileURLToPath} from 'node:url';
 import {addProject,listProjects,updateProject} from '../src/projects.mjs';
 import {groupProjectSessions} from '../frontend/project-groups.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture(){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'projects-'));
  const alpha=path.join(root,'alpha'),beta=path.join(root,'beta');await mkdir(alpha);await mkdir(beta);
  return {root,alpha,beta};

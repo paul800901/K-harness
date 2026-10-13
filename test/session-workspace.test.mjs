@@ -5,8 +5,9 @@ import {mkdir,mkdtemp,writeFile,readFile} from 'node:fs/promises';
 import {movedWorkspace,sessionAttachment,sessionArtifact} from '../src/session-workspace.mjs';
 import {saveAttachment} from '../src/desktop-files.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 test('moving retains exact original artifacts and draft attachments; no other-chat attachment or path escape',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'workspace-resources-')),a=path.join(root,'A'),b=path.join(root,'B');for(const p of [a,b])await mkdir(p);
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'workspace-resources-')),a=path.join(root,'A'),b=path.join(root,'B');for(const p of [a,b])await mkdir(p);
  await writeFile(path.join(a,'result.txt'),'original A');await writeFile(path.join(b,'result.txt'),'different B');
  const upload=await saveAttachment(a,'chat-a',{name:'draft.txt',base64:Buffer.from('draft before move').toString('base64')});
  const moved=movedWorkspace({workspace:a},['result.txt'],b);assert.deepEqual(moved.previousArtifacts,[path.join(a,'result.txt')]);

@@ -6,6 +6,8 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {createStateStream,applyStateEvent} from '../shared/state-stream.mjs';
+import {scratchBase} from './scratch.mjs';
+import {pathToFileURL} from 'node:url';
 
 const stateWith = (messages=[],tools=[]) => ({status:'working',busy:true,progress:{plan:[]},messages,tools});
 
@@ -65,7 +67,7 @@ test('removal and reordering are represented and applied', () => {
 });
 
 test('a second SSE client receives a snapshot only after pending changes reach the first client', async () => {
-  const root=await mkdtemp(path.join(fileURLToPath(new URL('../.runtime/tests/',import.meta.url)),'sse-reconnect-'));
+  const root=await mkdtemp(path.join(scratchBase,'sse-reconnect-'));
   const state={status:'ready',messages:[{id:'m1',role:'assistant',text:'before'}],tools:[]};let notify;
   const app=await startDesktop({root,executable:'fixture',port:0,controllerFactory:({onChange})=>{notify=onChange;return {state,close:async()=>{}};}});
   const streams=[];
@@ -105,7 +107,7 @@ test('benchmark 50-tool long conversation bytes and reducer cost; keep evidence'
   assert.deepEqual(client,state);
   const intervalSeconds=0.060,samplesPerSecond=1/intervalSeconds;
   const result={scenario:{toolCalls:50,messages:80,toolOutputBytes:1000000,events:sampleCount,intervalMs:60},baseline:{meanBytesPerEvent:Math.round(fullBytes/sampleCount),estimatedBytesPerSecond:Math.round(fullBytes/sampleCount*samplesPerSecond)},incremental:{meanBytesPerEvent:Math.round(patchBytes/sampleCount),estimatedBytesPerSecond:Math.round(patchBytes/sampleCount*samplesPerSecond)},reducer:{meanApplyMs:Number((reducerMs/sampleCount).toFixed(4)),totalMs:Number(reducerMs.toFixed(2))},note:'Synthetic Node benchmark; no browser rendering time measured.'};
-  const path=new URL('../.runtime/ui-parity-20260924/stream/benchmark.json',import.meta.url);
+  const path=new URL('stream-benchmark.json',pathToFileURL(scratchBase+'/'));
   await mkdir(new URL('.',path),{recursive:true});
   await writeFile(path,JSON.stringify(result,null,2)+'\n');
   assert.ok(patchBytes<fullBytes/100);

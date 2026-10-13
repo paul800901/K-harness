@@ -4,6 +4,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {createClaudeWorker} from '../src/claude-worker.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const rows=[
  {model:'claude-fable-5',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
@@ -14,7 +15,7 @@ const rows=[
  {model:'claude-haiku-4-5-20251001',supportedReasoningEfforts:[]},
 ].map(row=>({...row,supportedReasoningEfforts:row.supportedReasoningEfforts.map(reasoningEffort=>({reasoningEffort}))}));
 async function fixture({models=rows,closeError=false}={}){
- const root=path.resolve('.runtime','claude-worker-tests',randomUUID());
+ const root=path.join(scratchBase,'claude-worker-tests',randomUUID());
  const workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
  let handlers,starts=0,interrupts=0,closes=0;
  let resolveClosed;const closed=new Promise(resolve=>resolveClosed=resolve);

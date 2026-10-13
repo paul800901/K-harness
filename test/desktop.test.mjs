@@ -9,8 +9,9 @@ import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 async function fixture({catalog,modelPages,browser=false,browserState}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'desktop-'));
  const calls=[];let hooks;let close;let modelPageIndex=0,hostFactoryCalls=0,hostCloseCalls=0;
  const host={closed:new Promise(r=>{close=r;}),notify(){},waitForMcp:async()=>{},close:async()=>{hostCloseCalls++;close();},request:async(method,p)=>{
   calls.push({method,p});

@@ -106,4 +106,4 @@
 ## 十、檔案與資料
 
 - 只修改任務需要的檔案，保留可恢復性。沒有授權不清理使用者資料，刪除一律走資源回收筒；唯一例外是可依 lockfile 重新取得的 `node_modules`，回收筒放不下時可直接移除。
-- `.runtime` 根層只放現用項目；被工程紀錄引用的收據、截圖與讀回結果集中在 `.runtime/archive/<原名稱>`。退版保留最新 3 份（含 `.local/runtime.json` 的 `previous`），舊候選建置可從 Git 版本重建，不必長期保留。整理原則見 `docs/runtime-cleanup-20261013.md`。
+- `.runtime` 根層只放現用項目；被工程紀錄引用的收據、截圖與讀回結果集中在 `.runtime/archive/<原名稱>`。`.runtime/uploads` 是以本專案為工作區的聊天室附件（K 存在「工作區/.runtime/uploads」），屬使用者資料，不得移動或清理；K 自身狀態在 `vault/private-state/.runtime`。測試暫存一律經 `test/scratch.mjs`，跑完自動清除。退版保留最新 3 份（含 `.local/runtime.json` 的 `previous`），舊候選建置可從 Git 版本重建，不必長期保留。整理原則見 `docs/runtime-cleanup-20261013.md`。

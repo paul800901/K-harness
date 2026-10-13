@@ -5,13 +5,14 @@ import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
 import {availableWorkerModels,validateWorkerPolicy} from '../src/worker-policy.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const workspaceModels=[
  {model:'gpt-6.1-sol',supportedReasoningEfforts:[{reasoningEffort:'high'}]},
  {model:'claude-opus-5-5',supportedReasoningEfforts:[{reasoningEffort:'high'}]},
 ];
 async function fixture({claudeFactory,accessMode='workspace-write',onChange=()=>{},onRequest,workerPolicy={model:'claude-opus-5-5',effort:null}}={}){
- const root=path.resolve('.runtime','claude-bridge-tests',randomUUID());
+ const root=path.join(scratchBase,'claude-bridge-tests',randomUUID());
  const workspace=path.join(root,'workspace');await mkdir(workspace,{recursive:true});
  const bridge=await createLunaBridge({root,workspace,parentId:'parent',geminiOnly:true,accessMode,claudeFactory,onChange,onRequest,workerPolicy});
  return {root,workspace,bridge};

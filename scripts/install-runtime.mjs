@@ -1,6 +1,6 @@
 import path from 'node:path';
 import net from 'node:net';
-import {mkdir,readFile,writeFile,rename,copyFile,stat} from 'node:fs/promises';
+import {mkdir,readFile,writeFile,rename,copyFile,stat,readdir,rm} from 'node:fs/promises';
 import {atomicWrite} from '../src/atomic-write.mjs';
 
 export const candidateRelative='.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee';
@@ -62,7 +62,19 @@ export async function activateRuntime({root,prepared,version,settings={},checkSt
    else if(await exists(file))await rename(file,path.join(backup,`failed-${name}`));
   throw error;
  }
+ // Older program copies are reproducible from their Git version; failing to remove them never fails the update.
+ await pruneReleases(p.candidate).catch(()=>{});
  return {version,runtime:p.runtime,previous:hadRuntime?backup:null};
+}
+
+// Keep the newest `keep` before-<time> program copies (the newest is settings.previous).
+export async function pruneReleases(candidate,keep=3){
+ const releases=path.join(candidate,'releases');
+ const names=(await readdir(releases,{withFileTypes:true})).filter(e=>e.isDirectory()&&/^before-\d+$/.test(e.name)).map(e=>e.name)
+  .sort((x,y)=>Number(x.slice(7))-Number(y.slice(7)));
+ const old=names.slice(0,Math.max(0,names.length-keep));
+ for(const name of old)await rm(path.join(releases,name),{recursive:true,force:true,maxRetries:3});
+ return old;
 }
 
 export async function rollbackRuntime(root,{checkStopped=assertStopped}={}){

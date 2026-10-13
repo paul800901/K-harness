@@ -7,8 +7,9 @@ import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 import {remoteRouteAllowed} from '../src/remote-access.mjs';
 import {saveAttachment} from '../src/desktop-files.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 const models=[{model:'gpt-6.1-sol',displayName:'Sol',provider:'codex'},{model:'claude-opus-5-5',displayName:'Opus',provider:'claude'},{model:'gemini-3.8-flash',displayName:'Flash',provider:'gemini'}].map(m=>({...m,defaultReasoningEffort:'medium',supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}]}));
 async function fixture({hold=false,discussionApi}={}){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'discussion-rooms-'));let seq=0;const answerPending=new Set();

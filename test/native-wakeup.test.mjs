@@ -5,9 +5,10 @@ import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture({reject,history=[]}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'native-wakeup-')),calls=[],children=new Map();let hooks,close,turn=0,readGate,rejection=reject,sendGate,readMode;
  const host={closed:new Promise(r=>close=r),notify(){},waitForMcp:async()=>{},close:async()=>close(),async request(method,p){
   calls.push({method,p});

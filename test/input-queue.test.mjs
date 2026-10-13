@@ -6,9 +6,10 @@ import {fileURLToPath} from 'node:url';
 import {createInputQueue} from '../src/input-queue.mjs';
 import fs from 'node:fs/promises';
 import {syncBuiltinESMExports} from 'node:module';
+import {scratchBase} from './scratch.mjs';
 
 async function root(){
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'input-queue-'));
+  const base=scratchBase;await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'input-queue-'));
 }
 function controller({busy=false,status=busy?'working':'ready',send,steer}={}){
   const state={threadId:'queue-session',status,busy,questions:[],workers:[]},calls=[];

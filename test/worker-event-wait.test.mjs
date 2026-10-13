@@ -5,10 +5,11 @@ import path from 'node:path';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {consumeGeminiWaitResult,mergeGeminiHandoff} from '../src/gemini-handoff.mjs';
 import {createLunaGateway} from '../src/luna-gateway.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function setup(extra={}){
- await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/event-wait-'));
+ await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.join(scratchBase,'event-wait-'));
  return createLunaBridge({root,workspace:root,parentId:'wait-room',geminiOnly:true,...extra});
 }
 test('default event wait ignores unchanged quiet reports; caller abort does not cancel or replay worker',{timeout:5000},async()=>{

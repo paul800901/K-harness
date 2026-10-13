@@ -5,11 +5,12 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const CODEX_MODEL='gpt-6-astra';
 const CODEX_OTHER='gpt-6-luna';
 const CLAUDE_MODEL='claude-opus-5-5';
-const TEST_ROOT=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const TEST_ROOT=scratchBase;
 
 test('picker catalog contains the complete official GPT catalog and Claude with native effort choices',async()=>{
  const sol={model:'gpt-6.1-sol',displayName:'GPT-6.1 Sol',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']};

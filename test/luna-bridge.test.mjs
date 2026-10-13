@@ -12,8 +12,9 @@ import {PassThrough} from 'node:stream';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createGeminiWorker} from '../src/gemini-worker.mjs';
 import {mergeGeminiHandoff,geminiAccountWait} from '../src/gemini-handoff.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const root = path.resolve('.runtime','luna-bridge-tests',randomUUID());
+const root = path.join(scratchBase,'luna-bridge-tests',randomUUID());
 const workspace = path.join(root,'workspace');
 await mkdir(workspace,{recursive:true});
 const catalog = [{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]}];
@@ -537,7 +538,7 @@ test('main-agent account observation registers one owned wait without all-accoun
 
 
 test('real manager query IDs remain independent while an earlier room receipt awaits its worker durable write',{timeout:7000},async t=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const testRoot=await mkdtemp(path.join(base,'bridge-query-durable-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const testRoot=await mkdtemp(path.join(base,'bridge-query-durable-'));
  const A='a'.repeat(32),B='b'.repeat(32),parentId='query-durable-parent',now=Date.parse('2026-10-13T00:00:00Z');
  let identity={accountId:A,email:'a@example.test'},zero=false,finishProcess,lease,releaseWrite,resolveWrite,writeMock,receiptState;
  const writeGate=new Promise(resolve=>{releaseWrite=resolve;}),writeEntered=new Promise(resolve=>{resolveWrite=resolve;}),events=[],queries=[],activations=[];

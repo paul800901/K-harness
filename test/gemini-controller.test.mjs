@@ -8,11 +8,12 @@ import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {GEMINI_MEDIA_GUIDANCE} from '../src/gemini-worker.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const names=['gemini-3.8-flash-low','gemini-3.8-flash-medium','gemini-3.8-flash-high','gemini-3.1-pro-high','gemini-3.1-pro-low','gemini-new-native'];
 const loginFactory=()=>({status:async()=>({available:true,models:names,version:'fixture'})});
 async function fixture(options={}){
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-controller-'));const calls=[];
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-controller-'));const calls=[];
  const run=async(binary,args,params)=>{
   calls.push({binary,args,params});params.onStart(12345);
   const previous=args.indexOf('--conversation'),id=previous>=0?args[previous+1]:randomUUID();

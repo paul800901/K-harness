@@ -4,7 +4,8 @@ import path from 'node:path';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {geminiProjectMcp} from '../src/gemini-project-mcp.mjs';
 import {geminiSettings,geminiMcpConfig} from '../src/gemini-worker.mjs';
-async function fixture(){const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'project-mcp-'));await mkdir(path.join(root,'.runtime'));const workspace=path.join(root,'project');await mkdir(workspace);return {root,workspace,save:entries=>writeFile(path.join(root,'.runtime/gemini-mcp.json'),JSON.stringify(entries))};}
+import {scratchBase} from './scratch.mjs';
+async function fixture(){const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'project-mcp-'));await mkdir(path.join(root,'.runtime'));const workspace=path.join(root,'project');await mkdir(workspace);return {root,workspace,save:entries=>writeFile(path.join(root,'.runtime/gemini-mcp.json'),JSON.stringify(entries))};}
 const server={command:'node',args:['owner-approved-test-server.mjs'],disabledTools:['dangerous'],customNativeOption:true};
 test('owner MCP binding selects exact workspace, preserves native config, scopes grants by access mode',async()=>{
  const f=await fixture();assert.deepEqual(await geminiProjectMcp(f.root,f.workspace,'read-only'),{mcpServers:{},allow:[]});

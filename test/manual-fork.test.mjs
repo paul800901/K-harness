@@ -7,9 +7,10 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
 import {isVisibleMainSession} from '../frontend/project-groups.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture({failure,accessMode='read-only',sourceWorker=false,backgroundCommand=false}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'manual-fork-')),model='gpt-6.1-sol',calls=[],visibleAtReadiness=[];
  const policy={model:'gpt-6-luna',effort:'high'};
  await saveMainSession(root,{threadId:'parent',model,title:'來源',workspace:root,accessMode,workerPolicy:policy});

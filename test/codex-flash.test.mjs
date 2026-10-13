@@ -6,11 +6,12 @@ import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions,saveMainSession} from '../src/main-sessions.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
 
 async function fixture({accessMode='workspace-write',savedSession,root:existingRoot,workerPolicy={model:'gpt-6-luna',effort:'high'},cancelSettles=true,delayToolOutput=false,rejectToolOutput=false}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=existingRoot??await mkdtemp(path.join(base,'codex-flash-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=existingRoot??await mkdtemp(path.join(base,'codex-flash-'));
  if(savedSession)await saveMainSession(root,{threadId:'codex-parent',model:'gpt-6-astra',workspace:root,accessMode,workerPolicy,workerNotifications:{},...savedSession});
  const calls=[],hostOptions=[],hosts=[],gatewayOptions=[],bridgeOptions=[],workerRecords=new Map(),workerOperations=[];let hostCloseCount=0,gatewayCloseCount=0,bridgeCloseCount=0,resolveToolOutput,releaseToolOutput;const toolOutputSent=new Promise(resolve=>{resolveToolOutput=resolve;}),toolOutputGate=new Promise(resolve=>{releaseToolOutput=resolve;});
  const newHost=options=>{let onHostClose,droppedTurn=false,recoveredInterrupted=false;const host={closed:new Promise(resolve=>{onHostClose=resolve;}),notify(){},waitForMcp:async()=>{},close:async()=>{if(options.onEvent)hostCloseCount++;onHostClose();},request:async(method,params)=>{

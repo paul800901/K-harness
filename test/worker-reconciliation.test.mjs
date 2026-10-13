@@ -8,8 +8,9 @@ import {randomUUID} from 'node:crypto';
 import {request as httpRequest} from 'node:http';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {createLunaGateway} from '../src/luna-gateway.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const testRoot=path.resolve('.runtime','tests','worker-reconciliation',randomUUID());
+const testRoot=path.join(scratchBase,'worker-reconciliation',randomUUID());
 const makePaths=async()=>{const root=path.join(testRoot,randomUUID()),workspace=path.join(root,'workspace'),parentId=`parent-${randomUUID()}`;await mkdir(workspace,{recursive:true});return {root,workspace,parentId};};
 const legacyRecord=({requestId='legacy-gemini',parentId,workspace,provider='gemini',executionUnowned=true,settled=false,status='unresolved',...extra})=>({requestId,parentId,provider,model:provider==='gemini'?'gemini-3.8-flash':'gpt-6-luna',effort:'low',status,settled,executionUnowned,acceptance:'not-reviewed',task:'synthetic task: inspect result.txt',output:'',outputFiles:[],workspace,accessMode:'workspace-write',error:'original unresolved reason',...extra});
 async function writeRecord({root,parentId,record}){const dir=path.join(root,'.runtime','luna-bridge',parentId);await mkdir(dir,{recursive:true});await writeFile(path.join(dir,`${record.requestId}.json`),JSON.stringify(record,null,2));return path.join(dir,`${record.requestId}.json`);}

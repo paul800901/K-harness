@@ -7,10 +7,11 @@ import {PassThrough} from 'node:stream';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createGeminiWorker} from '../src/gemini-worker.mjs';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const A='a'.repeat(32),B='b'.repeat(32),now=Date.parse('2026-10-12T00:00:00Z');
 async function fixture(){
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-handoff-')),workspace=path.join(root,'workspace');await mkdir(workspace);
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-handoff-')),workspace=path.join(root,'workspace');await mkdir(workspace);
  let identity={accountId:A,email:'a@example.test'},exhausted=false;
  const calls={activate:[],spawn:[],kill:[]};
  const vault={current:async()=>({...identity}),capture:async()=>({...identity}),assertIdle:async()=>{},activate:async id=>{calls.activate.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};}};

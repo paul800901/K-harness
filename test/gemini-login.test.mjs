@@ -4,9 +4,10 @@ import path from 'node:path';
 import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {createGeminiLogin,geminiQuotaWindows} from '../src/gemini-login.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {scratchBase} from './scratch.mjs';
 
 test('Antigravity catalog never claims authenticated status and login opens only its native program',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-login-')),calls=[];
+ const base=scratchBase;await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-login-')),calls=[];
  const env={LOCALAPPDATA:path.join(cwd,'Paulus-local'),SystemRoot:process.env.SystemRoot??cwd,GEMINI_API_KEY:'do-not-inherit',HOME:'do-not-use'};
  const login=createGeminiLogin({cwd,env,exists:async()=>{},run:async(_b,args)=>({code:0,stdout:args[0]==='models'?'gemini-3.8-flash-low\n':'agy fixture'}),execImpl:async(...args)=>{calls.push(args);}});
  const status=await login.status({checkAuth:false});assert.equal(status.available,true);assert.equal(status.auth,undefined);assert.deepEqual(status.models,['gemini-3.8-flash-low']);assert.equal((await login.status()).auth.status,'unknown');
@@ -14,13 +15,13 @@ test('Antigravity catalog never claims authenticated status and login opens only
 });
 
 test('missing agy yields an actionable isolated failure without starting a login process',async()=>{
- let invoked=false;const cwd=path.resolve('.runtime/tests/gemini-missing-login');
+ let invoked=false;const cwd=path.join(scratchBase,'gemini-missing-login');
  const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd},exists:async()=>{throw Object.assign(Error('missing'),{code:'ENOENT'});},execImpl:async()=>{invoked=true;}});
  assert.match((await login.status()).reason,/找不到 agy.*安裝.*登入/);await assert.rejects(login.start(),/找不到 agy/);assert.equal(invoked,false);
 });
 
 test('selected K Gemini core is shared by quota, models and the visible native login',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-selected-')),calls=[];
+ const base=scratchBase;await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-selected-')),calls=[];
  const binary=path.join(cwd,'updates','agy.exe'),env={SystemRoot:process.env.SystemRoot,LOCALAPPDATA:cwd,K_GEMINI_EXECUTABLE:binary};let launched;
  const login=createGeminiLogin({cwd,env,exists:async()=>{},run:async(file,args)=>{calls.push({file,args});return {code:0,stdout:'fixture'};},execImpl:async(_cmd,_args,options)=>{launched=options.env.K_AGY_LOGIN_EXECUTABLE;}});
  await login.status();await login.status({checkAuth:false});await login.start();
@@ -28,7 +29,7 @@ test('selected K Gemini core is shared by quota, models and the visible native l
 });
 
 test('Gemini auth requires the native account report, including exhausted quota, and distinguishes signed out from unknown',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-auth-')),calls=[];
+ const base=scratchBase;await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-auth-')),calls=[];
  let report={code:0,stdout:'Gemini Models\tWeekly Limit Remaining\t0%\t2026-10-10T05:23:48Z\n',stderr:''};
  const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd},exists:async()=>{},run:async(_binary,args)=>{
   calls.push(args);return args[0]==='--version'?{code:0,stdout:'1.2.16'}:args[0]==='models'?{code:0,stdout:'gemini-3.8-flash-low'}:report;
@@ -42,7 +43,7 @@ test('Gemini auth requires the native account report, including exhausted quota,
 });
 
 test('refresh and opening Gemini preserve the user native onboarding and privacy settings byte for byte',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-preferences-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-preferences-'));
  const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd,SystemRoot:process.env.SystemRoot??cwd},exists:async()=>{},execImpl:async()=>{},run:async(_binary,args)=>({code:0,stdout:args[0]==='models'?'gemini-3.8-flash-low':'fixture'})});
  await login.status();const settings=path.join(cwd,'agent-home/gemini/account/.gemini/antigravity-cli/settings.json');const initial=JSON.parse(await readFile(settings,'utf8'));assert.ok(initial.permissions.deny.includes('write_file(*)'));
  const userSettings=JSON.stringify({...initial,colorScheme:'dark',enableTelemetry:false,onboardingComplete:true},null,2)+'\n';await writeFile(settings,userSettings);
@@ -67,7 +68,7 @@ test('Gemini login remains behind the same human session and origin checks as ex
 });
 
 test('temporary usage failure is not a signed-out result, but an explicit login rejection remains signed out',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-usage-transient-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const cwd=await mkdtemp(path.join(base,'gemini-usage-transient-'));
  let report;const login=createGeminiLogin({cwd,env:{LOCALAPPDATA:cwd},exists:async()=>{},run:async(_binary,args)=>args[0]==='--version'?{code:0,stdout:'1.2.16'}:report});
  for(const failure of [{code:null,reason:'timeout',stdout:'',stderr:''},{code:1,stdout:'',stderr:'Eligibility check failed: UNAVAILABLE (code 503): The service is currently unavailable. authentication required'}]){
   report=failure;const result=await login.status();assert.equal(result.auth.status,'unknown');assert.equal(result.temporaryFailure,true);assert.doesNotMatch(result.reason,/請完成官方登入/u);

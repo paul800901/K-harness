@@ -6,7 +6,8 @@ import {PassThrough,Writable} from 'node:stream';
 import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {openCodexHost} from '../src/codex-host.mjs';
-const base=path.resolve('.runtime/tests');
+import {scratchBase} from './scratch.mjs';
+const base=scratchBase;
 const tick=()=>new Promise(r=>setImmediate(r));
 
 test('real Codex host transport drains final/error notifications after process exit before resolving closed',async t=>{

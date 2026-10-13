@@ -4,9 +4,10 @@ import {mkdtemp,mkdir,writeFile,readFile,utimes,readdir} from 'node:fs/promises'
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 test('inherited card projection distinguishes legacy absence, verified empty and per-item unknown across metadata saves',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'inherited-projection-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'inherited-projection-'));
  for(const [threadId,inheritedAttachments] of [['legacy',undefined],['empty',{}],['cards',{'native-user':[{id:'upload',threadId:'ancestor',workspace:root,path:'.runtime/uploads/upload/source.txt'}],'unknown-user':null}]]){
   await saveMainSession(root,{threadId,model:'gpt-6.1-sol',inheritedAttachments});
   await saveMainSession(root,{threadId,model:'gpt-6.1-sol',title:'renamed'});
@@ -15,7 +16,7 @@ test('inherited card projection distinguishes legacy absence, verified empty and
 });
 
 test('1000 metadata saves coexist with continuous real listing of 150 conversations',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-listing-')),record={threadId:'active',model:'gpt-6-luna'};
  const target=await saveMainSession(root,{...record,title:'initial'}),directory=path.dirname(target);
  for(let i=0;i<149;i++)await writeFile(path.join(directory,`other-${i}-legacy.json`),JSON.stringify({threadId:`other-${i}`,model:'gpt-6-luna',workspace:root,title:`unchanged-${i}`}));
@@ -33,7 +34,7 @@ test('1000 metadata saves coexist with continuous real listing of 150 conversati
 });
 
 test('metadata updates use one atomic file per conversation and concurrent calls retain call order',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'bounded-sessions-'));
  const record={threadId:'one',model:'gpt-6-luna'};
  await saveMainSession(root,{...record,parentThreadId:'parent',parentTitle:'Original',browserSessionKey:'keep-browser'});
@@ -50,7 +51,7 @@ test('metadata updates use one atomic file per conversation and concurrent calls
 });
 
 test('legacy snapshots stay intact and their lineage survives fixed-file updates',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'legacy-sessions-')),dir=path.join(root,'.runtime/main-sessions');await mkdir(dir,{recursive:true});
  const old=JSON.stringify({threadId:'legacy',model:'gpt-6-luna',workspace:root,title:'old',parentThreadId:'parent',parentTitle:'Original',browserSessionKey:'legacy-browser',saveOrder:1});
  const oldPath=path.join(dir,'legacy-1-snapshot.json');await writeFile(oldPath,old);await utimes(oldPath,new Date(0),new Date(0));
@@ -64,7 +65,7 @@ test('legacy snapshots stay intact and their lineage survives fixed-file updates
  assert.equal((await listMainSessions(root)).unreadable,1);
 });
 test('Claude native permission modes survive common metadata readback without changing Codex modes',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'native-permissions-'));
  const modes=['manual','acceptEdits','auto','bypassPermissions','dontAsk','plan'];
  for(const mode of modes)await saveMainSession(root,{threadId:`claude-${mode}`,model:'claude-opus-5-5',accessMode:`claude-${mode}`});
@@ -75,7 +76,7 @@ test('Claude native permission modes survive common metadata readback without ch
  assert.equal(sessions.find(s=>s.threadId==='codex-mode').accessMode,'workspace-write');
 });
 test('Claude metadata uses its own provider while legacy Codex records retain subscription identity',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'provider-sessions-'));
  const target=await saveMainSession(root,{threadId:'claude-example',model:'claude-opus-5-5'});
  const raw=JSON.parse(await readFile(target,'utf8'));
@@ -86,7 +87,7 @@ test('Claude metadata uses its own provider while legacy Codex records retain su
  assert.equal(sessions.find(s=>s.threadId==='codex-example').provider,'codex');
 });
 test('selected service tier survives metadata writes while old and invalid values normalize to Standard',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'service-tier-sessions-'));
  await saveMainSession(root,{threadId:'fast-chat',model:'gpt-6-luna',serviceTier:'priority'});
  const saved=(await listMainSessions(root)).sessions[0];assert.equal(saved.serviceTier,'priority');
@@ -95,7 +96,7 @@ test('selected service tier survives metadata writes while old and invalid value
  assert.equal((await listMainSessions(root)).sessions.find(row=>row.threadId==='invalid-tier').serviceTier,'default');
 });
 test('saved main sessions survive reopen; listing deduplicates and preserves invalid records',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'sessions-'));
  assert.deepEqual(await listMainSessions(root),{sessions:[],unreadable:0});
  const workspace=path.join(root,'selected');await mkdir(workspace);
@@ -114,7 +115,7 @@ test('saved main sessions survive reopen; listing deduplicates and preserves inv
 });
 
 test('saved sessions retain every legal picker model even when catalog state changes',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'all-model-sessions-'));
  for(const [index,model] of ['gpt-6-astra','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna','gpt-5.5','gpt-5.3-codex-spark'].entries()){
   await saveMainSession(root,{threadId:`thread-${index}`,model});
@@ -124,14 +125,14 @@ test('saved sessions retain every legal picker model even when catalog state cha
 });
 
 test('user branch lineage survives subsequent ordinary metadata saves',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'branch-lineage-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'branch-lineage-'));
  await saveMainSession(root,{threadId:'child',model:'gpt-6-sol',parentThreadId:'parent',parentTitle:'Original',branchType:'user'});
  await saveMainSession(root,{threadId:'child',model:'gpt-6-sol',title:'Renamed'});
  const child=(await listMainSessions(root)).sessions[0];assert.equal(child.parentThreadId,'parent');assert.equal(child.parentTitle,'Original');assert.equal(child.branchType,'user');assert.equal(child.title,'Renamed');
 });
 
 test('owner browser session key round-trips and survives ordinary metadata saves',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'browser-session-key-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'browser-session-key-'));
  await saveMainSession(root,{threadId:'browser-owned',model:'gpt-6-sol',browserSessionKey:'owner-session-01'});
  let session=(await listMainSessions(root)).sessions.find(item=>item.threadId==='browser-owned');
  assert.equal(session.browserSessionKey,'owner-session-01');
@@ -141,7 +142,7 @@ test('owner browser session key round-trips and survives ordinary metadata saves
 });
 
 test('worker notification attempts round-trip and survive unrelated session saves',async()=>{
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'worker-notifications-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'worker-notifications-'));
  await saveMainSession(root,{threadId:'codex-flash',model:'gpt-6-luna',workerNotifications:{'flash.request-1':'delivery-attempted','invalid':'retry'}});
  let session=(await listMainSessions(root)).sessions.find(item=>item.threadId==='codex-flash');
  assert.deepEqual(session.workerNotifications,{'flash.request-1':'delivery-attempted'});

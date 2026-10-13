@@ -6,9 +6,10 @@ import {createHash} from 'node:crypto';
 import {createCoreUpdates,selectedCoreExecutables,officialCoreRelease,downloadCoreRelease} from '../src/core-updates.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {geminiExecutable} from '../src/gemini-worker.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture(){
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'core-update-')),active={};
  for(const key of ['claude','codex','gemini']){active[key]=path.join(root,`${key}.exe`);await writeFile(active[key],'1.0.0');}
  const inspect=file=>readFile(file,'utf8');

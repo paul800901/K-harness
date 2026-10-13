@@ -9,6 +9,7 @@ import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createGeminiWorker} from '../src/gemini-worker.mjs';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const A='a'.repeat(32),B='b'.repeat(32),now=Date.parse('2026-10-13T00:00:00Z');
 const tick=()=>new Promise(resolve=>setTimeout(resolve,60));
@@ -21,7 +22,7 @@ const job=(requestId,extra={})=>({requestId,task:`FAKE_TASK:${requestId}`,model:
 // Production accounts + controller + bridge + worker. Only the native provider
 // boundaries are fake: no credentials, network, installed agy, or formal K state.
 async function fixture(){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'gemini-scheduler-rooms-'));
  let identity={accountId:A,email:'a@example.test'},exhausted=false;
  const calls={activate:[],query:[],spawn:[],kill:[],timer:[]},events=[],children=new Map(),rooms=[];

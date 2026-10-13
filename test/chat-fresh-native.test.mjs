@@ -5,8 +5,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url)),model='gpt-6.1-sol';
+const base=scratchBase,model='gpt-6.1-sol';
 async function fixture(phase){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'fresh-native-')),calls=[];let ended,hooks,persistedAtMcp;
  const abort=new AbortController();

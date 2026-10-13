@@ -6,6 +6,7 @@ import {mkdir,mkdtemp,writeFile} from 'node:fs/promises';
 import {nativeDestinationKind,preserveNativeUrl,referencesNativeDestination,messageFileUrl,restoreNativeFileDestinations} from '../shared/native-content.mjs';
 import {readNativeMessageFile} from '../src/native-message-file.mjs';
 import {remoteRouteAllowed} from '../src/remote-access.mjs';
+import {scratchBase} from './scratch.mjs';
 
 test('native destinations remain exact: Windows, file URI, web, email, custom and unsafe',()=>{
  for(const href of ['D:/中文/交接.md','D:\\中文\\交接.md','file:///D:/中文/交接.md','../交接.md','https://example.test/a?q=1#x','mailto:me@example.test','tel:+886123','vscode://file/D:/a.js','javascript:alert(1)','data:text/html,<script>x</script>'])assert.equal(preserveNativeUrl(href),href);
@@ -14,7 +15,7 @@ test('native destinations remain exact: Windows, file URI, web, email, custom an
 });
 
 test('existing file links need no file-change artifact event; source must be this native assistant',async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'native-content-')),workspace=path.join(root,'workspace');await mkdir(workspace);const target=path.join(root,'已存在 #交接.md');await writeFile(target,'existing native file');
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'native-content-')),workspace=path.join(root,'workspace');await mkdir(workspace);const target=path.join(root,'已存在 #交接.md');await writeFile(target,'existing native file');
  const state=href=>({workspace,messages:[{role:'assistant',text:`[交接](<${href}>)`}],artifacts:[]});
  for(const href of [target,pathToFileURL(target).href,`${target}#L3`,`${target}:3:2`])assert.equal((await readNativeMessageFile(state(href),href)).bytes.toString(),'existing native file');
  const relative='../已存在%20%23交接.md';assert.equal((await readNativeMessageFile(state(relative),relative)).bytes.toString(),'existing native file');

@@ -5,8 +5,9 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createClaudeController} from '../src/claude-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const TEST_ROOT=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const TEST_ROOT=scratchBase;
 const CLAUDE_MODEL='claude-opus-5-5';
 
 async function fixture({bridgeFactory,gatewayFactory}={}){

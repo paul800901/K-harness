@@ -6,11 +6,12 @@ import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession,saveMainSessionActivity,listMainSessions} from '../src/main-sessions.mjs';
 import {sortSessions} from '../frontend/project-groups.mjs';
 import {conversationPreview} from '../shared/conversation-preview.mjs';
+import {scratchBase} from './scratch.mjs';
 const model='gpt-6-astra';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
 const until=async fn=>{const end=Date.now()+2500;while(!fn()){if(Date.now()>end)throw Error('test state not reached');await new Promise(r=>setTimeout(r,2));}};
 async function fixture(){
- await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/sidebar-ux-'));
+ await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.join(scratchBase,'sidebar-ux-'));
  const gates=new Map(),owners=[],calls=[];
  for(const id of ['A','B','C','D','E','F'])await saveMainSession(root,{threadId:id,model,title:`Chat ${id}`,workspace:root});
  const c=createConversationController({root,sessionFactory:({onChange})=>{
@@ -90,7 +91,7 @@ test('opening, metadata saves and settings do not reorder; real activity advance
 });
 
 test('legacy first-open freezes the old ordering anchor instead of inventing a new activity',async()=>{
- await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/sidebar-legacy-')),dir=path.join(root,'.runtime/main-sessions');await mkdir(dir,{recursive:true});
+ await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.join(scratchBase,'sidebar-legacy-')),dir=path.join(root,'.runtime/main-sessions');await mkdir(dir,{recursive:true});
  const file=path.join(dir,'old.json'),date=new Date('2026-01-01T00:00:00Z');await writeFile(file,JSON.stringify({threadId:'old',model,title:'Old',workspace:root}));await utimes(file,date,date);
  const initial=(await listMainSessions(root)).sessions[0].sortAt;await saveMainSession(root,{threadId:'old',model,title:'Old',workspace:root});
  assert.equal((await listMainSessions(root)).sessions[0].sortAt,initial);assert.equal(JSON.parse(await readFile(path.join(dir,'old-current.json'),'utf8')).sortAt,initial);

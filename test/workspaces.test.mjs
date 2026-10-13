@@ -5,9 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listWorkspaceDirectories, validateWorkspace } from '../src/workspaces.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture() {
-  const base = fileURLToPath(new URL('../.runtime/tests/', import.meta.url));
+  const base = scratchBase;
   await mkdir(base, { recursive: true });
   const root = await mkdtemp(path.join(base, 'workspaces-'));
   await mkdir(path.join(root, 'alpha'));

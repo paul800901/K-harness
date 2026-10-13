@@ -4,9 +4,10 @@ import {mkdir,mkdtemp,readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {scratchBase} from './scratch.mjs';
 
 async function fixture(pickWorkspace){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'folder-picker-'));
  const state={threadId:'keep-current',workspace:root,accessMode:'read-only'};
  const app=await startDesktop({root,port:0,pickWorkspace,controllerFactory:()=>({state,sessions:async()=>({sessions:[]}),close:async()=>{}})});

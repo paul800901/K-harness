@@ -4,8 +4,9 @@ import path from 'node:path';
 import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=path.resolve('.runtime/tests');
+const base=scratchBase;
 const A='a'.repeat(32),B='b'.repeat(32),C='c'.repeat(32),D='d'.repeat(32),E='e'.repeat(32);
 const email='same@example.test';
 const future=Date.parse('2026-10-10T00:00:00Z')/1000;

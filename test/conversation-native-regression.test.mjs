@@ -7,8 +7,9 @@ import { createConversationController } from '../src/conversation-controller.mjs
 import { createUnifiedController } from '../src/unified-controller.mjs';
 import { createClaudeController } from '../src/claude-controller.mjs';
 import { createDesktopController } from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 const claudeModel='claude-opus-5-5';
 
 async function fixture(){

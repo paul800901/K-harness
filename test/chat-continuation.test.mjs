@@ -6,8 +6,9 @@ import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url)),model='gpt-6.1-sol';
+const base=scratchBase,model='gpt-6.1-sol';
 async function fixture(){
  await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'chat-continuation-'));
  const owners=[],calls=[];let sequence=0,forkFailure,sendFailure,childOpenGate,childSendGate;

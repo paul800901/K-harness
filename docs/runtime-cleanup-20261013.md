@@ -39,3 +39,13 @@
 - 偶發失敗測試：`test/chat-continuation.test.mjs` 的「real controllers retain fresh completed accepted before its own late stdout tool events」單獨跑 5 次失敗 2 次，失敗時是 2 秒等待逾時（正常約 90 毫秒），不像單純負載變慢，可能是聊天室接續流程的時序問題。該區由 Sol／Astra 撰寫，需查明並經 Opus 5.5 審核。
 - Codex App 自管的工作樹（`C:\Users\Paulus\.codex\worktrees\` 下 `k-mobile-remote`、`room-lock-fix-20261010`、`fable-models`、`quota-scheduler`）可能仍連著該 App 的對話，未動。
 - 資源回收筒未清空，由本人決定。
+
+## 更正：`.runtime/uploads` 是使用者附件（2026-10-14）
+
+整理時把根層 `uploads`（最後寫入 10-04）當成 9 月舊開發狀態移入封存區。之後查證 K 把聊天室附件存在「工作區/.runtime/uploads」，以本專案為工作區的聊天室（包括本對話）的附件就在這裡，屬使用者資料。已將 49 個附件原樣搬回 `.runtime/uploads`，與期間新增的 1 個合併為 50 個，無衝突、未修改內容；封存期間如有舊聊天室顯示附件失敗，搬回後即恢復。其他封存的狀態目錄（`main-sessions`、`claude-sessions`、`input-queues`、`luna-bridge`、`jobs`、`projects.json` 等）最後寫入都在 9 月，正式 K 使用 `vault/private-state/.runtime` 的另一份，維持封存。`AGENTS.md` 已註明 `uploads` 不得移動或清理。
+
+## 防止再生（2026-10-14）
+
+- 測試暫存：新增 `test/scratch.mjs`，每個測試行程用 `.runtime/tests/run-<pid>-<時間>/`，正常結束自動刪除、有失敗時保留供查。64＋8 個測試檔改用它，含原本直接寫在 `.runtime` 根層的 8 處與每次寫入的效能量測檔。完整測試後 `.runtime/tests` 剩 0 項、根層無新增。`test/*-probe.mjs` 是手動產生證據的腳本，維持原樣。
+- 舊退版：`scripts/install-runtime.mjs` 部署成功後只保留最新 3 份 `before-<時間>`，其他名稱的目錄不碰；刪除失敗不影響更新。直接刪除而非送回收筒：舊版可依 Git 版本重建，每次 1.15GB 送回收筒會擠掉本人回收筒裡的其他檔案。
+

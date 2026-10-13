@@ -6,8 +6,9 @@ import {Client,InMemoryTransport} from '@modelcontextprotocol/client';
 import {googleOpsMcp,googleOpsTools,callGoogleOps,createGoogleOpsServer} from '../src/google-ops-mcp.mjs';
 import {geminiSettings,geminiMcpConfig} from '../src/gemini-worker.mjs';
 import {createGeminiController} from '../src/gemini-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
-async function workspace(){await mkdir('.runtime/tests',{recursive:true});return mkdtemp(path.resolve('.runtime/tests/google-ops-'));}
+async function workspace(){await mkdir('.runtime/tests',{recursive:true});return mkdtemp(path.join(scratchBase,'google-ops-'));}
 async function install(root){await mkdir(path.join(root,'google_ops_worker'),{recursive:true});await mkdir(path.join(root,'.venv/Scripts'),{recursive:true});await writeFile(path.join(root,'google_ops_worker/google_ops_client.py'),'# test only');await writeFile(path.join(root,'.venv/Scripts/python.exe'),'test only');}
 
 async function bind(owner,directory){await mkdir(path.join(owner,'.runtime'),{recursive:true});await writeFile(path.join(owner,'.runtime/google-ops.json'),JSON.stringify({directory}));}
@@ -59,7 +60,7 @@ test('Google Ops MCP returns paged live data and safe failures; invalid calls ne
 });
 
 test('Gemini Google Ops permission adds only read connector, never commands/write/broader MCP allow',()=>{
-  const server={command:'node',args:['connector','--serve',path.resolve('.runtime/tests/ops'),'python']},root=path.resolve('.runtime/tests');
+  const server={command:'node',args:['connector','--serve',path.join(scratchBase,'ops'),'python']},root=scratchBase;
   for(const access of ['read-only','workspace-write','danger-full-access']){
     const settings=geminiSettings(root,access,[],null,server);
     assert.ok(settings.permissions.allow.includes('mcp(k_google_ops/*)'));assert.ok(!settings.permissions.deny.includes('mcp(*)'));assert.ok(!settings.permissions.allow.includes('mcp(*)'));

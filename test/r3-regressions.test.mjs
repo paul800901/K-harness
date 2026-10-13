@@ -6,8 +6,9 @@ import {fileURLToPath} from 'node:url';
 import {syncBuiltinESMExports} from 'node:module';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {saveUiMessageTiming,loadUiMessageTiming} from '../src/ui-message-timing.mjs';
+import {scratchBase} from './scratch.mjs';
 
-async function fixture(){const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await fs.mkdir(base,{recursive:true});return fs.mkdtemp(path.join(base,'r3-'));}
+async function fixture(){const base=scratchBase;await fs.mkdir(base,{recursive:true});return fs.mkdtemp(path.join(base,'r3-'));}
 
 test('R3 official new Codex model is selectable without changing K',async()=>{
  const root=await fixture(),model={model:'gpt-future-official',supportedReasoningEfforts:[{reasoningEffort:'high'}]};

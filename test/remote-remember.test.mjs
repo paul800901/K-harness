@@ -3,7 +3,8 @@ import test from 'node:test';
 import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {createRemoteAccess,remoteKeyHash} from '../src/remote-access.mjs';
-const setup=async()=>{await mkdir(path.resolve('.runtime'),{recursive:true});const root=await mkdtemp(path.resolve('.runtime/remote-remember-'));const file=path.join(root,'remote-access.json'),key='fake-test-key',value={enabled:true,origin:'https://private.ts.net:8443',port:54832,login:'owner@example.invalid',keyHash:remoteKeyHash(key)};await writeFile(file,JSON.stringify(value));return {root,file,key,value,store:path.join(root,'remote-sessions.json'),req:cookie=>({socket:{remoteAddress:'127.0.0.1'},headers:{cookie:cookie.split(';')[0],host:'private.ts.net:8443','tailscale-user-login':value.login,origin:value.origin,'x-k-command':'exact-once-command'}})};};
+import {scratchBase} from './scratch.mjs';
+const setup=async()=>{const root=await mkdtemp(path.join(scratchBase,'remote-remember-'));const file=path.join(root,'remote-access.json'),key='fake-test-key',value={enabled:true,origin:'https://private.ts.net:8443',port:54832,login:'owner@example.invalid',keyHash:remoteKeyHash(key)};await writeFile(file,JSON.stringify(value));return {root,file,key,value,store:path.join(root,'remote-sessions.json'),req:cookie=>({socket:{remoteAddress:'127.0.0.1'},headers:{cookie:cookie.split(';')[0],host:'private.ts.net:8443','tailscale-user-login':value.login,origin:value.origin,'x-k-command':'exact-once-command'}})};};
 test('remembered phone survives process recreation, persists hashes and command claims before work',async()=>{
  const c=await setup();let access=createRemoteAccess(c.file,c.value);const cookie=await access.login(c.key,c.value),req=c.req(cookie),raw=cookie.split(';')[0].split('=')[1];
  assert.match(cookie,/Secure; HttpOnly; SameSite=Strict; Path=\//);assert(await access.authorized(req));

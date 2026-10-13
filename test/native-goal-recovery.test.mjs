@@ -5,10 +5,11 @@ import path from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 const error={message:'fixture native remote compact terminal error',codexErrorInfo:'other',additionalDetails:null};
 const rateError={message:'exceeded retry limit, last status: 429 Too Many Requests',codexErrorInfo:{responseTooManyFailedAttempts:{httpStatusCode:429}},additionalDetails:null,misalignment:null};
 async function fixture({budget=null,status='active',reject,alias=false,persistGate=false,rateCooldownMs,onContinueConversation,responseFirst=false}={}){
- const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'goal-recovery-'));
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'goal-recovery-'));
  const calls=[],children=new Map();let hooks,gateway,bridgeHooks,flashRows=[],close,seq=0,starts=0,gate,goalGate,deliveryGate,rejectGate,readFailure=false,background=false,synchronousAuditFailure=false;
  let goal={threadId:'parent',objective:'Complete remaining fake work',status,tokenBudget:budget,tokensUsed:12,timeUsedSeconds:1,createdAt:101,updatedAt:102};
  let parent={id:'parent',status:{type:'idle'},historyMode:'paginated',turns:[]};

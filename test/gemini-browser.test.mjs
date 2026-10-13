@@ -6,13 +6,14 @@ import {randomUUID} from 'node:crypto';
 import {createGeminiController} from '../src/gemini-controller.mjs';
 import {identifyBrowserServer} from '../src/browser-mcp-config.mjs';
 import {GEMINI_BROWSER_GUIDANCE} from '../src/gemini-worker.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const models=['gemini-3.8-flash-low'];
 const loginFactory=()=>({status:async()=>({available:true,models,version:'fixture'})});
 const finish=async c=>{for(let i=0;c.state.busy&&i<400;i++)await new Promise(r=>setTimeout(r,5));assert.equal(c.state.busy,false);};
 
 async function fixture(options={}){
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-browser-')),events=[],configs=[],closed=[];
+ const base=scratchBase;await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'gemini-browser-')),events=[],configs=[],closed=[];
  let runImpl=async(_binary,args,params)=>{
   events.push({args,params});params.onStart(12345);const id=args.includes('--conversation')?args[args.indexOf('--conversation')+1]:randomUUID();
   for(const event of [{event:'init',conversation_id:id},{event:'step_update',step_update:{step_type:'agent_response',step_index:1,text_delta:'fixture response',state:'DONE'}},{event:'result',result:{conversation_id:id,status:'SUCCESS',response:'fixture response'}}])params.onChunk(Buffer.from(JSON.stringify(event)+'\n'));

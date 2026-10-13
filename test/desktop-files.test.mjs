@@ -12,7 +12,8 @@ import JSZip from 'jszip';
 import {saveAttachment,saveAttachmentStream,loadAttachment,readPresentedFile} from '../src/desktop-files.mjs';
 import {sessionAttachmentSource} from '../src/session-workspace.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
-async function fixture(){const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'attachments-'));}
+import {scratchBase} from './scratch.mjs';
+async function fixture(){const base=scratchBase;await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'attachments-'));}
 const upload=(root,name,bytes)=>saveAttachment(root,'thread-a',{name,base64:Buffer.from(bytes).toString('base64')});
 
 test('attachments preserve original bytes, extract UTF-8, and reject cross-thread/path/secret names',async()=>{

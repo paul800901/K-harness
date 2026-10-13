@@ -9,7 +9,8 @@ import {createDiscussionReader} from '../src/discussion-read-tools.mjs';
 import {openDiscussionApiSession} from '../src/discussion-api.mjs';
 import {remoteRouteAllowed} from '../src/remote-access.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
-const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});
+import {scratchBase} from './scratch.mjs';
+const base=scratchBase;await mkdir(base,{recursive:true});
 const fixture=async()=>{const root=await mkdtemp(path.join(base,'discussion-api-')),keys=new Map(),vault={async get(id){return keys.get(id);},async set(id,key){keys.set(id,key);},async remove(id){keys.delete(id);}};return {root,keys,vault};};
 const stream=(deltas,finish='stop',done=true)=>new Response([...deltas.map(delta=>`data: ${JSON.stringify({choices:[{index:0,delta}]})}\r\n\r\n`),`data: ${JSON.stringify({choices:[{index:0,delta:{},finish_reason:finish}]})}\r\n\r\n`,...(done?['data: [DONE]\r\n\r\n']:[])].join(''),{headers:{'Content-Type':'text/event-stream'}});
 test('API configuration keeps secrets in vault, supports explicit catalog discovery and preserves metadata on name edit',async()=>{

@@ -6,8 +6,9 @@ import path from 'node:path';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {openCodexHost} from '../src/codex-host.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve};};
-const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});
+const base=scratchBase;await mkdir(base,{recursive:true});
 test('opening room is cancellable without stopping a busy selected room and can reopen',async()=>{
  const root=await mkdtemp(path.join(base,'cancel-room-')),entered=deferred();let calls=0,stops=0;const owners=[];
  const c=createConversationController({root,sessionFactory:()=>{const owner={state:{workspace:root,status:'ready',threadId:null},

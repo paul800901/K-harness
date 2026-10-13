@@ -4,11 +4,12 @@ import {mkdir,mkdtemp} from 'node:fs/promises';
 import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {saveMainSession,listMainSessions} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 const LUNA='gpt-6-luna',SOL='gpt-6.1-sol';
 const catalog=[LUNA,SOL].map(model=>({model,displayName:model,hidden:false,supportedReasoningEfforts:[{reasoningEffort:'medium'},{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image'],serviceTiers:[{id:'priority',name:'Fast',description:'Fast service'}]}));
 const overload={message:'Selected model is at capacity.',codexErrorInfo:'serverOverloaded'};
 async function fixture({goal=null,model=LUNA,serviceTier='default',immediateFailure=false,startAck=null,flash=false}={}){
- await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.resolve('.runtime/tests/capacity-'));
+ await mkdir('.runtime/tests',{recursive:true});const root=await mkdtemp(path.join(scratchBase,'capacity-'));
  await saveMainSession(root,{threadId:'parent',model,effort:'high',serviceTier,accessMode:'read-only',workspace:root});
  const calls=[],turns=[];let nativeGoal=goal,opts,closed,turnNumber=0,gateway,bridgeOptions,flashRecord;
  const emit=(method,params={})=>opts.onEvent({method,params:{threadId:'parent',...params}});

@@ -5,9 +5,10 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const MODEL='gpt-6-astra';
-const ROOT_TESTS=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const ROOT_TESTS=scratchBase;
 const catalog=[{model:'gpt-6-luna',supportedReasoningEfforts:[{reasoningEffort:'high'}]},
  {model:MODEL,displayName:'GPT-6 Astra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text','image']},
  {model:'gpt-5.6-terra',displayName:'GPT-5.6 Terra',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'high'}],defaultReasoningEffort:'low',inputModalities:['text','image']},

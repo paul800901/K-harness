@@ -4,11 +4,12 @@ import {mkdir,mkdtemp,lstat} from 'node:fs/promises';
 import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {createClaudeController} from '../src/claude-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const catalog=[{model:'gpt-6-luna',displayName:'GPT-6 Luna',hidden:false,supportedReasoningEfforts:[{reasoningEffort:'high'}],defaultReasoningEffort:'high',inputModalities:['text']}];
 
 for(const provider of ['codex','claude'])test(`${provider} release candidate has no experimental knowledge injection or capture`,async()=>{
- const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});
+ const base=scratchBase;await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'no-shared-knowledge-'));
  let hooks,started;const calls=[];
  const hostFactory=options=>{

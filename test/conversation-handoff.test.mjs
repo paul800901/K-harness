@@ -4,8 +4,9 @@ import {mkdtemp,mkdir,readFile,lstat,symlink} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {writeConversationHandoff} from '../src/conversation-handoff.mjs';
+import {scratchBase} from './scratch.mjs';
 
-const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+const base=scratchBase;
 await mkdir(base,{recursive:true});
 
 async function rootFixture(){return await mkdtemp(path.join(base,'conversation-handoff-'));}

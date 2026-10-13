@@ -7,6 +7,7 @@ import test from 'node:test';
 import {randomBytes,randomUUID} from 'node:crypto';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const request = (url, {method='GET', headers={}, body,commandId}={}) => new Promise((resolve,reject)=>{
  const requestHeaders={...headers};
@@ -41,7 +42,7 @@ const freePort = async () => {
 const service = () => ({status:async()=>({}),progress:()=>({}),start:async()=>({}),cancel:async()=>({}),submitCode:async()=>({}),close:async()=>{}});
 
 test('local and remote HTTP servers disable only the fixed request-body timeout for streamed attachments',async()=>{
- const base=path.resolve('.runtime/mobile-remote-tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'stream-timeout-'));
+ const base=path.join(scratchBase,'mobile-remote-tests');await mkdir(base,{recursive:true});const root=await mkdtemp(path.join(base,'stream-timeout-'));
  const remotePort=await freePort(),localDir=path.join(root,'.local');await mkdir(localDir,{recursive:true});
  await writeFile(path.join(localDir,'remote-access.json'),JSON.stringify({enabled:true,origin:'https://k-mobile-timeout.ts.net',login:'owner@example.ts.net',keyHash:remoteKeyHash(randomBytes(32).toString('hex')),port:remotePort}));
  const original=http.createServer,servers=[];http.createServer=function(...args){const server=Reflect.apply(original,this,args);servers.push(server);return server;};let app;
@@ -53,7 +54,7 @@ test('local and remote HTTP servers disable only the fixed request-body timeout 
 });
 
 test('desktop remote access keeps local bootstrap isolated and gates the remote listener', async t=>{
- const base=path.resolve('.runtime/mobile-remote-tests');
+ const base=path.join(scratchBase,'mobile-remote-tests');
  await mkdir(base,{recursive:true});
  const defaultRoot=await mkdtemp(path.join(base,'default-'));
  const defaultController={state:{threadId:null,workspace:null},close:async()=>{}};
@@ -231,7 +232,7 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
 });
 
 test('malformed remote config and an occupied remote port leave local bootstrap and state usable',async t=>{
- const base=path.resolve('.runtime/mobile-remote-tests');
+ const base=path.join(scratchBase,'mobile-remote-tests');
  await mkdir(base,{recursive:true});
  const startLocal=async (root)=>startDesktop({root,executable:'fake-executable',port:0,
   controllerFactory:()=>({state:{threadId:null,workspace:'fake'},close:async()=>{}}),
@@ -266,7 +267,7 @@ test('malformed remote config and an occupied remote port leave local bootstrap 
 
 test('remembered phone HTTP restart, durable no-replay, storage failure and disable revoke',async t=>{
  const {readFile,rename}=await import('node:fs/promises');
- const base=path.resolve('.runtime/mobile-remote-tests');await mkdir(base,{recursive:true});
+ const base=path.join(scratchBase,'mobile-remote-tests');await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'remember-http-'));await mkdir(path.join(root,'.local'));
  const remotePort=await freePort(),origin='https://remember.test.ts.net',login='fake@example.test',key='fake-key';
  const file=path.join(root,'.local/remote-access.json'),store=path.join(root,'.local/remote-sessions.json');

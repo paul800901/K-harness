@@ -5,9 +5,10 @@ import {mkdir,mkdtemp,readFile,writeFile} from 'node:fs/promises';
 import {saveAttachment,loadAttachment,readPresentedFile} from '../src/desktop-files.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {createGeminiController} from '../src/gemini-controller.mjs';
+import {scratchBase} from './scratch.mjs';
 
 const modalities=['text','image','pdf','audio','video'];
-async function fixture(){const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'gemini-media-'));}
+async function fixture(){const base=scratchBase;await mkdir(base,{recursive:true});return mkdtemp(path.join(base,'gemini-media-'));}
 function pdfBytes(count=1){
  const stream='1 0 0 rg 20 20 100 100 re f';
  const pages=Array.from({length:count},(_,i)=>i+3),objects=['<< /Type /Catalog /Pages 2 0 R >>',`<< /Type /Pages /Kids [${pages.map(id=>`${id} 0 R`).join(' ')}] /Count ${count} >>`,...pages.map(() =>`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 400 200] /Contents ${count+3} 0 R >>`),`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`];

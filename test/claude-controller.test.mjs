@@ -11,6 +11,7 @@ import {syncBuiltinESMExports} from 'node:module';
 import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
+import {scratchBase} from './scratch.mjs';
 
 test('Claude close drains result persistence before a durable immutable parent fork snapshot',async t=>{
  const f=await fixture();let blocked,release,patched;
@@ -49,7 +50,7 @@ test('Claude close drains result persistence before a durable immutable parent f
 const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
 
 async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
-  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));
+  const base=scratchBase;
   await mkdir(base,{recursive:true});
   const root=await mkdtemp(path.join(base,'claude-controller-'));
   await writeFile(path.join(root,'README.md'),'fixture read target');
