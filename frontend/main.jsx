@@ -4,37 +4,16 @@ import {uploadAttachment} from './attachment-upload.mjs';
 import {WorkStatus, WorkerHealthLabel, WorkerDetails} from './work-status.jsx';
 
 import {GoalDialog, goalStatusLabel} from './goal-dialog.jsx';
-import {
-  CopyFeedback,
-  NativeNotices,
-  NativeReasoning,
-  NativeDiffs,
-  NativeFilePicker,
-  NativeReview
-} from './native-ui.jsx';
+import {NativeNotices, NativeDiffs, NativeFilePicker, NativeReview} from './native-ui.jsx';
 import {compactionLabel} from './compaction-status.mjs';
 import {localizeNativeNotice} from './native-notices.mjs';
-import React, {
-  useState,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useContext,
-  createContext,
-  useMemo,
-  useId,
-  useCallback
-} from 'react';
+import React, {useState, useEffect, useLayoutEffect, useRef, useContext, useMemo, useCallback} from 'react';
 import {createRoot} from 'react-dom/client';
 import {
   AssistantRuntimeProvider,
   useExternalStoreRuntime,
   ThreadPrimitive,
-  ComposerPrimitive,
-  MessagePrimitive,
-  SelectionToolbarPrimitive,
-  ActionBarPrimitive,
-  useAuiState
+  ComposerPrimitive
 } from '@assistant-ui/react';
 import {
   Plus,
@@ -47,15 +26,11 @@ import {
   Paperclip,
   ArrowUp,
   Square,
-  Copy,
   Check,
   FileText,
   Download,
   X,
   Settings,
-  Archive,
-  Pin,
-  Pencil,
   Sun,
   Moon,
   ChevronDown,
@@ -64,9 +39,7 @@ import {
   Power,
   Activity,
   ShieldCheck,
-  MessageSquare,
   ArrowDown,
-  ExternalLink,
   Mic
 } from 'lucide-react';
 import './style.css';
@@ -78,7 +51,6 @@ import {
   MAX_RESPONSE_QUOTES,
   MAX_SEND_BODY_BYTES,
   normalizeResponseQuote,
-  parseResponseAnnotations,
   removeUnchangedResponseQuotes,
   saveResponseQuotes,
   shouldSubmitComposerEnter,
@@ -104,7 +76,7 @@ import {
 } from './project-groups.mjs';
 import {AppearanceSettings} from './appearance.jsx';
 import {applyAppearance, readAppearance, saveAppearance, readTheme, saveTheme} from './appearance.mjs';
-import {groupConversationMessages, elapsedConversationMs, formatElapsed} from '../shared/conversation-groups.mjs';
+import {groupConversationMessages} from '../shared/conversation-groups.mjs';
 import {applyStateEvent} from '../shared/state-stream.mjs';
 import {connectState, remoteLoginRequired} from './state-connection.mjs';
 import {sameChatState} from './chat-state.mjs';
@@ -114,7 +86,7 @@ import {WorkerActivityPopover} from './worker-activity-popover.jsx';
 import {AccountConnections} from './account-connections.jsx';
 import {CoreUpdates} from './core-updates.jsx';
 import './model-picker.css';
-import {PermissionPicker, permissionModes, claudePermissionModes, geminiPermissionModes} from './permission-picker.jsx';
+import {PermissionPicker, claudePermissionModes} from './permission-picker.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 import './mobile.css';
 import {AddResponseSelectionButton, AttachmentLabel, WorkProgress, messageComponents} from './chat-messages.jsx';

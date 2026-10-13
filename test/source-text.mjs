@@ -21,7 +21,9 @@ export function functionInitializer(source, name) {
   const declaration = source.match(new RegExp(`const ${name}\\s*=\\s*`));
   if (!declaration) throw Error(`const ${name} not found`);
   const start = declaration.index + declaration[0].length;
-  let i = source.indexOf('{', source.indexOf('=>', start));
+  const arrow = source.indexOf('=>', start);
+  let i = arrow < 0 ? -1 : source.slice(arrow + 2).search(/\S/) + arrow + 2;
+  if (arrow < 0 || source[i] !== '{') throw Error(`const ${name} is not an arrow function with a block body`);
   for (let depth = 0; i < source.length; i++) {
     const c = source[i];
     if (c === "'" || c === '"' || c === '`') {

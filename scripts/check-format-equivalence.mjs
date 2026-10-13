@@ -1,6 +1,6 @@
 // Usage: node scripts/check-format-equivalence.mjs <gitRef> <file>...   (run from repo root)
 // Proves formatting-only changes: parses <gitRef>:<file> and the working file,
-// drops positions/raw text/redundant parentheses, normalizes JSX whitespace the
+// drops positions and literal quote style, normalizes JSX whitespace the
 // way React's JSX transform does, and requires the trees to be identical.
 import {readFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
@@ -26,7 +26,9 @@ function cleanJsxText(value) {
   }
   return out;
 }
-function jsxChildren(children) {
+// `{' '}` containers merge into text only inside lowercase DOM elements, where React renders a
+// string and adjacent strings identically; components could observe string vs array children.
+function jsxChildren(children, mergeStrings) {
   const out = [];
   const pushText = text => {
     if (!text) return;
@@ -40,13 +42,12 @@ function jsxChildren(children) {
       continue;
     }
     if (child.type === 'JSXExpressionContainer') {
-      let e = child.expression;
-      while (e && e.type === 'ParenthesizedExpression') e = e.expression;
-      if (e && e.type === 'Literal' && typeof e.value === 'string') {
+      const e = child.expression;
+      if (mergeStrings && e.type === 'Literal' && typeof e.value === 'string') {
         pushText(e.value);
         continue;
       }
-      if (e && e.type === 'JSXEmptyExpression') continue;
+      if (e.type === 'JSXEmptyExpression') continue;
     }
     out.push(norm(child));
   }
@@ -55,12 +56,10 @@ function jsxChildren(children) {
 function norm(node) {
   if (Array.isArray(node)) return node.filter(n => n?.type !== 'EmptyStatement').map(norm);
   if (!node || typeof node !== 'object') return node;
-  if (node.type === 'ParenthesizedExpression') return norm(node.expression);
   // ?? || && are associative with identical left-to-right short-circuit order: compare as flat chains.
   if (node.type === 'LogicalExpression') {
     const operands = [];
     const collect = e => {
-      while (e && e.type === 'ParenthesizedExpression') e = e.expression;
       if (e.type === 'LogicalExpression' && e.operator === node.operator) {
         collect(e.left);
         collect(e.right);
@@ -73,11 +72,12 @@ function norm(node) {
   for (const key of Object.keys(node).sort()) {
     if (DROP.has(key)) continue;
     if (key === 'children' && (node.type === 'JSXElement' || node.type === 'JSXFragment')) {
-      out.children = jsxChildren(node.children);
+      const tag = node.openingElement?.name;
+      out.children = jsxChildren(node.children, tag?.type === 'JSXIdentifier' && /^[a-z]/.test(tag.name));
       continue;
     }
     if (node.type === 'TemplateElement' && key === 'value') {
-      out.value = {cooked: node.value.cooked};
+      out.value = {raw: node.value.raw, cooked: node.value.cooked};
       continue;
     }
     out[key] = norm(node[key]);
@@ -99,9 +99,17 @@ function firstDiff(a, b, path = '$') {
   }
   return null;
 }
-let bad = 0;
+let bad = 0,
+  added = 0;
 for (const file of files) {
-  const before = execFileSync('git', ['show', `${ref}:${file}`], {encoding: 'utf8', maxBuffer: 64 << 20});
+  let before;
+  try {
+    before = execFileSync('git', ['show', `${ref}:${file}`], {encoding: 'utf8', maxBuffer: 64 << 20, stdio: 'pipe'});
+  } catch {
+    added++;
+    console.log('NEW', file, '(not in', ref + ', not compared)');
+    continue;
+  }
   const after = readFileSync(file, 'utf8');
   let d;
   try {
@@ -114,5 +122,5 @@ for (const file of files) {
     console.log('DIFF', file, d.slice(0, 300));
   }
 }
-console.log(`${files.length - bad}/${files.length} files equivalent`);
+console.log(`${files.length - added - bad}/${files.length - added} files equivalent, ${bad} differ, ${added} new`);
 process.exit(bad ? 1 : 0);

@@ -167,6 +167,7 @@ async function fixture({
   if (rateCooldownMs !== undefined) {
     const sourceURL = new URL('../src/desktop-controller.mjs', import.meta.url);
     let source = (await readFile(sourceURL, 'utf8')).replaceAll('\r\n', '\n');
+    assert.equal(source.split('const rateRecoveryDelay = 30000;').length - 1, 1);
     source = source
       .replace('const rateRecoveryDelay = 30000;', `const rateRecoveryDelay = ${rateCooldownMs};`)
       .replace(/from '(\.\/[^']+)'/g, (_m, relative) => `from '${new URL(relative, sourceURL).href}'`);

@@ -8,7 +8,7 @@
   - `frontend/app-common.jsx`（3KB）：`api`、`remoteClient`、各 Context、`toolStatusName`、側欄偏好讀取、`IconButton`、`Modal`。
   - `frontend/chat-messages.jsx`（16KB）：訊息顯示元件（使用者訊息、助手回覆、工作過程、連結、圖片、Markdown、選取引用按鈕等）。
   - `frontend/dialogs.jsx`（17KB）：改名、封存管理、分支、核准對話框。
-  - `App`、`ChatView`、`Chat`（`ChatView` 外層）及進入點留在 `main.jsx`；移除 5 個已無用途的匯入。
+  - `App`、`ChatView`、`Chat`（`ChatView` 外層）及進入點留在 `main.jsx`；移除 5 個已無用途的匯入（Fable 第二審另指出 19 個，已於排版批刪除，見 code-format-20261014.md）。
 - `src/desktop-controller.mjs` 131KB → 125KB，拆出兩段不碰共用狀態的純函式：
   - `src/codex-attachments.mjs`：送給 Codex 的附件格式（`codexInput`）與歷史訊息附件還原（`projectUserAttachments`）。
   - `src/native-error-class.mjs`：原生錯誤分類 `recoveryErrorClass`（硬限制／一般限流／其他），新增 `test/native-error-class.test.mjs` 直接測試。
