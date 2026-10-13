@@ -4,7 +4,7 @@ export const DEFAULT_WORKER_EFFORT = 'auto';
 export function availableWorkerModels(models = [], {provider='codex',geminiGateway=false,claudeGateway=false} = {}) {
  if(provider==='gemini')return [];
  return models.filter(row=>row.hidden!==true&&row.available!==false&&(
-  /^gpt-/.test(row.model)||geminiGateway&&/^gemini-/.test(row.model)||claudeGateway&&/^claude-/.test(row.model)&&!/^claude-fable-/.test(row.model)
+  /^gpt-/.test(row.model)||geminiGateway&&/^gemini-/.test(row.model)||claudeGateway&&/^claude-/.test(row.model)
  ));
 }
 

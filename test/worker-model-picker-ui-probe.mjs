@@ -11,10 +11,11 @@ const root=fileURLToPath(new URL('..',import.meta.url)),out=path.resolve(root,'.
 await mkdir(out,{recursive:true});
 const server=await preview({preview:{host:'127.0.0.1',port:5208,strictPort:true}});
 const efforts=names=>names.map(reasoningEffort=>({reasoningEffort}));
-// Snapshot names and supported efforts correspond to native-catalogs.json (2026-10-08).
+// Native catalog fixture, including Fable 5/5.1 observed on 2026-10-13.
 const codexIds=['gpt-6.1-sol','gpt-6-astra','gpt-6-sol','gpt-6-luna','gpt-5.6-sol','gpt-5.6-terra','gpt-5.6-luna'];
 const codex=codexIds.map((model,index)=>({model,displayName:model.toUpperCase().replaceAll('-','-'),provider:'codex',available:true,defaultReasoningEffort:index===2||index===3||index===5||index===6?'medium':'low',supportedReasoningEfforts:efforts(index===3||index===6?['low','medium','high','xhigh','max']:['low','medium','high','xhigh','max','ultra']),...(index===0?{isDefault:true}:{})}));
 const claudeSpecs=[
+ ['claude-fable-5-1','Fable 5.1'],['claude-fable-5','Fable 5'],
  ['claude-opus-5-5','Opus 5.5'],['claude-sonnet-5-5','Sonnet 5.5'],['claude-haiku-5-5','Haiku 5.5'],['claude-haiku-4-5-20251001','Haiku 4.5'],
  ['claude-sonnet-5','Sonnet 5'],['claude-opus-5','Opus 5'],['claude-opus-4-8','Opus 4.8'],['claude-opus-4-7','Opus 4.7'],['claude-opus-4-6','Opus 4.6'],['claude-sonnet-4-6','Sonnet 4.6'],
 ];
@@ -23,13 +24,12 @@ const geminiNames=['gemini-3.8-flash-high','gemini-3.8-flash-medium','gemini-3.8
 const gemini=geminiModelsFrom(geminiNames);
 assert.equal(gemini.length,4);assert.deepEqual(gemini.find(row=>row.model==='gemini-3.1-pro').supportedReasoningEfforts.map(item=>item.reasoningEffort),['high','low']);
 const baseModels=[...codex,...claude,...gemini];
-assert.equal(baseModels.length,21,'native fixture has 7 GPT, 10 Claude, and 4 parser-aggregated Gemini choices');
+assert.equal(baseModels.length,23,'native fixture has 7 GPT, 12 Claude, and 4 parser-aggregated Gemini choices');
 const futureGPT={model:'gpt-future-manual',displayName:'Future GPT',provider:'codex',available:true,supportedReasoningEfforts:efforts(['low','high'])};
 const futureGemini={model:'gemini-future-flash',displayName:'Future Gemini Flash',provider:'gemini',available:true,supportedReasoningEfforts:efforts(['low','high'])};
 const filteredRows=[
  {model:'gpt-hidden-fixture',displayName:'Hidden GPT',provider:'codex',hidden:true,supportedReasoningEfforts:[]},
  {model:'gpt-unavailable-fixture',displayName:'Unavailable GPT',provider:'codex',available:false,supportedReasoningEfforts:[]},
- {model:'claude-fable-5-5',displayName:'Fable 5.5',provider:'claude',available:true,supportedReasoningEfforts:efforts(['low'])},
 ];
 const state={threadId:null,workspace:root,status:'idle',busy:false,messages:[],tools:[],questions:[],artifacts:[],accessMode:'workspace-write',provider:'codex',model:'gpt-6.1-sol',capabilities:{},conversationActivity:[]};
 const apiPosts=[],viewports=[[1440,1000,'desktop'],[390,844,'mobile']];let browser;
@@ -58,18 +58,18 @@ try{
   const provider=page.getByRole('group',{name:'選擇主代理提供者',exact:true}),workerDetails=page.locator('.worker-settings');await workerDetails.locator('summary').click();
   const picker=page.getByLabel('子代理模型',{exact:true}),effortPicker=page.getByLabel('子代理推理程度',{exact:true});
   const options=()=>picker.evaluate(select=>Array.from(select.options).map(option=>({value:option.value,label:option.textContent.trim(),group:option.parentElement.label||''})));
-  let rows=await options();assert.equal(rows.length,22,'21 native worker models plus AI Auto');assert.equal(rows[0].value,'auto');
-  assert.deepEqual(['GPT','Claude','Gemini'].map(group=>rows.filter(row=>row.group===group).length),[7,10,4]);
+  let rows=await options();assert.equal(rows.length,24,'23 native worker models plus AI Auto');assert.equal(rows[0].value,'auto');
+  assert.deepEqual(['GPT','Claude','Gemini'].map(group=>rows.filter(row=>row.group===group).length),[7,12,4]);
   await page.screenshot({path:path.join(out,`${label}-native-catalog.png`)});
 
   // Simulate a live native catalog growing after a provider refresh; only supported visible rows appear.
   const accountDetails=page.locator('.provider-auth-status');if(await accountDetails.getAttribute('open')===null)await accountDetails.locator('summary').click();catalog=[...baseModels,futureGPT,futureGemini,...filteredRows];
   await page.locator('.provider-auth-row').first().getByRole('button',{name:'刷新狀態'}).click();
   await picker.locator('option[value="gpt-future-manual"]').waitFor({state:'attached'});await picker.locator('option[value="gemini-future-flash"]').waitFor({state:'attached'});
-  rows=await options();assert.equal(rows.length,24,'two new native models are added to the 21 base models and Auto');
-  for(const excluded of ['gpt-hidden-fixture','gpt-unavailable-fixture','claude-fable-5-5'])assert.equal(rows.some(row=>row.value===excluded),false,`${excluded} must be excluded`);
+  rows=await options();assert.equal(rows.length,26,'two new native models are added to the 23 base models and Auto');
+  for(const excluded of ['gpt-hidden-fixture','gpt-unavailable-fixture'])assert.equal(rows.some(row=>row.value===excluded),false,`${excluded} must be excluded`);
 
-  for(const model of ['claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']){
+  for(const model of ['claude-fable-5','claude-fable-5-1','claude-opus-5-5','claude-sonnet-5-5','claude-haiku-5-5']){
    await picker.selectOption(model);const effortValues=await effortPicker.locator('option').evaluateAll(nodes=>nodes.map(node=>node.value));
    assert.deepEqual(effortValues,['low','medium','high','xhigh','max'],`${model} exposes all native efforts`);
    await effortPicker.selectOption('max');assert.equal(await effortPicker.inputValue(),'max');
@@ -99,6 +99,6 @@ try{
   assert.equal(JSON.stringify(opened.data.workerPolicy).includes('"null"'),false);assert.equal(apiPosts.filter(item=>item.viewport===label&&item.path==='/api/open').length,1);
   assert.deepEqual(errors,[]);await page.close();
  }
- const result={passed:true,syntheticCatalogs:true,modelsPerCore:{gpt:7,claude:10,gemini:4},baseChoices:21,baseChoicesIncludingAuto:22,futureAdded:2,excluded:['hidden','unavailable','Fable'],checks:['provider grouping and AI Auto first','native efforts for three Claude 5.5 models','dated Haiku 4.5 null effort summary and submit','Gemini 3.1 Pro low/high only','future catalog models appear','hidden/unavailable/Fable stay out','manual missing choice preserved and blocks creation','Gemini main hides worker settings','desktop/mobile']};
+ const result={passed:true,syntheticCatalogs:true,modelsPerCore:{gpt:7,claude:12,gemini:4},baseChoices:23,baseChoicesIncludingAuto:24,futureAdded:2,excluded:['hidden','unavailable'],checks:['provider grouping and AI Auto first','native efforts for Fable and three Claude 5.5 models','dated Haiku 4.5 null effort summary and submit','Gemini 3.1 Pro low/high only','future catalog models appear','hidden/unavailable stay out','manual missing choice preserved and blocks creation','Gemini main hides worker settings','desktop/mobile']};
  await writeFile(path.join(out,'result.json'),JSON.stringify(result,null,2)+'\n');console.log(JSON.stringify(result));
 }finally{await browser?.close();await new Promise(resolve=>server.httpServer.close(resolve));}

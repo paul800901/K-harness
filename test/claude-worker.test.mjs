@@ -6,6 +6,8 @@ import path from 'node:path';
 import {createClaudeWorker} from '../src/claude-worker.mjs';
 
 const rows=[
+ {model:'claude-fable-5',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
+ {model:'claude-fable-5-1',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
  {model:'claude-opus-5-5',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
  {model:'claude-sonnet-5-5',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
  {model:'claude-haiku-5-5',supportedReasoningEfforts:['low','medium','high','xhigh','max']},
@@ -23,8 +25,8 @@ async function fixture({models=rows,closeError=false}={}){
  return {root,workspace,handlers:()=>handlers,finishClosed:()=>resolveClosed(),stats:()=>({starts,interrupts,closes}),worker:options=>createClaudeWorker({workspace,...options,hostFactory})};
 }
 
-test('native 5.5 models validate supported efforts; legacy no-effort model accepts explicit null',async()=>{
- for(const [model,effort] of [['claude-opus-5-5','xhigh'],['claude-sonnet-5-5','high'],['claude-haiku-5-5','max'],['claude-haiku-4-5-20251001',null]]){
+test('native Fable and 5.5 models validate supported efforts; legacy no-effort model accepts explicit null',async()=>{
+ for(const [model,effort] of [['claude-fable-5','high'],['claude-fable-5-1','max'],['claude-opus-5-5','xhigh'],['claude-sonnet-5-5','high'],['claude-haiku-5-5','max'],['claude-haiku-4-5-20251001',null]]){
   const f=await fixture();
   const pending=f.worker().run({task:'bounded',model,effort});
   await new Promise(resolve=>setImmediate(resolve));

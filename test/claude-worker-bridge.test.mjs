@@ -39,6 +39,19 @@ test('Claude request is durably recorded before run, same requestId deduplicates
   await f.bridge.close();
 });
 
+test('Fable delegation uses the existing Claude route with the exact model and effort',async()=>{
+ for(const model of ['claude-fable-5','claude-fable-5-1']){
+  const calls=[];
+  const f=await fixture({claudeFactory:()=>({async run(input){calls.push(input);return {status:'completed',settled:true,output:'ok',outputFiles:[]};}})});
+  try{
+   await f.bridge.start({requestId:'fable',task:'bounded',model,effort:'high'});
+   const result=await f.bridge.wait({requestId:'fable',timeoutMs:1000});
+   assert.equal(result.status,'completed');assert.equal(result.provider,'claude');assert.equal(result.model,model);
+   assert.equal(calls.length,1);assert.equal(calls[0].model,model);assert.equal(calls[0].effort,'high');
+  }finally{await f.bridge.close();}
+ }
+});
+
 test('recovered unowned Claude work remains unresolved and is never replayed',async()=>{
  let runs=0;const f=await fixture({claudeFactory:()=>({run:async()=>{runs++;return {status:'completed',settled:true};}})});
   const directory=path.join(f.root,'.runtime','luna-bridge','parent');await mkdir(directory,{recursive:true});

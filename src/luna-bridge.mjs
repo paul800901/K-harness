@@ -354,7 +354,6 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     return operation;
   }
   async function startProcess({provider,requestId,task,model,effort,accountId,handoffFrom}) {
-    if(model.startsWith('claude-fable-'))throw Error('Fable 額外計費未授權；未開始工作。');
     if(model==='auto'||effort==='auto'||effort===undefined)throw Error('請依原生目錄明確指定模型與推理程度；沒有推理設定時傳 null。未開始工作。');
     if(accountId!==undefined&&!/^[a-f0-9]{32}$/u.test(accountId))throw Error('Gemini 帳號識別無效。');
     if(handoffFrom!==undefined&&(!safeId(handoffFrom)||handoffFrom===requestId))throw Error('接手必須使用新的工作 ID。');

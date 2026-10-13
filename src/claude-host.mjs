@@ -81,7 +81,7 @@ export function claudeModelsFrom(rows){
  for(const row of rows){
   if(row.hidden===true)continue;
   const model=row.value?.startsWith('claude-')?row.value:row.resolvedModel;
-  if(!model||model.startsWith('claude-fable-'))continue;
+  if(!model)continue;
   models.set(model,{model,displayName:row.displayName??model,description:row.description,provider:'claude',inputModalities:['text','image'],supportedReasoningEfforts:(row.supportedEffortLevels??[]).map(reasoningEffort=>({reasoningEffort}))});
  }
  return [...models.values()];
@@ -276,7 +276,6 @@ async function terminateChild(child) {
  * This is async so auth is verified before creating a model process.
  */
 export async function openClaudeHost({ commandSpec, cwd = process.cwd(), env:sourceEnv=process.env, captureImpl=runCapture, sessionId, resume = false, forkFrom, mcpConfig, accessMode='claude-manual', effort, model=CLAUDE_MODEL, workspaceInstructions='', worker=false, workerAccessMode, discussionOnly=false, signal, onMessage = () => {}, onPermission, spawnImpl = spawn } = {}) {
-  if(/^(?:claude-)?fable(?:-|$)/u.test(model))throw Error('Fable 可能使用額外計費，未經授權已停用；未換模。');
   const spec = normalizeCommandSpec(commandSpec ?? await resolveClaudeCommand({env:sourceEnv}));
   const env=sanitizedEnv(sourceEnv);
   const preflight = await inspectClaude({ commandSpec: spec, cwd, env:sourceEnv, captureImpl, signal });

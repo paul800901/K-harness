@@ -49,9 +49,9 @@ test('worker choices follow every native catalog model, route and effort rather 
  assert.deepEqual(availableWorkerModels(rows).map(row=>row.model),['gpt-6.1-sol','gpt-6-luna','gpt-future-native']);
  const routes={geminiGateway:true,claudeGateway:true};
  assert.deepEqual(availableWorkerModels(rows,{...routes,provider:'gemini'}),[]);
- assert.equal(availableWorkerModels(rows,routes).length,8);
- for(const policy of [{model:'gpt-future-native',effort:'new-effort'},{model:'claude-future-native',effort:null},{model:'gemini-future',effort:'max'}])assert.deepEqual(validateWorkerPolicy(policy,rows,routes),policy);
- for(const model of ['gpt-hidden','claude-fable-5-1','gpt-unavailable','alpaca-5-5'])assert.throws(()=>validateWorkerPolicy({model,effort:null},rows,routes),/未自動換模/);
+ assert.equal(availableWorkerModels(rows,routes).length,9);
+ for(const policy of [{model:'gpt-future-native',effort:'new-effort'},{model:'claude-future-native',effort:null},{model:'claude-fable-5-1',effort:null},{model:'gemini-future',effort:'max'}])assert.deepEqual(validateWorkerPolicy(policy,rows,routes),policy);
+ for(const model of ['gpt-hidden','gpt-unavailable','alpaca-5-5'])assert.throws(()=>validateWorkerPolicy({model,effort:null},rows,routes),/未自動換模/);
 });
 test('auto leaves native GPT defaults unset and supplies the complete routed model/effort catalog',()=>{
  const config=workerPolicyConfig(undefined,{baseInstructions:'Keep authority.',models,geminiGateway:true,claudeGateway:true});

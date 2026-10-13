@@ -203,11 +203,21 @@ test('Claude goal command confirms matching native lifecycle, never ordinary ass
  try{assert.equal(await host.goal('test objective'),'Goal set: test objective');}finally{await host.close();}
 });
 
-// A public model listing is not consent to additional usage-credit billing.
-test('Fable is excluded from K selection and direct launches stop before any subprocess',async()=>{
- const rows=[{value:'fable',resolvedModel:'claude-fable-5-1'},{value:'claude-fable-5'},{value:'haiku',resolvedModel:'claude-haiku-5-5',supportedEffortLevels:['low']}];
- assert.deepEqual(claudeModelsFrom(rows).map(m=>m.model),['claude-haiku-5-5']);
- for(const model of ['fable','claude-fable-5','claude-fable-5-1'])await assert.rejects(openClaudeHost({model,captureImpl:()=>{throw Error('preflight must not start');},spawnImpl:()=>{throw Error('spawn must not start');}}),/Fable.*額外計費.*未換模/);
+test('authorized Fable models retain native IDs, efforts and billing descriptions without changing the default',async()=>{
+ const levels=['low','medium','high','xhigh','max'];
+ const rows=[{value:'fable',resolvedModel:'claude-fable-5-1',supportedEffortLevels:levels},{value:'claude-fable-5',description:'Requires usage credits',supportedEffortLevels:['high']},{value:'claude-fable-hidden',hidden:true},{value:'haiku',resolvedModel:'claude-haiku-5-5',supportedEffortLevels:['low']}];
+ const models=claudeModelsFrom(rows);
+ assert.deepEqual(models.map(m=>m.model),['claude-fable-5-1','claude-fable-5','claude-haiku-5-5']);
+ assert.deepEqual(models[0].supportedReasoningEfforts.map(e=>e.reasoningEffort),levels);
+ assert.equal(models[1].description,'Requires usage credits');
+ assert.equal(CLAUDE_MODEL,'claude-opus-5-5');
+ for(const model of ['claude-fable-5','claude-fable-5-1']){
+  const fake=await fakeCli(undefined,rows);
+  const source=await readFile(fake.file,'utf8');
+  await writeFile(fake.file,source.replace("const args = process.argv.slice(2);",`const args = process.argv.slice(2); if(args.includes('--print') && (args[args.indexOf('--model')+1] !== '${model}' || args[args.indexOf('--effort')+1] !== 'high'))process.exit(17);`));
+  const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,model,effort:'high'});
+  try{assert.deepEqual(host.models,models);}finally{await host.close();}
+ }
  assert.deepEqual(nativeCapabilitiesFrom({}).models,[]);
  assert.equal(Object.hasOwn(nativeCapabilitiesFrom({}), 'efforts'),false);
 });
