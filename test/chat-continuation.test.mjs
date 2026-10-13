@@ -31,7 +31,8 @@ async function fixture(){
  const receipt=id=>readFile(path.join(root,'.runtime/chat-continuations',`${id??opened.threadId}.json`),'utf8').then(JSON.parse);
  return {root,c,source,owners,calls,opened,request,finish,receipt,failFork:error=>{forkFailure=error;},failSend:error=>{sendFailure=error;},blockChildOpen:gate=>{childOpenGate=gate;},blockChildSend:gate=>{childSendGate=gate;}};
 }
-async function wait(check){const deadline=Date.now()+2000;while(!await check()){if(Date.now()>deadline)throw Error('test wait timed out');await new Promise(r=>setTimeout(r,10));}}
+// File receipts can be held by Windows Defender for ~2s under load; atomicWrite waits up to 10s.
+async function wait(check){const deadline=Date.now()+15000;while(!await check()){if(Date.now()>deadline)throw Error('test wait timed out');await new Promise(r=>setTimeout(r,10));}}
 
 test('fresh handoff creates once, preserves settings without parent history, and is not recursive human authority',async()=>{
  const f=await fixture();try{

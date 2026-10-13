@@ -27,15 +27,15 @@ for(const code of ['EPERM','EACCES','EBUSY'])test(`metadata replacement retries 
  assert.deepEqual(await readdir(path.dirname(target)),['one.json']);
 });
 
-test('metadata replacement stops after bounded lock retries and a later save still works',async t=>{
+test('metadata replacement stops after its lock wait budget and a later save still works',async t=>{
  const base=fileURLToPath(new URL('../.runtime/tests/',import.meta.url));await mkdir(base,{recursive:true});
  const root=await mkdtemp(path.join(base,'rename-exhausted-')),record={threadId:'one',model:'gpt-6-luna'};
  const target=await save(root,{...record,title:'old'}),old=await readFile(target,'utf8');
  const original=fs.rename,attempts=[],error=Object.assign(new Error('target remains locked'),{code:'EPERM'});
  const mock=t.mock.method(fs,'rename',async(from,to)=>{if(to!==target)return original(from,to);attempts.push(from);throw error;});
  syncBuiltinESMExports();t.after(()=>{mock.mock.restore();syncBuiltinESMExports();});
- await assert.rejects(save(root,{...record,title:'not committed'}),err=>err===error);
- assert.equal(attempts.length,21);assert.equal(new Set(attempts).size,1);
+ await assert.rejects(atomicWrite(target,JSON.stringify({...record,title:'not committed'}),{lockWaitMs:300}),err=>err===error);
+ assert.ok(attempts.length>1);assert.equal(new Set(attempts).size,1);
  assert.equal(await readFile(target,'utf8'),old);
  assert.equal(JSON.parse(await readFile(attempts[0],'utf8')).title,'not committed');
  mock.mock.restore();syncBuiltinESMExports();
