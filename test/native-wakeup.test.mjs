@@ -94,8 +94,8 @@ test('another room terminal cannot queue or wake this parent',async()=>{
 });
 
 test('same child followup is a new terminal key, with one acceptance per turn',async()=>{
- const f=await fixture();try{f.child();f.finish();await f.tick();f.terminal();await f.tick();f.finish();await f.tick();
-  f.child('child','followup-turn');await f.tick();f.terminal();await f.tick();assert.equal(f.delivered().length,2);
+ const f=await fixture();try{f.child();f.finish();await f.tick();f.terminal();await waitRecheck(()=>f.delivered().length===1);f.finish();await f.tick();
+  f.child('child','followup-turn');await f.tick();f.terminal();await waitRecheck(()=>f.delivered().length===2);assert.equal(f.delivered().length,2);
   assert.match(f.delivered()[1].p.toolOutput.output,/followup-turn/);
  }finally{await f.c.close();}
 });
@@ -212,7 +212,7 @@ test('autonomous terminal probe never overlaps itself or scans historical childr
   f.child();await f.tick();f.finish();await f.tick();t.mock.timers.enable({apis:['setTimeout']});f.setReadMode('missing');f.terminal();await flushRecheck();
   const start=f.calls.length;f.setReadGate(new Promise(r=>release=r));t.mock.timers.tick(1000);await flushRecheck();t.mock.timers.tick(120000);await flushRecheck();
   const probes=f.calls.slice(start).filter(x=>x.method==='thread/read');assert.equal(probes.length,1);assert.equal(probes[0].p.threadId,'child');
-  f.setReadMode('ready');f.setReadGate(null);release();await flushRecheck();assert.equal(f.delivered().length,1);
+  f.setReadMode('ready');f.setReadGate(null);release();await waitRecheck(()=>f.delivered().length===1);assert.equal(f.delivered().length,1);
  }finally{release?.();t.mock.timers.reset();f.setReadMode('ready');f.setReadGate(null);await f.c.close();}
 });
 test('autonomous terminal confirmation never restarts a failed parent or retries attempted uncertain delivery',async t=>{
