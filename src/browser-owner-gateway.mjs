@@ -84,7 +84,9 @@ export async function createBrowserOwnerGateway({
       registered = false,
       finished = false;
     const cancel = () => {
-      if (finished || message?.method !== 'tools/call') return;
+      // 'close' fires before `finished` is set after a completed pipeline; a fully written response is not
+      // a cancellation.
+      if (finished || res.writableFinished || message?.method !== 'tools/call') return;
       // HTTP disconnects/timeouts are not necessarily SDK cancellations.
       // Reuse the same close-before-unlock path as the stdio integration.
       raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});

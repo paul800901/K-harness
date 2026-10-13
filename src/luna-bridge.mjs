@@ -254,6 +254,7 @@ export async function createLunaBridge({
         status: event.status,
         accountId: event.accountId,
         reason: event.reason,
+        ...(event.nextQueryAt ? {nextQueryAt: event.nextQueryAt} : {}),
         notificationRegistered: event.status === 'waiting'
       });
       for (const wake of waiters.get(id) ?? []) wake();
@@ -288,6 +289,8 @@ export async function createLunaBridge({
     if (event.status !== 'waiting' && event.queryIds.length) accountQueryId = null;
     if (event.status === 'waiting') {
       observeHandoff(event);
+      // A quiet update only refreshes what wait/inspect report; the room was already told it is waiting.
+      if (event.quiet) return;
       try {
         onGeminiHandoff(clone(event));
       } catch {}
@@ -702,12 +705,23 @@ export async function createLunaBridge({
                 onPermission: async value => {
                   record.waitingForApproval = (record.waitingForApproval ?? 0) + 1;
                   changed(record);
+                  let onAbort;
                   try {
-                    return await onRequest?.({
-                      method: 'k/claude/requestApproval',
-                      params: {threadId: record.threadId, parentId, requestId, ...value}
+                    // A cancelled worker must not leave its approval request pending forever.
+                    const cancelled = new Promise(resolve => {
+                      onAbort = () => resolve({behavior: 'deny', message: '子代理已取消；此核准請求失效。'});
+                      if (controller.signal.aborted) onAbort();
+                      else controller.signal.addEventListener('abort', onAbort, {once: true});
                     });
+                    return await Promise.race([
+                      onRequest?.({
+                        method: 'k/claude/requestApproval',
+                        params: {threadId: record.threadId, parentId, requestId, ...value}
+                      }),
+                      cancelled
+                    ]);
                   } finally {
+                    controller.signal.removeEventListener('abort', onAbort);
                     if (--record.waitingForApproval === 0) delete record.waitingForApproval;
                     record.lastActivityAt = Date.now();
                     changed(record);
@@ -970,7 +984,9 @@ export async function createLunaBridge({
       const readSnapshot = async () => {
         if (records.get(requestId)?.settled) {
           await processRuns.get(requestId)?.completion;
-          await persistTails.get(requestId);
+          // A settled record gets no further saves, so a failed last write would reject every wait forever.
+          // Retry that write once; if it fails again the error is still reported.
+          await persistTails.get(requestId)?.catch(() => persist(records.get(requestId)));
         }
         signal?.throwIfAborted();
         if (epoch !== handoffEpoch || closed || closing)

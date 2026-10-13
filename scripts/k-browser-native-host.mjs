@@ -405,8 +405,17 @@ export async function startNativeHost({
     const frame = encodeNativeMessage(message);
     if (stdout.write(frame)) return;
     await new Promise((resolve, reject) => {
-      stdout.once('drain', resolve);
-      stdout.once('error', reject);
+      // Only one of these fires; remove the other so repeated backpressure does not accumulate listeners.
+      const onDrain = () => {
+        stdout.off('error', onError);
+        resolve();
+      };
+      const onError = error => {
+        stdout.off('drain', onDrain);
+        reject(error);
+      };
+      stdout.once('drain', onDrain);
+      stdout.once('error', onError);
     });
   }
   function receiveNativeMessage(message) {

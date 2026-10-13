@@ -306,11 +306,14 @@ export async function startDesktop({
       if (req.headers.origin && req.headers.origin !== requestOrigin)
         return json(403, {error: 'Cross-origin request denied'});
       if (req.method === 'GET' && url.pathname === '/api/events') {
+        // The snapshot below resets the shared diff baseline. Always flush pending differences to existing
+        // screens first: a change made in place but not yet announced (no timer scheduled) would otherwise
+        // be folded into the new baseline and never reach them.
         if (scheduled) {
           clearTimeout(scheduled);
           scheduled = null;
-          broadcast(stateStream.update(publicState(), controller.historyVersion));
         }
+        broadcast(stateStream.update(publicState(), controller.historyVersion));
         res.writeHead(200, {'Content-Type': 'text/event-stream', 'Connection': 'keep-alive'});
         const snapshot = stateStream.snapshot(publicState(), controller.historyVersion);
         res.write(`data: ${JSON.stringify(isRemote ? remoteStateEvent(snapshot) : snapshot)}\n\n`);

@@ -487,12 +487,14 @@ export function createClaudeController({
     if (!Number.isFinite(contextWindow) || contextWindow < 0) return;
     state.progress.tokenUsage = {...(state.progress.tokenUsage ?? {}), modelContextWindow: contextWindow};
   };
-  const clearQuestions = () => {
+  const clearQuestions = matches => {
     for (const [id, item] of pending) {
+      if (matches && !matches(item)) continue;
       item.resolve(item.cancelValue);
       pending.delete(id);
+      state.questions = state.questions.filter(q => q.id !== id);
     }
-    state.questions = [];
+    if (!matches) state.questions = [];
   };
   async function deliverWorkers() {
     const handoff =
@@ -1242,7 +1244,13 @@ export function createClaudeController({
     if (!approval) return undefined;
     const id = randomUUID();
     return new Promise(resolve => {
-      pending.set(id, {resolve, cancelValue: approval.cancel?.() ?? {decision: 'cancel'}, approval});
+      pending.set(id, {
+        resolve,
+        cancelValue: approval.cancel?.() ?? {decision: 'cancel'},
+        approval,
+        // K worker approvals are cleared when that worker is cancelled.
+        workerRequestId: request.method === 'k/claude/requestApproval' ? request.params?.requestId : undefined
+      });
       const {reply, cancel, ...display} = approval;
       state.questions.push({
         id,
@@ -1340,7 +1348,11 @@ export function createClaudeController({
       wait: args => ensureBridge().then(value => value.wait(args)),
       async cancel(args) {
         disarm(args.requestId);
-        return (await ensureBridge()).cancel(args);
+        const result = await (await ensureBridge()).cancel(args);
+        // The cancelled worker's approval card would otherwise stay on screen and block the room.
+        clearQuestions(item => item.workerRequestId === args.requestId);
+        changed();
+        return result;
       },
       // The gateway acknowledges only after the model-facing result is prepared successfully.
       resultReady(args, result) {

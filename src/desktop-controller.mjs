@@ -1150,7 +1150,9 @@ export function createDesktopController({
         questions: p.questions,
         threadId: p.threadId,
         turnId: p.turnId,
-        requestId: m.id
+        requestId: m.id,
+        // K worker approvals are cleared when that worker is cancelled.
+        workerRequestId: m.method === 'k/claude/requestApproval' ? p.requestId : undefined
       });
       const {reply, cancel, ...display} = approval ?? {};
       state.questions.push(
@@ -1519,7 +1521,11 @@ export function createDesktopController({
     async cancel(args) {
       if (goalRecovery?.workerWait?.requestIds.includes(args.requestId)) invalidateRecovery();
       disarmFlash(args.requestId);
-      return (await ensureFlashBridge()).cancel(args);
+      const result = await (await ensureFlashBridge()).cancel(args);
+      // The cancelled worker's approval card would otherwise stay on screen and block the room.
+      clearQuestions(p => p.workerRequestId === args.requestId);
+      changed();
+      return result;
     },
     resultReady(args, result) {
       // Only the current recovery's own receipts must survive an ordinary read.
