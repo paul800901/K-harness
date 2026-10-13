@@ -488,3 +488,4 @@
 - 程式 c8942217303cb5f03471994ec4b91b8fddb1d14e 已對齊 runtime／vault host／installed 0.1.3；未啟動、未 push，等待 Gemini 批次整合後驗收。版本、退版與三真 profile 未驗證項目見 [套用與交接紀錄](k-fixes-deploy-held-20261007.md)。
 
 - 2026-10-13：[AGENTS.md 整理為現行規則](agents-consolidation-20261013.md)：64KB／46 段改為十主題約 21KB，原文歸檔 `agents-history-20261013.md`；只改文件。
+- 2026-10-13：[.runtime 與本機工作區整理](runtime-cleanup-20261013.md)：根層約 640 項整理為 4 項，證據集中 `.runtime/archive`，舊退版／候選／套件釋出約 72GB；修正測試環境變數相依；記下更新器不清退版、測試不清暫存、一個偶發測試三項待辦。

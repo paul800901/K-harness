@@ -97,7 +97,8 @@ test('local dictation starts one offline child, forwards WAV only on stdin, and 
   const audio = makeWav();
   let invocation;
   const child = new FakeChild({response: {ok: true, text: ''}});
-  const backend = createLocalDictation({provider: 'whisper', spawnImpl: (...args) => { invocation = args; return child; }});
+  const backend = createLocalDictation({provider: 'whisper', pythonPath: LOCAL_DICTATION_PYTHON, modelPath: LOCAL_DICTATION_MODEL,
+    spawnImpl: (...args) => { invocation = args; return child; }});
   try {
     assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: ''});
     assert.equal(invocation[0], LOCAL_DICTATION_PYTHON);
