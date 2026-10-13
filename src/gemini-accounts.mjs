@@ -375,7 +375,12 @@ export function createGeminiAccounts({
             });
         } else {
           const rows = [...handoffWaiters.values()].filter(row => row.parentId === room.parentId && waiterCurrent(row));
-          if (status === 'waiting' && rows.every(row => row.lastNotification === 'waiting')) continue;
+          if (status === 'waiting' && rows.every(row => row.lastNotification === 'waiting')) {
+            // A waiting room stays quiet (one notice per state), but queries must still show the latest reason
+            // and next official recheck instead of the first generic text.
+            notify({...room, notStartedIds, status, ...detail, quiet: true});
+            continue;
+          }
           for (const row of rows) row.lastNotification = status;
           notify({...room, notStartedIds, status, ...detail});
         }
@@ -943,9 +948,13 @@ export function createGeminiAccounts({
             if (released) return;
             released = true;
             running--;
+            let saveError;
             if (!settled) {
               data.uncertain = true;
-              await save();
+              // A failed save must not skip the notification and hand-off below; report it afterwards.
+              await save().catch(error => {
+                saveError = error;
+              });
             }
             onChange();
             if (!running && handoffWaiters.size) await drainHandoff();
@@ -955,6 +964,7 @@ export function createGeminiAccounts({
               } catch {
                 /* no replay; next status read shows cached quota */
               }
+            if (saveError) throw saveError;
           }
         };
       } finally {
@@ -987,7 +997,7 @@ export function createGeminiAccounts({
         outcome = await fn(lease);
         return {...outcome, accountId: lease.accountId, accountEmail: lease.accountEmail};
       } catch (error) {
-        if (error.settled === false) outcome = {settled: false};
+        if (error.settled === false) outcome = {settled: false, error};
         throw error;
       } finally {
         if (
@@ -997,7 +1007,21 @@ export function createGeminiAccounts({
           outcome.quotaCheckNeeded === true
         )
           registerHandoff(options, lease.accountId);
-        await lease.release({settled: outcome?.settled !== false, refresh: true});
+        try {
+          await lease.release({settled: outcome?.settled !== false, refresh: true});
+        } catch (releaseError) {
+          // A failed registry save must not replace the worker's own result. An unconfirmed stop stays
+          // unsettled (never "failed"); otherwise the original result or error stands. release() updates the
+          // in-memory registry before saving, so the next successful save persists it.
+          if (outcome?.settled === false)
+            throw Object.assign(
+              new Error(`${outcome.error?.message ?? '工人停止狀態未確認'}；帳號狀態保存失敗：${releaseError.message}`),
+              {
+                settled: false,
+                cause: releaseError
+              }
+            );
+        }
       }
     }
   };

@@ -98,17 +98,20 @@ export async function startDesktop({
       );
     }
   };
+  const publish = () => {
+    if (scheduled) {
+      clearTimeout(scheduled);
+      scheduled = null;
+    }
+    const state = publicState();
+    for (const listener of stateListeners) listener(state);
+    broadcast(stateStream.update(state, controller.historyVersion));
+  };
   const controller = controllerFactory({
     root,
     executable,
     onChange() {
-      if (!scheduled)
-        scheduled = setTimeout(() => {
-          scheduled = null;
-          const state = publicState();
-          for (const listener of stateListeners) listener(state);
-          broadcast(stateStream.update(state, controller.historyVersion));
-        }, 60);
+      scheduled ??= setTimeout(publish, 60);
     }
   });
   const closedResources = new Set();
@@ -306,11 +309,10 @@ export async function startDesktop({
       if (req.headers.origin && req.headers.origin !== requestOrigin)
         return json(403, {error: 'Cross-origin request denied'});
       if (req.method === 'GET' && url.pathname === '/api/events') {
-        if (scheduled) {
-          clearTimeout(scheduled);
-          scheduled = null;
-          broadcast(stateStream.update(publicState(), controller.historyVersion));
-        }
+        // The snapshot below resets the shared diff baseline. Always flush pending differences to existing
+        // screens first: a change made in place but not yet announced (no timer scheduled) would otherwise
+        // be folded into the new baseline and never reach them.
+        publish();
         res.writeHead(200, {'Content-Type': 'text/event-stream', 'Connection': 'keep-alive'});
         const snapshot = stateStream.snapshot(publicState(), controller.historyVersion);
         res.write(`data: ${JSON.stringify(isRemote ? remoteStateEvent(snapshot) : snapshot)}\n\n`);

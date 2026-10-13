@@ -111,10 +111,16 @@ function Chat(props) {
   const actions = useMemo(
     () =>
       Object.fromEntries(
-        ['onOptions', 'setUploads', 'upload', 'action', 'setEffort', 'setAccessMode', 'onChooseModel'].map(name => [
-          name,
-          (...args) => latest.current[name](...args)
-        ])
+        [
+          'onOptions',
+          'setUploads',
+          'upload',
+          'action',
+          'roomAction',
+          'setEffort',
+          'setAccessMode',
+          'onChooseModel'
+        ].map(name => [name, (...args) => latest.current[name](...args)])
       ),
     []
   );
@@ -130,6 +136,7 @@ const ChatView = React.memo(function ChatView({
   setUploads,
   upload,
   action,
+  roomAction,
   effort,
   setEffort,
   modelLabel,
@@ -307,7 +314,7 @@ const ChatView = React.memo(function ChatView({
   // Keep history inputs stable across background events and composer keystrokes;
   // callbacks still read this room's latest draft, attachments and permissions.
   const callbacks = useRef();
-  callbacks.current = {submitText, cancel: () => action(() => threadApi('stop'))};
+  callbacks.current = {submitText, cancel: () => roomAction(threadId, () => threadApi('stop'))};
   const isDisabled = !online || !state.threadId || ['connecting', 'offline', 'error'].includes(state.status),
     isSendDisabled = blocked || uploads.some(a => a.loading) || state.status === 'uncertain';
   const adapter = useMemo(
@@ -505,7 +512,7 @@ const ChatView = React.memo(function ChatView({
             {!!state.questions?.length && (
               <div className="inline-requests" aria-label="需要你的確認">
                 {state.questions.map(q => (
-                  <Approval key={q.id} question={q} action={action} request={threadApi} />
+                  <Approval key={q.id} question={q} action={fn => roomAction(threadId, fn)} request={threadApi} />
                 ))}
               </div>
             )}
@@ -1043,8 +1050,13 @@ function App() {
       window.removeEventListener('resize', clamp);
     };
   }, [panelWidth, sidebar]);
+  // Overlapping refreshes can finish out of order; only the latest may update the sidebar, so an older
+  // listing never brings back a room that was just archived or renamed.
+  const refreshSequence = useRef(0);
   const refresh = async () => {
+    const sequence = ++refreshSequence.current;
     const [result, registry] = await Promise.all([api('sessions'), api('projects')]);
+    if (sequence !== refreshSequence.current) return;
     setSessions(result.sessions);
     setProjects(registry.projects);
     if (result.unreadable) setNotice(`${result.unreadable} 份舊紀錄無法讀取，已保留原檔。`);
@@ -1061,6 +1073,22 @@ function App() {
     } finally {
       lock.current = false;
       setBusy(false);
+    }
+  };
+  // Stop and approval answers belong to one room. They must not be dropped while another room's action
+  // (e.g. a permission switch reopening the native thread) holds the global lock; only repeats in the same
+  // room are suppressed.
+  const roomLocks = useRef(new Set());
+  const roomAction = async (threadId, fn) => {
+    if (!threadId || roomLocks.current.has(threadId)) return;
+    roomLocks.current.add(threadId);
+    setError('');
+    try {
+      return await fn();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      roomLocks.current.delete(threadId);
     }
   };
   useEffect(() => {
@@ -1774,7 +1802,18 @@ function App() {
               onChooseModel={() => setModal({type: 'model', threadId: state.threadId})}
               modelLabel={modelName(state.model)}
               modelButtonLabel={modelButtonLabel(state.model)}
-              {...{state, uploads, setUploads, upload, action, effort, setEffort, accessMode, permissionConfirmed}}
+              {...{
+                state,
+                uploads,
+                setUploads,
+                upload,
+                action,
+                roomAction,
+                effort,
+                setEffort,
+                accessMode,
+                permissionConfirmed
+              }}
               setAccessMode={choosePermission}
             />
           </main>

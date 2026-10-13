@@ -300,6 +300,17 @@ export async function createBrowserLiveSession(
     if (!mapped.some(p => p.id === selectedPageId)) selectedPageId = mapped.at(-1)?.id ?? null;
     return mapped;
   };
+  // Reading the title runs page JavaScript, which never answers while the page shows alert()/confirm() or is
+  // busy. Bound it so one stuck tab cannot hang every state read and human browser action.
+  const pageTitle = (target, fallback) => {
+    let timer;
+    return Promise.race([
+      target.evaluate(() => document.title).catch(() => fallback),
+      new Promise(resolve => {
+        timer = setTimeout(() => resolve(fallback), 1500);
+      })
+    ]).finally(() => clearTimeout(timer));
+  };
   const state = async () => {
     const current = pages();
     const detailed = await Promise.all(
@@ -307,7 +318,7 @@ export async function createBrowserLiveSession(
         const target = context?.pages?.().find(p => pageId(p) === item.id);
         return {
           ...item,
-          title: target ? await target.evaluate(() => document.title).catch(() => item.title) : item.title,
+          title: target ? await pageTitle(target, item.title) : item.title,
           ...(target ? await historyForPage(target) : {canGoBack: null, canGoForward: null})
         };
       })

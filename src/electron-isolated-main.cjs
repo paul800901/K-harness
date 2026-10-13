@@ -4,6 +4,20 @@ const {mkdir, realpath, stat} = require('node:fs/promises');
 
 const root = path.resolve(__dirname, '..');
 const requireFromRuntime = createRequire(path.join(root, 'package.json'));
+
+// In Electron's main process an unhandled rejection only prints a warning nobody sees. Record it next
+// to the runtime (bounded size) so a silently failed background task leaves evidence for diagnosis.
+process.on('unhandledRejection', reason => {
+  try {
+    const fs = require('node:fs');
+    const file = path.join(root, '..', 'owner-unhandled.log');
+    if ((fs.statSync(file, {throwIfNoEntry: false})?.size ?? 0) > 1 << 20) return;
+    const detail = reason instanceof Error ? reason.stack || reason.message : String(reason);
+    fs.appendFileSync(file, `${new Date().toISOString()} ${detail.slice(0, 2000)}\n`);
+  } catch {
+    /* Diagnostics must never affect the owner. */
+  }
+});
 let ownerWorkbench = null,
   shuttingDown = false,
   ownerClosed = false,

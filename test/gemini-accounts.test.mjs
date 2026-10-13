@@ -2443,7 +2443,8 @@ test('rate limits stay terminal while temporary or unknown quota keeps a quiet w
       assert.deepEqual(f.calls.activate, []);
       assert.equal(f.current.accountId, A);
       if (mode === 'rate') assert.equal(events.filter(event => event.status === 'blocked').length, 1);
-      else assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+      // Quiet updates refresh what queries report; the room itself is notified once.
+      else assert.equal(events.filter(event => event.status === 'waiting' && !event.quiet).length, 1);
       assert.equal(
         events.some(event => event.status === 'ready'),
         false

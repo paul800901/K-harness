@@ -64,6 +64,21 @@ function enqueueSave(root, threadId, operation) {
 export function saveMainSession(root, record, {rejectedCodexSubmission = false, activityAt} = {}) {
   return enqueueSave(root, record.threadId, () => writeMainSession(root, record, rejectedCodexSubmission, activityAt));
 }
+// Read-modify-write inside the per-room save queue. Callers that change a few fields must use this
+// instead of reading a record first and saving `{...saved, ...}` later: a save queued in between
+// (rename, archive, pin, worker notification) would otherwise be silently overwritten.
+// `update` receives a copy of the current record and returns the record to save, or null to leave it
+// unchanged. Resolves to the saved (or unchanged) record, or null when the room has no record.
+export function updateMainSession(root, threadId, update, {activityAt, rejectedCodexSubmission = false} = {}) {
+  return enqueueSave(root, threadId, async () => {
+    const prior = (await listMainSessions(root, {threadId})).sessions[0];
+    if (!prior) return null;
+    const next = update(structuredClone(prior));
+    if (!next) return prior;
+    await writeMainSession(root, next, rejectedCodexSubmission, activityAt);
+    return next;
+  });
+}
 // Read inside the existing per-room save queue: a completion cannot overwrite a newer rename/settings save.
 export function saveMainSessionActivity(root, threadId, activityAt) {
   return enqueueSave(root, threadId, async () => {

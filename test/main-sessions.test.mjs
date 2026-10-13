@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdtemp, mkdir, writeFile, readFile, utimes, readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {saveMainSession, listMainSessions} from '../src/main-sessions.mjs';
+import {saveMainSession, listMainSessions, updateMainSession} from '../src/main-sessions.mjs';
 import {scratchBase} from './scratch.mjs';
 
 test('inherited card projection distinguishes legacy absence, verified empty and per-item unknown across metadata saves', async () => {
@@ -266,4 +266,30 @@ test('worker notification attempts round-trip and survive unrelated session save
   session = (await listMainSessions(root)).sessions.find(item => item.threadId === 'codex-flash');
   assert.equal(session.title, 'Renamed');
   assert.deepEqual(session.workerNotifications, {'flash.request-1': 'delivery-attempted'});
+});
+
+for (const order of ['archive-first', 'notification-first'])
+  test(`concurrent field updates never revert each other (${order})`, async () => {
+    // Regression: a background save that read the record first and wrote {...saved, x} later
+    // silently reverted a rename/archive made in between.
+    const root = await mkdtemp(path.join(scratchBase, 'session-update-'));
+    await saveMainSession(root, {threadId: 'room', model: 'gpt-6.1-sol', title: 'old'});
+    const archive = () => updateMainSession(root, 'room', prior => ({...prior, archived: true, title: 'new'}));
+    const notify = () =>
+      updateMainSession(root, 'room', prior => ({
+        ...prior,
+        workerNotifications: {'job-1': 'delivery-attempted'}
+      }));
+    await Promise.all(order === 'archive-first' ? [archive(), notify()] : [notify(), archive()]);
+    const session = (await listMainSessions(root)).sessions.find(item => item.threadId === 'room');
+    assert.equal(session.archived, true);
+    assert.equal(session.title, 'new');
+    assert.deepEqual(session.workerNotifications, {'job-1': 'delivery-attempted'});
+  });
+
+test('updateMainSession leaves a record unchanged when the update returns null and reports missing rooms', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'session-update-null-'));
+  await saveMainSession(root, {threadId: 'room', model: 'gpt-6.1-sol', title: 'kept'});
+  assert.equal((await updateMainSession(root, 'room', () => null)).title, 'kept');
+  assert.equal(await updateMainSession(root, 'missing', prior => prior), null);
 });

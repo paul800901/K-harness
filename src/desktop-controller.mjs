@@ -8,7 +8,7 @@ import {
   renderCompactionContext,
   CONVERSATION_CONTEXT_GUIDANCE
 } from './conversation-context.mjs';
-import {saveMainSession, saveMainSessionActivity, listMainSessions} from './main-sessions.mjs';
+import {saveMainSession, saveMainSessionActivity, listMainSessions, updateMainSession} from './main-sessions.mjs';
 import {randomUUID} from 'node:crypto';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
 import {
@@ -255,24 +255,23 @@ export function createDesktopController({
     return next;
   };
   const markSubmitted = async () => {
-    const saved = (await listMainSessions(root, {threadId: state.threadId})).sessions[0];
+    let prepared = false;
+    const saved = await updateMainSession(root, state.threadId, prior => {
+      prepared = prior.codexSession?.hasSubmitted === false;
+      return prepared ? {...prior, codexSession: {nativeThreadId: nativeId(state.threadId), hasSubmitted: true}} : null;
+    });
     if (!saved) throw Error('K 對話紀錄不存在；尚未送出訊息。');
-    if (saved.codexSession?.hasSubmitted === false)
-      await saveMainSession(root, {
-        ...saved,
-        codexSession: {nativeThreadId: nativeId(state.threadId), hasSubmitted: true}
-      });
     unsentSessions.delete(state.threadId);
-    return saved.codexSession?.hasSubmitted === false;
+    return prepared;
   };
   const restoreRejectedEmpty = async (wasPrepared, error) => {
     // A native error response is a rejection, unlike timeout/transport loss.
     // Never clear a marker if a turn-start event nevertheless reached us.
     if (!wasPrepared || error.protocolMessage === undefined || turnId) return false;
-    const saved = (await listMainSessions(root, {threadId: state.threadId})).sessions[0];
-    await saveMainSession(
+    await updateMainSession(
       root,
-      {...saved, codexSession: {nativeThreadId: nativeId(state.threadId), hasSubmitted: false}},
+      state.threadId,
+      prior => ({...prior, codexSession: {nativeThreadId: nativeId(state.threadId), hasSubmitted: false}}),
       {rejectedCodexSubmission: true}
     );
     return true;
@@ -340,8 +339,10 @@ export function createDesktopController({
   };
   const persistFlashNotifications = async () => {
     if (!state.threadId) return;
-    const saved = (await listMainSessions(root)).sessions.find(s => s.threadId === state.threadId);
-    if (saved) await saveMainSession(root, {...saved, workerNotifications: structuredClone(flashNotifications)});
+    await updateMainSession(root, state.threadId, prior => ({
+      ...prior,
+      workerNotifications: structuredClone(flashNotifications)
+    }));
   };
   const addNotice = (level, message, kind, noticeTurnId = null, extra = {}) => {
     if (typeof message !== 'string' || !message) return;
@@ -1087,7 +1088,8 @@ export function createDesktopController({
             quotaReadAt = Date.now();
           }
         } finally {
-          if (temporary && reader) await reader.close();
+          // A failed teardown of the temporary reader must not turn a finished quota read into a rejection.
+          if (temporary && reader) await reader.close().catch(() => {});
         }
       }
       changed();
@@ -1148,7 +1150,9 @@ export function createDesktopController({
         questions: p.questions,
         threadId: p.threadId,
         turnId: p.turnId,
-        requestId: m.id
+        requestId: m.id,
+        // K worker approvals are cleared when that worker is cancelled.
+        workerRequestId: m.method === 'k/claude/requestApproval' ? p.requestId : undefined
       });
       const {reply, cancel, ...display} = approval ?? {};
       state.questions.push(
@@ -1517,7 +1521,11 @@ export function createDesktopController({
     async cancel(args) {
       if (goalRecovery?.workerWait?.requestIds.includes(args.requestId)) invalidateRecovery();
       disarmFlash(args.requestId);
-      return (await ensureFlashBridge()).cancel(args);
+      const result = await (await ensureFlashBridge()).cancel(args);
+      // The cancelled worker's approval card would otherwise stay on screen and block the room.
+      clearQuestions(p => p.workerRequestId === args.requestId);
+      changed();
+      return result;
     },
     resultReady(args, result) {
       // Only the current recovery's own receipts must survive an ordinary read.
@@ -2772,14 +2780,14 @@ export function createDesktopController({
         if (state.busy || turnId || submission || stopping || closing || state.threadId !== threadId)
           throw new Error('目前工作或對話狀態已改變；服務速度與模型選擇未更新。');
         if (model !== state.model || selectedEffort !== state.effort || selectedServiceTier !== state.serviceTier) {
-          await saveMainSession(root, {
-            ...saved,
+          await updateMainSession(root, threadId, prior => ({
+            ...prior,
             model,
             effort: selectedEffort,
             serviceTier: selectedServiceTier,
             lastUsedModel: state.lastUsedModel,
             modelChanges: state.modelChanges
-          });
+          }));
           const unsent = unsentSessions.get(threadId);
           if (unsent)
             unsent.selection = selectionKey(
@@ -2843,22 +2851,18 @@ export function createDesktopController({
       return sessionArtifact(state.workspace, state.previousWorkspaces, name);
     },
     async metadata({threadId, title, archived, pinned}) {
-      const found = (await listMainSessions(root)).sessions.find(s => s.threadId === threadId);
-      if (!found) throw new Error('K 對話不存在。');
-      if (title !== undefined) {
-        if (typeof title !== 'string' || !title.trim() || title.length > 120) throw new Error('標題須為 1–120 字元。');
-        found.title = title.trim();
-      }
-      if (archived !== undefined) {
-        if (typeof archived !== 'boolean') throw new Error('封存狀態無效。');
-        found.archived = archived;
-      }
-      if (pinned !== undefined) {
-        if (typeof pinned !== 'boolean') throw new Error('釘選狀態無效。');
-        found.pinned = pinned;
-      }
+      if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 120))
+        throw new Error('標題須為 1–120 字元。');
+      if (archived !== undefined && typeof archived !== 'boolean') throw new Error('封存狀態無效。');
+      if (pinned !== undefined && typeof pinned !== 'boolean') throw new Error('釘選狀態無效。');
       // Sidebar labels/visibility are local K metadata; never alter model history.
-      await saveMainSession(root, found);
+      const found = await updateMainSession(root, threadId, prior => ({
+        ...prior,
+        ...(title === undefined ? {} : {title: title.trim()}),
+        ...(archived === undefined ? {} : {archived}),
+        ...(pinned === undefined ? {} : {pinned})
+      }));
+      if (!found) throw new Error('K 對話不存在。');
       if (threadId === state.threadId) {
         state.title = found.title;
         changed();
@@ -3417,8 +3421,8 @@ export function createDesktopController({
           } catch (error) {
             state.goalError = `原生目標暫時無法讀回：${error.message}`;
           }
-          await saveMainSession(root, {
-            ...saved,
+          const sessionRecord = base => ({
+            ...base,
             ...relocation,
             ...(freshSource ? {title: state.title} : {}),
             ...(forkSource
@@ -3440,13 +3444,21 @@ export function createDesktopController({
             accessMode: access,
             lastUsedModel: state.lastUsedModel,
             modelChanges: state.modelChanges,
-            browserSessionKey: state.browserAccess.sessionKey ?? saved?.browserSessionKey,
+            browserSessionKey: state.browserAccess.sessionKey ?? base?.browserSessionKey,
             workerNotifications: flashNotifications,
             codexSession: {
               nativeThreadId: nativeId(state.threadId),
               hasSubmitted: !!forkSource || (!!threadId && !prepared)
             }
           });
+          // Reopening the same room merges into the current record inside the save queue, so a rename,
+          // archive or pin made while this open was awaiting is not reverted. Forks and handoffs keep
+          // deriving the new room from the source record.
+          if (saved && !forkSource && !freshSource && saved.threadId === state.threadId) {
+            const merged = await updateMainSession(root, state.threadId, sessionRecord);
+            if (merged) state.title = merged.title;
+            else await saveMainSession(root, sessionRecord(saved));
+          } else await saveMainSession(root, sessionRecord(saved));
           state.workerConnection = 'ready';
           signal.throwIfAborted();
           if (!state.busy && !turnId) {
@@ -3675,23 +3687,25 @@ export function createDesktopController({
           }
           {
             try {
-              const title = state.title || (text.trim() || attachments[0]?.name || '').slice(0, 40);
-              const saved = (await listMainSessions(root)).sessions.find(s => s.threadId === state.threadId);
-              await saveMainSession(
+              const fallbackTitle = (text.trim() || attachments[0]?.name || '').slice(0, 40);
+              const saved = await updateMainSession(
                 root,
-                {
-                  ...saved,
-                  title,
+                state.threadId,
+                prior => ({
+                  ...prior,
+                  // Keep a rename made while this send was in flight; only name an untitled room.
+                  title: prior.title || state.title || fallbackTitle,
                   model: state.model,
                   workerPolicy: state.workerPolicy,
                   effort: state.effort,
                   accessMode: access,
                   lastUsedModel: state.lastUsedModel,
                   modelChanges: state.modelChanges
-                },
+                }),
                 {activityAt: sentMessage.createdAt}
               );
-              state.title = title;
+              if (!saved) throw new Error('room record missing');
+              state.title = saved.title;
             } catch {
               state.error = '訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';
             }
