@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 
-const main=readFileSync(new URL('../frontend/main.jsx',import.meta.url),'utf8');
+// main.jsx was split; source checks cover the same UI code across its modules.
+const main=['main.jsx','chat-messages.jsx','dialogs.jsx','app-common.jsx'].map(name=>readFileSync(new URL(`../frontend/${name}`,import.meta.url),'utf8')).join('\n');
 const component=readFileSync(new URL('../frontend/response-annotations.jsx',import.meta.url),'utf8');
 
 test('selection toolbar reuses assistant-ui Root and does not wrap or hide messages',()=>{

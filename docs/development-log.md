@@ -334,6 +334,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 複查、稽核與整理
 
+- 10-14 [大檔拆分：前端與 desktop-controller](code-split-20261014.md)
 - 10-14 [存檔遇防毒占用時誤判失敗](atomic-write-lock-20261014.md)
 - 10-13 [.runtime 與本機工作區整理](runtime-cleanup-20261013.md)
 - 10-13 [AGENTS.md 歷史決定全文（2026-10-13 歸檔）](agents-history-20261013.md)

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 
-const main=await readFile(new URL('../frontend/main.jsx',import.meta.url),'utf8');
+// main.jsx was split; source checks cover the same UI code across its modules.
+const main=(await Promise.all(['main.jsx','chat-messages.jsx','dialogs.jsx','app-common.jsx'].map(name=>readFile(new URL(`../frontend/${name}`,import.meta.url),'utf8')))).join('\n');
 const sidebar=await readFile(new URL('../frontend/project-sidebar.jsx',import.meta.url),'utf8');
 const style=await readFile(new URL('../frontend/style.css',import.meta.url),'utf8');
 const queued=await readFile(new URL('../frontend/queued-messages.jsx',import.meta.url),'utf8');
