@@ -5,7 +5,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 ## 目前狀態
 
 - **正式 K（南區）**：`.local/runtime.json` 的 `version` 為準。2026-10-13 部署 `2f6cdc8`（[Gemini 五帳獨立額度](gemini-independent-quota-20261013.md)）；退版位置是同檔 `previous`。
-- **已提交、待部署**：2026-10-14 整理批（[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)），需關閉 K 後在 K 外部署。
+- **已提交、待部署**：2026-10-14 整理批，程式版本 `72f04c2`（[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)、[大檔拆分](code-split-20261014.md)），需關閉 K 後在 K 外部署。
 - **東區**：等本人到當地再更新；南區部署或 push 不代表東區完成。步驟見 [Git 安裝更新](git-install-update.md)。
 - **規則**：根目錄 `AGENTS.md`（現行）；各日決定原文見 [AGENTS 歷史全文](agents-history-20261013.md)。
 - **證據位置**：舊紀錄中的 `.runtime/<名稱>` 現在在 `.runtime/archive/<名稱>`，對照見 [.runtime 整理](runtime-cleanup-20261013.md)。
