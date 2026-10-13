@@ -808,8 +808,9 @@ export async function openClaudeHost({
       throw new TypeError('inputContent must be text or Claude message content.');
     if (typeof inputContent === 'string' && !inputContent.trim())
       throw new TypeError('inputContent must not be empty.');
-    if (stopped) throw new Error('Claude Code host is closed.');
-    if (!initialized) throw new Error('Claude Code stream is not initialized yet.');
+    // Both checks run before anything is written: the message certainly did not reach Claude Code.
+    if (stopped) throw Object.assign(new Error('Claude Code host is closed.'), {notSent: true});
+    if (!initialized) throw Object.assign(new Error('Claude Code stream is not initialized yet.'), {notSent: true});
     await new Promise((resolve, reject) =>
       child.stdin.write(
         `${JSON.stringify({type: 'user', uuid, session_id: '', message: {role: 'user', content: inputContent}, parent_tool_use_id: null})}\n`,

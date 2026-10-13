@@ -206,6 +206,10 @@ export function createClaudeController({
     opening = false,
     closing = false,
     stopping = false,
+    // Set when a stop fails before the host is closed: the interrupted turn's late events must not
+    // turn the unconfirmed room back into working/completed. Cleared by the next open().
+    stopUnconfirmed = false,
+    hostClosedDuringOpen = null,
     restartingHost = false,
     activeGeneration = 0,
     persistChain = Promise.resolve(),
@@ -351,6 +355,8 @@ export function createClaudeController({
     active.closed.then(() => {
       if (host === active && generation === activeGeneration) {
         settleNativeChildrenAfterHostClose();
+        // open() still owns status here; it must not report ready for a host that already exited.
+        if (opening && !closing && !stopping && !restartingHost) hostClosedDuringOpen = active;
         if (!closing && !opening && !stopping && !restartingHost) {
           if (state.busy) state.progress.compactionsComplete = false;
           markActiveAssistantPartial();
@@ -1056,7 +1062,7 @@ export function createClaudeController({
       }
     } else if (message?.type === 'system' && message?.subtype === 'status') {
       // A native background completion can start a follow-up model turn.
-      if (message.status === 'requesting' && !stopping && !closing) {
+      if (message.status === 'requesting' && !stopping && !closing && !stopUnconfirmed) {
         const wasBusy = state.busy;
         state.busy = true;
         state.status = 'working';
@@ -1177,7 +1183,7 @@ export function createClaudeController({
         }
       }
     } else if (message?.type === 'result') {
-      if (stopping || state.status === 'interrupted') {
+      if (stopping || stopUnconfirmed || state.status === 'interrupted') {
         changed();
         return;
       }
@@ -1421,6 +1427,7 @@ export function createClaudeController({
       }
       if (goalStopError) throw goalStopError;
       markActiveAssistantPartial();
+      stopUnconfirmed = false;
       state.busy = false;
       state.status = 'interrupted';
       state.error = null;
@@ -1428,6 +1435,7 @@ export function createClaudeController({
       return {stopRequested: true};
     } catch (error) {
       markActiveAssistantPartial();
+      stopUnconfirmed = true;
       state.status = 'uncertain';
       state.busy = false;
       state.error = `已要求停止，但狀態未確認：${error.message}`;
@@ -1438,24 +1446,30 @@ export function createClaudeController({
     }
   }
 
-  const persistAccessMode = async mode => {
+  // Read-modify-write inside the persist queue, so a rename/archive queued meanwhile is not overwritten.
+  const persistAccessMode = mode => {
     state.accessMode = mode;
-    const record = await currentRecord();
-    if (record) {
+    const threadId = state.threadId,
+      model = state.model,
+      policy = clone(state.workerPolicy),
+      effort = state.effort;
+    return enqueuePersist(async () => {
+      const record = (await persisted(threadId)).find(item => item.threadId === threadId);
+      if (!record) return;
       record.accessMode = mode;
       await saveRecord(root, record);
       await saveMainSession(root, {
-        threadId: state.threadId,
-        model: state.model,
+        threadId,
+        model,
         title: record.title,
         archived: record.archived,
         pinned: record.pinned,
         workspace: record.workspace,
-        workerPolicy: state.workerPolicy,
+        workerPolicy: policy,
         accessMode: mode,
-        effort: state.effort
+        effort
       });
-    }
+    });
   };
 
   return {
@@ -1487,8 +1501,15 @@ export function createClaudeController({
         throw Error('指定推理程度目前不可用。');
       if (model !== state.model) {
         await flushPersist();
-        await host?.close();
-        host = null;
+        // A deliberate restart, not a crash: keep watchHost from reporting "Claude Code 已中斷".
+        const active = host;
+        restartingHost = true;
+        try {
+          await active?.close();
+        } finally {
+          restartingHost = false;
+        }
+        if (host === active) host = null;
         state.model = model;
         state.modelDisplayName = selected.displayName;
       }
@@ -1626,6 +1647,11 @@ export function createClaudeController({
       if (archived !== undefined && typeof archived !== 'boolean') throw new Error('封存狀態無效。');
       if (pinned !== undefined && typeof pinned !== 'boolean') throw new Error('釘選狀態無效。');
       let updated;
+      // saveCurrent() snapshots state.title when it is queued; update it before queuing this rename so a
+      // background save queued behind it cannot write the old title back.
+      const current = threadId === state.threadId && title !== undefined,
+        previousTitle = state.title;
+      if (current) state.title = title.trim();
       await enqueuePersist(async () => {
         const record = (await persisted(threadId)).find(item => item.threadId === threadId);
         if (!record) throw new Error('K Claude 對話不存在。');
@@ -1647,6 +1673,9 @@ export function createClaudeController({
           accessMode: updated.accessMode,
           effort: updated.effort
         });
+      }).catch(error => {
+        if (current && state.title === title.trim()) state.title = previousTitle;
+        throw error;
       });
       if (threadId === state.threadId) {
         state.title = updated.title;
@@ -1669,6 +1698,8 @@ export function createClaudeController({
         previousCompactionIds = new Set(compactionIds);
       activity.clear();
       opening = true;
+      stopUnconfirmed = false;
+      hostClosedDuringOpen = null;
       state.status = 'connecting';
       state.error = null;
       changed();
@@ -1827,6 +1858,8 @@ export function createClaudeController({
         if (saved?.nativeStarted && state.capabilities.goal && ['active', 'unknown'].includes(state.goal?.status))
           await goalCommand().catch(() => {});
         signal.throwIfAborted();
+        if (hostClosedDuringOpen && hostClosedDuringOpen === host)
+          throw Error('Claude Code 在開啟過程中已結束；尚未就緒，請重新開啟對話。');
         state.status = 'ready';
         changed();
         return {threadId: state.threadId};
@@ -1908,6 +1941,7 @@ export function createClaudeController({
         cancelGeminiHandoff();
         if (state.goal?.status === 'active') geminiLiveGoal = clone(state.goal);
         let hostAtSend = host;
+        const statusBeforeSend = state.status;
         state.busy = true;
         activity.begin();
         state.status = 'working';
@@ -1997,17 +2031,34 @@ export function createClaudeController({
           try {
             await hostAtSend.start(content, {uuid: sentMessage.id});
           } catch (error) {
-            state.status = 'uncertain';
-            state.error = '訊息送出狀態未確認，未自動重送。請先重開原對話查明。';
+            if (error.notSent === true) {
+              // The host had exited or was not ready: nothing was written, so this is not an unknown send.
+              attempted = false;
+              state.busy = false;
+              state.status = 'offline';
+              state.error = 'Claude Code 已結束；訊息未送出，請重新開啟對話。';
+            } else {
+              state.status = 'uncertain';
+              state.error = '訊息送出狀態未確認，未自動重送。請先重開原對話查明。';
+            }
             throw error;
           }
           if (!state.title) state.title = (text.trim() || attachmentRecords[0]?.name || '').slice(0, 40);
           await saveCurrent(sentMessage.createdAt);
           return {sent: true};
         } catch (error) {
+          if (!attempted) {
+            // Nothing reached Claude Code: drop the optimistic message instead of persisting a phantom 'queued'
+            // entry. The composer keeps the draft because the error is marked notSent.
+            const index = state.messages.indexOf(sentMessage);
+            if (index >= 0) {
+              state.messages.splice(index, 1);
+              void saveCurrent().catch(() => {});
+            }
+          }
           if (!['uncertain', 'offline'].includes(state.status)) {
             state.busy = false;
-            state.status = 'ready';
+            state.status = attempted ? 'ready' : statusBeforeSend;
           }
           throw error;
         } finally {
@@ -2214,6 +2265,11 @@ export function createClaudeController({
       clearQuestions();
       let safe = false;
       try {
+        // As in stop(): an open still awaiting its host would otherwise attach a live host after close().
+        if (opening && openAbort) {
+          openAbort.abort(new DOMException('K 正在關閉。', 'AbortError'));
+          await openDone;
+        }
         await flushPersist();
         await closeWorkers();
         if (host) {
