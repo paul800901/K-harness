@@ -1,6 +1,10 @@
 # 帳號觀察／事件等待與聊天效能修正（2026-10-13）
 
-## 目前邊界
+## 目前狀態
+
+本人後續明確「已關 更新」，本批已於 **2026-10-13 11:49（臺灣）**正式套用 `a95fd65b1ae140c6b9220272dab68bbfbffc5370`。安裝來源、退版、既有資料及正式介面讀回完成後正常關閉；沒有接續翻譯房。下方候選階段敘述保留當時邊界，部署結果見文末。
+
+## 候選階段邊界（更新前紀錄）
 
 本輪本人要求「把整理出來這些修好，然後放著」，等本人停止 K 後再授權更新。**本批僅候選，未部署、未停止或重啟正式 K、未對真實翻譯房送訊息／派工／取消／重派、未切帳或刷新官方額度。** 原工作可以繼續執行。
 
@@ -99,3 +103,30 @@ Luna 提出的等待競態、caller 接線、前端回歸已用上述證據檢�
 補審涵蓋的歷史產品批次：`2a18509`（429／response-first）、`4595e96`／`f5ef4ab`（fresh model／收尾交接）、`ee8992d`／`a0662c5`（長訊息／切模提示／晚到工人恢復）、`9550ade`（四房排程）。第一輪沒有逐份讀完所有舊文件，`chat-source-guard-probe` 僅看差異標頭；實際審查深度見原報告，不把「補審範圍」說成所有歷史行為實測通過。
 
 **最終狀態：候選修正、相稱驗證及真正 Opus 5.5 兩輪複查完成；停止於待本人關 K 後再授權更新。未部署、未重啟、未對原翻譯房送訊息／重派、未 push／更新東區／排程上線。**
+
+## 本人授權後正式更新與讀回（2026-10-13）
+
+本人明確「已關 更新」後，先確認 K 自有主程式／工人與 47831、5199 listener 均不存在；Chrome 原生訊息 host 仍在，並非 K 執行工作，原樣保留。未強制關閉任何程序、未切帳、未操作正式翻譯房。
+
+### 封裝與驗證
+
+- 固定產品來源 `a95fd65b1ae140c6b9220272dab68bbfbffc5370`，705 個追蹤檔逐 bytes 與 Git 比對零差異。既有相依版本未變，使用原正式相依，沒有安裝套件、改全域設定或供應商核心。
+- 三項建置（UI／擴充／啟動器）成功。封裝第一輪完整測試 1588/1589：`fresh native selection: effort only changes child` 在測試用收據落盤時遭 Windows `EPERM` 拒絕 rename，因此狀態保留 uncertain，而非 sent；沒有自動重建或重送。
+- 失敗原件、暫存收據及日誌保留。造成 EPERM 的持有程序／底層原因未證，沒有宣稱已修復，也沒有更改程式、增加重试或放寬斷言來通過。相同來源的 17 項 fresh-target 測試連續三次全過，再重跑完整封裝 **1589/1589，0 fail／cancelled／skipped，151.788 秒**；三尺寸 long-user UI probe 3/3。兩次完整測試分開保存，沒有覆蓋失敗紀錄。
+- 採用上述真正 Opus 5.5 兩輪複查及主代理獨立驗收，不把另一模型或舊額度不足記錄當末審。部署前後所有 705 個安裝來源再核對一致；正式安裝路徑聚焦調度／事件等待／goal recovery／收據測試 **126/126，0 fail／cancelled／skipped，55.982 秒**。
+
+### 正式套用與保留
+
+- 只執行一次程式交易式切換，正式 `9550ade` → `a95fd65`。`D:/K-harness/.local/runtime.json` 版本及退版指標讀回一致，其餘欄位不變。
+- 可退回程式位於 `D:/K-harness/.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791863397103`。舊入口／啟動器 hash、旧 runtime 關鍵來源與原版本一致；新入口及桌面啟動器與封裝一致。桌面既有 `K HARNESS.lnk` 仍指向原啟動器。這是程式退版，不是對話資料備份或還原。
+- **79 份聊天室 metadata 完整 hash 不變**；專案、核心選擇、Codex 設定、Google 操作設定及既有資料目錄位置／清單保留。未搬動任何登入資料。
+- 真正啟動正式 owner 做介面讀回時，既有當前 Gemini 第 3 帳僅 `auth.checkedAt`、`quota.checkedAt`、`lastQueryAt` 三個正常查詢時間更新；逐欄核對帳號清單／activeAccountId／額度數值／reset 等其餘內容不變。没有換帳、逐帳查額度或改計費。
+
+### 正式讀回與停止
+
+- 正式 HTTP health 200，未授權 state 403；實際送出的 JS／CSS hash 等於安裝檔。1440×960 與 390×844 headless 正式介面載入成功，31 個可列對話，截圖由主代理目視核對。
+- 兩尺寸均維持 `threadId=null`、`busy=false`，0 工作 POST、0 頁面錯誤；沒有開啟真翻譯房、派工、恢復目標或重播未知工作。手機尺寸核對的是正式頁面／側欄，不是實體手機或翻譯聊天長跑。
+- 讀回完成後正常關閉 owner，服務不可連、K 自有程序與 listener 再確認為空；保留原 Chrome host。**K 維持關閉，下一次從原桌面捷徑開啟即使用新版。**
+- 未 push、未更新東區、未排程、未續跑原四房。真實四房長任務、真帳號輪換與實體手機仍待日常驗證；不把隔離效能改善當成正式整機卡頓全解，也不承諾供應商故障不再發生。
+
+證據目錄：`D:/K-harness/.runtime/scheduler-performance-deploy-20261013/`，包括 `candidate.json`、`validation.json`、兩輪完整測試日誌、`activation.json`、`preserved.json`、`formal-readback.json`、雙尺寸截圖、`post-readback-preservation.json`、`stopped-after-readback.json`、`launcher-rollback-readback.json`。最新狀態為**已正式更新、讀回完成、K 已關閉**，取代上文候選待授權狀態。
