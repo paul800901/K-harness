@@ -9,12 +9,13 @@ const validId=id=>typeof id==='string'&&/^[a-f0-9]{32}$/u.test(id);
 
 // One native login is shared by all Gemini processes. Settings and project data
 // never enter this registry; secrets stay behind the Windows vault adapter.
-export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.now,onChange=()=>{}}){
+export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.now,onChange=()=>{},setTimer=setTimeout,clearTimer=clearTimeout}){
  const file=path.join(root,'.runtime','gemini-accounts.json');
  let data={version:1,activeAccountId:null,accounts:[],loginPending:null,uncertain:false};
  let changing=false,running=0,refreshPending=null,acquiring=null,recoveryAttemptedAt=null;
  const handoffWaiters=new Map();
- let handoffPending=null;
+ let handoffPending=null,resetTimer=null;
+ const clearReset=()=>{if(resetTimer!==null){clearTimer(resetTimer);resetTimer=null;}};
  let loading;
  const load=()=>loading??=(async()=>{try{data=JSON.parse(await readFile(file,'utf8'));if(data.version!==1||!Array.isArray(data.accounts)||data.accounts.some(row=>!validId(row.id)||typeof row.email!=='string'))throw Error('Gemini 帳號紀錄格式不符，未覆寫。');}catch(error){if(error.code!=='ENOENT')throw error;}if(data.quotaRefreshOriginalId)data.uncertain=true;})();
  const save=async()=>{await atomicWrite(file,JSON.stringify(data,null,2));onChange();};
@@ -25,7 +26,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
  const cachedExhausted=row=>quotaZeroUntil(row?.quota,clock())!==null;
  const exhausted=cachedExhausted;
  // Derive the all-exhausted episode from successful observations, not a new
- // timer or persisted flag. A failed recovery breaks the complete observation.
+ // persisted flag. A failed recovery breaks the complete observation.
  const allRecheckAt=()=>{
   if(!data.accounts.length)return null;
   const latestObserved=Math.max(...data.accounts.map(row=>Date.parse(row.quota?.checkedAt??row.lastQueryAt??'')));
@@ -54,7 +55,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   await load();if(waitForRefresh&&refreshPending)await refreshPending.catch(()=>{});
   if(running)throw Error('Gemini 正在工作或執行原生查詢，本次帳號操作未執行；這不是額度耗盡。請等全部 Gemini 工作結束後再操作。');
   if(changing)throw Error('另一個 Gemini 帳號操作正在進行，本次未執行；這不是額度耗盡，請等該操作結束。');
-  changing=true;onChange();let result;try{result=await fn();}finally{changing=false;onChange();}
+  changing=true;onChange();let result;try{result=await fn();}finally{changing=false;onChange();if(handoffWaiters.size){clearReset();queueMicrotask(()=>void drainHandoff());}}
   return result?.accounts?{...result,busy:running>0||data.uncertain}:result;
  }
  function requireIdleLogin(){if(data.loginPending)throw Error('請先完成或取消另一帳號的登入。');if(data.uncertain)throw Error('Gemini 程序停止尚未確認，不可切換或再派工作。');}
@@ -124,7 +125,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
     if(!available(chosen))throw Error('下一個 Gemini 帳號尚無官方目前額度資料，未開始工作；請刷新確認後再試。');
     return chosen;
    }
-   throw Error(exhaustedMessage());
+   throw Object.assign(Error(exhaustedMessage()),{code:'GEMINI_ACCOUNTS_EXHAUSTED'});
   }catch(error){
    if(attempted.size){
     try{
@@ -141,13 +142,18 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   const rooms=new Map();
   for(const [key,row] of handoffWaiters){
    if(!waiterCurrent(row)){handoffWaiters.delete(key);continue;}
-   const room=rooms.get(row.parentId)??{parentId:row.parentId,requestIds:[],notStartedIds:[],notify:row.onHandoff};
-   room.requestIds.push(row.requestId);if(row.notStarted)room.notStartedIds.push(row.requestId);rooms.set(row.parentId,room);
+   const room=rooms.get(row.parentId)??{parentId:row.parentId,requestIds:[],queryIds:[],notStartedIds:[],notify:row.onHandoff};
+   if(row.queryOnly)room.queryIds.push(row.requestId);
+   else {room.requestIds.push(row.requestId);if(row.notStarted)room.notStartedIds.push(row.requestId);}
+   rooms.set(row.parentId,room);
   }
-  if(status!=='waiting')handoffWaiters.clear();
+  if(status!=='waiting'){handoffWaiters.clear();clearReset();}
   for(const {notify,notStartedIds,...room} of rooms.values())try{
-   if(status==='positive')notify({...room,requestIds:notStartedIds.length?notStartedIds:room.requestIds,status:notStartedIds.length?'ready':'blocked',...detail,switched:false,
-    reason:notStartedIds.length?'官方確認目前帳號仍有可用額度，未切換。只核對這些未送出工單，以新 ID 接剩餘；已執行而失敗工單不屬於本次接手，不重派或恢復。':'官方仍有額度；可能是速率限制，未換帳號，已執行失敗工單未重派或恢復。'});
+   if(status==='positive'){
+    const startedIds=room.requestIds.filter(id=>!notStartedIds.includes(id));
+    if(startedIds.length)notify({...room,requestIds:startedIds,queryIds:[],status:'blocked',...detail,switched:false,reason:'官方仍有額度；可能是速率限制，未換帳號，已執行失敗工單未重派或恢復。'});
+    if(notStartedIds.length||room.queryIds.length)notify({...room,requestIds:notStartedIds,status:'ready',...detail,switched:false,reason:'官方確認目前共用帳號仍有可用額度，本次未切換。查詢已完成；只核對這些未送出工單，以新 ID 接剩餘。已執行而失敗工單不屬於本次接手，不重派或恢復。'});
+   }
    else notify({...room,status,...detail});
   }catch{/* notifications do not replay work or undo an account switch */}
  }
@@ -155,16 +161,17 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
   // A refused job never acquired an account or history. If its catch runs after
   // another drain finished, attach it to the now-current shared account.
   if(notStarted)accountId=data.activeAccountId??accountId;
-  if(!accountId||typeof options.parentId!=='string'||typeof options.requestId!=='string'||typeof options.onHandoff!=='function'||!waiterCurrent(options))return;
+  if(typeof options.parentId!=='string'||typeof options.requestId!=='string'||typeof options.onHandoff!=='function'||!waiterCurrent(options))return false;
   const key=JSON.stringify([options.parentId,options.requestId]);
-  if(handoffWaiters.has(key))return;
+  if(handoffWaiters.has(key))return true;
   handoffWaiters.set(key,{...options,accountId,notStarted});
   publishHandoff('waiting',{accountId,reason:'等待既有 Gemini 工作自然結束，再查核官方額度；尚未確認耗盡，未換帳號。'});
-  if(!running&&!handoffPending)void drainHandoff();
+  if(!running&&!changing&&!acquiring&&!handoffPending)void drainHandoff();
+  return true;
  }
  async function drainHandoff(){
   if(handoffPending)return handoffPending;
-  if(running||!handoffWaiters.size)return;
+  if(running||changing||resetTimer!==null||!handoffWaiters.size)return;
   // Reserve before the first await so no new Flash can slip into the drain.
   handoffPending=(async()=>{
    while(acquiring)await acquiring;
@@ -174,11 +181,12 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    let original,ownsChange=false;
    try{
     requireIdleLogin();if(changing||running)throw Error('Gemini 狀態尚未閒置，未交接帳號。');
+    const recovered=allRecheckDue();if(recovered)await api.refreshAll({force:false});
     assertEnabled();changing=true;ownsChange=true;onChange();await vault.assertIdle();
     original=await current();
-    if(!original||[...handoffWaiters.values()].some(row=>row.accountId!==original.id))throw Error('等候來源帳號與目前登入不符，未切換。');
+    if(!original||[...handoffWaiters.values()].some(row=>!row.notStarted&&!row.queryOnly&&row.accountId!==original.id))throw Error('等候來源帳號與目前登入不符，未切換。');
     // Reuse the release-time official check; never infer quota from a rate error.
-    if(!quotaCurrent(original)||!officialZero(original))await query(original);
+    if(!quotaCurrent(original)||!recovered&&!officialZero(original))await query(original);
     for(const [key,row] of handoffWaiters)if(!waiterCurrent(row))handoffWaiters.delete(key);
     if(!handoffWaiters.size)return;
     if(original.auth?.status!=='authenticated')throw Error(authFailure(original));
@@ -186,21 +194,34 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
      if(available(original))return {status:'positive',detail:{accountId:original.id}};
      throw Error('官方額度未確認歸零，未換帳號。');
     }
-    const chosen=await nextWorkerAccount(original,{current:()=>[...handoffWaiters.values()].some(waiterCurrent)});
+    const chosen=await nextWorkerAccount(original,{recovered,current:()=>[...handoffWaiters.values()].some(waiterCurrent)});
     return {status:'ready',detail:{accountId:chosen.id,switched:true,reason:'官方確認原帳號額度耗盡，已按保存順序換到有可用額度的帳號。先核對成果，以新工單接剩餘；原工單未重播。'}};
-   }catch(error){return {status:'blocked',detail:{accountId:data.uncertain?null:data.activeAccountId,reason:error.message,nextQueryAt:allRecheckAt()}};}
+   }catch(error){const nextQueryAt=allRecheckAt(),waiting=error.code==='GEMINI_ACCOUNTS_EXHAUSTED'&&!data.uncertain&&nextQueryAt>clock()&&data.accounts.every(cachedExhausted);return {status:waiting?'waiting':'blocked',detail:{accountId:data.uncertain?null:data.activeAccountId,reason:error.message,nextQueryAt}};}
    finally{if(ownsChange){changing=false;onChange();}}
   })();
   let result;try{result=await handoffPending;}finally{handoffPending=null;}
   // Clear the account lock before calling the room. A ready callback may enqueue
   // a new, explicitly reviewed job; it must not re-enter its own drain promise.
-  if(result)publishHandoff(result.status,result.detail);
+  if(result){publishHandoff(result.status,result.detail);if(result.status==='waiting'&&result.detail.nextQueryAt>clock()&&handoffWaiters.size){clearReset();resetTimer=setTimer(()=>{resetTimer=null;void drainHandoff();},Math.min(2147483647,result.detail.nextQueryAt-clock()));resetTimer?.unref?.();}}
   else if(!running&&handoffWaiters.size)void drainHandoff();
  }
  const api={
-  cancelWorkerHandoff({parentId,requestId}={}){for(const [key,row] of handoffWaiters)if(row.parentId===parentId&&(requestId===undefined||row.requestId===requestId))handoffWaiters.delete(key);},
+  cancelWorkerHandoff({parentId,requestId}={}){for(const [key,row] of handoffWaiters)if(row.parentId===parentId&&(requestId===undefined||row.requestId===requestId))handoffWaiters.delete(key);if(!handoffWaiters.size)clearReset();},
   get cachedUsage(){const rows=data.accounts.map(publicRow),active=rows.find(row=>row.id===data.activeAccountId);return rows.length?{...(active?.quota??unknown()),accountId:active?.id??null,accountEmail:active?.email??null,accounts:rows}:null;},
   async list(){await load();return snapshot();},
+  async observe(options={}){
+   await load();
+   const value=()=>({...snapshot(),dispatchAccountId:data.activeAccountId,quotaEvidence:'last-official-observation',
+    instruction:'一般新工單省略 accountId，由 K 按目前共用帳號及既有順序核對派工；不要為每個工單刷新全部帳號。快取不是目前額度保證。'});
+   if(!data.accounts.length||data.loginPending||data.uncertain||!enabled)return {...value(),scheduling:{status:'blocked',notificationRegistered:false,reason:data.uncertain?'程序停止或身分未確認':data.loginPending?'等待本人完成登入':!enabled?'帳號管理未啟用':'目前沒有已保存帳號'}};
+   const row=find(data.activeAccountId);
+   // Observing a usable shared account never rotates through unrelated accounts.
+   // Busy is not exhaustion. Startup still validates identity and quota itself.
+   if(!changing&&!refreshPending&&!handoffPending&&!handoffWaiters.size&&row?.auth?.status==='authenticated'&&available(row))return {...value(),scheduling:{status:'ready',notificationRegistered:false}};
+   const registered=registerHandoff({...options,queryOnly:true},data.activeAccountId,{notStarted:true});
+   return {...value(),scheduling:{status:registered?'waiting':'blocked',notificationRegistered:registered,waitId:registered?options.requestId:null,
+    reason:registered?'K 已接管等待，現有工作自然結束後核對目前帳號並通知本房。可结束本回合；不要輪詢、重派或僅因等待標為 blocked。':'查詢沒有有效來源，未登記自動接續。'}};
+  },
   async inspect(fn){await load();if(refreshPending)await refreshPending;requireIdleLogin();if(changing)throw Error('Gemini 正在處理帳號操作。');running++;try{return await fn();}finally{running--;onChange();if(!running&&handoffWaiters.size)await drainHandoff();}},
   async capture(){assertEnabled();return exclusive(async()=>{requireIdleLogin();const row=remember(await vault.capture());await save();await query(row);return snapshot();});},
   async startLogin(){assertEnabled();return exclusive(async()=>{
@@ -293,7 +314,7 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    if(worker&&(handoffWaiters.size||handoffPending))throw Object.assign(Error('Gemini 正在等既有工作自然結束並查核帳號；未送出本工作。就緒時 K 會通知，勿立即重派。'),{code:'GEMINI_HANDOFF_WAIT',accountId:data.activeAccountId});
    const recovered=!running&&allRecheckDue();
    if(recovered)await api.refreshAll({force:false});
-   if(changing)throw Error('Gemini 正在切換帳號或登入，未開始工作。');
+   if(changing)throw Object.assign(Error('Gemini 正在切換帳號或登入，未開始工作。'),worker?{code:'GEMINI_HANDOFF_WAIT',accountId:data.activeAccountId}:{});
    changing=true;
    let chosen=null;
    try{
@@ -312,7 +333,10 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
        if(running)throw Object.assign(Error('目前 Gemini 工作尚未結束，不能交接帳號；未送出本工作。就緒時 K 會通知，勿立即重派。'),{code:'GEMINI_HANDOFF_WAIT',accountId:chosen.id});
        chosen=await nextWorkerAccount(chosen,{recovered});target=chosen.id;
       }else if(accountId&&accountId!==chosen.id){
-       throw Error('目前 Gemini 帳號尚未確認額度耗盡，工人不得跳過順序切換帳號；未送出本工作。');
+       // Keep an explicit account expectation intact. Do not switch backwards or
+       // silently run on another account: report the unstarted job through the
+       // same owned scheduling path and supply the current account on readiness.
+       throw Object.assign(Error('工單指定的帳號與目前共用帳號不同；本工作未送出，也未切回舊帳號。K 已接管帳號核對，就緒後通知本房；勿輪詢或立即重派。'),{code:'GEMINI_HANDOFF_WAIT',accountId:chosen.id});
       }
      }
      if(target!==chosen?.id){
@@ -341,10 +365,10 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
     onChange();if(!running&&handoffWaiters.size)await drainHandoff();
     else if(refresh&&!running&&!data.uncertain&&chosen)try{await api.refresh({force:false});}catch{/* no replay; next status read shows cached quota */}
    }};
-   }finally{acquiring=null;unlock();}
+   }finally{acquiring=null;unlock();if(!running&&handoffWaiters.size)queueMicrotask(()=>void drainHandoff());}
   },
   async run(options,fn){
-   let lease;try{lease=await api.acquire(options);}catch(error){if(options.worker&&error.code==='GEMINI_HANDOFF_WAIT')registerHandoff(options,error.accountId,{notStarted:true});throw error;}
+   let lease;try{lease=await api.acquire(options);}catch(error){if(options.worker&&['GEMINI_HANDOFF_WAIT','GEMINI_ACCOUNTS_EXHAUSTED'].includes(error.code)){const registered=registerHandoff(options,error.accountId??data.activeAccountId,{notStarted:true});error.scheduling={status:registered?'waiting':'blocked',notificationRegistered:registered,reason:error.message};error.dispatch='not-started';}throw error;}
    let outcome;try{outcome=await fn(lease);return {...outcome,accountId:lease.accountId,accountEmail:lease.accountEmail};}
    catch(error){if(error.settled===false)outcome={settled:false};throw error;}
    finally{if(options.worker&&outcome?.status==='failed'&&outcome.settled===true&&outcome.quotaCheckNeeded===true)registerHandoff(options,lease.accountId);await lease.release({settled:outcome?.settled!==false,refresh:true});}

@@ -9,7 +9,7 @@ const base=path.resolve('.runtime/tests');
 const A='a'.repeat(32),B='b'.repeat(32),C='c'.repeat(32),D='d'.repeat(32),E='e'.repeat(32);
 const email='same@example.test';
 const future=Date.parse('2026-10-10T00:00:00Z')/1000;
-async function fixture({enabled=true,identity=null,statusFor=()=>authStatus(),root,clock=()=>Date.parse('2026-10-03T12:00:00Z')}={}){
+async function fixture({enabled=true,identity=null,statusFor=()=>authStatus(),root,clock=()=>Date.parse('2026-10-03T12:00:00Z'),setTimer,clearTimer}={}){
  await mkdir(base,{recursive:true});root??=await mkdtemp(path.join(base,'gemini-accounts-'));
  let current=identity?{accountId:identity.accountId,email:identity.email??email}:null;
  const calls={capture:0,activate:[],activateOptions:[],prepareLogin:0,assertIdle:0,status:0,start:0};
@@ -22,11 +22,62 @@ async function fixture({enabled=true,identity=null,statusFor=()=>authStatus(),ro
   assertIdle:async()=>{calls.assertIdle++;if(!idle)throw Error('fixture busy');return true;},
  };
  const login={status:async()=>{calls.status++;return statusFor(current,calls.status);},start:async()=>{calls.start++;}};
- return {root,calls,vault,login,get current(){return current?{...current}:null;},set current(value){current=value?{...value}:null;},set idle(v){idle=v;},accounts:createGeminiAccounts({root,login,vault,enabled,clock})};
+ return {root,calls,vault,login,get current(){return current?{...current}:null;},set current(value){current=value?{...value}:null;},set idle(v){idle=v;},accounts:createGeminiAccounts({root,login,vault,enabled,clock,setTimer,clearTimer})};
 }
 function authStatus(quota={status:'available',windows:[{remainingPercent:80,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'}){
  return {auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota};
 }
+
+const eventually=async check=>{const end=Date.now()+2000;while(!check()){if(Date.now()>end)throw Error('scheduler event missing');await new Promise(r=>setImmediate(r));}};
+test('passive account observation while busy uses dated evidence without switching or querying',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();const lease=await f.accounts.acquire(),before=structuredClone(f.calls);
+ try{for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:()=>assert.fail('unneeded notification')});assert.equal(info.scheduling.status,'ready');assert.equal(info.quotaEvidence,'last-official-observation');}assert.deepEqual(f.calls,before);}finally{await lease.release();}
+});
+test('stale observation is one owned wait; last release checks once and notifies without another model query',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const f=await fixture({identity:{accountId:A,email},clock:()=>now});await f.accounts.capture();const lease=await f.accounts.acquire(),before=f.calls.status,events=[];now+=120000;
+ try{
+  for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});assert.equal(info.scheduling.status,'waiting');assert.equal(info.scheduling.notificationRegistered,true);}
+  assert.equal(f.calls.status,before);assert.equal(events.length,1);await lease.release();
+  assert.equal(f.calls.status,before+1);assert.deepEqual(f.calls.activate,[]);assert.equal(events.length,2);assert.equal(events[1].status,'ready');assert.deepEqual(events[1].requestIds,[]);assert.deepEqual(events[1].queryIds,['query']);
+ }finally{await lease.release();}
+});
+test('worker admission can await an already in-flight refresh directly without creating a model notification',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();let release,entered;const begun=new Promise(r=>entered=r);f.login.status=()=>{entered();return new Promise(r=>release=()=>r(authStatus()));};
+ const refresh=f.accounts.refresh();await begun; // refreshPending joins are allowed to await directly
+ const events=[];const dispatch=f.accounts.run({worker:true,parentId:'room',requestId:'job',onHandoff:e=>events.push(e)},async()=>({status:'completed',settled:true}));
+ release();f.login.status=async()=>authStatus();await refresh;assert.equal((await dispatch).status,'completed');assert.deepEqual(events,[]);
+});
+test('official all-zero reset is waited by K timer, repeated observations neither poll nor replay, then notify each room',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),positive=false;const reset=now+120000,timers=[],events=[];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,setTimer:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimer:t=>{t.cancelled=true;},statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:positive?70:0,resetsAt:reset/1000}]})});
+ for(const id of [A,B]){f.current={accountId:id,email};await f.accounts.capture();}const count=f.calls.status;
+ await f.accounts.observe({parentId:'room-1',requestId:'query-1',onHandoff:e=>events.push(e)});await eventually(()=>timers.length===1);
+ for(let i=0;i<18;i++)await f.accounts.observe({parentId:'room-2',requestId:'query-2',onHandoff:e=>events.push(e)});
+ await new Promise(r=>setImmediate(r));assert.equal(f.calls.status,count);assert.equal(timers.length,1);assert.equal(timers[0].ms,120000);
+ positive=true;now=reset;timers[0].fn();await eventually(()=>events.filter(e=>e.status==='ready').length===2);
+ assert.equal(f.calls.status,count+2,'official reset recovery checks both accounts once');assert(events.filter(e=>e.status==='ready').every(e=>e.requestIds.length===0));
+ assert.equal((await f.accounts.list()).busy,false);
+});
+test('last stopped account observer cancels reset timer; startup does not resurrect waits',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const timers=[],events=[];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,setTimer:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimer:t=>{t.cancelled=true;},statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:(now+120000)/1000}]})});
+ await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>timers.length===1);
+ f.accounts.cancelWorkerHandoff({parentId:'room'});assert.equal(timers[0].cancelled,true);const count=f.calls.status;now+=120000;timers[0].fn();await new Promise(r=>setImmediate(r));assert.equal(f.calls.status,count);assert.equal(events.some(e=>e.status==='ready'),false);
+ const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true,clock:()=>now});await restarted.list();assert.equal(f.calls.status,count);
+});
+
+test('explicit official refresh supersedes an old reset deadline and wakes its existing observer',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z'),positive=false;const timers=[],events=[];
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,setTimer:(fn,ms)=>{const t={fn,ms};timers.push(t);return t;},clearTimer:t=>{t.cancelled=true;},statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:positive?70:0,resetsAt:(now+120000)/1000}]})});
+ await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>timers.length===1);
+ positive=true;await f.accounts.refresh();await eventually(()=>events.some(e=>e.status==='ready'));
+ assert.equal(timers[0].cancelled,true);assert.equal(events.filter(e=>e.status==='ready').length,1);assert.deepEqual(f.calls.activate,[]);
+});
+test('unknown quota or missing reset stays blocked, never assumes a timer or account rotation',async t=>{
+ for(const quota of [{status:'unavailable',windows:[]},{status:'ready',windows:[{key:'five_hour',remainingPercent:0}]}])await t.test(quota.status,async()=>{
+  const timers=[],events=[],f=await fixture({identity:{accountId:A,email},setTimer:()=>timers.push(true),statusFor:()=>authStatus(quota)});await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>events.some(e=>e.status==='blocked'));assert.deepEqual(timers,[]);assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(e=>e.status==='ready'),false);
+ });
+});
 
 test('active work refusal is not reported as login or exhausted quota',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
@@ -833,11 +884,11 @@ test('official positive quota releases only not-started rooms on the same accoun
  assert.equal(events.find(event=>event.parentId==='rate-room'&&event.status==='blocked')?.accountId,A);assert.deepEqual(f.calls.activate,[]);
 });
 
-test('mixed same-room rate failure and unstarted work receive one same-account ready for unstarted IDs only',async()=>{
+test('mixed same-room positive quota resolves both wait scopes but only unstarted IDs are ready',async()=>{
  const f=await handoffFixture(()=>officialBalance(80)),active=await f.accounts.acquire(),events=[];
  await f.accounts.run(handoffOptions('mixed','rate-failed',events),async()=>limitFailure);
  await assert.rejects(f.accounts.run(handoffOptions('mixed','unstarted',events),async()=>{throw Error('must not start');}),/未送出/);
- await active.release();const terminal=events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,1);assert.equal(terminal[0].status,'ready');assert.equal(terminal[0].switched,false);assert.deepEqual(terminal[0].requestIds,['unstarted']);assert.match(terminal[0].reason,/失敗工單.*不|不.*失敗工單/);assert.deepEqual(f.calls.activate,[]);
+ await active.release();const terminal=events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,2);assert.equal(terminal[0].status,'blocked');assert.deepEqual(terminal[0].requestIds,['rate-failed']);assert.equal(terminal[1].status,'ready');assert.equal(terminal[1].switched,false);assert.deepEqual(terminal[1].requestIds,['unstarted']);assert.match(terminal[1].reason,/失敗工單.*不|不.*失敗工單/);assert.deepEqual(f.calls.activate,[]);
 });
 
 test('a rejected acquisition registered after the last release still starts one drain without a timer',async()=>{

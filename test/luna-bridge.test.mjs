@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {createLunaBridge,lunaResult} from '../src/luna-bridge.mjs';
 import {approvalRequest} from '../src/desktop-permissions.mjs';
+import fs from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
+import {EventEmitter} from 'node:events';
+import {PassThrough} from 'node:stream';
+import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
+import {createGeminiWorker} from '../src/gemini-worker.mjs';
+import {mergeGeminiHandoff,geminiAccountWait} from '../src/gemini-handoff.mjs';
 
 const root = path.resolve('.runtime','luna-bridge-tests',randomUUID());
 const workspace = path.join(root,'workspace');
@@ -514,7 +521,55 @@ test('overlapping approvals remain suspended until the final decision and restar
 });
 
 
-test('main-agent Gemini account lookup performs live all-account query, never cached list',async()=>{
- let queries=0;const bridge=await createLunaBridge({root,workspace,parentId:'quota-query-parent',geminiOptions:{accounts:{list:()=>{throw Error('cached list forbidden');},refreshAll:async()=>{queries++;return {quotaCheck:{allExhausted:false},accounts:[]};}}}});
- try{assert.equal((await bridge.accounts()).quotaCheck.allExhausted,false);assert.equal(queries,1);}finally{await bridge.close();}
+test('main-agent account observation registers one owned wait without all-account refresh',async()=>{
+ const calls=[],events=[];let cancelled=0;
+ const bridge=await createLunaBridge({root,workspace,parentId:'quota-query-parent',geminiOptions:{accounts:{
+  refreshAll:()=>{throw Error('must not refresh all');},observe:async options=>{calls.push(options);return {scheduling:{status:'waiting',notificationRegistered:true},accounts:[]};},cancelWorkerHandoff:()=>{cancelled++;}
+ }},onGeminiHandoff:event=>events.push(event)});
+ try{
+  for(let i=0;i<18;i++)assert.equal((await bridge.accounts()).scheduling.status,'waiting');
+  assert.equal(new Set(calls.map(c=>c.requestId)).size,1);assert(calls.every(c=>c.parentId==='quota-query-parent'));
+  const callback=calls[0].onHandoff;callback({parentId:'quota-query-parent',requestIds:[],queryIds:[calls[0].requestId],status:'ready'});
+  assert.equal(events.length,1);bridge.cancelGeminiHandoff();assert.equal(cancelled,1);
+  callback({parentId:'quota-query-parent',requestIds:[],queryIds:[calls[0].requestId],status:'ready'});assert.equal(events.length,1);
+ }finally{await bridge.close();}
+});
+
+
+test('real manager query IDs remain independent while an earlier room receipt awaits its worker durable write',{timeout:7000},async t=>{
+ const base=path.resolve('.runtime/tests');await mkdir(base,{recursive:true});const testRoot=await mkdtemp(path.join(base,'bridge-query-durable-'));
+ const A='a'.repeat(32),B='b'.repeat(32),parentId='query-durable-parent',now=Date.parse('2026-10-13T00:00:00Z');
+ let identity={accountId:A,email:'a@example.test'},zero=false,finishProcess,lease,releaseWrite,resolveWrite,writeMock,receiptState;
+ const writeGate=new Promise(resolve=>{releaseWrite=resolve;}),writeEntered=new Promise(resolve=>{resolveWrite=resolve;}),events=[],queries=[],activations=[];
+ const accounts=createGeminiAccounts({root:testRoot,enabled:true,clock:()=>now,vault:{current:async()=>({...identity}),capture:async()=>({...identity}),assertIdle:async()=>{},activate:async id=>{activations.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};}},login:{status:async()=>{queries.push(identity.accountId);return {auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:zero&&identity.accountId===A?0:80,resetsAt:(now+3600000)/1000}]}};}}});
+ await accounts.capture();identity={accountId:B,email:'b@example.test'};await accounts.capture();await accounts.activate({accountId:A});activations.length=0;
+ const spawnImpl=(_exe,args)=>{
+  const child=new EventEmitter();Object.assign(child,{pid:23000,stdout:new PassThrough(),stderr:new PassThrough()});
+  if(args[0]==='models')queueMicrotask(()=>{child.stdout.write('gemini-3.8-flash-high\tFlash\n');child.emit('close',0);});
+  else finishProcess=()=>{child.stdout.write(JSON.stringify({event:'result',result:{status:'ERROR',error:'RESOURCE_EXHAUSTED quota',response:'saved original quota output'}})+'\n');child.emit('close',1);};return child;
+ };
+ const bridge=await createLunaBridge({root:testRoot,workspace:testRoot,parentId,geminiOnly:true,geminiOptions:{accounts},geminiFactory:options=>createGeminiWorker({...options,executable:'fake-never-run-agy',env:{SystemRoot:'C:/Windows'},spawnImpl,killTree:async()=>{throw Error('No process kill expected');},gitStatus:async()=>null}),onGeminiHandoff:event=>{events.push(structuredClone(event));receiptState=mergeGeminiHandoff(receiptState,{...event,epoch:0});}});
+ const job=(requestId,accountId)=>({requestId,task:'bounded fake work',model:'gemini-3.8-flash',effort:'high',...(accountId?{accountId}:{})});
+ const waitFor=async predicate=>{const deadline=Date.now()+2500;while(!predicate()){if(Date.now()>deadline)throw Error('expected fixture event not reached');await new Promise(resolve=>setTimeout(resolve,10));}};
+ try{
+  await bridge.start(job('quota-owned'));await waitFor(()=>!!finishProcess);
+  await bridge.start(job('old-expectation',B));assert.equal((await bridge.wait({requestId:'old-expectation',timeoutMs:1000})).dispatch,'not-started');
+  const first=await bridge.accounts();assert.equal(first.scheduling.status,'waiting');assert.equal(first.scheduling.notificationRegistered,true);
+  const target=path.join(testRoot,'.runtime/luna-bridge',parentId,'quota-owned.json'),rename=fs.rename;let held=false;
+  writeMock=t.mock.method(fs,'rename',async(from,to)=>{if(!held&&path.resolve(to)===path.resolve(target)&&JSON.parse(await readFile(from,'utf8')).status==='failed'){held=true;resolveWrite();await writeGate;}return rename(from,to);});syncBuiltinESMExports();
+  zero=true;finishProcess();await writeEntered;
+  assert.deepEqual(activations,[B]);assert.equal(events.some(event=>event.status==='ready'),false);assert.equal(JSON.parse(await readFile(target,'utf8')).settled,false);
+  const count=queries.length,current=await bridge.accounts();assert.equal(current.scheduling.status,'ready');assert.equal(current.scheduling.notificationRegistered,false);assert.equal(queries.length,count,'unchanged ready manager creates no second waiting receipt or quota query');
+  // A real new episode, not a ghost injected into the first worker's callback.
+  lease=await accounts.acquire();await bridge.start(job('new-expectation',A));assert.equal((await bridge.wait({requestId:'new-expectation',timeoutMs:1000})).dispatch,'not-started');
+  const second=await bridge.accounts();assert.equal(second.scheduling.status,'waiting');assert.notEqual(second.scheduling.waitId,first.scheduling.waitId);
+  assert.deepEqual(geminiAccountWait(receiptState).queryIds,[first.scheduling.waitId,second.scheduling.waitId],'both legitimate live query IDs are retained, not overwritten');
+  await lease.release();
+  assert.equal(events.some(event=>event.status==='ready'&&event.requestIds.includes('quota-owned')),false,'a later legal terminal receipt must not flush the earlier worker before its durable write finishes');
+  releaseWrite();assert.equal((await bridge.wait({requestId:'quota-owned',timeoutMs:2000})).settled,true);
+  const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,2);
+  assert.deepEqual(new Set(geminiAccountWait(receiptState).queryIds),new Set([first.scheduling.waitId,second.scheduling.waitId]));
+  for(const event of ready)for(const id of event.requestIds){const row=JSON.parse(await readFile(path.join(testRoot,'.runtime/luna-bridge',parentId,`${id}.json`),'utf8'));assert.equal(row.settled,true);}
+  assert.deepEqual(activations,[B]);assert.equal(finishProcess!==undefined,true);
+ }finally{releaseWrite?.();await lease?.release();writeMock?.mock.restore();syncBuiltinESMExports();await bridge.close();}
 });

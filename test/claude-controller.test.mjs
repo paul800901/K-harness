@@ -1302,7 +1302,7 @@ for(const switched of [false,true])test('Claude Gemini ready account facts match
   f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['not-started'],status:'ready',accountId:'fake-a',switched,reason:'fixture official account check'});
   await waitFor(()=>f.host.startCalls.length===2);const text=f.host.startCalls.at(-1)[0].text;
   assert.match(text,/handoffFrom/);assert.match(text,/新的 requestId/);assert.match(text,/fixture official account check/);
-  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/同一帳號/);assert.match(text,/已執行後失敗/);}
+  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/本次通知未切換帳號/);assert.match(text,/不表示之前沒有其他聊天室換過帳號/);assert.match(text,/已執行後失敗/);}
  }finally{await f.controller.close();}
 });
 
@@ -1487,4 +1487,100 @@ test('Claude sends and steers image-only content with no empty text block',async
   assert.equal(f.host.startCalls.length,2);for(const content of f.host.startCalls){assert.equal(content.length,1);assert.equal(content[0].type,'image');}
   assert.deepEqual(f.controller.state.messages.filter(m=>m.role==='user'&&m.attachments.length).map(m=>m.text),['','   ']);assert.equal(f.controller.state.title,'pixel.png');
  }finally{await f.controller.close();}
+});
+
+test('Claude Gemini ready arriving during bridge-list preflight replaces the receipt and still reaches native start once',{timeout:5000},async()=>{
+ const f=await fixture();let release;const gate=new Promise(resolve=>{release=resolve;});let entered,listCalls=0;
+ const preflightEntered=new Promise(resolve=>{entered=resolve;});
+ try{
+  await f.controller.open({});await f.controller.send({text:'bounded fake work for receipt preflight'});
+  for(const requestId of ['preflight-first','preflight-new'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});
+  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  const list=f.bridge.list.bind(f.bridge);f.bridge.list=async()=>{listCalls++;if(listCalls===1){entered();await gate;}return list();};
+  const parentId=f.controller.state.threadId,ready=requestId=>({parentId,requestIds:[requestId],status:'ready',accountId:'fake-shared-account',switched:false});
+  f.bridgeOptions.onGeminiHandoff(ready('preflight-first'));await preflightEntered;
+  assert.equal(f.host.startCalls.length,1,'old receipt has not passed read-only preflight');
+  f.bridgeOptions.onGeminiHandoff(ready('preflight-new'));await tick();
+  assert.equal(f.host.startCalls.length,1,'new receipt cannot send while old preflight is still held');
+  release();await waitFor(()=>f.host.startCalls.length===2);
+  assert.equal(listCalls,2,'new material receipt gets its own preflight after cancelling the old object snapshot');
+  const text=f.host.startCalls[1][0].text,receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
+  assert.deepEqual(receipt.requestIds,['preflight-first','preflight-new']);assert.equal(receipt.parentId,parentId);
+  assert.match(text,/先核對最新本人意圖/);assert.equal(f.controller.state.busy,true);
+  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  for(const requestId of ['preflight-first','preflight-new'])f.bridgeOptions.onGeminiHandoff(ready(requestId));
+  await tick();assert.equal(f.host.startCalls.length,2,'both receipts are consumed by one accepted notification, not stranded or replayed');
+  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);
+ }finally{release?.();await f.controller.close();}
+});
+
+test('Claude Gemini ready arriving while native start awaits acceptance survives consumption of only the sent receipt',{timeout:5000},async()=>{
+ const f=await fixture();let release;const gate=new Promise(resolve=>{release=resolve;});let entered,hold=true;
+ const nativeStartEntered=new Promise(resolve=>{entered=resolve;});
+ try{
+  await f.controller.open({});await f.controller.send({text:'bounded fake work for accepted-send receipt race'});
+  for(const requestId of ['send-first','send-new'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});
+  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  const start=f.host.start.bind(f.host);f.host.start=async(...args)=>{await start(...args);if(hold){hold=false;entered();await gate;}};
+  const parentId=f.controller.state.threadId,ready=requestId=>({parentId,requestIds:[requestId],status:'ready',accountId:'fake-shared-account',switched:false});
+  f.bridgeOptions.onGeminiHandoff(ready('send-first'));await nativeStartEntered;
+  assert.equal(f.host.startCalls.length,2);assert.equal(f.controller.state.busy,true);
+  f.bridgeOptions.onGeminiHandoff(ready('send-new'));await tick();assert.equal(f.host.startCalls.length,2,'active native send owns this turn');
+  release();await waitFor(()=>!f.controller.state.completionPending);
+  const first=JSON.parse(f.host.startCalls[1][0].text.split('\n').find(line=>line.startsWith('{"parentId"')));
+  assert.deepEqual(first.requestIds,['send-first']);assert.equal(first.parentId,parentId);
+  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),true,'new receipt stays pending after the old accepted send');
+  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===3);
+  const text=f.host.startCalls[2][0].text,second=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
+  assert.deepEqual(second.requestIds,['send-new']);assert.equal(second.parentId,parentId);assert.doesNotMatch(text,/send-first/);
+  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  for(const requestId of ['send-first','send-new'])f.bridgeOptions.onGeminiHandoff(ready(requestId));
+  await tick();assert.equal(f.host.startCalls.length,3,'each independent receipt was sent once; old IDs never reappear');
+  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);
+ }finally{release?.();await f.controller.close();}
+});
+
+for(const terminal of ['blocked','ready'])test(`Claude query-only ${terminal} receipt after an early native result is delivered when the earlier start finally returns`,{timeout:8000},async()=>{
+ const f=await fixture();let release,entered,hold=true,queryNumber=0;const gate=new Promise(resolve=>{release=resolve;}),startEntered=new Promise(resolve=>{entered=resolve;});
+ try{
+  await f.controller.open({});await f.controller.send({text:'bounded fake query-only scheduling work'});
+  const parentId=f.controller.state.threadId;
+  f.bridge.accounts=async()=>{const waitId=`query-early-${++queryNumber}`;f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[waitId],status:'waiting'});return {scheduling:{status:'waiting',notificationRegistered:true,waitId}};};
+  const first=await f.gatewayOptions.bridge.accounts();f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  const start=f.host.start.bind(f.host);f.host.start=async(...args)=>{await start(...args);if(hold){hold=false;entered();await gate;}};
+  f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[first.scheduling.waitId],status:'ready',accountId:'fake-account',switched:false});await startEntered;
+  assert.equal(f.host.startCalls.length,2);assert.deepEqual(await f.gatewayOptions.bridge.list(),[],'query-only callbacks create no worker records or worker result queue');
+  // Native stream completion is allowed to precede the native start response.
+  f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.status,'completed');
+  const next=await f.gatewayOptions.bridge.accounts();assert.notEqual(next.scheduling.waitId,first.scheduling.waitId);
+  f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[next.scheduling.waitId],status:terminal,accountId:'fake-account',switched:false,reason:'new material fake scheduling result'});
+  await tick();assert.equal(f.host.startCalls.length,2,'new terminal waits behind the still-pending native start response');
+  release();await waitFor(()=>f.host.startCalls.length===3);
+  const before=JSON.parse(f.host.startCalls[1][0].text.split('\n').find(line=>line.startsWith('{"parentId"'))),text=f.host.startCalls[2][0].text;
+  const receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
+  assert.deepEqual(before.queryIds,[first.scheduling.waitId]);assert.deepEqual(receipt.requestIds,[]);assert.deepEqual(receipt.queryIds,[next.scheduling.waitId]);assert.equal(receipt.status,terminal);assert.doesNotMatch(text,new RegExp(first.scheduling.waitId));
+  if(terminal==='blocked')assert.match(text,/不是.*恢復原生目標的授權/);
+  await waitFor(()=>!f.controller.state.completionPending);f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(resolve=>setTimeout(resolve,1100));
+  assert.equal(f.host.startCalls.length,3,'new material query result is sent once, with no unchanged-state model polling');
+  assert.deepEqual(await f.gatewayOptions.bridge.list(),[]);
+ }finally{release?.();await f.controller.close();}
+});
+
+test('Claude query-only new blocked receipt during blocked preflight gets a fresh check and one combined native notification',{timeout:8000},async()=>{
+ const f=await fixture();let release,entered,listCalls=0,queryNumber=0;const gate=new Promise(resolve=>{release=resolve;}),preflightEntered=new Promise(resolve=>{entered=resolve;});
+ try{
+  await f.controller.open({});await f.controller.send({text:'bounded fake query-only blocked preflight'});const parentId=f.controller.state.threadId;
+  f.bridge.accounts=async()=>{const waitId=`query-blocked-${++queryNumber}`;f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[waitId],status:'waiting'});return {scheduling:{status:'waiting',notificationRegistered:true,waitId}};};
+  const first=await f.gatewayOptions.bridge.accounts();f.hostOptions.onMessage({type:'result',is_error:false});await tick();
+  const list=f.bridge.list.bind(f.bridge);f.bridge.list=async()=>{listCalls++;if(listCalls===1){entered();await gate;}return list();};
+  const blocked=id=>({parentId,requestIds:[],queryIds:[id],status:'blocked',reason:'distinct fake scheduling result remains unready'});
+  f.bridgeOptions.onGeminiHandoff(blocked(first.scheduling.waitId));await preflightEntered;
+  const next=await f.gatewayOptions.bridge.accounts();f.bridgeOptions.onGeminiHandoff(blocked(next.scheduling.waitId));await tick();
+  assert.equal(f.host.startCalls.length,1);release();await waitFor(()=>f.host.startCalls.length===2);
+  assert.equal(listCalls,2,'new blocked receipt rechecks after the old snapshot is cancelled');
+  const text=f.host.startCalls[1][0].text,receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
+  assert.equal(receipt.status,'blocked');assert.deepEqual(receipt.requestIds,[]);assert.deepEqual(receipt.queryIds,[first.scheduling.waitId,next.scheduling.waitId]);assert.match(text,/不是.*恢復原生目標的授權/);
+  await waitFor(()=>!f.controller.state.completionPending);f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(resolve=>setTimeout(resolve,1100));
+  assert.equal(f.host.startCalls.length,2);assert.equal(listCalls,2,'unchanged blocked result does not schedule another preflight or model turn');
+ }finally{release?.();await f.controller.close();}
 });

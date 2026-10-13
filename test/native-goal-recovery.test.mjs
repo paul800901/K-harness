@@ -60,11 +60,42 @@ async function fixture({budget=null,status='active',reject,alias=false,persistGa
 const wait=async predicate=>{const end=Date.now()+3500;while(!predicate()){if(Date.now()>end)throw Error('observable not reached');await new Promise(r=>setTimeout(r,20));}};
 const tick=()=>new Promise(r=>setTimeout(r,60));
 
+test('account-only material changes wake the same active conversation repeatedly without new human sends or polling',async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();
+  const notify=(status,id)=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],status,switched:false});
+  notify('waiting','first-query');f.end('completed');await tick();assert.equal(f.deliveries().length,0);
+  notify('ready','first-query');await wait(()=>f.deliveries().length===1);
+  // The awakened main model can ask once about a genuinely different wait.
+  notify('waiting','second-query');f.end('completed');await tick();assert.equal(f.deliveries().length,1);
+  notify('ready','second-query');await wait(()=>f.deliveries().length===2);
+  assert.match(f.deliveries()[1].p.toolOutput.output,/second-query/);f.end('completed');await tick();assert.equal(f.deliveries().length,2);
+  assert.equal(f.calls.filter(c=>c.method==='turn/start'&&!c.p.toolOutput).length,1,'only the fixture original human input');
+ }finally{await f.cleanup();}
+});
+
 async function waitingWorker(f,id='late-worker'){
  await f.gateway.bridge.start({requestId:id});
  const row={parentId:'parent',provider:'gemini',requestId:id,status:'running',settled:false,output:''};
  f.setFlashRows([row]);f.bridgeHooks.onChange(row);return row;
 }
+
+for(const kind of ['worker','account'])test(`same resumed goal can await a new ${kind} and receive another audit without human polling`,async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();
+  const notify=(status,id)=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],status,switched:false});
+  for(let i=1;i<=2;i++){
+   const id=`new-wait-${i}`,row=kind==='worker'?await waitingWorker(f,id):null;
+   if(kind==='account')notify('waiting',id);
+   f.blockGoal();f.end('completed');await tick();assert.equal(f.deliveries().length,i-1);
+   if(row){Object.assign(row,{status:'completed',settled:true,output:'saved '+id});f.bridgeHooks.onChange(row);}else notify('ready',id);
+   await wait(()=>f.deliveries().length===i);await tick();assert.equal(f.deliveries()[i-1].p.toolOutput.name,'k_native_goal_recovery');assert.match(f.deliveries()[i-1].p.toolOutput.output,new RegExp(id));
+   await f.gateway.resumeGoal({}, {'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+   assert.equal(f.goal.status,'active');assert.equal(f.goal.createdAt,101);
+  }
+  f.end('completed');await tick();assert.equal(f.deliveries().length,2);assert.equal(f.calls.filter(c=>c.method==='turn/start'&&!c.p.toolOutput).length,1);
+ }finally{await f.cleanup();}
+});
 test('live active goal blocked while awaiting a worker receives one trusted audit after its late completion',async()=>{
  const f=await fixture();try{
   const row=await waitingWorker(f),blockedTurn=f.currentTurn;f.blockGoal();f.end('completed');await tick();assert.equal(f.deliveries().length,0);
@@ -336,7 +367,7 @@ test('synchronous failed ready audit cannot rearm the same episode, but later in
  }finally{await f.cleanup();}
 });
 
-for(const action of ['pause','stop','human-send','blocked','budget','unknown'])test('Gemini ready never bypasses '+action,async()=>{
+for(const action of ['pause','stop','human-send','budget','unknown'])test('Gemini ready never bypasses '+action,async()=>{
  const f=await fixture({budget:action==='budget'?10:null});let release;try{
   await f.gateway.bridge.start({requestId:'quota'});const callback=f.bridgeHooks.onGeminiHandoff,event={parentId:'parent',requestIds:['quota'],accountId:'fake-account'};
   f.end('completed');callback({...event,status:'waiting'});await tick();
@@ -346,6 +377,60 @@ for(const action of ['pause','stop','human-send','blocked','budget','unknown'])t
   if(action==='unknown')f.setUnknown(true);
   if(action==='budget'){f.nativeStart();f.end();}
   callback({...event,status:action==='blocked'?'blocked':'ready',reason:'fixture official check unknown'});await tick();assert.equal(f.deliveries().length,0);
+ }finally{release?.();await f.cleanup();}
+});
+
+test('query-only terminal blocker informs the same main once without claiming readiness or resuming its goal',async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();const event={parentId:'parent',requestIds:[],queryIds:['blocked-query']};
+  f.bridgeHooks.onGeminiHandoff({...event,status:'waiting'});f.blockGoal();f.end('completed');await tick();assert.equal(f.deliveries().length,0);
+  f.bridgeHooks.onGeminiHandoff({...event,status:'blocked',reason:'official authentication requires human login'});
+  await wait(()=>f.deliveries().length===1);await tick();const output=f.deliveries()[0].p.toolOutput;
+  assert.notEqual(output.name,'k_native_goal_recovery');assert.match(output.output,/official authentication requires human login/);assert.match(output.output,/保留受阻狀態/);assert.doesNotMatch(output.output,/排程條件已就緒/);
+  assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);assert.equal(f.goal.status,'blocked');
+  f.end('completed');await f.c.workers();await tick();assert.equal(f.deliveries().length,1);
+ }finally{await f.cleanup();}
+});
+
+test('a worker finishing during an already completed status-notice send is not stranded',async()=>{
+ const f=await fixture();let release;try{
+  const row=await waitingWorker(f);Object.assign(row,{status:'failed',settled:false});f.bridgeHooks.onChange(row);
+  f.setDeliveryGate(new Promise(r=>release=r));f.end('completed');await wait(()=>f.deliveries().length===1);
+  f.end('completed');Object.assign(row,{status:'completed',settled:true,output:'late saved result'});f.bridgeHooks.onChange(row);
+  f.setDeliveryGate(null);release();await wait(()=>f.deliveries().length===2);
+  assert.match(f.deliveries()[1].p.toolOutput.output,/late saved result/);f.end('completed');await tick();assert.equal(f.deliveries().length,2);
+ }finally{release?.();await f.cleanup();}
+});
+
+test('distinct blocked receipt during another blocked preflight is not stranded',async()=>{
+ const f=await fixture();let release;try{
+  await f.gateway.bridge.list();f.end('completed');await tick();const before=f.calls.length;
+  f.setGate(new Promise(r=>release=r));const notify=id=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],status:'blocked',reason:'needs human login'});
+  notify('blocked-first');await wait(()=>f.calls.slice(before).some(c=>c.method==='thread/read'));
+  notify('blocked-second');f.setGate(null);release();await wait(()=>f.deliveries().length===1);
+  assert.match(f.deliveries()[0].p.toolOutput.output,/blocked-first/);assert.match(f.deliveries()[0].p.toolOutput.output,/blocked-second/);
+  f.end('completed');await tick();assert.equal(f.deliveries().length,1);
+ }finally{release?.();await f.cleanup();}
+});
+
+for(const phase of ['preflight','accepted-send'])test(`query-only blocked receipt during ${phase} is delivered without another external event`,async()=>{
+ const f=await fixture();let release;try{
+  await f.gateway.bridge.list();f.end('completed');await tick();
+  const notify=(status,id)=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],status,reason:'distinct scheduling result',switched:false});
+  const gate=new Promise(r=>release=r),before=f.calls.length;
+  if(phase==='preflight')f.setGate(gate);else f.setDeliveryGate(gate);
+  notify('ready','first-ready');
+  await wait(()=>phase==='preflight'?f.calls.slice(before).some(c=>c.method==='thread/read'):f.deliveries().length===1);
+  // The second query has a real terminal change, not a repeat of unchanged state.
+  notify('waiting','second-blocked');notify('blocked','second-blocked');
+  if(phase==='accepted-send')f.end('completed');
+  f.setGate(null);f.setDeliveryGate(null);release();
+  await wait(()=>f.deliveries().length===1);
+  if(phase==='preflight'){await tick();f.end('completed');}
+  await wait(()=>f.deliveries().length===2);const output=f.deliveries()[1].p.toolOutput;
+  assert.match(output.output,/second-blocked/);assert.doesNotMatch(output.output,/first-ready/);
+  assert.match(output.output,/保留受阻狀態/);assert.notEqual(output.name,'k_native_goal_recovery');
+  f.end('completed');await tick();assert.equal(f.deliveries().length,2);assert.equal(f.calls.some(c=>c.method==='thread/goal/set'),false);
  }finally{release?.();await f.cleanup();}
 });
 
@@ -379,7 +464,7 @@ for(const switched of [false,true])test('Codex Gemini ready account facts match 
   f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:['not-started'],status:'ready',accountId:'fake-a',switched,reason:'fixture official account check'});
   await wait(()=>f.deliveries().length===1);const text=f.deliveries()[0].p.toolOutput.output;
   assert.match(text,/handoffFrom/);assert.match(text,/新的 requestId/);assert.match(text,/fixture official account check/);
-  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/同一帳號/);assert.match(text,/已執行後失敗/);}
+  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/本次通知未切換帳號/);assert.match(text,/不表示之前沒有其他聊天室換過帳號/);assert.match(text,/已執行後失敗/);}
  }finally{await f.cleanup();}
 });
 

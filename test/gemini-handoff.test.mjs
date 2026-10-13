@@ -97,7 +97,10 @@ test('same-room positive ready contains only unstarted IDs and excludes its rate
  const f=await fixture(),bridge=await f.make('mixed-room'),main=await f.accounts.acquire();
  try{
   await bridge.start(job('rate-failed'));await bridge.wait({requestId:'rate-failed',timeoutMs:1000});await bridge.start(job('not-started'));await bridge.wait({requestId:'not-started',timeoutMs:1000});
-  await main.release();const terminal=f.events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,1);assert.equal(terminal[0].status,'ready');assert.equal(terminal[0].switched,false);assert.deepEqual(terminal[0].requestIds,['not-started']);assert.equal((await bridge.inspect({requestId:'rate-failed'})).status,'failed');assert.deepEqual(f.calls.activate,[]);
+  await main.release();const terminal=f.events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,2);
+  const ready=terminal.find(event=>event.status==='ready'),blocked=terminal.find(event=>event.status==='blocked');
+  assert.equal(ready.switched,false);assert.deepEqual(ready.requestIds,['not-started']);assert.deepEqual(blocked.requestIds,['rate-failed']);
+  assert.equal((await bridge.inspect({requestId:'rate-failed'})).status,'failed');assert.deepEqual(f.calls.activate,[]);
  }finally{await main.release();await f.close();}
 });
 

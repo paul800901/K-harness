@@ -20,7 +20,7 @@ const clone = value => structuredClone(value);
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
   if (!record) return null;
-  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','observation','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','dispatch','scheduling','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','observation','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
   if(record.executionUnowned===true)result.task=record.task;
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
@@ -115,22 +115,28 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   const persistTails = new Map();
   const ownedRequests=new Set(), revisions=new Map(),waiters=new Map();
   let closed = false, closing = false, closePromise, models;
-  let handoffEpoch=0,pendingHandoff;
+  let handoffEpoch=0,querySequence=0,accountQueryId=null;const pendingHandoffs=[];
   function flushHandoff(){
-    if(!pendingHandoff||closed||closing||pendingHandoff.epoch!==handoffEpoch)return;
-    const event=pendingHandoff.event;
+    if(closed||closing)return;
+    for(let i=0;i<pendingHandoffs.length;){
+    const pending=pendingHandoffs[i],event=pending.event;
+    if(pending.epoch!==handoffEpoch){pendingHandoffs.splice(i,1);continue;}
     // Account release precedes the worker result. Notify only after every old
     // record in the room has its persisted settled result ready for inspection.
-    if(event.requestIds.some(id=>records.get(id)?.settled!==true))return;
-    pendingHandoff=null;try{onGeminiHandoff(clone(event));}catch{}
+    if(event.requestIds.some(id=>records.get(id)?.settled!==true||persistTails.has(id))){i++;continue;}
+    pendingHandoffs.splice(i,1);try{onGeminiHandoff(clone(event));}catch{}
+    }
   }
   function receiveHandoff(event,epoch){
     if(closed||closing||epoch!==handoffEpoch||event.parentId!==parentId)return;
+    event={...event,queryIds:(event.queryIds??[]).filter(id=>id===accountQueryId)};
+    if(!event.requestIds.length&&!event.queryIds.length)return;
+    if(event.status!=='waiting'&&event.queryIds.length)accountQueryId=null;
     if(event.status==='waiting'){try{onGeminiHandoff(clone(event));}catch{}return;}
-    pendingHandoff={event,epoch};flushHandoff();
+    pendingHandoffs.push({event,epoch});flushHandoff();
   }
   function cancelGeminiHandoff(){
-    handoffEpoch++;pendingHandoff=null;
+    handoffEpoch++;accountQueryId=null;pendingHandoffs.length=0;
     geminiOptions.accounts?.cancelWorkerHandoff?.({parentId});
   }
   const defaults=normalizeWorkerPolicy(workerPolicy);
@@ -153,7 +159,9 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       if(patch)Object.assign(record,patch);
     });
     persistTails.set(record.requestId,next);
-    void next.finally(()=>{if(persistTails.get(record.requestId)===next)persistTails.delete(record.requestId);}).catch(()=>{});
+    // Keep a failed write visible to handoff/wait until a later successful save;
+    // in-memory terminal state alone does not prove the result was persisted.
+    void next.then(()=>{if(persistTails.get(record.requestId)===next)persistTails.delete(record.requestId);}).catch(()=>{});
     return next;
   };
   const load = async requestId => {
@@ -371,7 +379,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
           record.pid=pid;record.status='running';record.startedAt=new Date().toISOString();
           void persist(record).then(()=>changed(record)).catch(()=>{});
         }})).then(result=>Object.assign(record,result)).catch(error=>{
-          Object.assign(record,{status:error.settled===false?'unresolved':controller.signal.aborted?'cancelled':'failed',settled:error.settled!==false,error:error.message});
+          Object.assign(record,{status:error.settled===false?'unresolved':controller.signal.aborted?'cancelled':'failed',settled:error.settled!==false,error:error.message,...(error.scheduling?{scheduling:clone(error.scheduling),dispatch:error.dispatch}:{})});
         }).then(async()=>{
           record.acceptance='not-reviewed';record.endedAt=new Date().toISOString();
           await persist(record);changed(record);flushHandoff();return clone(record);
@@ -409,7 +417,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   }
   async function cancel({requestId}) {
     geminiOptions.accounts?.cancelWorkerHandoff?.({parentId,requestId});
-    if(pendingHandoff){pendingHandoff.event.requestIds=pendingHandoff.event.requestIds.filter(id=>id!==requestId);if(!pendingHandoff.event.requestIds.length)pendingHandoff=null;else flushHandoff();}
+    for(let i=pendingHandoffs.length-1;i>=0;i--){const event=pendingHandoffs[i].event;event.requestIds=event.requestIds.filter(id=>id!==requestId);if(!event.requestIds.length&&!event.queryIds?.length)pendingHandoffs.splice(i,1);}flushHandoff();
     watch.forget(requestId);
     const current = await inspect({requestId});
     if (!current) return null;
@@ -495,7 +503,13 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   }
   return {
     start, inspect, cancel, reconcile, cancelGeminiHandoff, workerPolicy:clone(defaults),
-     accounts:()=>geminiOptions.accounts?.refreshAll({force:false})??{enabled:false,accounts:[]},
+     accounts:async()=>{
+      if(closed||closing)throw Error('Luna bridge 正在關閉或已關閉。');
+      const epoch=handoffEpoch,requestId=accountQueryId??=`account-query-${epoch}-${++querySequence}`;
+      const result=await geminiOptions.accounts?.observe({parentId,requestId,onHandoff:event=>receiveHandoff(event,epoch),handoffCurrent:()=>!closed&&!closing&&epoch===handoffEpoch})??{enabled:false,accounts:[],scheduling:{status:'blocked',notificationRegistered:false,reason:'帳號排程未接通'}};
+      if(result.scheduling?.status!=='waiting'&&accountQueryId===requestId)accountQueryId=null;
+      return result;
+     },
     async wait({requestId,timeoutMs=30000}) {
       if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
       const readSnapshot=async()=>{

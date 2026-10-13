@@ -79,7 +79,7 @@ test('fresh unknown creation or send outcomes do not replay; known children rema
 });
 
 test('fresh handoff does not select its child over another room being viewed',async()=>{
- const f=await fixture();try{await f.request('fresh');const other=await f.c.open({model,workspace:f.root});await f.finish();assert.equal(f.c.state.threadId,other.threadId);assert.equal(f.calls.filter(c=>c[0]==='start').length,1);assert.equal(f.calls.filter(c=>c[0]==='send').length,1);}finally{await f.c.close();}
+ const f=await fixture();try{await f.request('fresh');const other=await f.c.open({model,workspace:f.root});await f.finish();await wait(async()=>(await f.receipt()).status==='sent');assert.equal(f.c.state.threadId,other.threadId);assert.equal(f.calls.filter(c=>c[0]==='start').length,1);assert.equal(f.calls.filter(c=>c[0]==='send').length,1);}finally{await f.c.close();}
 });
 
 test('a continuation accepted during an idle probe cannot be closed by its late read',async()=>{

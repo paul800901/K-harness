@@ -2,6 +2,7 @@ import {createWorkActivity,claudeWorkActivity} from './work-activity.mjs';
 import {workerNoticeKey,workerNoticeCurrent,workerNoticeText,workerNeedsAttention} from './worker-watch.mjs';
 import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
+import {mergeGeminiHandoff,consumeGeminiHandoff,geminiWaitingJobs,geminiHandoffText} from './gemini-handoff.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
@@ -95,12 +96,12 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   const cancelGeminiHandoff=()=>{geminiIntentEpoch++;geminiHandoff=null;geminiHandoffJobs.clear();geminiLiveGoal=null;geminiFailedGoal=null;bridgeInstance?.cancelGeminiHandoff?.();for(const n of state.notices)if(n.kind==='gemini-handoff')n.resolved=true;};
   const recordGeminiHandoff=event=>{
     if(!event||event.parentId!==state.threadId||opening||closing||stopping||['interrupted','offline','uncertain'].includes(state.status))return;
-    const requestIds=(event.requestIds??[]).filter(id=>geminiHandoffJobs.has(id));if(!requestIds.length)return;
+    const requestIds=(event.requestIds??[]).filter(id=>geminiHandoffJobs.has(id)),queryIds=event.queryIds??[];if(!requestIds.length&&!queryIds.length)return;
     for(const n of state.notices)if(n.kind==='gemini-handoff')n.resolved=true;
-    geminiHandoff={...event,requestIds,epoch:geminiIntentEpoch};
+    geminiHandoff=mergeGeminiHandoff(geminiHandoff,{...event,requestIds,queryIds,epoch:geminiIntentEpoch});
     if(['ready','blocked'].includes(event.status))for(const id of requestIds)geminiHandoffJobs.delete(id);
     state.notices.push({id:randomUUID(),kind:'gemini-handoff',level:event.status==='blocked'?'warning':'info',message:event.status==='waiting'?'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。':event.status==='ready'?'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。':`Gemini 帳號交接未完成：${event.reason??'官方額度或停止狀態未確認。'}`,createdAt:new Date().toISOString()});
-    if(event.status==='ready')scheduleWorkers();changed();
+    if(event.status!=='waiting')scheduleWorkers();changed();
   };
   const changed = () => { state.completionPending=notifying||workerQueue.size>0||state.goalPending===true;try { onChange(state); } catch {} };
   async function goalCommand(args=''){
@@ -174,11 +175,12 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
   };
   const clearQuestions = () => { for(const [id,item] of pending){item.resolve(item.cancelValue);pending.delete(id);} state.questions=[]; };
   async function deliverWorkers(){
-    const handoff=geminiHandoff?.status==='ready'&&geminiHandoff.epoch===geminiIntentEpoch?geminiHandoff:null,failed=state.status==='failed';
+    const handoff=['ready','blocked'].includes(geminiHandoff?.status)&&geminiHandoff.epoch===geminiIntentEpoch?geminiHandoff:null,failed=state.status==='failed';
+    if(handoff?.status==='blocked'&&failed)return;
     if(notifying||!host||state.busy||state.goalPending||opening||closing||stopping||!(state.status==='completed'||failed&&handoff)||(!workerQueue.size&&!handoff))return;
-    if(failed&&(!geminiFailedGoal||geminiFailedGoal.turnId!==currentTurnId||geminiFailedGoal.objective!==state.goal?.objective||state.goal?.status!=='active'||state.goalError||!state.capabilities.goal)){geminiHandoff=null;for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;state.notices.push({id:randomUUID(),kind:'gemini-handoff',level:'warning',message:'Gemini 帳號已就緒，但主目標不具自動核對資格；未啟動或重播工作。'});changed();return;}
+    if(failed&&(!geminiFailedGoal||geminiFailedGoal.turnId!==currentTurnId||geminiFailedGoal.objective!==state.goal?.objective||state.goal?.status!=='active'||state.goalError||!state.capabilities.goal)){geminiHandoff=consumeGeminiHandoff(geminiHandoff);for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;state.notices.push({id:randomUUID(),kind:'gemini-handoff',level:'warning',message:'Gemini 帳號已就緒，但主目標不具自動核對資格；未啟動或重播工作。'});changed();return;}
     for(const [id,record] of workerQueue)if(!workerNoticeCurrent(record,state.workers.find(w=>w.requestId===id)))workerQueue.delete(id);
-    if(!workerQueue.size&&!handoff)return;
+    const waitingJobs=geminiWaitingJobs(geminiHandoff);if(![...workerQueue.values()].some(row=>!waitingJobs.has(row.requestId))&&!handoff)return;
     const active=host,parent=state.threadId,epoch=geminiIntentEpoch,priorStatus=state.status;let batch=[];
     notifying=true;if(!handoff){state.busy=true;activity.begin();state.status='working';}
     const current=()=>host===active&&parent===state.threadId&&!opening&&!closing&&!stopping&&(!handoff||geminiHandoff===handoff&&epoch===geminiIntentEpoch&&!state.busy&&!state.questions.length&&!nativePending.size&&!quotaZeroUntil(state.usage.claude)&&state.usage.claude.rateLimitStatus!=='rejected'&&(!failed||geminiFailedGoal?.turnId===currentTurnId&&state.goal?.status==='active'&&state.goal.objective===geminiFailedGoal.objective));
@@ -190,14 +192,14 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         if(bridgeInstance)for(const record of await bridgeInstance.list())recordWorker(record);
         if(!current()||state.workers.some(w=>w.settled!==true)||state.tools.some(t=>t.status==='running'))return;
       }
-      batch=[...workerQueue.values()];workerQueue.clear();for(const record of batch)if(record.settled)workerArmed.delete(record.requestId);
+      batch=[...workerQueue.values()].filter(row=>!waitingJobs.has(row.requestId));for(const record of batch)workerQueue.delete(record.requestId);for(const record of batch)if(record.settled)workerArmed.delete(record.requestId);
       const results=await Promise.all(batch.map(lunaResult));
       if(!current())return;
       // Mark before writing to the native stream: an uncertain send must never replay automatically.
       for(const record of batch)workerNotifications[workerNoticeKey(record)]='delivery-attempted';
       await saveCurrent();
       if(!current())return;
-      const text=(handoff?(handoff.switched===true?'Gemini 官方額度確認歸零，現有工人已自然結束，帳號已查核切換就緒。':handoff.switched===false?'Gemini 官方確認同一帳號仍有額度；本次就緒只涵蓋 event.requestIds 中先前未送出的工作；其他已執行後失敗工單不因本次通知自動重啟，不立即重派／恢復。':'Gemini 帳號已就緒，待核對本房工人與成果。')+'這是一次系統接手通知，不是本人新指令或原工單重播。先讀本對話最新本人意圖，再讀已保存成果及以下原工單結果；已完成不要重做，副作用未知不要重送。本次就緒接手僅限通知 requestIds 的剩餘工作；只有原目標仍適用且本次範圍確有剩餘工作，才以新的 requestId、handoffFrom 原工單 ID 接手；不得重派相同 ID、換模型、預算或擴張權限。本人停止／清除／更改目標優先。\n'+JSON.stringify(handoff)+'\n':'')+workerNoticeText(batch)+JSON.stringify(results);
+      const text=(handoff?geminiHandoffText(handoff):'')+workerNoticeText(batch)+JSON.stringify(results);
       if(handoff){state.busy=true;activity.begin();state.status='working';geminiLiveGoal=clone(state.goal);currentGroupId=randomUUID();}
       const event=appendMessage('user',text,handoff?`gemini-ready-${randomUUID()}`:`luna-completion-${batch.map(workerNoticeKey).join('-')}`);
       event.kind='worker-completion';event.summary=`${batch.every(r=>r.provider==='codex')?'Codex':'K'} 子代理${batch.some(r=>!r.settled)?'狀態待確認':'工作完成'}：${batch.map(r=>r.requestId).join('、')}`;
@@ -215,12 +217,16 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
         else state.error=`K 子代理通知已送出，但介面紀錄保存失敗；不重送：${error.message}`;
       }
     }finally{
-      if(handoff&&sendAttempted&&geminiHandoff===handoff){geminiHandoff=null;for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;}
+      if(handoff&&sendAttempted){geminiHandoff=consumeGeminiHandoff(geminiHandoff,handoff);if(geminiHandoff?.status!=='ready')for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;}
       if(handoff&&!sendAttempted&&batch.length&&host===active&&state.threadId===parent){
         for(const record of batch){delete workerNotifications[workerNoticeKey(record)];if(!stopping&&!closing&&state.status!=='interrupted'&&workerNoticeCurrent(record,state.workers.find(w=>w.requestId===record.requestId)))workerQueue.set(record.requestId,record);}
         await saveCurrent().catch(error=>{state.error=`未送出的子代理通知標記保存失敗；請核對原結果：${error.message}`;});
       }
       notifying=false;changed();
+      if(sendCompleted&&state.status==='completed'&&(workerQueue.size||['ready','blocked'].includes(geminiHandoff?.status))&&!closing&&!stopping)scheduleWorkers();
+      // A distinct receipt arriving during preflight is new information, not a
+      // retry of the old model turn. Its earlier callback saw notifying=true.
+      if(handoff&&!sendAttempted&&geminiHandoff!==handoff&&['ready','blocked'].includes(geminiHandoff?.status)&&epoch===geminiIntentEpoch&&!closing&&!stopping)scheduleWorkers();
     }
   }
   const scheduleWorkers=()=>queueMicrotask(()=>{void deliverWorkers();});
