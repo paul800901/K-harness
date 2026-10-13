@@ -5,7 +5,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 ## 目前狀態
 
 - **正式 K（南區）已部署**：2026-10-14 套用 `72f04c22d6fc41d4bfcde35d2bc0ffbd69faac0e`，更新器完整測試 1621/1621；`.local/runtime.json` 的 `version` 與 `previous` 已讀回，退版保留三份。見[部署紀錄與清理限制](code-split-20261014.md#部署)。
-- **待完成驗證／發布**：本人手動啟動後，2026-10-14 01:26 health **200／native**；本人指定正式介面交 Claude 檢查，待結果後發布，尚未 push。本批含[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)、[大檔拆分](code-split-20261014.md)，不把程式套用或 health 成功當成正式介面驗收完成。
+- **已驗收並發布**：本人確認 Claude 的 350 檔／前端產物一致性與啟動驗證通過，正式 health 再查 **200／native**；首次 push 後本機 `main`、`origin/main` 與 GitHub 遠端均為 `16b40ac`，其後僅補本文件與[部署收尾](code-split-20261014.md#claude-驗證與-github-發布收尾2026-10-14)，不再部署。本批含[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)、[大檔拆分](code-split-20261014.md)；桌面工具與最舊退版回收的驗證限制保留於紀錄。
 - **東區**：等本人到當地再更新；南區部署或 push 不代表東區完成。步驟見 [Git 安裝更新](git-install-update.md)。
 - **規則**：根目錄 `AGENTS.md`（現行）；各日決定原文見 [AGENTS 歷史全文](agents-history-20261013.md)。
 - **證據位置**：舊紀錄中的 `.runtime/<名稱>` 現在在 `.runtime/archive/<名稱>`，對照見 [.runtime 整理](runtime-cleanup-20261013.md)。

@@ -33,7 +33,15 @@
 - `.local/runtime.json.version` 讀回與指定完整 SHA 相同；`previous` 為 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791911518346`，保留更新前的 `2f6cdc8`。帳號、對話、核心、語音與瀏覽器資料位置不變；本次部署前已存在的 121 個工作區附件 SHA-256 全部一致；新程式的 `.runtime/tests` 為空。
 - 這次仍由舊版 `2f6cdc8` 的更新器執行，故不會執行新版退版保留邏輯。更新後四份中最舊的 `before-1791891326740` 以 Windows `SendToRecycleBin` 呼叫處理；原路徑已消失，但 Shell 與 D 槽回收 metadata 均未找到對應紀錄，**不可宣稱可還原**，未重試刪除、未清空回收筒，已停止其他清理。現在只剩 `before-1791897025592`、`before-1791897884691`、`before-1791911518346` 三份，最新 `previous` 存在。
 - 啟動原桌面 `K HARNESS.lnk` 的工具操作遭政策拒絕，沒有改用另一條路徑繞過；本人手動啟動後，2026-10-14 01:26（臺灣）`http://127.0.0.1:47831/health` 回 **200**、`deployment: native`，正式 Electron 與原桌面啟動器程序存在，程式 SHA 再次讀回一致。
-- 桌面工具兩次選到 K 視窗卻擷取到其他前景畫面，未據此點擊、未搶前景或宣稱 K 介面通過。本人指定改交 Claude 檢查既有聊天室、附件、側欄、訊息、核准、改名與封存管理；Codex 停止介面操作。**正式介面驗證待 Claude 結果；尚未 push**。不能用先前四項候選介面實測代替本次正式讀回。
+- 桌面工具兩次選到 K 視窗卻擷取到其他前景畫面，未據此點擊、未搶前景或宣稱 K 介面通過。本人指定改交 Claude 檢查，Codex 停止介面操作；當時暫緩 push，後續依本人確認的 Claude 驗證結果完成下述發布，不把 Codex 未完成的桌面操作寫成已實測。
 - 部署前五個待推提交的新增內容未命中常見金鑰模式，Git 未追蹤 `.runtime`、`.local`、登入或憑證檔；未上傳私人證據。純 CRLF／既有檔尾空白警告未擴大整理。
 - 本機證據在 `.runtime/archive/code-split-deploy-20261014/`：`precheck.json`、`post-update.json`、`health.json`、`recycle-readback.json`；`update.log` 的 PowerShell transcript 未收錄子程序標準輸出，1621/1621 以本次更新器工具回傳為據，不能把該空白輸出段當完整測試紀錄。
 - **東區未更新**。本批未改設定、資料格式、權限、Defender 排除或三家原生核心；程式退版不還原對話。
+
+### Claude 驗證與 GitHub 發布收尾（2026-10-14）
+
+- 本人回報 Claude **已驗證通過**並明確要求 push：版本 `72f04c2`、退版三份、350 個 runtime 程式檔與 Git 一致；正式 `dist-ui` 的 JavaScript 與本機重建逐位元相同，確認為前述四項瀏覽器 UI 實測通過的同一份產物；`launcher.log` 01:26 啟動無錯誤，health 200。以上 350 檔與前端逐位元核對結果由本人提供的 Claude 驗證回報取得，非 Codex 重新執行；不擴寫為本次正式 Electron 各對話框都曾逐一點擊。
+- Codex 本輪另讀回 `.local/runtime.json.version` 仍為 `72f04c22d6fc41d4bfcde35d2bc0ffbd69faac0e`，`previous` 與三份退版不變，正式 health 再次 **200／native**。未重啟 K、未操作聊天室、未修改程式或補跑無關測試。
+- 推送前 `main` 為 `16b40ac1a2362b60e7d7f9473e2bc65c3404e09b`，工作樹乾淨；包含本人剛補的 `AGENTS.md` 純文件提交（保留 `.runtime/desktop-logs` 原處）。待推提交的新增內容未命中常見金鑰模式，未追蹤私人執行資料或憑證路徑。
+- `git push origin main` 成功，隨後 `git rev-parse main`、`git rev-parse origin/main`、`git ls-remote origin refs/heads/main` 三者皆為 **`16b40ac1a2362b60e7d7f9473e2bc65c3404e09b`**。首次發布讀回存於 `.runtime/archive/code-split-deploy-20261014/publish-16b40ac.json`；此後本文件與工程索引的收尾為純文件提交，與正式程式版本分開，不再部署。
+- **本批南區部署、驗收與來源發布完成；東區仍未更新。** 最舊退版的回收可還原性仍維持上述未確認，不因發布成功改寫其狀態。
