@@ -163,6 +163,7 @@ test('idle native refusal/completed wakes once, using IDs not body and unchanged
       item: {id: 'subagent-completed-child-turn', type: 'subAgentActivity', agentThreadId: 'child', kind: 'completed'}
     });
     await f.c.workers();
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
     assert.equal(
@@ -189,6 +190,7 @@ for (const [status, expected] of [
       f.finish();
       await f.tick();
       f.terminal('child', status);
+      await waitRecheck(() => f.delivered().length >= 1);
       await f.tick();
       assert.equal(f.delivered().length, 1);
       assert.match(f.delivered()[0].p.toolOutput.output, new RegExp(`"status":"${expected}"`));
@@ -227,6 +229,7 @@ test('partial output is preserved and terminal notification never claims task su
     f.finish();
     await f.tick();
     f.terminal();
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
     assert.match(f.delivered()[0].p.toolOutput.output, /實際成果獨立核對/);
@@ -285,6 +288,7 @@ test('parent completion activity read winning the child-read race still wakes on
     f.emit('item/completed', 'parent', {
       item: {id: 'subagent-completed-child-turn', type: 'subAgentActivity', kind: 'completed', agentThreadId: 'child'}
     });
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
   } finally {
@@ -396,6 +400,7 @@ test('transport uncertainty is not retried and stop reconciles own parent', asyn
     assert.equal(f.c.state.status, 'uncertain');
     f.terminal();
     await f.c.workers();
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
     await f.c.stop();
@@ -415,14 +420,17 @@ test('confirmed protocol rejection from an active goal queues until that turn en
     await f.tick();
     f.emit('thread/goal/updated', 'parent', {goal: {status: 'active'}});
     f.terminal();
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
     assert.equal(f.c.state.status, 'completed');
     f.setReject(null);
     f.emit('turn/started', 'parent', {turn: {id: 'goal-turn'}});
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
     f.emit('turn/completed', 'parent', {turn: {id: 'goal-turn', status: 'completed'}});
+    await waitRecheck(() => f.delivered().length >= 2);
     await f.tick();
     assert.equal(f.delivered().length, 2);
   } finally {
@@ -446,6 +454,7 @@ test('terminal queued before a user send acknowledgement drains after submission
     assert.equal(f.delivered().length, 0);
     release();
     await send;
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
   } finally {
@@ -499,6 +508,7 @@ for (const mode of ['missing', 'throw'])
       assert.equal(f.delivered().length, 1);
       f.terminal();
       await f.c.workers();
+      await waitRecheck(() => f.delivered().length >= 1);
       await f.tick();
       assert.equal(f.delivered().length, 1);
     } finally {
@@ -553,6 +563,7 @@ test('recovered terminal stays queued while native goal is busy and delivers onc
     assert.equal(f.c.state.completionPending, true);
     f.emit('turn/completed', 'parent', {turn: {id: 'goal-turn', status: 'completed'}});
     await f.c.workers();
+    await waitRecheck(() => f.delivered().length >= 1);
     await f.tick();
     assert.equal(f.delivered().length, 1);
   } finally {
