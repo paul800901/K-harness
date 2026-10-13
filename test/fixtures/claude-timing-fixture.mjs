@@ -8,7 +8,7 @@ import {scratchBase} from '../scratch.mjs';
 export async function claudeTimingFixture({models, waitForHost, bridgeOverrides = {}, onChange, afterHost} = {}) {
   const root = await mkdtemp(path.join(scratchBase, 'claude-timing-'));
   await writeFile(path.join(root, 'README.md'), 'x');
-  let hostOptions, gatewayOptions, host;
+  let hostOptions, gatewayOptions, bridgeOptions, host;
   const makeHost = () => {
     let resolveClosed;
     return {
@@ -76,7 +76,10 @@ export async function claudeTimingFixture({models, waitForHost, bridgeOverrides 
       afterHost?.(host);
       return host;
     },
-    bridgeFactory: async () => bridge,
+    bridgeFactory: async options => {
+      bridgeOptions = options;
+      return bridge;
+    },
     gatewayFactory: async options => {
       gatewayOptions = options;
       return gateway;
@@ -95,6 +98,9 @@ export async function claudeTimingFixture({models, waitForHost, bridgeOverrides 
     },
     get gatewayOptions() {
       return gatewayOptions;
+    },
+    get bridgeOptions() {
+      return bridgeOptions;
     }
   };
 }

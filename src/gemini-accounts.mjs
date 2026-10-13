@@ -997,7 +997,7 @@ export function createGeminiAccounts({
         outcome = await fn(lease);
         return {...outcome, accountId: lease.accountId, accountEmail: lease.accountEmail};
       } catch (error) {
-        if (error.settled === false) outcome = {settled: false};
+        if (error.settled === false) outcome = {settled: false, error};
         throw error;
       } finally {
         if (
@@ -1014,10 +1014,13 @@ export function createGeminiAccounts({
           // unsettled (never "failed"); otherwise the original result or error stands. release() updates the
           // in-memory registry before saving, so the next successful save persists it.
           if (outcome?.settled === false)
-            throw Object.assign(new Error(`工人停止狀態未確認；帳號狀態保存失敗：${releaseError.message}`), {
-              settled: false,
-              cause: releaseError
-            });
+            throw Object.assign(
+              new Error(`${outcome.error?.message ?? '工人停止狀態未確認'}；帳號狀態保存失敗：${releaseError.message}`),
+              {
+                settled: false,
+                cause: releaseError
+              }
+            );
         }
       }
     }

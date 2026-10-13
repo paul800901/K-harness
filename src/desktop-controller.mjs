@@ -3454,10 +3454,11 @@ export function createDesktopController({
           // Reopening the same room merges into the current record inside the save queue, so a rename,
           // archive or pin made while this open was awaiting is not reverted. Forks and handoffs keep
           // deriving the new room from the source record.
-          if (saved && !forkSource && !freshSource && saved.threadId === state.threadId)
-            (await updateMainSession(root, state.threadId, sessionRecord)) ??
-              (await saveMainSession(root, sessionRecord(saved)));
-          else await saveMainSession(root, sessionRecord(saved));
+          if (saved && !forkSource && !freshSource && saved.threadId === state.threadId) {
+            const merged = await updateMainSession(root, state.threadId, sessionRecord);
+            if (merged) state.title = merged.title;
+            else await saveMainSession(root, sessionRecord(saved));
+          } else await saveMainSession(root, sessionRecord(saved));
           state.workerConnection = 'ready';
           signal.throwIfAborted();
           if (!state.busy && !turnId) {
@@ -3703,7 +3704,8 @@ export function createDesktopController({
                 }),
                 {activityAt: sentMessage.createdAt}
               );
-              if (saved) state.title = saved.title;
+              if (!saved) throw new Error('room record missing');
+              state.title = saved.title;
             } catch {
               state.error = '訊息已送出，但工作名稱或設定未保存；請勿重送訊息。';
             }

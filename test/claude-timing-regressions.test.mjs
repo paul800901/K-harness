@@ -55,7 +55,7 @@ test('late events from an interrupted turn cannot revive a room whose stop was n
   assert.equal(f.host.startCalls.length, 1);
 });
 
-test('a host that exits during open is not reported ready, and a send to it is known unsent', async () => {
+test('a host that exits during open is not reported ready', async () => {
   const f = await fixture({
     afterHost: host => {
       host.resolveClosed();
@@ -168,4 +168,45 @@ test('close() during open cancels it, closes the new host and refuses later send
   assert.equal(await settledWithin(f.host.closed), true, 'the host created during open must be closed');
   await assert.rejects(f.controller.send({text: 'after close'}));
   assert.equal(f.host.startCalls.length, 0);
+});
+
+test('a send the host refuses before delivery is known unsent and leaves no message', async () => {
+  const f = await fixture();
+  await f.controller.open({});
+  f.host.start = async () => {
+    throw Object.assign(new Error('Claude Code host is closed.'), {notSent: true});
+  };
+  await assert.rejects(f.controller.send({text: 'never delivered'}), error => {
+    assert.equal(error.notSent, true);
+    return true;
+  });
+  assert.equal(f.controller.state.status, 'offline');
+  assert.deepEqual(f.controller.state.messages, []);
+  assert.equal(f.host.startCalls.length, 0);
+  await f.controller.close().catch(() => {});
+});
+
+test('cancelling a K worker clears its pending approval card and denies the request', async () => {
+  const f = await fixture();
+  await f.controller.open({});
+  const parentId = f.controller.state.threadId;
+  await f.gatewayOptions.bridge.start({requestId: 'child', model: 'claude-opus-5-5', effort: 'high', task: 't'});
+  const request = toolName => ({
+    method: 'k/claude/requestApproval',
+    params: {
+      parentId,
+      requestId: toolName === 'Write' ? 'child' : 'other',
+      toolName,
+      input: {file_path: 'a.txt', content: 'x'}
+    }
+  });
+  const approval = f.bridgeOptions.onRequest(request('Write'));
+  const other = f.bridgeOptions.onRequest(request('Edit'));
+  assert.equal(f.controller.state.questions.length, 2);
+  await f.gatewayOptions.bridge.cancel({requestId: 'child'});
+  assert.equal((await approval).behavior, 'deny');
+  assert.equal(f.controller.state.questions.length, 1, 'another worker keeps its approval card');
+  assert.equal(await settledWithin(other, 20), false);
+  await f.controller.close();
+  assert.equal((await other).behavior, 'deny');
 });
