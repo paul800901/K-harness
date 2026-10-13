@@ -32,7 +32,8 @@
 - 依 SOP 執行一次 `Update-K.ps1 -Ref 72f04c22d6fc41d4bfcde35d2bc0ffbd69faac0e`；相依安裝、介面／擴充／啟動器建置與完整測試成功，**1621/1621 通過、0 失敗**，正式程式已套用。本批沿用前述 Opus 5.5 撰寫與審核結果，未另修改程式。
 - `.local/runtime.json.version` 讀回與指定完整 SHA 相同；`previous` 為 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1791911518346`，保留更新前的 `2f6cdc8`。帳號、對話、核心、語音與瀏覽器資料位置不變；本次部署前已存在的 121 個工作區附件 SHA-256 全部一致；新程式的 `.runtime/tests` 為空。
 - 這次仍由舊版 `2f6cdc8` 的更新器執行，故不會執行新版退版保留邏輯。更新後四份中最舊的 `before-1791891326740` 以 Windows `SendToRecycleBin` 呼叫處理；原路徑已消失，但 Shell 與 D 槽回收 metadata 均未找到對應紀錄，**不可宣稱可還原**，未重試刪除、未清空回收筒，已停止其他清理。現在只剩 `before-1791897025592`、`before-1791897884691`、`before-1791911518346` 三份，最新 `previous` 存在。
-- 啟動原桌面 `K HARNESS.lnk` 的工具操作遭政策拒絕，沒有改用另一條路徑繞過；已請本人手動啟動。**程式已部署，啟動／health／正式介面讀回待完成；尚未 push**。不能用先前四項候選介面實測代替本次正式讀回。
+- 啟動原桌面 `K HARNESS.lnk` 的工具操作遭政策拒絕，沒有改用另一條路徑繞過；本人手動啟動後，2026-10-14 01:26（臺灣）`http://127.0.0.1:47831/health` 回 **200**、`deployment: native`，正式 Electron 與原桌面啟動器程序存在，程式 SHA 再次讀回一致。
+- 桌面工具兩次選到 K 視窗卻擷取到其他前景畫面，未據此點擊、未搶前景或宣稱 K 介面通過。本人指定改交 Claude 檢查既有聊天室、附件、側欄、訊息、核准、改名與封存管理；Codex 停止介面操作。**正式介面驗證待 Claude 結果；尚未 push**。不能用先前四項候選介面實測代替本次正式讀回。
 - 部署前五個待推提交的新增內容未命中常見金鑰模式，Git 未追蹤 `.runtime`、`.local`、登入或憑證檔；未上傳私人證據。純 CRLF／既有檔尾空白警告未擴大整理。
-- 本機證據在 `.runtime/archive/code-split-deploy-20261014/`：`precheck.json`、`recycle-readback.json`；`update.log` 的 PowerShell transcript 未收錄子程序標準輸出，1621/1621 以本次更新器工具回傳為據，不能把該空白輸出段當完整測試紀錄。
+- 本機證據在 `.runtime/archive/code-split-deploy-20261014/`：`precheck.json`、`post-update.json`、`health.json`、`recycle-readback.json`；`update.log` 的 PowerShell transcript 未收錄子程序標準輸出，1621/1621 以本次更新器工具回傳為據，不能把該空白輸出段當完整測試紀錄。
 - **東區未更新**。本批未改設定、資料格式、權限、Defender 排除或三家原生核心；程式退版不還原對話。
