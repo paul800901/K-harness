@@ -50,7 +50,7 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
   await f.c.open({model:'gpt-6-astra',workerPolicy:{model:'gpt-6-luna',effort:'high'}});
   const config=f.calls.find(x=>x.method==='thread/start').params.config;
   assert.ok(f.calls.find(x=>x.method==='thread/start').params.developerInstructions.includes(MODEL_ROLE_GUIDANCE));
-  assert.deepEqual(config.mcp_servers.k_gemini,{url:'http://127.0.0.1:43210/mcp',http_headers:{Authorization:'Bearer fixture-token'}});
+  assert.deepEqual(config.mcp_servers.k_gemini,{url:'http://127.0.0.1:43210/mcp',http_headers:{Authorization:'Bearer fixture-token'},tool_timeout_sec:86400});
   assert.equal(config.mcp_servers.k_luna,undefined);assert.equal(config.mcp_servers.k_flash.enabled,false);
   assert.equal(config.agents.default_subagent_model,'gpt-6-luna');assert.equal(config.agents.default_subagent_reasoning_effort,'high');
   assert.doesNotMatch(JSON.stringify(config.agents),/claude-/,'native GPT defaults must not be populated with Claude models');

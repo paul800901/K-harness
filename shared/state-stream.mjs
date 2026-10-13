@@ -51,21 +51,24 @@ function buildCollection(previous, current, key) {
 export function createStateStream() {
   let revision = 0;
   let baseline = null;
-  const split = state => {
+  let baselineVersion;
+  const split = (state,reuseHistory=false) => {
     const {messages=[], tools=[], ...fields} = state;
-    return {fields:clone(fields), messages:signatures(messages,'text'), tools:signatures(tools,'output')};
+    return {fields:clone(fields), messages:reuseHistory?baseline.messages:signatures(messages,'text'), tools:reuseHistory?baseline.tools:signatures(tools,'output')};
   };
-  const snapshot = state => {
+  const snapshot = (state,historyVersion) => {
     const captured = split(state);
     baseline = captured;
+    baselineVersion = historyVersion;
     return {type:'snapshot', revision, state:{...captured.fields,messages:clone(state.messages??[]),tools:clone(state.tools??[])}};
   };
-  const update = state => {
-    const current = split(state);
-    if (!baseline) return snapshot(state);
+  const update = (state,historyVersion) => {
+    if (!baseline) return snapshot(state,historyVersion);
+    const reuseHistory=historyVersion!==undefined&&historyVersion===baselineVersion;
+    const current = split(state,reuseHistory);
     const changes = {};
-    const messageChanges = buildCollection(baseline.messages,current.messages,'text');
-    const toolChanges = buildCollection(baseline.tools,current.tools,'output');
+    const messageChanges = reuseHistory?{remove:[]}:buildCollection(baseline.messages,current.messages,'text');
+    const toolChanges = reuseHistory?{remove:[]}:buildCollection(baseline.tools,current.tools,'output');
     if (messageChanges.remove.length || messageChanges.upsert?.length || messageChanges.order) changes.messages = messageChanges;
     if (toolChanges.remove.length || toolChanges.upsert?.length || toolChanges.order) changes.tools = toolChanges;
     for (const key of new Set([...Object.keys(baseline.fields),...Object.keys(current.fields)])) {
@@ -76,6 +79,7 @@ export function createStateStream() {
     // Keep independent copies so subsequent in-place controller mutations cannot
     // rewrite the baseline. Do not stringify the messages/tools collections.
     baseline = current;
+    baselineVersion = historyVersion;
     if (!Object.keys(changes).length) return null;
     return {type:'patch',revision:++revision,changes};
   };

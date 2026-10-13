@@ -217,10 +217,15 @@ export function createGeminiAccounts({root,login,vault,enabled=false,clock=Date.
    const row=find(data.activeAccountId);
    // Observing a usable shared account never rotates through unrelated accounts.
    // Busy is not exhaustion. Startup still validates identity and quota itself.
-   if(!changing&&!refreshPending&&!handoffPending&&!handoffWaiters.size&&row?.auth?.status==='authenticated'&&available(row))return {...value(),scheduling:{status:'ready',notificationRegistered:false}};
+   // A read of dated evidence is not a request to drain every other room. The
+   // dispatch path checks the actual identity and rechecks quota when idle.
+   // Keep real zero / account-operation waits, but never manufacture a wait
+   // merely because a positive or unknown observation aged past the cache TTL.
+   if(!changing&&!refreshPending&&!handoffPending&&!handoffWaiters.size&&!officialZero(row))return {...value(),scheduling:{status:row?.auth?.status==='authenticated'?'ready':'blocked',notificationRegistered:false,
+    ...(row?.auth?.status==='authenticated'?{}:{reason:'目前共用帳號登入尚未確認；未查詢或切換帳號。'})}};
    const registered=registerHandoff({...options,queryOnly:true},data.activeAccountId,{notStarted:true});
    return {...value(),scheduling:{status:registered?'waiting':'blocked',notificationRegistered:registered,waitId:registered?options.requestId:null,
-    reason:registered?'K 已接管等待，現有工作自然結束後核對目前帳號並通知本房。可结束本回合；不要輪詢、重派或僅因等待標為 blocked。':'查詢沒有有效來源，未登記自動接續。'}};
+    reason:registered?'K 已接管等待，現有工作自然結束後核對目前帳號並通知本房。若原生目標仍 active 且無其他可做工作，使用等待工具及本 waitId，timeoutMs=null，維持回合等待事件；不要結束回合反覆喚起，不要輪詢、重派或僅因等待標為 blocked。':'查詢沒有有效來源，未登記自動接續。'}};
   },
   async inspect(fn){await load();if(refreshPending)await refreshPending;requireIdleLogin();if(changing)throw Error('Gemini 正在處理帳號操作。');running++;try{return await fn();}finally{running--;onChange();if(!running&&handoffWaiters.size)await drainHandoff();}},
   async capture(){assertEnabled();return exclusive(async()=>{requireIdleLogin();const row=remember(await vault.capture());await save();await query(row);return snapshot();});},

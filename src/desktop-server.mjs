@@ -51,7 +51,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
   }
  };
  const controller=controllerFactory({root,executable,onChange(){
-  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const state=publicState();for(const listener of stateListeners)listener(state);broadcast(stateStream.update(state));},60);
+  if(!scheduled)scheduled=setTimeout(()=>{scheduled=null;const state=publicState();for(const listener of stateListeners)listener(state);broadcast(stateStream.update(state,controller.historyVersion));},60);
  }});
  const closedResources=new Set();
  let resourceCloseAttempt=null;
@@ -139,8 +139,8 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(isRemote&&req.method==='POST')await remote.acceptCommand(req);
    if(req.headers.origin&&req.headers.origin!==requestOrigin)return json(403,{error:'Cross-origin request denied'});
  if(req.method==='GET'&&url.pathname==='/api/events'){
-    if(scheduled){clearTimeout(scheduled);scheduled=null;broadcast(stateStream.update(publicState()));}
-    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});const snapshot=stateStream.snapshot(publicState());res.write(`data: ${JSON.stringify(isRemote?remoteStateEvent(snapshot):snapshot)}\n\n`);clients.add(res);if(isRemote)remoteClients.add(res);
+    if(scheduled){clearTimeout(scheduled);scheduled=null;broadcast(stateStream.update(publicState(),controller.historyVersion));}
+    res.writeHead(200,{'Content-Type':'text/event-stream','Connection':'keep-alive'});const snapshot=stateStream.snapshot(publicState(),controller.historyVersion);res.write(`data: ${JSON.stringify(isRemote?remoteStateEvent(snapshot):snapshot)}\n\n`);clients.add(res);if(isRemote)remoteClients.add(res);
     const heartbeat=setInterval(async()=>{try{if(isRemote&&!await remote.authorized(req)){clients.delete(res);res.end();return;}if(!res.destroyed)res.write(': alive\n\n');}catch(error){console.error('[remote heartbeat]',error.message);clients.delete(res);res.end();}},20000);res.on('close',()=>{clearInterval(heartbeat);clients.delete(res);});return;
    }
    if(req.method==='GET'&&url.pathname==='/api/codex/auth')return json(200,await codexLogin.status());
@@ -233,7 +233,7 @@ export async function startDesktop({root,executable,port=47831,controllerFactory
    if(url.pathname.startsWith('/api/gemini/accounts/')){
     const operation={'capture':'capture','login':'startLogin','finish':'finishLogin','cancel':'cancelLogin','activate':'activate','refresh':'refresh','refresh-all':'refreshAll'}[url.pathname.slice('/api/gemini/accounts/'.length)];
     if(!operation||!geminiAccounts)throw Error('此版本未提供 Gemini 多帳號操作。');
-    const result=await geminiAccounts[operation](data);broadcast(stateStream.update(publicState()));return json(200,result);
+    const result=await geminiAccounts[operation](data);broadcast(stateStream.update(publicState(),controller.historyVersion));return json(200,result);
    }
    if(url.pathname==='/api/gemini/login'){
     if((await geminiAccounts?.list())?.accounts.length)throw Error('請在 Gemini 多帳號區使用加入帳號或重新登入。');

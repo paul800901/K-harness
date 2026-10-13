@@ -26,6 +26,15 @@ export function consumeGeminiHandoff(value,delivered=value){
   return keys.some(key=>remaining[key].length)?[remaining]:[];
  }));
 }
+// A successful wait result already delivered this exact scheduling receipt to
+// the main agent. Do not wake it again for the same ID; retain other rooms/jobs.
+export function consumeGeminiWaitResult(value,requestId,result){
+ const scheduling=result?.scheduling;
+ if(!['ready','blocked'].includes(scheduling?.status))return value;
+ const events=(value?.events??[]).filter(e=>e.status===scheduling.status&&e.accountId===scheduling.accountId)
+  .map(e=>({...e,requestIds:(e.requestIds??[]).filter(id=>id===requestId),queryIds:(e.queryIds??[]).filter(id=>id===requestId)}));
+ return consumeGeminiHandoff(value,{status:scheduling.status,events});
+}
 export function geminiWaitingJobs(value){return new Set((value?.events??(value?[value]:[])).filter(e=>e.status==='waiting').flatMap(e=>e.requestIds??[]));}
 export function geminiAccountWait(value){
  const events=(value?.events??(value?[value]:[])).filter(e=>['waiting','ready'].includes(e.status));

@@ -226,6 +226,17 @@ test('native URL denial preserves the URL and is not duplicated by denied_action
  parser.write(Buffer.from(JSON.stringify({event:'result',result:{status:'SUCCESS',response:'denied',denied_actions:[{action:'read_url',display_name:'ReadUrlContent'}]}})));
  assert.deepEqual(parser.end().deniedTools,[{tool:'read_url_content',target:'https://example.com/'}]);
 });
+
+test('permission declaration read failure is a tool error, not an authorization denial',()=>{
+ for(const message of ['error declaring permissions: failed to read file: The system cannot find the file specified','permission check failed: cannot find file']){
+  const parser=geminiStream();parser.write(Buffer.from(JSON.stringify({event:'step_update',step_update:{tool_info:{name:'view_file',error:{message}}}})));
+  const result=parser.end();assert.equal(result.toolErrors[0].error,message);assert.deepEqual(result.deniedTools,[]);
+ }
+ for(const message of ['Permission denied for read_file(x)','user denied permission','Matches user-configured deny rule','auto-denied']){
+  const parser=geminiStream();parser.write(Buffer.from(JSON.stringify({event:'step_update',step_update:{tool_info:{name:'view_file',error:{message}}}})));
+  assert.equal(parser.end().deniedTools.length,1);
+ }
+});
 test('concurrent runs share catalog and atomic profile writes; cancelling one never cancels the other',async()=>{
  const fake=fakeSpawn(),worker=make(fake),ac=new AbortController();
  const first=worker.run({task:'first',effort:'low',signal:ac.signal});const second=worker.run({task:'second',effort:'low'});ac.abort();

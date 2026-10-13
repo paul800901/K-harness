@@ -23,12 +23,13 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  const writeContinuation=receipt=>atomicWrite(continuationFile(receipt.sourceThreadId),JSON.stringify(receipt,null,2));
  const attention=createCompletionAttention();
  const discussions=new Map();
+ const historyVersions=new WeakMap();
  const discussion=controller=>discussions.get(controller.state.threadId);
  const projected=controller=>{const s=controller.state,d=discussion(controller),ds=d?.state,continuation=continuationStates.get(controller);return {...s,...(continuation?{continuation,...(['uncertain','cancelled'].includes(continuation.status)?{error:s.error??continuation.error}:{})}:{}),messages:d?d.project(s.messages??[]):s.messages,discussion:ds,
   ...(d?.busy?{busy:true,status:ds.status==='stopping'?'stopping':'working'}:{})};};
  const loadDiscussion=async (controller,state=controller.state)=>{
   const id=state.threadId;if(!id||discussions.has(id))return;
-  const d=discussionFactory({root,threadId:id,executable:options.executable,...discussionOptions,...(discussionSessionFactory?{sessionFactory:discussionSessionFactory}:{}),onChange(){attention.observe(projected(rooms.get(id)??controller));onChange();}});
+  const d=discussionFactory({root,threadId:id,executable:options.executable,...discussionOptions,...(discussionSessionFactory?{sessionFactory:discussionSessionFactory}:{}),onChange(){const owner=rooms.get(id)??controller;historyVersions.set(owner,{});attention.observe(projected(owner));onChange();}});
   await d.load();discussions.set(id,d);
  };
  const noDiscussion=controller=>{if(discussion(controller)?.busy||discussion(controller)?.held)throw Error('請先結束或查明這個聊天室的討論，再變更一般工作設定。');};
@@ -39,7 +40,7 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   let controller;
   controller=sessionFactory({...options,root,onContinueConversation:data=>requestContinuation(controller,data),onConversationSettled:data=>{
    const task=finishContinuation(controller,data);continuationTasks.add(task);void task.finally(()=>continuationTasks.delete(task));
-  },onChange:()=>{if(!closing){if(controller)attention.observe(projected(controller));onChange();}}});
+  },onChange:()=>{if(!closing){if(controller){historyVersions.set(controller,{});attention.observe(projected(controller));}onChange();}}});
   controllers.add(controller);return controller;
  };
  const catalog=create();active=catalog;
@@ -68,8 +69,8 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
   const safeError=value=>typeof value==='string'?value.slice(0,500):undefined;
   return (s.workers??[]).filter(worker=>worker.kind!=='command').map(worker=>{
     const nativeThreadId=worker.threadId;
-    const activityTool=(s.tools??[]).find(tool=>
-     nativeThreadId&&((tool.id===`native:${nativeThreadId}`||tool.details?.threadId===nativeThreadId)||tool.details?.threadIds?.includes?.(nativeThreadId)));
+    const activityTool=nativeThreadId?(s.tools??[]).find(tool=>
+     (tool.id===`native:${nativeThreadId}`||tool.details?.threadId===nativeThreadId)||tool.details?.threadIds?.includes?.(nativeThreadId)):undefined;
     const question=nativeThreadId?(s.questions??[]).find(item=>item.isSubagent&&item.threadId===nativeThreadId):null;
     const ended=worker.settled===true||worker.settled!==false&&['completed','failed','cancelled','canceled','stopped','interrupted'].includes(worker.status);
     const unresolved=!ended&&(disconnected||!['running','starting','pending'].includes(worker.status));
@@ -331,6 +332,9 @@ export function createConversationController({root,onChange=()=>{},sessionFactor
  };
  const api={
   concurrentConversations:true,
+  // Internal invalidation token, not user data. In-place native updates advance
+  // their own room; background updates do not dirty the selected transcript.
+  get historyVersion(){return pendingView??historyVersions.get(active)??active;},
   get discussionBusy(){return locked.size>0||[...discussions.values()].some(d=>d.busy||d.held);},
   get state(){const s=projected(active),view=pendingView?conversationPreview(pendingView.record,pendingView.history):null;return {...s,...view,connectionOpening:!!pendingView,usage:{...s.usage,...sharedUsage},conversationActivity:[...rooms.values()].map(activity),workerActivity:workerActivity(),workerDetails:workerDetails(),completionAttention:attention.state};},
   markViewed(data){const changed=attention.markViewed(data);if(changed)onChange();return {viewed:changed};},

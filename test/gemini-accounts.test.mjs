@@ -33,14 +33,16 @@ test('passive account observation while busy uses dated evidence without switchi
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();const lease=await f.accounts.acquire(),before=structuredClone(f.calls);
  try{for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:()=>assert.fail('unneeded notification')});assert.equal(info.scheduling.status,'ready');assert.equal(info.quotaEvidence,'last-official-observation');}assert.deepEqual(f.calls,before);}finally{await lease.release();}
 });
-test('stale observation is one owned wait; last release checks once and notifies without another model query',async()=>{
+test('aged positive observations across four busy rooms never drain or block new jobs',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z');const f=await fixture({identity:{accountId:A,email},clock:()=>now});await f.accounts.capture();const lease=await f.accounts.acquire(),before=f.calls.status,events=[];now+=120000;
  try{
-  for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});assert.equal(info.scheduling.status,'waiting');assert.equal(info.scheduling.notificationRegistered,true);}
-  assert.equal(f.calls.status,before);assert.equal(events.length,1);await lease.release();
-  assert.equal(f.calls.status,before+1);assert.deepEqual(f.calls.activate,[]);assert.equal(events.length,2);assert.equal(events[1].status,'ready');assert.deepEqual(events[1].requestIds,[]);assert.deepEqual(events[1].queryIds,['query']);
+  for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:`room-${i%4}`,requestId:`query-${i%4}`,onHandoff:e=>events.push(e)});assert.equal(info.scheduling.status,'ready');assert.equal(info.scheduling.notificationRegistered,false);}
+  let runs=0;await f.accounts.run({worker:true,parentId:'room-2',requestId:'new',onHandoff:e=>events.push(e)},async()=>{runs++;return {status:'completed',settled:true};});
+  assert.equal(runs,1);assert.equal(f.calls.status,before);assert.deepEqual(events,[]);assert.deepEqual(f.calls.activate,[]);
+  await lease.release();assert.equal(f.calls.status,before);assert.deepEqual(events,[]);
  }finally{await lease.release();}
 });
+
 test('worker admission can await an already in-flight refresh directly without creating a model notification',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();let release,entered;const begun=new Promise(r=>entered=r);f.login.status=()=>{entered();return new Promise(r=>release=()=>r(authStatus()));};
  const refresh=f.accounts.refresh();await begun; // refreshPending joins are allowed to await directly
@@ -73,10 +75,14 @@ test('explicit official refresh supersedes an old reset deadline and wakes its e
  positive=true;await f.accounts.refresh();await eventually(()=>events.some(e=>e.status==='ready'));
  assert.equal(timers[0].cancelled,true);assert.equal(events.filter(e=>e.status==='ready').length,1);assert.deepEqual(f.calls.activate,[]);
 });
-test('unknown quota or missing reset stays blocked, never assumes a timer or account rotation',async t=>{
- for(const quota of [{status:'unavailable',windows:[]},{status:'ready',windows:[{key:'five_hour',remainingPercent:0}]}])await t.test(quota.status,async()=>{
-  const timers=[],events=[],f=await fixture({identity:{accountId:A,email},setTimer:()=>timers.push(true),statusFor:()=>authStatus(quota)});await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>events.some(e=>e.status==='blocked'));assert.deepEqual(timers,[]);assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(e=>e.status==='ready'),false);
- });
+test('unknown quota observation remains dated unknown without inventing a wait or rotating',async()=>{
+ const quota={status:'unavailable',windows:[]},f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus(quota)});await f.accounts.capture();const before=structuredClone(f.calls);
+ const result=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:()=>assert.fail('passive read must not schedule')});
+ assert.deepEqual(result.accounts[0].quota,quota);assert.equal(result.scheduling.status,'ready');assert.equal(result.scheduling.notificationRegistered,false);assert.deepEqual(f.calls,before);
+});
+test('official zero with unknown reset stays blocked without an invented reset timer',async()=>{
+ const timers=[],events=[],f=await fixture({identity:{accountId:A,email},setTimer:()=>timers.push(true),statusFor:()=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:0}]})});
+ await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>events.some(e=>e.status==='blocked'));assert.deepEqual(timers,[]);assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(e=>e.status==='ready'),false);
 });
 
 test('active work refusal is not reported as login or exhausted quota',async()=>{

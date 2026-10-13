@@ -2,7 +2,7 @@ import {createWorkActivity,claudeWorkActivity} from './work-activity.mjs';
 import {workerNoticeKey,workerNoticeCurrent,workerNoticeText,workerNeedsAttention} from './worker-watch.mjs';
 import {mkdir, readFile} from 'node:fs/promises';
 import path from 'node:path';
-import {mergeGeminiHandoff,consumeGeminiHandoff,geminiWaitingJobs,geminiHandoffText} from './gemini-handoff.mjs';
+import {consumeGeminiWaitResult,mergeGeminiHandoff,consumeGeminiHandoff,geminiWaitingJobs,geminiHandoffText} from './gemini-handoff.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {quotaZeroUntil,quotaZeroRecheckDue} from './quota-zero.mjs';
@@ -509,7 +509,7 @@ export function createClaudeController({root, executable, commandSpec, hostFacto
       wait:args=>ensureBridge().then(value=>value.wait(args)),
       async cancel(args){disarm(args.requestId);return (await ensureBridge()).cancel(args);},
       // The gateway acknowledges only after the model-facing result is prepared successfully.
-      resultReady(args,result){if(result?.settled)disarm(args.requestId);else if(workerNeedsAttention(result??{})){workerNotifications[workerNoticeKey(result)]='delivery-attempted';const queued=workerQueue.get(args.requestId);if(queued&&workerNoticeKey(queued)===workerNoticeKey(result))workerQueue.delete(args.requestId);void saveCurrent().catch(()=>{});}},
+      resultReady(args,result){geminiHandoff=consumeGeminiWaitResult(geminiHandoff,args.requestId,result);if(!geminiHandoff&&result?.scheduling?.status==='ready'){for(const n of state.notices)if(n.kind==='gemini-handoff'&&n.level==='info')n.resolved=true;changed();}if(result?.settled)disarm(args.requestId);else if(workerNeedsAttention(result??{})){workerNotifications[workerNoticeKey(result)]='delivery-attempted';const queued=workerQueue.get(args.requestId);if(queued&&workerNoticeKey(queued)===workerNoticeKey(result))workerQueue.delete(args.requestId);void saveCurrent().catch(()=>{});}},
       list:args=>ensureBridge().then(value=>value.list(args)),
       accounts:()=>ensureBridge().then(value=>value.accounts()),
       async close(){const value=bridgeInstance??(bridgeInitPromise?await bridgeInitPromise.catch(()=>null):null);if(value){await value.close();if(bridgeInstance===value)bridgeInstance=null;}}

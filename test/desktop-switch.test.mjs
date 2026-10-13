@@ -131,7 +131,7 @@ test('normal GPT conversations wait for only the Flash gateway and keep native A
   assert.deepEqual(f.activeHost.waiters.map(waiter=>waiter.name),['k_gemini']);
   const resume=f.activeHost.calls.find(call=>call.method==='thread/resume').p;
   const disabled={enabled:false,command:process.execPath,args:['--version']};
-  assert.deepEqual(resume.config.mcp_servers,{k_google_ops:disabled,k_flash:disabled,k_gemini:{url:'http://127.0.0.1:43123/mcp',http_headers:{Authorization:'Bearer fixture'}},k_browser:disabled});
+  assert.deepEqual(resume.config.mcp_servers,{k_google_ops:disabled,k_flash:disabled,k_gemini:{url:'http://127.0.0.1:43123/mcp',http_headers:{Authorization:'Bearer fixture'},tool_timeout_sec:86400},k_browser:disabled});
   assert.deepEqual(resume.config.agents,{enabled:true});
   assert.deepEqual(f.c.state.messages.map(message=>message.text),['要求 A','回答 A']);
   await f.c.send({text:'直接工作，不啟動 Flash'});

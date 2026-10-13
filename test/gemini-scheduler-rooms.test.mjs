@@ -200,3 +200,27 @@ test('stopping two of four real DesktopControllers cancels only their wait; shar
 
 
 
+
+
+test('four active rooms use pending tool waits through a shared drain; delivered results do not trigger duplicate goal turns',async()=>{
+ const f=await fixture(),[a,b,c,d]=f.rooms;
+ try{
+  await a.gateway.bridge.start(job('a-event'));await f.started('a-event');await b.gateway.bridge.start(job('b-event'));await f.started('b-event');
+  f.exhausted=true;await f.finish('a-event',true);
+  await until(()=>a.c.state.workers.some(w=>w.requestId==='a-event'&&w.settled),'failed original settled');
+  await c.gateway.bridge.start(job('c-event'));
+  await until(()=>c.c.state.workers.some(w=>w.requestId==='c-event'&&w.settled),'unstarted settled');
+  const info=await d.gateway.bridge.accounts();assert.equal(info.scheduling.status,'waiting');
+  const ids=['a-event','c-event',info.scheduling.waitId],rooms=[a,c,d];let completed=0;
+  const pending=rooms.map((room,i)=>room.gateway.bridge.wait({requestId:ids[i]}).then(result=>{completed++;room.gateway.bridge.resultReady({requestId:ids[i]},result);return result;}));
+  await tick();assert.equal(completed,0);assert.deepEqual(f.calls.activate,[]);
+  await f.finish('b-event');const results=await Promise.all(pending);
+  assert.equal(completed,3);assert(results.every(r=>r.scheduling.status==='ready'&&r.scheduling.accountId===B));
+  assert.equal(results[1].dispatch,'not-started');assert.equal(results[2].dispatch,'not-started');
+  assert.deepEqual(f.calls.activate,[B]);assert.equal(f.calls.spawn.filter(r=>r.requestId).length,2);
+  for(const room of rooms)room.end();await tick();
+  assert(rooms.every(room=>room.goal.status==='active'&&room.deliveries().length===0),'one still-active native turn receives the result, not a second notification turn');
+  assert(rooms.every(room=>room.c.state.notices.every(n=>n.kind!=='gemini-handoff'||n.resolved)),'already read ready notice is cleared');
+  assertNoUnexpectedStops(f);
+ }finally{await f.close();}
+});

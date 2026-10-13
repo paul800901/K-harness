@@ -11,7 +11,7 @@ import {checkedPath} from './files.mjs';
 import {createGeminiWorker} from './gemini-worker.mjs';
 import {createClaudeWorker} from './claude-worker.mjs';
 import {randomUUID} from 'node:crypto';
-import {createWorkerWatch,workerObservation,workerNeedsAttention} from './worker-watch.mjs';
+import {createWorkerWatch,workerObservation,workerNeedsAttention,workerNoticeKey} from './worker-watch.mjs';
 
 import {normalizeWorkerPolicy,validateWorkerPolicy} from './worker-policy.mjs';
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
@@ -21,6 +21,7 @@ const clone = value => structuredClone(value);
 export async function lunaResult(record) {
   if (!record) return null;
   const result=Object.fromEntries(['requestId','provider','model','effort','status','settled','executionUnowned','reconciliation','acceptance','threadId','turnId','accountId','accountEmail','handoffFrom','error','dispatch','scheduling','deniedTools','toolErrors','outputFilesNote','activity','lastActivityAt','lastReadAt','startedAt','inspection','observation','waitingForApproval'].filter(key=>record[key]!==undefined).map(key=>[key,record[key]]));
+  if(record.dispatch==='not-started')result.instruction='本次工具呼叫已返回，但工人未啟動，沒有執行此工單。若 scheduling.status=waiting，K 只在等待排程；無其他有用工作時用本入口的等待工具及 timeoutMs=null 等待此 requestId，不輪詢、不重派。就緒只代表可核對剩餘工作，不代表工單自動執行。';
   if(record.executionUnowned===true)result.task=record.task;
   const text=typeof record.output==='string'?record.output:'';
   result.outputLength=text.length;
@@ -108,14 +109,25 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
   let requestGuard=()=>undefined;
   let host, codexError, gemini, claude;
   const processRuns=new Map();
-  const snapshotRecord=record=>record?{...clone(record),...(['gemini','claude'].includes(record.provider)?{observation:workerObservation(record,{owned:processRuns.has(record.requestId),quietMs:watchOptions.quietMs})}:{})}:null;
+  const snapshotRecord=record=>{
+    if(!record)return null;
+    const current=handoffObservations.get(record.requestId),scheduling=current??(record.scheduling?.status==='waiting'?{...record.scheduling,status:'unconfirmed',notificationRegistered:false,reason:'舊排程紀錄在本次沒有有效等候；先查目前條件，不重播原工單。'}:record.scheduling);
+    return {...clone(record),...(scheduling?{scheduling:clone(scheduling)}:{}),...(['gemini','claude'].includes(record.provider)?{observation:workerObservation(record,{owned:processRuns.has(record.requestId),quietMs:watchOptions.quietMs})}:{})};
+  };
   const records = new Map(),activities=new Map();
   const approvalItems = new Map();
   const operations = new Map(), ownedThreads=new Set();
   const persistTails = new Map();
   const ownedRequests=new Set(), revisions=new Map(),waiters=new Map();
+  const handoffObservations=new Map();
   let closed = false, closing = false, closePromise, models;
   let handoffEpoch=0,querySequence=0,accountQueryId=null;const pendingHandoffs=[];
+  function observeHandoff(event){
+    for(const id of [...event.requestIds,...(event.queryIds??[])]){
+      handoffObservations.set(id,{status:event.status,accountId:event.accountId,reason:event.reason,notificationRegistered:event.status==='waiting'});
+      for(const wake of waiters.get(id)??[])wake();
+    }
+  }
   function flushHandoff(){
     if(closed||closing)return;
     for(let i=0;i<pendingHandoffs.length;){
@@ -124,7 +136,7 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     // Account release precedes the worker result. Notify only after every old
     // record in the room has its persisted settled result ready for inspection.
     if(event.requestIds.some(id=>records.get(id)?.settled!==true||persistTails.has(id))){i++;continue;}
-    pendingHandoffs.splice(i,1);try{onGeminiHandoff(clone(event));}catch{}
+    pendingHandoffs.splice(i,1);observeHandoff(event);try{onGeminiHandoff(clone(event));}catch{}
     }
   }
   function receiveHandoff(event,epoch){
@@ -132,11 +144,13 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
     event={...event,queryIds:(event.queryIds??[]).filter(id=>id===accountQueryId)};
     if(!event.requestIds.length&&!event.queryIds.length)return;
     if(event.status!=='waiting'&&event.queryIds.length)accountQueryId=null;
-    if(event.status==='waiting'){try{onGeminiHandoff(clone(event));}catch{}return;}
+    if(event.status==='waiting'){observeHandoff(event);try{onGeminiHandoff(clone(event));}catch{}return;}
     pendingHandoffs.push({event,epoch});flushHandoff();
   }
   function cancelGeminiHandoff(){
     handoffEpoch++;accountQueryId=null;pendingHandoffs.length=0;
+    handoffObservations.clear();
+    for(const listeners of waiters.values())for(const wake of listeners)wake();
     geminiOptions.accounts?.cancelWorkerHandoff?.({parentId});
   }
   const defaults=normalizeWorkerPolicy(workerPolicy);
@@ -507,25 +521,45 @@ export async function createLunaBridge({root, workspace, parentId, executable, a
       if(closed||closing)throw Error('Luna bridge 正在關閉或已關閉。');
       const epoch=handoffEpoch,requestId=accountQueryId??=`account-query-${epoch}-${++querySequence}`;
       const result=await geminiOptions.accounts?.observe({parentId,requestId,onHandoff:event=>receiveHandoff(event,epoch),handoffCurrent:()=>!closed&&!closing&&epoch===handoffEpoch})??{enabled:false,accounts:[],scheduling:{status:'blocked',notificationRegistered:false,reason:'帳號排程未接通'}};
+      if(closed||closing||epoch!==handoffEpoch)throw Error('來源已變更，未沿用舊帳號查詢的等待授權。');
       if(result.scheduling?.status!=='waiting'&&accountQueryId===requestId)accountQueryId=null;
       return result;
      },
-    async wait({requestId,timeoutMs=30000}) {
-      if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new Error('timeoutMs 無效。');
+    async wait({requestId,timeoutMs=geminiOnly?null:30000,signal}) {
+      if (timeoutMs!==null&&(!Number.isFinite(timeoutMs) || timeoutMs < 0)) throw new Error('timeoutMs 無效。');
+      signal?.throwIfAborted();
+      const epoch=handoffEpoch;
       const readSnapshot=async()=>{
         if(records.get(requestId)?.settled){await processRuns.get(requestId)?.completion;await persistTails.get(requestId);}
-        return snapshotRecord(records.get(requestId));
+        signal?.throwIfAborted();
+        if(epoch!==handoffEpoch||closed||closing)throw Error('來源意圖或連線已變更，等待已取消；原工單未停止或重送。');
+        const record=snapshotRecord(records.get(requestId)),scheduling=handoffObservations.get(requestId);
+        return scheduling?{...(record??{requestId,dispatch:'not-started',status:'not-started',settled:true}),scheduling:clone(scheduling)}:record;
       };
-      const snapshot=await inspect({requestId});
-      if(!snapshot||snapshot.settled||workerNeedsAttention(snapshot)||timeoutMs===0)return readSnapshot();
+      const snapshot=handoffObservations.has(requestId)?await readSnapshot():await inspect({requestId});
+      const schedulingWaiting=()=>handoffObservations.get(requestId)?.status==='waiting';
+      if(timeoutMs===0||!schedulingWaiting()&&(!snapshot||snapshot.settled||snapshot.executionUnowned||['unresolved','failed'].includes(snapshot.status)))return readSnapshot();
+      // A second wait acknowledges the already observed quiet episode instead
+      // of returning the same attention instantly and driving another goal turn.
+      const seenNotice=workerNeedsAttention(snapshot??{})?workerNoticeKey(snapshot):null;
+      let seenApproval=snapshot?.waitingForApproval??0;
       // Subscribe before rechecking the record so a completion at the read/
       // subscription boundary cannot be lost. Timeout only ends this wait.
       return new Promise((resolve,reject)=>{
-        let done=false;
+        let done=false,timer;
         const listeners=waiters.get(requestId)??new Set();waiters.set(requestId,listeners);
-        const finish=()=>{if(done)return;done=true;clearTimeout(timer);listeners.delete(wake);if(!listeners.size)waiters.delete(requestId);readSnapshot().then(resolve,reject);};
-        const wake=()=>{const record=records.get(requestId);if(!record||record.settled||workerNeedsAttention(record))finish();};
-        const timer=setTimeout(finish,timeoutMs);listeners.add(wake);wake();
+        const finish=error=>{if(done)return;done=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);listeners.delete(wake);if(!listeners.size)waiters.delete(requestId);if(error)reject(error);else readSnapshot().then(resolve,reject);};
+        const abort=()=>finish(signal.reason??new Error('等待已取消；原工單未停止或重送。'));
+        const wake=()=>{
+          if(epoch!==handoffEpoch||closed||closing)return finish(new Error('來源意圖或連線已變更，等待已取消；原工單未停止或重送。'));
+          if(schedulingWaiting())return;
+          const record=records.get(requestId);
+          const approval=record?.waitingForApproval??0,newApproval=approval>seenApproval;
+          seenApproval=approval;
+          if(!record||record.settled||newApproval||workerNeedsAttention(record)&&workerNoticeKey(record)!==seenNotice)finish();
+        };
+        if(timeoutMs!==null)timer=setTimeout(()=>finish(),timeoutMs);
+        listeners.add(wake);signal?.addEventListener('abort',abort,{once:true});if(signal?.aborted)abort();else wake();
       });
     },
     list:bridgeList,

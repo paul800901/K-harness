@@ -43,6 +43,26 @@ async function fixture({beforeOpen=async()=>{},browserRequest=async()=>({availab
 }
 const eventually=async check=>{const end=Date.now()+2500;while(!check()){if(Date.now()>end)throw Error('condition timed out');await new Promise(r=>setTimeout(r,20));}};
 
+test('history invalidation follows the selected room, not background activity or quota',async()=>{
+ const f=await fixture(),c=f.controller;
+ try{
+  const a=await c.open({model:codexModel});const b=await c.open({model:codexModel});
+  const version=c.historyVersion;f.room(a.threadId).state.messages.push({id:'background',text:'new'});f.room(a.threadId).notify();
+  assert.equal(c.historyVersion,version);await c.usage();assert.equal(c.historyVersion,version);
+  f.room(b.threadId).state.messages.push({id:'selected',text:'new'});f.room(b.threadId).notify();assert.notEqual(c.historyVersion,version);
+  const next=c.historyVersion;await c.open({model:codexModel,threadId:a.threadId});assert.notEqual(c.historyVersion,next);assert.equal(c.state.messages.at(-1).id,'background');
+ }finally{await c.close();}
+});
+
+test('Flash worker detail projection never searches native tool history without a native thread ID',async()=>{
+ const f=await fixture(),c=f.controller;try{
+  const a=await c.open({model:codexModel}),room=f.room(a.threadId);
+  room.state.workers=[{requestId:'flash',provider:'gemini',status:'running',settled:false}];
+  room.state.tools=[{get id(){assert.fail('Flash must not scan native tools');}}];
+  assert.equal(c.state.workerDetails[0].requestId,'flash');room.state.tools=[];
+ }finally{await c.close();}
+});
+
 test('a slow scoped submission cancels an idle probe before the native busy flag changes',async()=>{
  const f=await fixture(),c=f.controller,entered=Promise.withResolvers(),read=Promise.withResolvers(),sending=Promise.withResolvers(),accepted=Promise.withResolvers();let submission;
  try{

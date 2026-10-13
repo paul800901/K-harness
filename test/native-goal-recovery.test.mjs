@@ -514,3 +514,37 @@ test('first ready with unknown workers still reconciles read-only and sends once
   await new Promise(r=>setTimeout(r,1250));assert.equal(f.deliveries().length,0);f.setUnknown(false);await wait(()=>f.deliveries().length===1);assert.match(f.deliveries()[0].p.toolOutput.output,/handoffFrom/);f.end('completed');await tick();assert.equal(f.deliveries().length,1);
  }finally{await f.cleanup();}
 });
+
+
+test('reading ready while a blocked goal awaits an account preserves its trusted recovery receipt',async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();const event={parentId:'parent',requestIds:[],queryIds:['query-wait'],accountId:'B',switched:false};
+  f.bridgeHooks.onGeminiHandoff({...event,status:'waiting'});f.blockGoal();
+  f.bridgeHooks.onGeminiHandoff({...event,status:'ready'});
+  f.gateway.bridge.resultReady({requestId:'query-wait'},{settled:true,scheduling:{status:'ready',accountId:'B'}});
+  f.end('completed');await wait(()=>f.deliveries().length===1);
+  assert.equal(f.deliveries()[0].p.toolOutput.name,'k_native_goal_recovery');assert.equal(f.goal.status,'blocked');
+ }finally{await f.cleanup();}
+});
+
+for(const phase of ['attempted','invalidated'])for(const status of ['ready','blocked'])test(`a ${phase} account recovery does not retain a later ${status} wait receipt`,async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();const notify=(status,id)=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],accountId:'B',status});
+  notify('waiting','old-query');f.blockGoal();f.end('completed');notify('ready','old-query');await wait(()=>f.deliveries().length===1);
+  await f.gateway.resumeGoal({}, {'x-codex-turn-metadata':{thread_id:'parent',turn_id:f.currentTurn}});
+  if(phase==='invalidated'){f.end('completed');f.nativeStart();}
+  notify('waiting','new-query');notify(status,'new-query');
+  f.gateway.bridge.resultReady({requestId:'new-query'},{settled:true,scheduling:{status,accountId:'B'}});
+  f.end('completed');await tick();assert.equal(f.deliveries().length,1,'already delivered new wait must not create a second notification turn');
+ }finally{await f.cleanup();}
+});
+
+test('pending trusted account recovery retains only its own IDs, not an unrelated delivered ready result',async()=>{
+ const f=await fixture();try{
+  await f.gateway.bridge.list();const notify=(status,id)=>f.bridgeHooks.onGeminiHandoff({parentId:'parent',requestIds:[],queryIds:[id],accountId:'B',status});
+  notify('waiting','held-query');f.blockGoal();notify('waiting','other-query');notify('ready','other-query');
+  f.gateway.bridge.resultReady({requestId:'other-query'},{settled:true,scheduling:{status:'ready',accountId:'B'}});
+  notify('ready','held-query');f.end('completed');await wait(()=>f.deliveries().length===1);
+  assert.equal(f.deliveries()[0].p.toolOutput.name,'k_native_goal_recovery');assert.doesNotMatch(f.deliveries()[0].p.toolOutput.output,/other-query/);
+ }finally{await f.cleanup();}
+});

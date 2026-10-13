@@ -9,6 +9,22 @@ import {createStateStream,applyStateEvent} from '../shared/state-stream.mjs';
 
 const stateWith = (messages=[],tools=[]) => ({status:'working',busy:true,progress:{plan:[]},messages,tools});
 
+test('background revisions skip selected history while source revisions preserve in-place changes',()=>{
+ const stream=createStateStream(),state=stateWith([{id:'m',text:'before'}],[{id:'t',output:'before'}]);let token={};
+ let client=applyStateEvent(null,stream.snapshot(state,token));
+ // Getter counts assert actual skipped work, not a timing threshold on a busy PC.
+ let reads=0;Object.defineProperty(state.messages[0],'text',{enumerable:true,configurable:true,get:()=>{reads++;return 'before';}});
+ for(let i=0;i<4;i++){
+  state.conversationActivity=[{threadId:`background-${i}`,busy:true}];
+  const event=stream.update(state,token);assert.equal(event.changes.messages,undefined);client=applyStateEvent(client,event);
+ }
+ assert.equal(reads,0);
+ Object.defineProperty(state.messages[0],'text',{enumerable:true,configurable:true,value:'after',writable:true});state.tools[0].output='after';token={};
+ client=applyStateEvent(client,stream.update(state,token));assert.deepEqual(client,state);
+ // Callers without tokens retain the original in-place-safe path.
+ state.messages[0].text+=' fallback';client=applyStateEvent(client,stream.update(state));assert.deepEqual(client,state);
+});
+
 test('snapshots on connect/reconnect resynchronize state', () => {
   const stream=createStateStream();
   const state=stateWith([{id:'m1',role:'assistant',text:'one'}]);

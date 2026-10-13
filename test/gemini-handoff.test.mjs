@@ -31,13 +31,20 @@ async function fixture(){
  return {root,accounts,events,calls,make,get identity(){return identity;},set exhausted(value){exhausted=value;},async close(){for(const bridge of bridges)await bridge.close();}};
 }
 const job=requestId=>({requestId,task:'bounded fake task',model:'gemini-3.8-flash',effort:'high'});
+// Setup needs the worker's durable terminal record, not account readiness: the
+// fixture deliberately retains another lease until after these assertions.
+async function settled(bridge,requestId){
+ const deadline=Date.now()+1000;
+ while(Date.now()<deadline){const record=await bridge.inspect({requestId});if(record?.settled)return bridge.wait({requestId,timeoutMs:0});await new Promise(resolve=>setTimeout(resolve,5));}
+ throw Error(`fixture worker did not settle: ${requestId}`);
+}
 
 test('two native bridges share one drain; ready is delivered once per room after failed records persist, never replaying a worker',async()=>{
  const f=await fixture();const first=await f.make('room-gpt'),second=await f.make('room-claude'),main=await f.accounts.acquire();
  try{
-  await first.start(job('failed-first'));const old=await first.wait({requestId:'failed-first',timeoutMs:1000});assert.equal(old.status,'failed');assert.equal(old.settled,true);
+  await first.start(job('failed-first'));const old=await settled(first,'failed-first');assert.equal(old.status,'failed');assert.equal(old.settled,true);
   assert.equal(f.events.some(event=>event.status==='ready'),false);const spawnCount=f.calls.spawn.length;
-  await second.start(job('not-started-second'));const refused=await second.wait({requestId:'not-started-second',timeoutMs:1000});assert.equal(refused.status,'failed');assert.equal(refused.settled,true);assert.equal(f.calls.spawn.length,spawnCount);
+  await second.start(job('not-started-second'));const refused=await settled(second,'not-started-second');assert.equal(refused.status,'failed');assert.equal(refused.settled,true);assert.equal(f.calls.spawn.length,spawnCount);
   f.exhausted=true;await main.release();
   const ready=f.events.filter(event=>event.status==='ready');assert.equal(ready.length,2);assert.deepEqual(f.calls.activate,[B]);assert.deepEqual(f.calls.kill,[]);
   for(const event of ready){
@@ -51,7 +58,7 @@ test('two native bridges share one drain; ready is delivered once per room after
 test('same-room failed and rejected requests aggregate one ready event, including immediate last-release completion',async()=>{
  const f=await fixture(),bridge=await f.make('aggregate'),main=await f.accounts.acquire();
  try{
-  await bridge.start(job('failed'));await bridge.wait({requestId:'failed',timeoutMs:1000});await bridge.start(job('refused'));await bridge.wait({requestId:'refused',timeoutMs:1000});
+  await bridge.start(job('failed'));await settled(bridge,'failed');await bridge.start(job('refused'));await settled(bridge,'refused');
   f.exhausted=true;await main.release();const ready=f.events.filter(event=>event.status==='ready');assert.equal(ready.length,1);assert.deepEqual(ready[0].requestIds,['failed','refused']);
  }finally{await main.release();await f.close();}
  const immediate=await fixture(),single=await immediate.make('single');
@@ -67,7 +74,7 @@ test('bridge cancellation, explicit pause hook and close remove waiters without 
  for(const mode of ['cancel-job','pause-hook','close'])await t.test(mode,async()=>{
   const f=await fixture(),bridge=await f.make(`room-${mode}`),main=await f.accounts.acquire();
   try{
-   await bridge.start(job('failed'));await bridge.wait({requestId:'failed',timeoutMs:1000});
+   await bridge.start(job('failed'));await settled(bridge,'failed');
    if(mode==='cancel-job')await bridge.cancel({requestId:'failed'});else if(mode==='pause-hook')bridge.cancelGeminiHandoff();else await bridge.close();
    f.exhausted=true;await main.release();assert.deepEqual(f.calls.activate,[]);assert.deepEqual(f.calls.kill,[]);assert.equal(f.events.some(event=>event.status!=='waiting'),false);
   }finally{await main.release();await f.close();}
@@ -77,8 +84,10 @@ test('bridge cancellation, explicit pause hook and close remove waiters without 
 test('bridge ignores old-epoch handoff events and never recreates waiters from persisted failed records',async()=>{
  const f=await fixture(),bridge=await f.make('epoch');
  try{
-  const main=await f.accounts.acquire();await bridge.start(job('failed'));await bridge.wait({requestId:'failed',timeoutMs:1000});bridge.cancelGeminiHandoff();await bridge.close();f.exhausted=true;await main.release();
+  const main=await f.accounts.acquire();await bridge.start(job('failed'));await settled(bridge,'failed');await bridge.start(job('not-started'));await settled(bridge,'not-started');bridge.cancelGeminiHandoff();await bridge.close();f.exhausted=true;await main.release();
   const restarted=await f.make('epoch');const old=await restarted.inspect({requestId:'failed'});assert.equal(old.status,'failed');
+  const stale=await restarted.inspect({requestId:'not-started'});assert.equal(stale.scheduling.status,'unconfirmed');assert.equal(stale.scheduling.notificationRegistered,false);
+  assert.equal((await restarted.wait({requestId:'not-started'})).scheduling.status,'unconfirmed');
   assert.equal(f.events.some(event=>event.status!=='waiting'),false);assert.deepEqual(f.calls.activate,[]);
  }finally{await f.close();}
 });
@@ -86,8 +95,8 @@ test('bridge ignores old-epoch handoff events and never recreates waiters from p
 test('real worker bridges release unstarted work on official positive quota without waking the rate-failed source',async()=>{
  const f=await fixture(),rate=await f.make('rate-room'),unstarted=await f.make('unstarted-room'),main=await f.accounts.acquire();
  try{
-  await rate.start(job('rate-failed'));await rate.wait({requestId:'rate-failed',timeoutMs:1000});const count=f.calls.spawn.length;
-  await unstarted.start(job('not-started'));await unstarted.wait({requestId:'not-started',timeoutMs:1000});await main.release();
+  await rate.start(job('rate-failed'));await settled(rate,'rate-failed');const count=f.calls.spawn.length;
+  await unstarted.start(job('not-started'));await settled(unstarted,'not-started');await main.release();
   const ready=f.events.filter(event=>event.status==='ready');assert.equal(ready.length,1);assert.equal(ready[0].parentId,'unstarted-room');assert.deepEqual(ready[0].requestIds,['not-started']);assert.equal(ready[0].switched,false);assert.equal(ready[0].accountId,A);
   assert.equal(f.events.some(event=>event.parentId==='rate-room'&&event.status==='ready'),false);assert.equal(f.calls.spawn.length,count);assert.deepEqual(f.calls.activate,[]);assert.deepEqual(f.calls.kill,[]);
  }finally{await main.release();await f.close();}
@@ -96,7 +105,7 @@ test('real worker bridges release unstarted work on official positive quota with
 test('same-room positive ready contains only unstarted IDs and excludes its rate-failed work',async()=>{
  const f=await fixture(),bridge=await f.make('mixed-room'),main=await f.accounts.acquire();
  try{
-  await bridge.start(job('rate-failed'));await bridge.wait({requestId:'rate-failed',timeoutMs:1000});await bridge.start(job('not-started'));await bridge.wait({requestId:'not-started',timeoutMs:1000});
+  await bridge.start(job('rate-failed'));await settled(bridge,'rate-failed');await bridge.start(job('not-started'));await settled(bridge,'not-started');
   await main.release();const terminal=f.events.filter(event=>event.status!=='waiting');assert.equal(terminal.length,2);
   const ready=terminal.find(event=>event.status==='ready'),blocked=terminal.find(event=>event.status==='blocked');
   assert.equal(ready.switched,false);assert.deepEqual(ready.requestIds,['not-started']);assert.deepEqual(blocked.requestIds,['rate-failed']);
@@ -108,7 +117,7 @@ test('a real rejected bridge catches after the prior drain and still receives on
  let resolveReady;const ready=new Promise(resolve=>{resolveReady=resolve;});
  const f=await fixture(),first=await f.make('old-room'),late=await f.make('late-room',event=>{if(event.status==='ready')resolveReady(event);}),main=await f.accounts.acquire();
  try{
-  await first.start(job('failed'));await first.wait({requestId:'failed',timeoutMs:1000});f.exhausted=true;
+  await first.start(job('failed'));await settled(first,'failed');f.exhausted=true;
   const acquire=f.accounts.acquire;f.accounts.acquire=async options=>{try{return await acquire(options);}catch(error){if(error.code==='GEMINI_HANDOFF_WAIT'){await main.release();await Promise.resolve();}throw error;}};
   const count=f.calls.spawn.length;await late.start(job('not-started'));await late.wait({requestId:'not-started',timeoutMs:1000});
   // drain is event-driven and may finish after wait() sees the refused record.
