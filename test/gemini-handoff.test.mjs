@@ -14,7 +14,8 @@ async function fixture(){
  let identity={accountId:A,email:'a@example.test'},exhausted=false;
  const calls={activate:[],spawn:[],kill:[]};
  const vault={current:async()=>({...identity}),capture:async()=>({...identity}),assertIdle:async()=>{},activate:async id=>{calls.activate.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};}};
- const accounts=createGeminiAccounts({root,vault,enabled:true,clock:()=>now,login:{status:async()=>({auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:identity.accountId===A&&exhausted?0:80,resetsAt:(now+3600000)/1000}]}})}});
+ vault.queryQuota=async id=>({accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:id===A&&exhausted?0:80,resetsAt:(now+3600000)/1000}]}});
+ const accounts=createGeminiAccounts({root,vault,enabled:true,clock:()=>now,login:{}});
  await accounts.capture();identity={accountId:B,email:'b@example.test'};await accounts.capture();await accounts.activate({accountId:A});calls.activate.length=0;
  const spawnImpl=(exe,args)=>{
   calls.spawn.push(args);const child=new EventEmitter();Object.assign(child,{pid:12300+calls.spawn.length,stdout:new PassThrough(),stderr:new PassThrough()});

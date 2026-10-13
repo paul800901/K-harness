@@ -43,6 +43,15 @@ function fakeSpawn(answer=success('done'),models=modelList) {
 }
 const make=(fake,options={})=>createGeminiWorker({root,workspace,accessMode:'read-only',env:{LOCALAPPDATA:path.join(root,'original-local'),Path:'fake-path',SystemRoot:'C:/Windows',OPENAI_API_KEY:'do-not-forward',NODE_OPTIONS:'do-not-forward'},spawnImpl:fake.spawnImpl,gitStatus:async()=>null,...options});
 
+test('native quota hint requests only a read before the process closes and cannot alter its outcome',async()=>{
+ const fake=fakeSpawn(null);let started,check;const ready=new Promise(r=>started=r),hint=new Promise(r=>check=r);
+ const run=make(fake).run({task:'fake quota event',effort:'low',onStart:()=>started(),onQuotaHint:()=>{check();throw Error('quota read failed');}});
+ await ready;const child=fake.children.at(-1);let finished=false;run.then(()=>finished=true);
+ child.stdout.write(JSON.stringify({event:'result',result:{status:'ERROR',error:{message:'resource exhausted quota'}}})+'\n');
+ await hint;await new Promise(r=>setImmediate(r));assert.equal(finished,false);assert.equal(fake.calls.filter(c=>c.args[0]==='-p').length,1);
+ child.emit('close',1);const outcome=await run;assert.equal(outcome.status,'failed');assert.equal(outcome.settled,true);assert.equal(outcome.quotaCheckNeeded,true);
+});
+
 test('all Gemini families and exact efforts dispatch from the native catalog without a Flash allowlist',async()=>{
  for(const [model,effort] of [['gemini-3.1-pro','low'],['gemini-3.1-pro','high'],['gemini-3.7-flash','medium'],['gemini-future','native-effort']]){
   const native=`${model}-${effort}`,fake=fakeSpawn(success('native family done'),native+'\tNative model');

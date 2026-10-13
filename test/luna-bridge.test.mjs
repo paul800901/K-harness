@@ -541,7 +541,9 @@ test('real manager query IDs remain independent while an earlier room receipt aw
  const A='a'.repeat(32),B='b'.repeat(32),parentId='query-durable-parent',now=Date.parse('2026-10-13T00:00:00Z');
  let identity={accountId:A,email:'a@example.test'},zero=false,finishProcess,lease,releaseWrite,resolveWrite,writeMock,receiptState;
  const writeGate=new Promise(resolve=>{releaseWrite=resolve;}),writeEntered=new Promise(resolve=>{resolveWrite=resolve;}),events=[],queries=[],activations=[];
- const accounts=createGeminiAccounts({root:testRoot,enabled:true,clock:()=>now,vault:{current:async()=>({...identity}),capture:async()=>({...identity}),assertIdle:async()=>{},activate:async id=>{activations.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};}},login:{status:async()=>{queries.push(identity.accountId);return {auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:zero&&identity.accountId===A?0:80,resetsAt:(now+3600000)/1000}]}};}}});
+ const vault={current:async()=>({...identity}),capture:async()=>({...identity}),assertIdle:async()=>{},activate:async id=>{activations.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};}};
+ vault.queryQuota=async id=>{queries.push(id);return {accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:zero&&id===A?0:80,resetsAt:(now+3600000)/1000}]}};};
+ const accounts=createGeminiAccounts({root:testRoot,enabled:true,clock:()=>now,vault,login:{}});
  await accounts.capture();identity={accountId:B,email:'b@example.test'};await accounts.capture();await accounts.activate({accountId:A});activations.length=0;
  const spawnImpl=(_exe,args)=>{
   const child=new EventEmitter();Object.assign(child,{pid:23000,stdout:new PassThrough(),stderr:new PassThrough()});

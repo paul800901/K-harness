@@ -21,7 +21,8 @@ async function fixture({enabled=true,identity=null,statusFor=()=>authStatus(),ro
   prepareLogin:async()=>{calls.prepareLogin++;current=null;return {previousAccountId:identity?.accountId??null};},
   assertIdle:async()=>{calls.assertIdle++;if(!idle)throw Error('fixture busy');return true;},
  };
- const login={status:async()=>{calls.status++;return statusFor(current,calls.status);},start:async()=>{calls.start++;}};
+ const login={status:async account=>{calls.status++;return statusFor(account??current,calls.status);},start:async()=>{calls.start++;}};
+ vault.queryQuota=async id=>({accountId:id,...await login.status({accountId:id,email})});
  return {root,calls,vault,login,get current(){return current?{...current}:null;},set current(value){current=value?{...value}:null;},set idle(v){idle=v;},accounts:createGeminiAccounts({root,login,vault,enabled,clock,setTimer,clearTimer})};
 }
 function authStatus(quota={status:'available',windows:[{remainingPercent:80,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'}){
@@ -33,13 +34,13 @@ test('passive account observation while busy uses dated evidence without switchi
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();const lease=await f.accounts.acquire(),before=structuredClone(f.calls);
  try{for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:()=>assert.fail('unneeded notification')});assert.equal(info.scheduling.status,'ready');assert.equal(info.quotaEvidence,'last-official-observation');}assert.deepEqual(f.calls,before);}finally{await lease.release();}
 });
-test('aged positive observations across four busy rooms never drain or block new jobs',async()=>{
- let now=Date.parse('2026-10-03T12:00:00Z');const f=await fixture({identity:{accountId:A,email},clock:()=>now});await f.accounts.capture();const lease=await f.accounts.acquire(),before=f.calls.status,events=[];now+=120000;
+test('aged positive observations are refreshed read-only across four busy rooms and admit new work on same identity',async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:80,resetsAt:future}]})});await f.accounts.capture();const lease=await f.accounts.acquire(),before=f.calls.status,events=[];now+=120000;
  try{
   for(let i=0;i<18;i++){const info=await f.accounts.observe({parentId:`room-${i%4}`,requestId:`query-${i%4}`,onHandoff:e=>events.push(e)});assert.equal(info.scheduling.status,'ready');assert.equal(info.scheduling.notificationRegistered,false);}
   let runs=0;await f.accounts.run({worker:true,parentId:'room-2',requestId:'new',onHandoff:e=>events.push(e)},async()=>{runs++;return {status:'completed',settled:true};});
-  assert.equal(runs,1);assert.equal(f.calls.status,before);assert.deepEqual(events,[]);assert.deepEqual(f.calls.activate,[]);
-  await lease.release();assert.equal(f.calls.status,before);assert.deepEqual(events,[]);
+  assert.equal(runs,1);assert(f.calls.status>before);assert.deepEqual(events,[]);assert.deepEqual(f.calls.activate,[]);
+  await lease.release();assert.deepEqual(events,[]);
  }finally{await lease.release();}
 });
 
@@ -75,23 +76,27 @@ test('explicit official refresh supersedes an old reset deadline and wakes its e
  positive=true;await f.accounts.refresh();await eventually(()=>events.some(e=>e.status==='ready'));
  assert.equal(timers[0].cancelled,true);assert.equal(events.filter(e=>e.status==='ready').length,1);assert.deepEqual(f.calls.activate,[]);
 });
-test('unknown quota observation remains dated unknown without inventing a wait or rotating',async()=>{
+test('unknown quota is not admitted or interpreted as zero',async()=>{
  const quota={status:'unavailable',windows:[]},f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus(quota)});await f.accounts.capture();const before=structuredClone(f.calls);
- const result=await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:()=>assert.fail('passive read must not schedule')});
- assert.deepEqual(result.accounts[0].quota,quota);assert.equal(result.scheduling.status,'ready');assert.equal(result.scheduling.notificationRegistered,false);assert.deepEqual(f.calls,before);
+ await assert.rejects(f.accounts.acquire({worker:true}),/額度尚未確認|尚無官方目前額度資料/u);
+ const result=await f.accounts.list();assert.deepEqual(result.accounts[0].quota,quota);assert.equal(result.accounts[0].quota.status,'unavailable');assert.deepEqual(f.calls.activate,before.activate);
 });
-test('official zero with unknown reset stays blocked without an invented reset timer',async()=>{
- const timers=[],events=[],f=await fixture({identity:{accountId:A,email},setTimer:()=>timers.push(true),statusFor:()=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:0}]})});
- await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>events.some(e=>e.status==='blocked'));assert.deepEqual(timers,[]);assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(e=>e.status==='ready'),false);
+test('official zero with unknown reset keeps an owned quiet retry without inventing a reset time',async()=>{
+ const timers=[],events=[],f=await fixture({identity:{accountId:A,email},setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;},statusFor:()=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:0}]})});
+ await f.accounts.capture();await f.accounts.observe({parentId:'room',requestId:'query',onHandoff:e=>events.push(e)});await eventually(()=>timers.length===1);
+ assert.equal(events.at(-1).status,'waiting');assert.equal(timers[0].ms,60000);assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(e=>e.status==='ready'),false);
+ f.accounts.cancelWorkerHandoff({parentId:'room'});assert.equal(timers[0].cancelled,true);
 });
 
-test('active work refusal is not reported as login or exhausted quota',async()=>{
+test('read-only per-account quota refresh is allowed during active work and does not change login',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
  let finish;const pending=f.accounts.inspect(()=>new Promise(r=>finish=r));while(!finish)await new Promise(r=>setImmediate(r));
  try{
-  const before=structuredClone(f.calls),quota=(await f.accounts.list()).accounts[0].quota;
-  await assert.rejects(f.accounts.refreshAll(),e=>/正在工作/.test(e.message)&&/不是額度耗盡/.test(e.message)&&!/登入/.test(e.message));
-  assert.deepEqual(f.calls,before);assert.deepEqual((await f.accounts.list()).accounts[0].quota,quota);assert.equal((await f.accounts.list()).loginPending,false);
+  const before=f.calls.status,identity=f.current.accountId;
+  const refreshed=await f.accounts.refreshAll();
+  assert.equal(f.calls.status,before+1);assert.equal(f.current.accountId,identity);
+  assert.deepEqual(f.calls.activate,[]);assert.equal(refreshed.accounts[0].quota.windows[0].remainingPercent,80);
+  assert.equal((await f.accounts.list()).busy,true,'quota observation does not release or misreport the live work lease');
  }finally{finish();await pending;}
 });
 test('concurrent account operation refusal is distinct from running work or exhausted quota',async()=>{
@@ -114,7 +119,7 @@ test('known weekly or five-hour zero suppresses UI, AI and worker checks across 
  });
 });
 
-test('all five zero accounts recheck every account at the earliest effective reset and restore the original',async()=>{
+test('all five zero accounts recheck independently at earliest effective reset without switching login',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z'),recovered=false;const start=now;
  const ids=[A,B,C,D,E],deadlines=ids.map((_,i)=>start+(i+1)*120000);
  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'seven_day',remainingPercent:current.accountId===A&&recovered?70:0,resetsAt:deadlines[ids.indexOf(current.accountId)]/1000},{key:'five_hour',remainingPercent:current.accountId===A&&recovered?70:0,resetsAt:(start+60000)/1000}]})});
@@ -122,7 +127,7 @@ test('all five zero accounts recheck every account at the earliest effective res
  const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true,clock:()=>now});
  const count=f.calls.status;now=start+61000;await restarted.usage();assert.equal(f.calls.status,count,'earlier five-hour reset cannot clear a later blocking weekly zero');
  now=deadlines[0];recovered=true;f.calls.activate.length=0;await restarted.usage();
- assert.equal(f.calls.status,count+5,'later-reset accounts are also queried in this complete recovery');assert.deepEqual(f.calls.activate,[A,B,C,D,E]);assert.equal(f.current.accountId,E);
+ assert.equal(f.calls.status,count+5,'later-reset accounts are also queried in this complete recovery');assert.deepEqual(f.calls.activate,[]);assert.equal(f.current.accountId,E);
  await restarted.usage();assert.equal(f.calls.status,count+5);
 });
 
@@ -150,10 +155,10 @@ test('all-zero recovery is deferred while Gemini is running and a failed recover
  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>failed?{temporaryFailure:true,auth:{status:'unknown'},reason:'fixture offline'}:authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
  for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
  let finish;const work=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;}));while(!finish)await new Promise(resolve=>setImmediate(resolve));
- const count=f.calls.status;now=reset;await f.accounts.usage();assert.equal(f.calls.status,count);finish();await work;
- failed=true;await f.accounts.usage();assert.equal(f.calls.status,count+5);assert.equal(f.current.accountId,E);
+ const count=f.calls.status;now=reset;failed=true;await f.accounts.usage();assert.equal(f.calls.status,count+5);assert.equal((await f.accounts.list()).busy,true);
  const state=await f.accounts.list();assert(state.accounts.every(row=>row.quota.status==='stale'));
- await f.accounts.usage();assert.equal(f.calls.status,count+5);assert.equal(state.uncertain,false);
+ await f.accounts.usage();assert.equal(f.calls.status,count+5,'failed lookup is not immediately retried while the same reset episode remains');
+ finish();await work;await f.accounts.usage();assert.equal(f.calls.status,count+5,'completion of existing work does not replay the failed batch');assert.equal(state.uncertain,false);assert.equal(f.current.accountId,E);
 });
 
 test('known-zero candidates are skipped but an unknown account is checked before use',async()=>{
@@ -171,37 +176,36 @@ test('explicit all-account refresh overrides zero suppression before reset',asyn
  const count=f.calls.status;remaining=90;const result=await f.accounts.refreshAll();assert.equal(f.calls.status,count+5);assert.equal(result.quotaCheck.allExhausted,false);assert.equal(f.current.accountId,E);
 });
 
-test('a thrown account switch error cannot automatically replay the all-zero recovery batch',async()=>{
+test('read-only all-zero recovery does not switch accounts or replay after the next check',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z'),reset=now+120000;
  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
  for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
- const activate=f.vault.activate;f.vault.activate=async id=>{if(id===A)throw Error('fixture switch failed');return activate(id);};
- now=reset;reset=now+120000;const before=f.calls.status;await f.accounts.usage();assert.equal(f.calls.status,before+1);assert.equal(f.current.accountId,E);
- await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+1);assert.equal((await f.accounts.list()).uncertain,false);
- f.vault.activate=activate;await f.accounts.refreshAll();assert.equal(f.calls.status,before+6,'explicit human retry remains available');
+ const activate=f.vault.activate;f.vault.activate=async id=>{throw Error(`must not activate ${id}`);};
+ now=reset;reset=now+120000;const before=f.calls.status;await f.accounts.usage();assert.equal(f.calls.status,before+5);assert.equal(f.current.accountId,E);
+ await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+5);assert.equal((await f.accounts.list()).uncertain,false);
+ f.vault.activate=activate;await f.accounts.refreshAll();assert.equal(f.calls.status,before+10,'explicit human refresh remains available');
 });
 
-test('delayed recovery cannot replay after its earliest reset moves to another already expired account',async()=>{
+test('delayed all-account recovery waits for the next effective reset without switching login',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z'),recovering=false;const start=now,ids=[A,B,C,D,E];
  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:current=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:(recovering?now+120000:start+(ids.indexOf(current.accountId)+1)*120000)/1000}]})});
  for(const id of ids){f.current={accountId:id,email};await f.accounts.capture();}
- await f.accounts.activate({accountId:A});const activate=f.vault.activate;
- f.vault.activate=async id=>{if(id===B)throw Error('fixture switch failed');return activate(id);};
+ await f.accounts.activate({accountId:A});f.calls.activate.length=0;
  now=start+720000;recovering=true;const before=f.calls.status;
  await f.accounts.usage();await f.accounts.usage();await f.accounts.usage();
- assert.equal(f.calls.status,before+1,'the remaining expired deadlines belong to the same attempted recovery');assert.equal(f.current.accountId,A);
- now+=120000;const switches=f.calls.activate.length;await f.accounts.usage();await f.accounts.usage();
- assert.equal(f.calls.status,before+2,'the active account resumes single-account lookup at its new reset');assert.equal(f.calls.activate.length,switches,'failed recovery is not replayed as a batch');
- f.vault.activate=activate;await f.accounts.refreshAll();assert.equal(f.calls.status,before+7,'manual refresh still queries all five');
+ assert.equal(f.calls.status,before+5,'the complete read-only recovery checks all saved accounts once');assert.equal(f.current.accountId,A);
+ now+=120000;await f.accounts.usage();const afterNewReset=f.calls.status;await f.accounts.usage();
+ assert.equal(afterNewReset,before+10,'the new reset deadline starts a fresh complete read-only recovery');assert.equal(f.calls.status,afterNewReset,'the same reset episode is not polled twice');assert.deepEqual(f.calls.activate,[]);
+ await f.accounts.refreshAll();assert.equal(f.calls.status,afterNewReset+5,'manual refresh still queries all five');
 });
 
-test('a thrown first quota query also does not replay automatic recovery',async()=>{
+test('a thrown first quota query starts read-only recovery and does not immediately repeat',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z');const reset=now+120000;
  const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:reset/1000}]})});
  for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
  f.login.status=async()=>{f.calls.status++;throw Error('fixture query threw');};now=reset;const before=f.calls.status;
- await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+1);
- now+=61000;await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+2,'single-account failures retain the existing one-minute throttle');
+ await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+5,'the reset recovery reads each saved account independently once');
+ now+=61000;await f.accounts.usage();await f.accounts.usage();assert.equal(f.calls.status,before+6,'subsequent temporary refreshes are throttled');
 });
 
 test('capture keeps account identity rows separate even when email duplicates',async()=>{
@@ -265,7 +269,7 @@ test('failed quota refresh does not allow waiting acquire or inspect to proceed'
  let inspected=false;const inspect=f.accounts.inspect(async()=>{inspected=true;}).catch(error=>error);
  await new Promise(resolve=>setImmediate(resolve));rejectStatus(Error('refresh failed'));
  await refresh.catch(()=>{});const [workError,inspectError]=await Promise.all([work,inspect]);
- assert.match(workError.message,/refresh failed/u);assert.match(inspectError.message,/refresh failed/u);
+ assert.match(workError.message,/官方額度暫時查不到/u);assert.match(inspectError.message,/官方額度暫時查不到/u);
  assert.equal(invoked,false);assert.equal(inspected,false);
 });
 
@@ -340,14 +344,14 @@ test('worker explicit account cannot skip Fourth to Fifth to First and never rep
  assert.equal(first.accountId,A);assert.equal(invoked,2);assert.deepEqual(f.calls.activate,[A]);
 });
 
-test('a stale or unknown next account is queried and not assumed available',async()=>{
- const f=await fixture({identity:{accountId:A,email},statusFor:current=>current.accountId===B
+test('an unknown next account is not assumed available when a later saved account has verified quota',async()=>{
+ const queried=[];const f=await fixture({identity:{accountId:A,email},statusFor:current=>{queried.push(current.accountId);return current.accountId===B
   ?{auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota:{status:'unavailable',windows:[]},reason:'quota unavailable'}
-  :authStatus({status:'ready',windows:[{remainingPercent:current.accountId===A?0:40,resetsAt:future}]})});
+  :authStatus({status:'ready',windows:[{remainingPercent:current.accountId===A?0:40,resetsAt:future}]});}});
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:C,email};await f.accounts.capture();
- await f.accounts.activate({accountId:A});let invoked=0;f.calls.activate.length=0;
- await assert.rejects(f.accounts.run({accountId:C,worker:true},async()=>{invoked++;}),/尚無官方目前額度資料/u);
- assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[B,A]);assert.equal(f.current.accountId,A);
+ await f.accounts.activate({accountId:A});let invoked=0;f.calls.activate.length=0;queried.length=0;
+ const result=await f.accounts.run({accountId:C,worker:true},async()=>{invoked++;return {settled:true};});
+ assert.equal(invoked,1);assert.equal(result.accountId,C);assert.deepEqual(queried,[B,C,C]);assert.deepEqual(f.calls.activate,[C]);assert.equal(f.current.accountId,C);
 });
 
 test('worker does not rotate on unknown quota; a failed check retains prior official zero until reset',async t=>{
@@ -362,11 +366,13 @@ test('worker does not rotate on unknown quota; a failed check retains prior offi
   }});
   await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();
   await f.accounts.activate({accountId:A});f.calls.activate.length=0;
-  if(scenario==='timeout'){failed=true;await f.accounts.refresh();}
-  if(scenario!=='timeout'){
+   if(scenario==='timeout'){failed=true;await f.accounts.refresh();}
+   if(scenario==='unknown'){
+    await assert.rejects(f.accounts.acquire({worker:true}),/額度尚未確認|保留等待/u);
+   }else if(scenario!=='timeout'){
    for(let i=0;i<2;i++){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();}
   }else {const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();}
-  assert.equal(f.current.accountId,scenario==='timeout'?B:A);assert.deepEqual(f.calls.activate,scenario==='timeout'?[B]:[]);assert.equal((await f.accounts.list()).busy,false);
+   assert.equal(f.current.accountId,scenario==='timeout'?B:A);assert.deepEqual(f.calls.activate,scenario==='timeout'?[B]:[]);assert.equal((await f.accounts.list()).busy,false);
  });
 });
 
@@ -487,11 +493,11 @@ test('selecting a cached signed-out account does not activate it before rejectio
  assert.deepEqual(f.calls.activate,[]);
 });
 
-test('unknown network quota is not interpreted as zero or as exhaustion',async()=>{
+test('unknown network quota is not admitted and remains distinct from official exhaustion',async()=>{
  const f=await fixture({identity:{accountId:A,email},statusFor:()=>({auth:{status:'authenticated',checkedAt:'2026-10-03T11:59:30.000Z'},quota:{status:'unavailable',windows:[],note:'network unknown'}})});
  await f.accounts.capture();let invoked=0;
- const result=await f.accounts.run({},async()=>{invoked++;return {settled:true};});
- assert.equal(invoked,1);assert.equal(result.accountId,A);
+ await assert.rejects(f.accounts.run({},async()=>{invoked++;return {settled:true};}),/額度尚未確認|尚無官方目前額度資料/u);
+ assert.equal(invoked,0);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).accounts[0].quota.status,'unavailable');
 });
 
 test('inactive official quota remains a readable last-query result',async()=>{
@@ -502,12 +508,27 @@ test('inactive official quota remains a readable last-query result',async()=>{
  assert.equal(state.accounts.find(row=>row.id===B).quota.status,'available');
 });
 
-test('quota refresh with identity changing during status check is discarded',async()=>{
- let f,changeIdentity=false;f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:()=>{if(changeIdentity){f.current={accountId:B,email:'b@example.test'};return authStatus({status:'available',windows:[{remainingPercent:1,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'});}return authStatus({status:'available',windows:[{remainingPercent:55,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'});}});
- await f.accounts.capture();changeIdentity=true;
- await assert.rejects(f.accounts.refresh(),/已改變.*丟棄/u);
- const state=await f.accounts.list();assert.equal(state.activeAccountId,null);
- assert.notEqual(state.accounts.find(row=>row.id===A).quota.windows?.[0]?.remainingPercent,1);
+test('quota refresh reads requested account independently of the current live login',async()=>{
+ const f=await fixture({identity:{accountId:A,email:'a@example.test'},statusFor:current=>authStatus({status:'available',windows:[{remainingPercent:current?.accountId===A?55:1,resetsAt:future}],checkedAt:'2026-10-03T11:59:30.000Z'})});
+ await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();f.calls.activate.length=0;
+ const result=await f.accounts.refreshAll();const state=await f.accounts.list();
+ assert.equal(f.current.accountId,B);assert.equal(state.activeAccountId,B);assert.deepEqual(f.calls.activate,[]);
+ assert.equal(result.accounts.find(row=>row.id===A).quota.windows[0].remainingPercent,55);
+ assert.equal(result.accounts.find(row=>row.id===B).quota.windows[0].remainingPercent,1);
+});
+
+test('legacy interrupted quota restoration owns the account lock until identity is restored',async()=>{
+ const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();
+ const file=path.join(f.root,'.runtime/gemini-accounts.json'),saved=JSON.parse(await readFile(file,'utf8'));saved.quotaRefreshOriginalId=A;await writeFile(file,JSON.stringify(saved));
+ let finish,started,defer=true;const began=new Promise(resolve=>{started=resolve;});
+ f.vault.assertIdle=async()=>{if(defer){defer=false;started();await new Promise(resolve=>{finish=resolve;});}};
+ const accounts=createGeminiAccounts({root:f.root,vault:f.vault,login:f.login,enabled:true,clock:()=>Date.parse('2026-10-03T12:00:00Z')});
+ const restore=accounts.refreshAll();await began;
+ await assert.rejects(accounts.capture(),/另一個 Gemini 帳號操作/u);
+ let acquired=false;const acquire=accounts.acquire({worker:true}).then(lease=>{acquired=true;return lease;});
+ await new Promise(resolve=>setImmediate(resolve));assert.equal(acquired,false);assert.equal(f.current.accountId,B);assert.deepEqual(f.calls.activate,[]);
+ finish();const result=await restore;assert.equal(result.activeAccountId,A);const lease=await acquire;assert.equal(lease.accountId,A);assert.deepEqual(f.calls.activate,[A]);await lease.release();
+ assert.equal(JSON.parse(await readFile(file,'utf8')).quotaRefreshOriginalId,undefined);
 });
 
 test('an unsettled stop marks account state uncertain and blocks further work or switching',async()=>{
@@ -579,8 +600,8 @@ test('malformed account metadata reports a read error without overwriting the re
 test('uncertain work before first account enrollment can be cleared only after native idle is confirmed',async()=>{
  const f=await fixture();const lease=await f.accounts.acquire();await lease.release({settled:false});
  assert.equal((await f.accounts.list()).uncertain,true);
- f.idle=false;await assert.rejects(f.accounts.refresh(),/fixture busy/);
- assert.equal((await f.accounts.list()).uncertain,true);
+ f.idle=false;await f.accounts.refresh();
+ assert.equal((await f.accounts.list()).uncertain,true);await assert.rejects(f.accounts.acquire(),/停止尚未確認/u);
  f.idle=true;await f.accounts.refresh();assert.equal((await f.accounts.list()).uncertain,false);
  const next=await f.accounts.acquire();await next.release();
 });
@@ -605,12 +626,12 @@ test('manual account activation waits for a background quota refresh instead of 
 
 test('next account with no usable official windows is not assumed available',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
- f.login.status=async()=>authStatus({status:'ready',windows:f.current.accountId===A?[{remainingPercent:0,resetsAt:future}]:[]});
- await f.accounts.refresh();await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/);assert.deepEqual(f.calls.activate,[A,B,A]);assert.equal(f.current.accountId,A);
+ f.vault.queryQuota=async id=>({accountId:id,...authStatus({status:'ready',windows:id===A?[{key:'five_hour',remainingPercent:0,resetsAt:future}]:[]})});
+ await f.accounts.refreshAll();await assert.rejects(f.accounts.acquire({worker:true}),/額度尚未確認|候選帳號額度尚未確認/u);assert.deepEqual(f.calls.activate,[A]);assert.equal(f.current.accountId,A);
 });
 test('fresh positive balance after a past reset remains usable for the next saved account',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
- f.login.status=async()=>authStatus({status:'ready',windows:[{remainingPercent:f.current.accountId===A?0:100,resetsAt:f.current.accountId===A?future:1}]});
+  f.login.status=async account=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00.000Z',windows:[{key:'seven_day',remainingPercent:account.accountId===A?0:100,resetsAt:future}]});
  await f.accounts.refresh();const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();
 });
 
@@ -621,8 +642,8 @@ test('temporary quota failure preserves only prior verified login and does not r
  await f.accounts.refresh();const after=(await f.accounts.list()).accounts[0];
  assert.deepEqual(after.auth,before.auth);assert.equal(after.quota.status,'stale');assert.deepEqual(after.quota.windows,before.quota.windows);
  const statusCalls=f.calls.status;await f.accounts.usage();
- const lease=await f.accounts.acquire();assert.equal(lease.accountId,A);await lease.release();assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
- assert.equal(f.calls.status,statusCalls,'a failed recent quota query must not immediately run again');
+ await assert.rejects(f.accounts.acquire(),/額度尚未確認|尚無官方目前額度資料/u);assert.equal((await f.accounts.list()).busy,false);assert.deepEqual(f.calls.activate,[]);
+ assert.equal(f.calls.status,statusCalls,'a recent failed official result cannot authorize work or trigger an immediate repeat');
  assert.equal(after.lastQueryAt,undefined,'attempt timestamps are not a new public authentication result');
  now+=61000;await f.accounts.usage();assert.equal(f.calls.status,statusCalls+1);
  f.login.status=async()=>({auth:{status:'signed-out'},reason:'尚未登入 Gemini，請完成官方登入。'});await f.accounts.refresh();
@@ -643,50 +664,49 @@ test('quota query busy flag clears after a timeout-shaped response without disca
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();
  let resolveStatus;f.login.status=()=>new Promise(resolve=>{resolveStatus=resolve;});const pending=f.accounts.refresh();
  while(!resolveStatus)await new Promise(resolve=>setImmediate(resolve));
- assert.equal((await f.accounts.list()).checking,true);assert.equal((await f.accounts.list()).busy,true);
+ assert.equal((await f.accounts.list()).checking,true);assert.equal((await f.accounts.list()).busy,false,'read-only quota query is not an account-changing operation');
  resolveStatus({temporaryFailure:true,auth:{status:'unknown'},reason:'query timeout'});await pending;
  const result=await f.accounts.list();assert.equal(result.checking,false);assert.equal(result.busy,false);assert.deepEqual(result.accounts.map(r=>r.id),[A,B]);
 });
 
 
-test('refreshAll queries every saved account once and restores original without sending model work',async()=>{
+test('refreshAll queries every saved account once without switching login or sending model work',async()=>{
  let left=0;const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'five_hour',remainingPercent:left,resetsAt:future}]})});
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.calls.activate.length=0;const before=f.calls.status;left=75;
- const result=await f.accounts.refreshAll();assert.equal(f.calls.status,before+2);assert.deepEqual(f.calls.activate,[A,B]);assert.equal(f.current.accountId,B);assert.equal(result.activeAccountId,B);assert.equal(result.busy,false);assert.equal(result.quotaCheck.allExhausted,false);assert(result.accounts.every(a=>a.quota.windows[0].remainingPercent===75));
+ const result=await f.accounts.refreshAll();assert.equal(f.calls.status,before+2);assert.deepEqual(f.calls.activate,[]);assert.equal(f.current.accountId,B);assert.equal(result.activeAccountId,B);assert.equal(result.busy,false);assert.equal(result.quotaCheck.allExhausted,false);assert(result.accounts.every(a=>a.quota.windows[0].remainingPercent===75));
  assert.equal(JSON.parse(await readFile(path.join(f.root,'.runtime/gemini-accounts.json'),'utf8')).quotaRefreshOriginalId,undefined);
 });
-test('all-account query refuses running work, external native processes and pending login without switching',async()=>{
+test('read-only all-account query can run beside work, does not inspect native login processes, and refuses pending login',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();
- const lease=await f.accounts.acquire();await assert.rejects(f.accounts.refreshAll(),/正在工作/u);await lease.release();
- f.idle=false;await assert.rejects(f.accounts.refreshAll(),/fixture busy/u);f.idle=true;
+ const lease=await f.accounts.acquire();const before=f.calls.assertIdle;await f.accounts.refreshAll();assert.equal(f.calls.assertIdle,before);await lease.release();
+ f.idle=false;await f.accounts.refreshAll();f.idle=true;
  await f.accounts.startLogin();await assert.rejects(f.accounts.refreshAll(),/登入/u);assert.deepEqual(f.calls.activate,[]);
 });
-test('all-account query restores original on failure and never reports unknown as exhausted',async()=>{
+test('all-account read-only query preserves identity on failure and never reports unknown as exhausted',async()=>{
  let fail=false;const f=await fixture({identity:{accountId:A,email},statusFor:current=>fail&&current.accountId===A?{temporaryFailure:true,reason:'lookup failed',auth:{status:'unknown'}}:authStatus()});
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();fail=true;
  const result=await f.accounts.refreshAll();assert.equal(result.quotaCheck.allExhausted,null);assert.equal(f.current.accountId,B);assert.match(result.note,/1 個帳號未取得/u);
- f.login.status=async()=>{throw Error('native query failed');};await assert.rejects(f.accounts.refreshAll(),/native query failed/u);assert.equal(f.current.accountId,B);
+ f.vault.queryQuota=async id=>{if(id===A)throw Error('native query failed');return {accountId:id,...authStatus()};};const failed=await f.accounts.refreshAll();assert.equal(failed.quotaCheck.allExhausted,null);assert.equal(f.current.accountId,B);assert.deepEqual(f.calls.activate,[]);
 });
-test('failed restoration survives restart, blocks work, and explicit retry only restores original',async()=>{
+test('failed independent quota query preserves every saved identity and does not mark switching uncertain',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();
- const activate=f.vault.activate;f.vault.activate=async id=>{if(id===B)throw Error('restore failed');return activate(id);};
- await assert.rejects(f.accounts.refreshAll(),/尚未確認已切回/u);assert.equal(f.current.accountId,A);
- const restarted=createGeminiAccounts({root:f.root,login:f.login,vault:f.vault,enabled:true});await assert.rejects(restarted.acquire(),/停止尚未確認/u);await assert.rejects(restarted.refresh(),/尚未還原/u);
- f.vault.activate=activate;const queries=f.calls.status;const result=await restarted.refreshAll();assert.equal(f.current.accountId,B);assert.equal(f.calls.status,queries);assert.match(result.note,/未重新執行/u);assert.equal(result.uncertain,false);
+ f.vault.queryQuota=async id=>id===A?{accountId:id,temporaryFailure:true,auth:{status:'unknown'},reason:'temporary'}:{accountId:id,...authStatus()};
+ const result=await f.accounts.refreshAll();assert.equal(f.current.accountId,B);assert.equal(result.uncertain,false);assert.deepEqual(f.calls.activate,[]);
+ assert.equal(result.accounts.find(row=>row.id===A).quota.status,'stale');assert.equal(result.accounts.find(row=>row.id===B).quota.status,'available');
 });
 test('an early quota replenishment requires explicit refresh instead of an automatic zero recheck',async()=>{
  let remaining=0;const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'five_hour',remainingPercent:remaining,resetsAt:future}]})});await f.accounts.capture();remaining=88;
  await assert.rejects(f.accounts.acquire({worker:true}),/皆已無可用額度/);assert.equal(f.calls.status,1);
  await f.accounts.refresh();assert.equal(f.calls.status,2);
- const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);assert.equal(f.calls.status,3);
+ const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,A);await lease.release();assert.deepEqual(f.calls.activate,[]);assert.equal(f.calls.status,2,'the just-refreshed positive quota is reused rather than queried again');
 });
 
 test('all-account refresh clears non-batch uncertain state only after native idle is confirmed',async()=>{
  const f=await fixture({identity:{accountId:A,email}});await f.accounts.capture();const lease=await f.accounts.acquire();await lease.release({settled:false});
- f.idle=false;await assert.rejects(f.accounts.refreshAll(),/fixture busy/u);assert.equal((await f.accounts.list()).uncertain,true);
+ f.idle=false;const observed=await f.accounts.refreshAll();assert.equal(observed.uncertain,true);assert.equal((await f.accounts.list()).uncertain,true);await assert.rejects(f.accounts.acquire(),/停止尚未確認/u);
  f.idle=true;const result=await f.accounts.refreshAll();assert.equal(result.uncertain,false);const next=await f.accounts.acquire();await next.release();
 });
-test('new work and inspection each wait for an all-account scan and see restored original',async()=>{
+test('new work and inspection wait for an in-flight read-only account scan and retain active identity',async()=>{
  for(const mode of ['work','inspect']){
   let pause=false,finish,start;const started=new Promise(resolve=>start=resolve);
   const f=await fixture({identity:{accountId:A,email},statusFor:()=>pause?new Promise(resolve=>{pause=false;finish=()=>resolve(authStatus());start();}):authStatus()});
@@ -711,7 +731,7 @@ test('slow multi-account queries retain their results without a display time lim
 test('successful quota refresh retains a native disabled window but weekly zero still blocks work',async()=>{
  const f=await fixture({identity:{accountId:A,email},statusFor:()=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:[{key:'seven_day',remainingPercent:0,resetsAt:future},{key:'five_hour',disabled:true,remainingPercent:null,resetsAt:null}]})});
  await f.accounts.capture();const result=await f.accounts.refreshAll();
- assert.equal(result.note,'已查詢全部帳號並切回原帳號。');assert.equal(result.quotaCheck.allExhausted,true);
+ assert.match(result.note,/已獨立查詢 1 個帳號.*未切換目前登入/u);assert.equal(result.quotaCheck.allExhausted,true);
  assert.equal(result.accounts[0].quota.windows[1].disabled,true);assert.equal(f.current.accountId,A);
  await assert.rejects(f.accounts.acquire({worker:true}),/皆已無可用額度/u);
 });
@@ -721,17 +741,18 @@ test('sequential worker handoff accepts an explicitly disabled limit only alongs
   const f=await fixture({identity:{accountId:A,email},statusFor:current=>authStatus({status:'ready',checkedAt:'2026-10-03T12:00:00Z',windows:current.accountId===A?[{key:'seven_day',remainingPercent:0,resetsAt:future}]:scenario==='all-disabled'?[{key:'five_hour',disabled:true,remainingPercent:null,resetsAt:null}]:[{key:'seven_day',remainingPercent:40,resetsAt:future},{key:'five_hour',...(scenario==='disabled'?{disabled:true}:{}),remainingPercent:null,resetsAt:null}]})});
   await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();f.current={accountId:A,email};
   if(scenario==='disabled'){const lease=await f.accounts.acquire({worker:true});assert.equal(lease.accountId,B);await lease.release();}
-  else await assert.rejects(f.accounts.acquire({worker:true}),/尚無官方目前額度資料/u);
+  else await assert.rejects(f.accounts.acquire({worker:true}),/額度尚未確認|候選帳號額度尚未確認/u);
  }
 });
 
 const handoffOptions=(parentId,requestId,events)=>({worker:true,parentId,requestId,onHandoff:event=>events.push(event)});
 const limitFailure={status:'failed',settled:true,quotaCheckNeeded:true,error:'native quota or rate limit',output:'partial result'};
-async function handoffFixture(statusFor){
+async function handoffFixture(statusFor,{clock,setTimer,clearTimer}={}){
  const f=await fixture({identity:{accountId:A,email}});
  await f.accounts.capture();f.current={accountId:B,email:'b@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});
  f.calls.activate.length=0;
- if(statusFor)f.login.status=async()=>{f.calls.status++;return statusFor(f.current);};
+ if(statusFor)f.login.status=async account=>{f.calls.status++;return statusFor(account??f.current);};
+ if(clock||setTimer||clearTimer)f.accounts=createGeminiAccounts({root:f.root,vault:f.vault,login:f.login,enabled:true,clock,setTimer,clearTimer});
  return f;
 }
 const officialBalance=(remainingPercent,resetsAt=future)=>authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent,resetsAt}],checkedAt:'2026-10-03T11:59:30.000Z'});
@@ -748,32 +769,69 @@ test('shared-account drain aggregates failed and not-started jobs per room after
  await active.release();
  assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
  const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,2);
- assert.deepEqual(ready.find(event=>event.parentId==='room-A').requestIds,['failed-A','not-started-A']);
+  assert.deepEqual(ready.find(event=>event.parentId==='room-A').requestIds,['failed-A','not-started-A']);
+  assert.deepEqual(ready.find(event=>event.parentId==='room-A').notStartedIds,['not-started-A']);
  assert.deepEqual(ready.find(event=>event.parentId==='room-B').requestIds,['not-started-B']);
+  assert.deepEqual(ready.find(event=>event.parentId==='room-B').notStartedIds,['not-started-B']);
  assert(ready.every(event=>event.accountId===B));assert.equal((await f.accounts.list()).busy,false);
 });
 
-test('rate limit and unknown official usage end the wait without switching or automatic polling',async t=>{
+test('hard acquire rejection is marked not-started without claiming an owned quota wait',async()=>{
+ const f=await handoffFixture(),events=[];let invoked=0;
+ await assert.rejects(f.accounts.run({...handoffOptions('hard-refusal','invalid-account',events),accountId:C},async()=>{invoked++;return {status:'completed',settled:true};}),error=>{
+  assert.equal(error.dispatch,'not-started');assert.equal(error.code,undefined);assert.equal(error.scheduling,undefined);return true;
+ });
+ assert.equal(invoked,0);assert.deepEqual(events,[]);assert.deepEqual(f.calls.activate,[]);assert.equal((await f.accounts.list()).busy,false);
+});
+
+test('rate limits stay terminal while temporary or unknown quota keeps a quiet wait without switching',async t=>{
  for(const mode of ['rate','unknown','stale-zero','non-subscription-zero'])await t.test(mode,async()=>{
   const f=await handoffFixture(()=>mode==='rate'?officialBalance(70):mode==='stale-zero'?authStatus({status:'stale',windows:[{key:'five_hour',remainingPercent:0,resetsAt:future}]}):mode==='non-subscription-zero'?authStatus({status:'ready',windows:[{key:'requests',remainingPercent:0,resetsAt:future}]}):{auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}});
   const active=await f.accounts.acquire(),events=[];
   await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
   assert.deepEqual(f.calls.activate,[]);assert.equal(f.current.accountId,A);
-  assert.equal(events.filter(event=>event.status==='blocked').length,1);assert.equal(events.some(event=>event.status==='ready'),false);
+   if(mode==='rate')assert.equal(events.filter(event=>event.status==='blocked').length,1);
+   else assert.equal(events.filter(event=>event.status==='waiting').length,1);
+   assert.equal(events.some(event=>event.status==='ready'),false);
   const before=f.calls.status;await f.accounts.list();await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.status,before);
  });
 });
 
-test('official zero with unknown reset is exhausted, not usable, and does not require a fabricated reset',async t=>{
+test('official zero with unknown reset is never usable and hands off only to a verified positive account',async t=>{
  await t.test('original zero can hand off to an official positive account',async()=>{
   const f=await handoffFixture(identity=>officialBalance(identity.accountId===A?0:75,null));const active=await f.accounts.acquire(),events=[];
   await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
   assert.deepEqual(f.calls.activate,[B]);assert.equal(events.at(-1).status,'ready');
  });
- await t.test('zero candidate with unknown reset never becomes ready',async()=>{
-  const f=await handoffFixture(()=>officialBalance(0,null)),active=await f.accounts.acquire(),events=[];
+  await t.test('zero candidate with unknown reset never becomes ready',async()=>{
+   const f=await handoffFixture(()=>officialBalance(0,null)),active=await f.accounts.acquire(),events=[];
   await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
-  assert.deepEqual(f.calls.activate,[B,A]);assert.equal(f.current.accountId,A);assert.equal(events.at(-1).status,'blocked');assert.equal(events.at(-1).nextQueryAt,null);
+    assert.deepEqual(f.calls.activate,[]);assert.equal(f.current.accountId,A);assert.equal(events.at(-1).status,'waiting');f.accounts.cancelWorkerHandoff({parentId:'room'});
+ });
+});
+
+test('all-zero accounts with unknown or past resets retry quietly; a later positive result readies once, and cancel clears retry timer',async t=>{
+ for(const resetKind of ['unknown','past'])await t.test(resetKind,async()=>{
+  let now=Date.parse('2026-10-03T12:00:00Z'),positive=false;const timers=[],events=[],queried=[];
+  const resetAt=resetKind==='unknown'?null:(now-1000)/1000;
+  const f=await fixture({identity:{accountId:A,email},clock:()=>now,setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;},statusFor:account=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:positive&&account.accountId===B?75:0,resetsAt:resetAt}]})});
+  for(const id of [A,B,C,D,E]){f.current={accountId:id,email};await f.accounts.capture();}
+  await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+  f.vault.queryQuota=async id=>{queried.push(id);return {accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:positive&&id===B?75:0,resetsAt:resetAt}]}).quota};};
+  await assert.rejects(f.accounts.run(handoffOptions(`zero-${resetKind}`,'not-started',events),async()=>assert.fail('all-zero account must not run')),/未開始工作|未送出/);
+  await eventually(()=>timers.length===1);assert.equal(events.filter(event=>event.status==='waiting').length,1);assert.deepEqual(f.calls.activate,[]);
+  assert.equal(timers[0].ms,60000);now+=60000;positive=true;timers[0].fn();
+  await eventually(()=>events.filter(event=>event.status==='ready').length===1);
+  assert.equal(events.filter(event=>event.status==='waiting').length,1);assert.equal(events.filter(event=>event.status==='ready').length,1);
+  assert.equal(events.at(-1).accountId,B);assert.deepEqual(f.calls.activate,[B]);assert(queried.includes(A));assert(queried.includes(B));
+ });
+ await t.test('cancel removes an unknown-reset retry without dispatch or switching',async()=>{
+  let now=Date.parse('2026-10-03T12:00:00Z');const timers=[],events=[];
+  const f=await fixture({identity:{accountId:A,email},clock:()=>now,setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;},statusFor:()=>authStatus({status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:0,resetsAt:null}]})});
+  for(const id of [A,B]){f.current={accountId:id,email};await f.accounts.capture();}await f.accounts.activate({accountId:A});f.calls.activate.length=0;
+  await assert.rejects(f.accounts.run(handoffOptions('cancel-zero','not-started',events),async()=>assert.fail('must not dispatch')),/未開始工作|未送出/);await eventually(()=>timers.length===1);
+  const before=f.calls.status;f.accounts.cancelWorkerHandoff({parentId:'cancel-zero'});assert.equal(timers[0].cancelled,true);assert.deepEqual(f.calls.activate,[]);
+  await new Promise(resolve=>setImmediate(resolve));assert.equal(f.calls.status,before);assert.equal(events.some(event=>event.status==='ready'),false);
  });
 });
 
@@ -792,6 +850,64 @@ test('cancelled last waiter while another room works leaves the account untouche
  assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(event=>event.status!=='waiting'),false);
 });
 
+test('temporary quota-query failures preserve the wait and use 1/2/4/8/10 minute retries',{timeout:5000},async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const timers=[],events=[];
+ const f=await handoffFixture(id=>id.accountId===B?{auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}}:officialBalance(80),{clock:()=>now,setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;}});
+ // Keep one live work lease while its quota-failed result registers an owned wait.
+ const active=await f.accounts.acquire();let reads=0;
+ f.vault.queryQuota=async id=>{reads++;throw Error(`temporary ${id}`);};
+ await f.accounts.run(handoffOptions('retry-room','failed',events),async()=>limitFailure);
+ assert.equal(events.filter(event=>event.status==='waiting').length,1);
+ await active.release();await eventually(()=>timers.length===1);
+ const delays=[60000,120000,240000,480000,600000];
+ for(let index=0;index<delays.length;index++){
+  assert.equal(timers[index].ms,delays[index]);
+  if(index<delays.length-1){now+=delays[index];timers[index].fn();await eventually(()=>timers.length===index+2);}
+ }
+ f.vault.queryQuota=async id=>{reads++;return {accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:officialBalance(80).quota};};
+ now+=delays.at(-1);timers.at(-1).fn();await eventually(()=>events.filter(event=>event.status==='blocked').length===1);
+ assert.equal(reads,6,'one shared drain query, four failed retries, and one successful retry');
+ assert.equal(events.filter(event=>event.status==='waiting').length,1,'temporary retries do not repeatedly wake the same room');
+ assert.deepEqual(f.calls.activate,[]);
+ f.accounts.cancelWorkerHandoff({parentId:'retry-room'});
+});
+
+test('temporary candidate query retries stay quiet and confirmed positive quota releases the waiter once',{timeout:5000},async()=>{
+ let now=Date.parse('2026-10-03T12:00:00Z');const timers=[],events=[],queried=[];let failures=5;
+ const f=await handoffFixture(()=>officialBalance(80),{clock:()=>now,setTimer:(fn,ms)=>{const timer={fn,ms};timers.push(timer);return timer;},clearTimer:timer=>{timer.cancelled=true;}});
+ f.vault.queryQuota=async id=>{
+  queried.push(id);
+  if(id===A)return {accountId:id,...officialBalance(0)};
+  if(id===B&&failures-->0)throw Error('temporary candidate query failure');
+  return {accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:officialBalance(80).quota};
+ };
+ const active=await f.accounts.acquire();
+ await f.accounts.run(handoffOptions('failed-room','failed',events),async()=>limitFailure);
+ await assert.rejects(f.accounts.run(handoffOptions('waiting-room','not-started',events),async()=>assert.fail('unstarted work must not run')),/未送出/u);
+ await active.release();await eventually(()=>timers.length===1);
+ const delays=[60000,120000,240000,480000,600000];
+ for(let index=0;index<delays.length;index++){
+  assert.equal(timers[index].ms,delays[index]);now+=delays[index];timers[index].fn();
+  if(index<delays.length-1)await eventually(()=>timers.length===index+2);
+ }
+ await eventually(()=>events.some(event=>event.parentId==='waiting-room'&&event.status==='ready'));
+ assert.deepEqual(queried,[A,B,B,B,B,B,B]);assert.deepEqual(f.calls.activate,[B]);assert.equal(f.current.accountId,B);
+ assert.equal(events.filter(event=>event.parentId==='waiting-room'&&event.status==='waiting').length,1);
+ assert.equal(events.filter(event=>event.parentId==='waiting-room'&&event.status==='ready').length,1);
+ f.accounts.cancelWorkerHandoff({parentId:'failed-room'});
+});
+
+test('natural drain activates the same account once when quota evidence requires token activation',async()=>{
+ const f=await handoffFixture(()=>officialBalance(80)),events=[];let refreshRequiresActivation=false;
+ f.vault.queryQuota=async id=>({accountId:id,auth:{status:'authenticated',requiresActivation:refreshRequiresActivation,checkedAt:new Date().toISOString()},quota:officialBalance(80).quota});
+ const active=await f.accounts.acquire();
+ refreshRequiresActivation=true;await f.accounts.refresh();
+ await assert.rejects(f.accounts.run({...handoffOptions('token-room','token-unstarted',events),accountId:B},async()=>assert.fail('unstarted job must not run')),/本工作未送出/u);
+ await active.release();
+ assert.deepEqual(f.calls.activate,[A]);assert.equal(f.current.accountId,A);
+ assert.equal(events.filter(event=>event.status==='ready').length,1);assert.equal(events.some(event=>event.status==='blocked'),false);
+});
+
 test('cancelling the last waiter during the final official query prevents rotation and callbacks',async()=>{
  const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];let resolveQuery,started;
  const queryStarted=new Promise(resolve=>{started=resolve;});
@@ -801,23 +917,28 @@ test('cancelling the last waiter during the final official query prevents rotati
  assert.deepEqual(f.calls.activate,[]);assert.equal(events.some(event=>event.status!=='waiting'),false);
 });
 
-test('unknown candidate and switch failure restore the original identity before reporting blocked',async t=>{
+test('unknown candidate stays waiting; failed account activation restores original identity',async t=>{
  for(const mode of ['unknown','switch-failed','cancel-during-candidate','restore-failed'])await t.test(mode,async()=>{
   const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
-  f.login.status=async()=>{
-   if(f.current.accountId===A)return officialBalance(0);
-   if(mode==='cancel-during-candidate')f.accounts.cancelWorkerHandoff({parentId:'room'});
-   return {auth:{status:'authenticated'},quota:{status:'unavailable',windows:[]}};
+  f.vault.queryQuota=async id=>{
+   if(id===A)return {accountId:id,...officialBalance(0)};
+   if(mode==='unknown'||mode==='cancel-during-candidate'){
+    if(mode==='cancel-during-candidate')f.accounts.cancelWorkerHandoff({parentId:'room'});
+    return {accountId:id,temporaryFailure:true,auth:{status:'unknown'},quota:{status:'unavailable',windows:[]}};
+   }
+   return {accountId:id,...officialBalance(80)};
   };
   const activate=f.vault.activate;
   f.vault.activate=async(id,options)=>{
-   if(mode==='restore-failed'&&id===A)throw Error('fixture restore failed');
-   const result=await activate(id,options);if(mode==='switch-failed'&&id===B)throw Error('fixture partial switch failed');return result;
+    if(mode==='restore-failed'&&id===A)throw Error('fixture restore failed');
+    const result=await activate(id,options);if((mode==='switch-failed'||mode==='restore-failed')&&id===B)throw Error('fixture partial switch failed');return result;
   };
   await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
   if(mode==='restore-failed'){assert.equal(f.current.accountId,B);assert.equal((await f.accounts.list()).uncertain,true);assert.equal(events.at(-1).accountId,null);assert.match(events.at(-1).reason,/還原尚未確認/);}
-  else {assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[B,A]);}
+  else if(mode==='switch-failed'){assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[B,A],JSON.stringify({events,queries:f.calls.status,state:await f.accounts.list()}));}
+  else {assert.equal(f.current.accountId,A);assert.deepEqual(f.calls.activate,[]);}
   if(mode==='cancel-during-candidate')assert.equal(events.some(event=>event.status!=='waiting'),false);
+  else if(mode==='unknown')assert.equal(events.at(-1).status,'waiting');
   else assert.equal(events.at(-1).status,'blocked');
   assert.equal(events.some(event=>event.status==='ready'),false);
  });
@@ -853,7 +974,7 @@ test('initial official zero with unknown reset cannot start a main or worker mod
 
 test('an expired cached zero is rechecked after drain; replenished official quota does not trigger rotation',async()=>{
  let now=Date.parse('2026-10-03T12:00:00Z'),zero=false;
- const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>officialBalance(zero?0:80)});
+ const f=await fixture({identity:{accountId:A,email},clock:()=>now,statusFor:()=>officialBalance(zero?0:80,(Date.parse('2026-10-03T12:00:00Z')+60000)/1000)});
  await f.accounts.capture();f.current={accountId:B,email};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;zero=true;await f.accounts.refresh();
  let finish,started;const began=new Promise(resolve=>{started=resolve;});const active=f.accounts.inspect(()=>new Promise(resolve=>{finish=resolve;started();}));await began;const events=[];
  await assert.rejects(f.accounts.run(handoffOptions('room','rejected',events),async()=>{throw Error('must not start');}),/未送出/);
@@ -864,20 +985,20 @@ test('an expired cached zero is rechecked after drain; replenished official quot
 test('a drain decision cannot clear a concurrently held manual account-operation lock',async()=>{
  const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);
- let resolveQuery,started;const began=new Promise(resolve=>{started=resolve;});f.login.status=async()=>{started();return new Promise(resolve=>{resolveQuery=resolve;});};
+  let resolveQuery,started,defer=true;const began=new Promise(resolve=>{started=resolve;});f.login.status=async()=>{if(defer){defer=false;started();return new Promise(resolve=>{resolveQuery=resolve;});}return officialBalance(80);};
  // Both operations await load first. The final release makes capture eligible;
  // capture gets changing before the already queued acquire wakes the drain.
- const capture=f.accounts.capture();const queued=f.accounts.acquire().catch(error=>error);const release=active.release();await began;await queued;await release;
+  const capture=f.accounts.capture();const queued=f.accounts.acquire().catch(error=>error);const release=active.release();await began;const queuedResult=await queued;assert(queuedResult instanceof Error,'acquire queued behind a manual capture must not enter work');await release;
  assert.equal((await f.accounts.list()).busy,true,'manual capture still owns changing');
- await assert.rejects(f.accounts.acquire(),/正在切換|登入/);assert.equal(events.at(-1).status,'blocked');assert.deepEqual(f.calls.activate,[]);
- resolveQuery(officialBalance(80));await capture;assert.equal((await f.accounts.list()).busy,false);
+  await assert.rejects(f.accounts.acquire(),/正在切換|登入/);assert.equal(events.at(-1).status,'waiting');assert.deepEqual(f.calls.activate,[]);
+  resolveQuery(officialBalance(80));await capture;await eventually(()=>events.at(-1)?.status==='blocked');assert.equal((await f.accounts.list()).busy,false);
 });
 
 test('disabled usage windows and unverified authentication cannot authorize a drain rotation',async t=>{
  for(const mode of ['disabled','unknown-auth','signed-out'])await t.test(mode,async()=>{
   const f=await handoffFixture(),active=await f.accounts.acquire(),events=[];
   f.login.status=async()=>mode==='disabled'?authStatus({status:'ready',windows:[{key:'five_hour',remainingPercent:0,disabled:true,resetsAt:null},{key:'seven_day',remainingPercent:80,resetsAt:future}]}):{auth:{status:mode==='unknown-auth'?'unknown':'signed-out'},quota:{status:'ready',windows:[{key:'five_hour',remainingPercent:0,resetsAt:future}]}};
-  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();assert.deepEqual(f.calls.activate,[]);assert.equal(events.at(-1).status,'blocked');assert.equal(events.some(event=>event.status==='ready'),false);
+   await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();assert.deepEqual(f.calls.activate,[]);assert.equal(events.at(-1).status,mode==='unknown-auth'?'waiting':'blocked');assert.equal(events.some(event=>event.status==='ready'),false);
  });
 });
 
@@ -886,8 +1007,9 @@ test('official positive quota releases only not-started rooms on the same accoun
  await f.accounts.run(handoffOptions('rate-room','rate-failed',events),async()=>limitFailure);
  await assert.rejects(f.accounts.run(handoffOptions('new-room','not-started',events),async()=>{throw Error('must not start');}),/未送出/);
  await active.release();
- const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,1);assert.equal(ready[0].parentId,'new-room');assert.equal(ready[0].switched,false);assert.equal(ready[0].accountId,A);assert.deepEqual(ready[0].requestIds,['not-started']);
- assert.equal(events.find(event=>event.parentId==='rate-room'&&event.status==='blocked')?.accountId,A);assert.deepEqual(f.calls.activate,[]);
+  const ready=events.filter(event=>event.status==='ready');assert.equal(ready.length,1);assert.equal(ready[0].parentId,'new-room');assert.equal(ready[0].switched,false);assert.equal(ready[0].accountId,A);assert.deepEqual(ready[0].requestIds,['not-started']);
+  const blocked=events.find(event=>event.parentId==='rate-room'&&event.status==='blocked');assert.equal(blocked?.accountId,A);assert.deepEqual(blocked?.requestIds,['rate-failed']);
+  assert.deepEqual(events.find(event=>event.parentId==='new-room'&&event.status==='waiting')?.notStartedIds,['not-started']);assert.deepEqual(f.calls.activate,[]);
 });
 
 test('mixed same-room positive quota resolves both wait scopes but only unstarted IDs are ready',async()=>{
@@ -914,12 +1036,12 @@ test('a rejected acquisition registered after the last release still starts one 
  assert.equal(gaps,1);assert.notEqual(observed,null,'a live waiter must not be stranded after no lease remains');assert.equal(observed.status,'ready');assert.equal(observed.switched,false);assert.deepEqual(f.calls.activate,[]);
 });
 
-test('a failed later candidate restores the original even when identity remains on an earlier attempted zero candidate',async()=>{
+test('saved-order quota queries skip zero account without switching and activate only the first confirmed available account',async()=>{
  const f=await handoffFixture();f.current={accountId:C,email:'c@example.test'};await f.accounts.capture();await f.accounts.activate({accountId:A});f.calls.activate.length=0;
- const active=await f.accounts.acquire(),events=[];f.login.status=async()=>officialBalance(0);
- const activate=f.vault.activate;f.vault.activate=async(id,options)=>{if(id===C)throw Error('candidate C switch failed before changing identity');return activate(id,options);};
+ const active=await f.accounts.acquire(),events=[],queried=[];
+ f.vault.queryQuota=async id=>{queried.push(id);return {accountId:id,...officialBalance(id===A?0:id===B?0:80)};};
  await f.accounts.run(handoffOptions('room','failed',events),async()=>limitFailure);await active.release();
- assert.equal(f.current.accountId,A);assert.equal((await f.accounts.list()).uncertain,false);assert.deepEqual(f.calls.activate,[B,A]);assert.equal(events.at(-1).status,'blocked');assert.equal(events.at(-1).accountId,A);
+ assert.deepEqual(queried,[A,B,C]);assert.equal(f.current.accountId,C);assert.equal((await f.accounts.list()).uncertain,false);assert.deepEqual(f.calls.activate,[C]);assert.equal(events.at(-1).status,'ready');assert.equal(events.at(-1).accountId,C);
 });
 
 test('late unstarted registration after an earlier zero drain attaches to the newly current account and wakes once',async()=>{
@@ -933,10 +1055,11 @@ test('late unstarted registration after an earlier zero drain attaches to the ne
  const prior=events.filter(event=>event.parentId==='old'&&event.status==='ready');assert.equal(prior.length,1);assert.equal(prior[0].switched,true);
 });
 
-test('an already rejected acquisition registered in cancelled-drain finally is not orphaned before pending clears',async()=>{
+test('an already rejected acquisition registered in cancelled-drain finally is not orphaned before pending clears',{timeout:3000},async()=>{
  const f=await handoffFixture();let accounts,phase='init',resolveQuery,started,lateRun,resolveTerminal,triggered=false;const events=[],trace=[];
  const began=new Promise(resolve=>{started=resolve;}),terminal=new Promise(resolve=>{resolveTerminal=resolve;});
  const login={status:async()=>{if(phase==='await-query'){started();return new Promise(resolve=>{resolveQuery=resolve;});}return officialBalance(80);}};
+ f.vault.queryQuota=async id=>({accountId:id,...await login.status({accountId:id,email})});
  accounts=createGeminiAccounts({root:f.root,vault:f.vault,login,enabled:true,clock:()=>Date.parse('2026-10-03T12:00:00Z'),onChange:()=>{
   if(phase==='query-resolved'){trace.push('query-save');phase='query-saved';}
   else if(phase==='query-saved'&&!triggered){

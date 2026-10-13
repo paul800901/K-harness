@@ -44,6 +44,55 @@ test('safe helper error codes preserve busy and identity explanations without ex
  await assert.rejects(identity.current(),/憑證身分缺失或不唯一/u);
 });
 
+test('quota helper schema accepts fractions and disabled windows, rejects missing or invalid fields, and never exposes tokens',async()=>{
+ const windows=[
+  {key:'five_hour',disabled:false,remainingPercent:37.5,resetsAt:123},
+  {key:'seven_day',disabled:true,remainingPercent:null,resetsAt:null},
+ ];
+ const makeVault=value=>createGeminiCredentialVault({root,env:{SystemRoot:'C:\\Windows',K_GEMINI_EXECUTABLE:'C:\\fake\\agy.exe'},enabled:true,execImpl:async()=>({stdout:JSON.stringify(value)})});
+ const value={...metadata,checkedAt:'2026-10-13T00:00:00.000Z',windows,refreshed:true,requiresActivation:false,access_token:'must-not-leak',refresh_token:'must-not-leak'};
+ const result=await makeVault(value).queryQuota(accountId);
+ assert.deepEqual(result,{...metadata,auth:{status:'authenticated',checkedAt:value.checkedAt,requiresActivation:false},quota:{status:'ready',checkedAt:value.checkedAt,windows:[{key:'five_hour',label:'5 小時',minutes:300,disabled:false,remainingPercent:37.5,resetsAt:123},{key:'seven_day',label:'每週',minutes:10080,disabled:true,remainingPercent:null,resetsAt:null}]},refreshed:true});
+ assert.doesNotMatch(JSON.stringify(result),/must-not-leak|access_token|refresh_token/u);
+ for(const bad of [
+  null,
+  {...value,windows:[windows[0]]},
+  {...value,windows:[...windows,{...windows[0]}]},
+  {...value,windows:[{...windows[0],remainingPercent:101},windows[1]]},
+  {...value,windows:[{...windows[0],remainingPercent:null},windows[1]]},
+  {...value,checkedAt:'not-a-date'},
+ ]) assert.deepEqual(await makeVault(bad).queryQuota(accountId),{accountId,auth:{status:'unknown'},failureCode:'quota_schema',temporaryFailure:false,reason:'官方額度回傳格式改變或缺失；需要檢查接頭，未派工。'});
+});
+
+test('independent quota helper reads serialize with activation and never require idle themselves',async()=>{
+ const calls=[];let entered,finish;const started=new Promise(r=>entered=r);
+ const quota={...metadata,checkedAt:'2026-10-13T00:00:00Z',windows:[{key:'five_hour',remainingPercent:80},{key:'seven_day',remainingPercent:60}]};
+ const vault=createGeminiCredentialVault({root,env:{SystemRoot:'C:\\Windows',K_GEMINI_EXECUTABLE:'C:\\fake\\agy.exe'},enabled:true,execImpl:async(file,args)=>{
+  const op=args[args.indexOf('-Operation')+1];calls.push(op);
+  assert.match(file,/WindowsPowerShell[\\/]v1\.0[\\/]powershell\.exe$/iu);
+  if(op==='queryQuota'){entered();await new Promise(r=>finish=r);return {stdout:JSON.stringify(quota)};}
+  return {stdout:JSON.stringify(op==='assertIdle'?{idle:true}:metadata)};
+ }});
+ const query=vault.queryQuota(accountId);await started;const activation=vault.activate(accountId);
+ await new Promise(r=>setImmediate(r));assert.deepEqual(calls,['queryQuota']);finish();await query;await activation;
+ assert.deepEqual(calls,['queryQuota','assertIdle','activate']);
+});
+
+test('quota helper failures return sanitized status and do not expose helper or token details',async()=>{
+ const vault=createGeminiCredentialVault({root,env:{SystemRoot:'C:\\Windows',K_GEMINI_EXECUTABLE:'C:\\fake\\agy.exe'},enabled:true,execImpl:async()=>{throw Object.assign(new Error('refresh-token-secret native failure'),{stdout:'{"errorCode":"quota_auth"}',stderr:'access-token-secret'});}});
+ const result=await vault.queryQuota(accountId);
+ assert.deepEqual(result,{accountId,auth:{status:'signed-out'},failureCode:'quota_auth',temporaryFailure:false,reason:'此帳號需重新確認官方登入。'});
+ assert.doesNotMatch(JSON.stringify(result),/secret|token/u);
+});
+
+test('quota credential storage failures preserve waiting but schema and identity failures require attention',async()=>{
+ for(const code of ['credential','quota_client','identity','quota_schema']){
+  const vault=createGeminiCredentialVault({root,env:{K_GEMINI_EXECUTABLE:'C:\\fake\\agy.exe'},enabled:true,execImpl:async()=>{throw Object.assign(Error('fake secret'),{stdout:JSON.stringify({errorCode:code}),stderr:'fake secret'});}});
+  const result=await vault.queryQuota(accountId);
+  assert.equal(result.temporaryFailure,code==='credential');assert.equal(result.auth.status,'unknown');assert.equal(result.failureCode,code);assert.doesNotMatch(JSON.stringify(result),/fake secret/u);
+ }
+});
+
 test('helper is restricted to the exact live target and contains no credential enumeration or logout path',async()=>{
  const helper=await readFile(fileURLToPath(new URL('../scripts/gemini-credentials.ps1',import.meta.url)),'utf8');
  assert.match(helper,/\$liveTarget='gemini:antigravity'/u);assert.match(helper,/CredReadW/u);assert.match(helper,/CredWriteW/u);assert.match(helper,/CredDeleteW/u);

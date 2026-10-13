@@ -30,9 +30,10 @@ async function fixture(){
   assert.equal(children.size,0,'never switch while another room owns an agy process');
   calls.activate.push(id);identity={accountId:id,email:`${id[0]}@example.test`};return {...identity};
  }};
- const accounts=createGeminiAccounts({root,vault,enabled:true,clock:()=>now,setTimer:(...args)=>{calls.timer.push(args[1]);return setTimeout(...args);},login:{status:async()=>{
-  calls.query.push(identity.accountId);return {auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:identity.accountId===A&&exhausted?0:80,resetsAt:(now+3600000)/1000}]}};
- }}});
+ vault.queryQuota=async id=>{
+  calls.query.push(id);return {accountId:id,auth:{status:'authenticated',checkedAt:new Date(now).toISOString()},quota:{status:'ready',checkedAt:new Date(now).toISOString(),windows:[{key:'five_hour',remainingPercent:id===A&&exhausted?0:80,resetsAt:(now+3600000)/1000}]}};
+ };
+ const accounts=createGeminiAccounts({root,vault,enabled:true,clock:()=>now,setTimer:(...args)=>{calls.timer.push(args[1]);return setTimeout(...args);},login:{}});
  await accounts.capture();identity={accountId:B,email:'b@example.test'};await accounts.capture();await accounts.activate({accountId:A});calls.activate.length=0;calls.query.length=0;
  const spawnImpl=(_executable,args,options)=>{
   const child=new EventEmitter();Object.assign(child,{pid:24000+calls.spawn.length,stdout:new PassThrough(),stderr:new PassThrough()});

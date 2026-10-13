@@ -225,7 +225,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     })();
     return new Set(await catalog);
   }
-  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{},onDiagnostic=()=>{}}={}) {
+  const worker={profile,home,models,async run({task,model='gemini-3.8-flash',effort,signal,onStart,onActivity=()=>{},onDiagnostic=()=>{},onQuotaHint=()=>{}}={}) {
     if(!/^gemini-[\w.-]+$/u.test(model)||effort==='auto'||effort!==null&&typeof effort!=='string')throw Error('Gemini 子代理須指定原生模型與推理程度；未換模。');
     if(typeof task!=='string'||!task.trim()||task.length>32000)throw Error('Flash task 無效。');
     const nativeModel=effort==null?model:`${model}-${effort}`;
@@ -241,7 +241,9 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
     const runHome=server?path.join(home,'runs',runId):home;
     await prepare(runHome,server);
     const before=await gitStatus(workspace),telemetry={},activity=createWorkActivity(telemetry);
-    const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);},onDiagnostic);
+    const parser=geminiStream(event=>{const previous=telemetry.activity;geminiWorkActivity(activity,event);if(telemetry.activity!==previous)onActivity(telemetry.activity);
+      if(['error','result'].includes(event.event??event.type)&&/quota|resource.exhausted|rate.limit|credits?.*(?:exhausted|insufficient)/iu.test(errorText(event.error??event.result?.error)))void Promise.resolve().then(onQuotaHint).catch(()=>{});
+    },onDiagnostic);
     const args=['-p',geminiInstruction(task,accessMode,server),'--model',nativeModel,'--output-format','stream-json','--print-timeout',`${Math.ceil(timeoutMs/1000)}s`,'--log-file',path.join(runHome,`${runId}.log`),'--disable-slash-commands'];
     if(accessMode==='danger-full-access')args.push('--dangerously-skip-permissions');
     // Native turns finish themselves; duration/quiet activity are display-only.
@@ -257,7 +259,7 @@ export function createGeminiWorker({root,workspace,accessMode='workspace-write',
   if(accounts){const run=worker.run;worker.run=options=>accounts.run({accountId:options?.accountId,worker:true,...(options?.parentId?{parentId:options.parentId,requestId:options.requestId,onHandoff:options.onHandoff,handoffCurrent:options.handoffCurrent,signal:options.signal}:{})},async lease=>{
     // Catalog availability may differ across subscriptions; never carry A's
     // cached model catalog into B's worker. The settings home remains shared.
-    catalog=null;options?.onAccount?.(lease);return run(options);
+    catalog=null;options?.onAccount?.(lease);return run({...options,onQuotaHint:lease.quotaHint});
   });}
   return worker;
 }
