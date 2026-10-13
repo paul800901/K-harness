@@ -80,7 +80,7 @@ export function UsageDetails({state,online}){
      </summary>
      <div className="usage-timestamps"><span>{account.quota?.checkedAt?`上次查詢：${new Date(account.quota.checkedAt).toLocaleString('zh-TW')}`:'尚未查詢額度。'}</span>{(account.quota?.windows??[]).map(w=><span key={w.key}>{quotaIsHistorical(account.quota,online)?'上次回報・':''}{w.label||(w.key==='seven_day'?'每週':'5 小時')}：{quotaPercent(w)}；重設時間：{quotaReset(w)}</span>)}</div>
     </details>)}</div>
-    <p className="usage-note">每週或 5 小時任一額度用完，仍須等待該項重設；另一項 100% 不代表可繼續工作。「未啟用」是官方回報該限制 disabled，不是 0% 或未知。百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。人工更新會在 Gemini 閒置時查詢全部帳號，再切回原帳號。自動查詢略過歸零帳號；全部帳號實查歸零後最早重設到期會重查全部。工作中不切換。</p>
+    <p className="usage-note">每週或 5 小時任一額度用完，仍須等待該項重設；另一項 100% 不代表可繼續工作。「未啟用」是官方回報該限制 disabled，不是 0% 或未知。百分比是各帳號上次實查結果，不代表此刻額度。點帳號列查看重設時間。人工更新會獨立查詢全部帳號，不切換目前登入；工作期間也能查詢。自動查詢略過歸零帳號；全部帳號實查歸零後最早重設到期會重查全部。工作中不切換。</p>
    </>:<>
     <div className="quota-line">{gemini?.windows?.length?gemini.windows.map(w=><span key={w.key}>{windowName(w)} <b>{quotaPercent(w)}</b></span>):<span>{gemini?.note??'尚未取得官方額度。'}</span>}</div>
     <p className="usage-note">{!online||gemini?.status==='stale'?'舊資料，等待更新。':'約每分鐘更新；額度歸零時等待官方重設。'}直接查詢 Antigravity 官方額度，不以 Token 推算。</p>
