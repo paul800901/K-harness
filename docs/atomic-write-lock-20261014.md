@@ -27,7 +27,7 @@
 ## 複查與未處理
 
 - 由 Opus 5.5 撰寫與自查；改動小、無新增狀態或設定。
-- 尚未部署（K 內無法自更新），隨本批交 Codex 部署。
+- 已於 2026-10-14 隨 `72f04c2` 由 Codex 部署，Claude 讀回驗證通過；見 [code-split-20261014.md](code-split-20261014.md)。
 - `scripts/k-browser-native-host.mjs` 的 `writeDescriptor` 自行改名、遇鎖即失敗，可能造成偶發瀏覽器連線問題；它安裝在 vault，需重新設定瀏覽器助手才生效，另案處理。`codex-host-diagnostics` 只寫診斷且失敗即忽略，不影響功能。
 
 ## 補充：Defender 排除後的對照（2026-10-14 01:10）
