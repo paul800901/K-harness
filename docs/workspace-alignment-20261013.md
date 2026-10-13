@@ -18,6 +18,15 @@
    - 其餘 7 份兩邊不同的文件（`git-install-update`、`readme-history-before-20261001`、`codex-capacity-error-20261009`、`steer-final-display-20261009` 等）採分支版；這些是不同對話對同一收尾的平行寫法，舊寫法保留在備份分支。
 4. 根目錄 8 張除錯截圖移至 `.runtime/root-screenshots-20261013/`，未刪除。
 
+## 分支整理
+
+- 已合併分支刪除：`codex/chat-links-20261007`、`mobile-image-upload-20261008`、`modal-focus-fix`、`public-readme-20261009`、`r2-simplification`、`r3-1`、`r3-2`。
+- 已含於 main 的 `steer-final-display-20261009` 刪除。
+- 5 條只含文件收尾提交、未合回主線的分支，內容併入 main：`attachment-only-20261009`（2771bad）、`discussion-feature-20261008`（7d19ccf）、`gemini-command-pathext-20261007`（3ee970a）、`native-attachments-20261008`（823c65f）四條刪除（原提交 SHA 供日後查回）；`k-diagnostic-fixes-20261007`（efbd899）仍被工作樹使用而保留。
+  - 7d19ccf 的 f5e9e26 正式部署收尾段落原本不在 main，已收回 3 份文件；`development-log` 兩行舊「未部署」索引改為分支上的部署後寫法，並補回 10-07 三項修正條目。
+  - 其餘提交內容 main 已涵蓋或有較新寫法。
+- 仍被其他工作樹使用、未動：`codex/room-lock-fix-20261010`、`mobile-remote-20261006`、`multi-model-discussion-20261008`、`k-diagnostic-fixes-20261007`（`.runtime/chat-links-20261007/source`）。
+
 ## 未完成
 
 - `node_modules` 仍是舊 main 時期安裝，與現行 `package-lock.json` 不一致；未自動重新安裝，在此跑測試前需另行處理。
