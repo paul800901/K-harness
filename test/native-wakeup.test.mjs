@@ -75,7 +75,7 @@ test('busy parent queues and merges two child terminals, irrespective of final-a
  const f=await fixture();try{
   f.child('first','one');f.child('second','two');await f.tick();f.terminal('first');f.terminal('second');await f.tick();
   assert.equal(f.delivered().length,0);assert.equal(f.c.state.completionPending,true);
-  f.finish();await f.tick();assert.equal(f.delivered().length,1);assert.match(f.delivered()[0].p.toolOutput.output,/one/);assert.match(f.delivered()[0].p.toolOutput.output,/two/);
+  f.finish();await waitRecheck(()=>f.delivered().length===1);assert.equal(f.delivered().length,1);assert.match(f.delivered()[0].p.toolOutput.output,/one/);assert.match(f.delivered()[0].p.toolOutput.output,/two/);
  }finally{await f.c.close();}
 });
 
