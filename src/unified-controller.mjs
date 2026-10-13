@@ -5,7 +5,7 @@ import {createClaudeController} from './claude-controller.mjs';
 import {createGeminiController} from './gemini-controller.mjs';
 import {modelProvider} from '../shared/model-provider.mjs';
 import {inspectClaude} from './claude-host.mjs';
-import {listMainSessions, saveMainSession} from './main-sessions.mjs';
+import {listMainSessions, saveMainSession, updateMainSession} from './main-sessions.mjs';
 import {normalizeClaudeAccessMode} from './claude-host.mjs';
 import {permissionMode} from './desktop-permissions.mjs';
 import {groupConversationMessages} from '../shared/conversation-groups.mjs';
@@ -357,9 +357,8 @@ export function createUnifiedController(options) {
           });
         }
         await queue.load(created.threadId);
-        const saved = (await listMainSessions(root)).sessions.find(s => s.threadId === created.threadId) ?? {};
-        await saveMainSession(root, {
-          ...saved,
+        const branchRecord = base => ({
+          ...base,
           threadId: created.threadId,
           model,
           workspace: source.workspace,
@@ -370,6 +369,8 @@ export function createUnifiedController(options) {
           branchType: 'user',
           title: source.title ? `${source.title} · 分支` : ''
         });
+        (await updateMainSession(root, created.threadId, branchRecord)) ??
+          (await saveMainSession(root, branchRecord({})));
         active.state.parentThreadId = source.threadId;
         active.state.parentTitle = source.title;
         active.state.title = source.title ? `${source.title} · 分支` : '';
