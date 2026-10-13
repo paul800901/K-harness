@@ -61,3 +61,7 @@
 | `main.jsx` 尚有 20 個拆分後無用的匯入 | 部分採納：查證後 19 個確實無用，已刪；`conversationPreview` 在第 920 行仍使用（即先前修過的誤刪），保留。 |
 | `app-common.jsx`、`dialogs.jsx` 的 `import React` 在自動 JSX runtime 下不需要，且其他元件檔沒有 | 不採納：26 個元件檔有 24 個匯入 React，維持一致；前提與實況不符。 |
 | `atomicWrite` 遇目標是資料夾即失敗屬過度防禦，可刪 | 不採納：既有「存檔失敗要顯示通知」測試以資料夾占位模擬永久失敗，少這 2 行就得白等 10 秒；成本低、無副作用。 |
+
+## 部署
+
+待部署程式版本：`48ab0aa84ef4e5ef52daa480874a086a9a52e554`（含排版 97af2f5 與第二審修正）。K 內無法自更新，需本人關閉 K 後交 Codex 依 `docs/git-install-update.md` 部署並讀回。
