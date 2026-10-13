@@ -1,128 +1,349 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {collectNativeWorkerIds,checkNativeWorkers} from '../src/native-workers.mjs';
+import {collectNativeWorkerIds, checkNativeWorkers} from '../src/native-workers.mjs';
 
-test('native child IDs come only from observed collaboration items',()=>{
- assert.deepEqual(collectNativeWorkerIds([{type:'mcpToolCall',receiverThreadIds:['other']},{type:'collabAgentToolCall',receiverThreadIds:['a','a','b']}]),['a','b']);
- assert.deepEqual(collectNativeWorkerIds([{type:'subAgentActivity',kind:'started',agentThreadId:'native-v2'},{type:'subAgentActivity',kind:'completed',agentThreadId:'native-v2'},{type:'collabAgentToolCall',tool:'wait',receiverThreadIds:[]}]),['native-v2']);
+test('native child IDs come only from observed collaboration items', () => {
+  assert.deepEqual(
+    collectNativeWorkerIds([
+      {type: 'mcpToolCall', receiverThreadIds: ['other']},
+      {type: 'collabAgentToolCall', receiverThreadIds: ['a', 'a', 'b']}
+    ]),
+    ['a', 'b']
+  );
+  assert.deepEqual(
+    collectNativeWorkerIds([
+      {type: 'subAgentActivity', kind: 'started', agentThreadId: 'native-v2'},
+      {type: 'subAgentActivity', kind: 'completed', agentThreadId: 'native-v2'},
+      {type: 'collabAgentToolCall', tool: 'wait', receiverThreadIds: []}
+    ]),
+    ['native-v2']
+  );
 });
-test('native worker stop checks parent ownership and interrupts the exact active child turn',async()=>{
- const calls=[];let stopped=false;
- const host={async request(method,p){calls.push({method,p});if(method==='thread/backgroundTerminals/list')return {data:[]};if(method==='turn/interrupt'){stopped=true;return {};}
-  return {thread:{id:p.threadId,parentThreadId:'parent',model:'gpt-6.1-sol',agentNickname:'reviewer',name:'Code review',status:{type:stopped?'idle':'active'},turns:[{id:'child-turn',status:stopped?'interrupted':'inProgress'}]}};}};
- const result=await checkNativeWorkers(host,'parent',['child'],{stop:true});
- assert.equal(result[0].status,'cancelled');assert.equal(result[0].settled,true);
- assert.equal(result[0].model,'gpt-6.1-sol');assert.equal(result[0].agentNickname,'reviewer');assert.equal(result[0].name,'Code review');
- assert.ok(Number.isFinite(Date.parse(result[0].lastReadAt)),'successful native read is timestamped');
- assert.deepEqual(calls.find(c=>c.method==='turn/interrupt').p,{threadId:'child',turnId:'child-turn'});
+test('native worker stop checks parent ownership and interrupts the exact active child turn', async () => {
+  const calls = [];
+  let stopped = false;
+  const host = {
+    async request(method, p) {
+      calls.push({method, p});
+      if (method === 'thread/backgroundTerminals/list') return {data: []};
+      if (method === 'turn/interrupt') {
+        stopped = true;
+        return {};
+      }
+      return {
+        thread: {
+          id: p.threadId,
+          parentThreadId: 'parent',
+          model: 'gpt-6.1-sol',
+          agentNickname: 'reviewer',
+          name: 'Code review',
+          status: {type: stopped ? 'idle' : 'active'},
+          turns: [{id: 'child-turn', status: stopped ? 'interrupted' : 'inProgress'}]
+        }
+      };
+    }
+  };
+  const result = await checkNativeWorkers(host, 'parent', ['child'], {stop: true});
+  assert.equal(result[0].status, 'cancelled');
+  assert.equal(result[0].settled, true);
+  assert.equal(result[0].model, 'gpt-6.1-sol');
+  assert.equal(result[0].agentNickname, 'reviewer');
+  assert.equal(result[0].name, 'Code review');
+  assert.ok(Number.isFinite(Date.parse(result[0].lastReadAt)), 'successful native read is timestamped');
+  assert.deepEqual(calls.find(c => c.method === 'turn/interrupt').p, {threadId: 'child', turnId: 'child-turn'});
 });
-test('foreign or unreadable children remain unresolved and are never interrupted',async()=>{
- let interrupts=0;
- const host={async request(method,p){if(method==='turn/interrupt')interrupts++;if(p.threadId==='missing')throw Error('offline');return {thread:{parentThreadId:'foreign',status:{type:'active'},turns:[{id:'x',status:'inProgress'}]}};}};
- const results=await checkNativeWorkers(host,'parent',['foreign','missing'],{stop:true});
- assert.equal(interrupts,0);assert.ok(results.every(r=>!r.settled&&r.status==='unresolved'));
- assert.equal(results[0].error,'原生子代理來源無法確認。');assert.equal(results[1].error,'原生子代理狀態讀回失敗。');
- assert.equal(results[1].lastReadAt,undefined,'failed read does not invent a read time');
+test('foreign or unreadable children remain unresolved and are never interrupted', async () => {
+  let interrupts = 0;
+  const host = {
+    async request(method, p) {
+      if (method === 'turn/interrupt') interrupts++;
+      if (p.threadId === 'missing') throw Error('offline');
+      return {thread: {parentThreadId: 'foreign', status: {type: 'active'}, turns: [{id: 'x', status: 'inProgress'}]}};
+    }
+  };
+  const results = await checkNativeWorkers(host, 'parent', ['foreign', 'missing'], {stop: true});
+  assert.equal(interrupts, 0);
+  assert.ok(results.every(r => !r.settled && r.status === 'unresolved'));
+  assert.equal(results[0].error, '原生子代理來源無法確認。');
+  assert.equal(results[1].error, '原生子代理狀態讀回失敗。');
+  assert.equal(results[1].lastReadAt, undefined, 'failed read does not invent a read time');
 });
-test('incomplete native readback has no read timestamp',async()=>{
- const [result]=await checkNativeWorkers({async request(){return {}; }},'parent',['child']);
- assert.equal(result.status,'unresolved');assert.equal(result.error,'原生子代理狀態讀回資料不完整。');assert.equal(result.lastReadAt,undefined);
+test('incomplete native readback has no read timestamp', async () => {
+  const [result] = await checkNativeWorkers(
+    {
+      async request() {
+        return {};
+      }
+    },
+    'parent',
+    ['child']
+  );
+  assert.equal(result.status, 'unresolved');
+  assert.equal(result.error, '原生子代理狀態讀回資料不完整。');
+  assert.equal(result.lastReadAt, undefined);
 });
-test('an interrupt acknowledgement does not falsely claim a child has stopped',async()=>{
- const host={async request(method){if(method==='thread/backgroundTerminals/list')return {data:[]};return {thread:{parentThreadId:'parent',status:{type:'active'},turns:[{id:'child-turn',status:'inProgress'}]}};}};
- const [result]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
- assert.equal(result.status,'running');assert.equal(result.settled,false);
+test('an interrupt acknowledgement does not falsely claim a child has stopped', async () => {
+  const host = {
+    async request(method) {
+      if (method === 'thread/backgroundTerminals/list') return {data: []};
+      return {
+        thread: {parentThreadId: 'parent', status: {type: 'active'}, turns: [{id: 'child-turn', status: 'inProgress'}]}
+      };
+    }
+  };
+  const [result] = await checkNativeWorkers(host, 'parent', ['child'], {stop: true});
+  assert.equal(result.status, 'running');
+  assert.equal(result.settled, false);
 });
-test('idle or notLoaded without an explicit terminal latest turn remains unresolved',async()=>{
- for(const variant of [
-  {threadStatus:'idle',turns:[]},
-  {threadStatus:'notLoaded',turns:[]},
-  {threadStatus:'idle',turns:[{id:'child-turn',status:'queued'}]},
-  {threadStatus:'notLoaded',turns:[{id:'child-turn',status:'unknown'}]},
- ]){
-  const calls=[];
-  const host={async request(method,p){calls.push({method,p});if(method==='thread/backgroundTerminals/list')return {data:[]};return {thread:{id:p.threadId,parentThreadId:'parent',status:{type:variant.threadStatus},turns:variant.turns}};}};
-  const [result]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
-  assert.equal(result.status,'unresolved',JSON.stringify(variant));assert.equal(result.settled,false,JSON.stringify(variant));
-  assert.equal(result.error,'原生子代理最後回合狀態未確認。');
-  assert.equal(calls.some(call=>call.method==='turn/interrupt'),false,'no explicit inProgress turn means no interrupt or stop claim');
- }
+test('idle or notLoaded without an explicit terminal latest turn remains unresolved', async () => {
+  for (const variant of [
+    {threadStatus: 'idle', turns: []},
+    {threadStatus: 'notLoaded', turns: []},
+    {threadStatus: 'idle', turns: [{id: 'child-turn', status: 'queued'}]},
+    {threadStatus: 'notLoaded', turns: [{id: 'child-turn', status: 'unknown'}]}
+  ]) {
+    const calls = [];
+    const host = {
+      async request(method, p) {
+        calls.push({method, p});
+        if (method === 'thread/backgroundTerminals/list') return {data: []};
+        return {
+          thread: {id: p.threadId, parentThreadId: 'parent', status: {type: variant.threadStatus}, turns: variant.turns}
+        };
+      }
+    };
+    const [result] = await checkNativeWorkers(host, 'parent', ['child'], {stop: true});
+    assert.equal(result.status, 'unresolved', JSON.stringify(variant));
+    assert.equal(result.settled, false, JSON.stringify(variant));
+    assert.equal(result.error, '原生子代理最後回合狀態未確認。');
+    assert.equal(
+      calls.some(call => call.method === 'turn/interrupt'),
+      false,
+      'no explicit inProgress turn means no interrupt or stop claim'
+    );
+  }
 });
-test('idle or notLoaded settles only explicit completed, interrupted, or failed latest turns',async()=>{
- for(const [threadStatus,turnStatus,expected] of [
-  ['idle','completed','completed'],['notLoaded','completed','completed'],
-  ['idle','interrupted','cancelled'],['notLoaded','failed','failed'],
- ]){
-  const host={async request(_method,p){return {thread:{id:p.threadId,parentThreadId:'parent',status:{type:threadStatus},turns:[{id:'child-turn',status:turnStatus}]}};}};
-  const [result]=await checkNativeWorkers(host,'parent',['child']);
-  assert.equal(result.status,expected);assert.equal(result.settled,true);assert.equal(result.turnId,'child-turn');
- }
+test('idle or notLoaded settles only explicit completed, interrupted, or failed latest turns', async () => {
+  for (const [threadStatus, turnStatus, expected] of [
+    ['idle', 'completed', 'completed'],
+    ['notLoaded', 'completed', 'completed'],
+    ['idle', 'interrupted', 'cancelled'],
+    ['notLoaded', 'failed', 'failed']
+  ]) {
+    const host = {
+      async request(_method, p) {
+        return {
+          thread: {
+            id: p.threadId,
+            parentThreadId: 'parent',
+            status: {type: threadStatus},
+            turns: [{id: 'child-turn', status: turnStatus}]
+          }
+        };
+      }
+    };
+    const [result] = await checkNativeWorkers(host, 'parent', ['child']);
+    assert.equal(result.status, expected);
+    assert.equal(result.settled, true);
+    assert.equal(result.turnId, 'child-turn');
+  }
 });
 
-test('paginated workers read only the latest native turn summary and exclude completed history',async()=>{
- const calls=[],ids=Array.from({length:96},(_,i)=>`child-${i}`);
- const host={async request(method,p){calls.push({method,p});
-  if(method==='thread/read')return {thread:{id:p.threadId,parentThreadId:'parent',historyMode:'paginated',model:'gpt-6-luna',status:{type:'notLoaded'},turns:[]}};
-  if(method==='thread/turns/list')return {data:[{id:`turn-${p.threadId}`,status:'completed'}],nextCursor:null};
-  throw Error('unexpected mutation');
- }};
- const rows=await checkNativeWorkers(host,'parent',ids);
- assert.equal(rows.length,96);assert.ok(rows.every(r=>r.settled&&r.status==='completed'&&r.model==='gpt-6-luna'));
- assert.ok(calls.filter(c=>c.method==='thread/read').every(c=>c.p.includeTurns===false));
- assert.ok(calls.filter(c=>c.method==='thread/turns/list').every(c=>c.p.limit===1&&c.p.sortDirection==='desc'&&c.p.itemsView==='summary'));
+test('paginated workers read only the latest native turn summary and exclude completed history', async () => {
+  const calls = [],
+    ids = Array.from({length: 96}, (_, i) => `child-${i}`);
+  const host = {
+    async request(method, p) {
+      calls.push({method, p});
+      if (method === 'thread/read')
+        return {
+          thread: {
+            id: p.threadId,
+            parentThreadId: 'parent',
+            historyMode: 'paginated',
+            model: 'gpt-6-luna',
+            status: {type: 'notLoaded'},
+            turns: []
+          }
+        };
+      if (method === 'thread/turns/list')
+        return {data: [{id: `turn-${p.threadId}`, status: 'completed'}], nextCursor: null};
+      throw Error('unexpected mutation');
+    }
+  };
+  const rows = await checkNativeWorkers(host, 'parent', ids);
+  assert.equal(rows.length, 96);
+  assert.ok(rows.every(r => r.settled && r.status === 'completed' && r.model === 'gpt-6-luna'));
+  assert.ok(calls.filter(c => c.method === 'thread/read').every(c => c.p.includeTurns === false));
+  assert.ok(
+    calls
+      .filter(c => c.method === 'thread/turns/list')
+      .every(c => c.p.limit === 1 && c.p.sortDirection === 'desc' && c.p.itemsView === 'summary')
+  );
 });
 
-test('paginated stop rechecks ownership and exact latest turn after interrupt',async()=>{
- const calls=[];let stopped=false;
- const host={async request(method,p){calls.push({method,p});
-  if(method==='thread/read')return {thread:{id:p.threadId,parentThreadId:'parent',historyMode:'paginated',status:{type:stopped?'idle':'active'},turns:[]}};
-  if(method==='thread/turns/list')return {data:[{id:'latest-turn',status:stopped?'interrupted':'inProgress'}]};
-  if(method==='turn/interrupt'){stopped=true;return {};}
-  if(method==='thread/backgroundTerminals/list')return {data:[]};
- }};
- const [row]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
- assert.equal(row.status,'cancelled');assert.equal(row.settled,true);
- assert.deepEqual(calls.find(c=>c.method==='turn/interrupt').p,{threadId:'child',turnId:'latest-turn'});
- assert.equal(calls.filter(c=>c.method==='thread/turns/list').length,2);
+test('paginated stop rechecks ownership and exact latest turn after interrupt', async () => {
+  const calls = [];
+  let stopped = false;
+  const host = {
+    async request(method, p) {
+      calls.push({method, p});
+      if (method === 'thread/read')
+        return {
+          thread: {
+            id: p.threadId,
+            parentThreadId: 'parent',
+            historyMode: 'paginated',
+            status: {type: stopped ? 'idle' : 'active'},
+            turns: []
+          }
+        };
+      if (method === 'thread/turns/list')
+        return {data: [{id: 'latest-turn', status: stopped ? 'interrupted' : 'inProgress'}]};
+      if (method === 'turn/interrupt') {
+        stopped = true;
+        return {};
+      }
+      if (method === 'thread/backgroundTerminals/list') return {data: []};
+    }
+  };
+  const [row] = await checkNativeWorkers(host, 'parent', ['child'], {stop: true});
+  assert.equal(row.status, 'cancelled');
+  assert.equal(row.settled, true);
+  assert.deepEqual(calls.find(c => c.method === 'turn/interrupt').p, {threadId: 'child', turnId: 'latest-turn'});
+  assert.equal(calls.filter(c => c.method === 'thread/turns/list').length, 2);
 });
 
-test('paginated missing, unknown, failed read and foreign ownership never become completed',async()=>{
- for(const variant of ['empty','unknown','error','foreign']){
-  const calls=[];
-  const host={async request(method,p){calls.push(method);
-   if(method==='thread/read')return {thread:{parentThreadId:variant==='foreign'?'elsewhere':'parent',historyMode:'paginated',status:{type:'notLoaded'},turns:[{id:'stale',status:'completed'}]}};
-   if(method==='thread/turns/list'){if(variant==='error')throw Error('read failed');return {data:variant==='empty'?[]:[{id:'latest',status:'unknown'}]};}
-   throw Error('unexpected mutation');
-  }};
-  const [row]=await checkNativeWorkers(host,'parent',['child'],{stop:true});
-  assert.equal(row.status,'unresolved',variant);assert.equal(row.settled,false,variant);
-  assert.equal(calls.includes('turn/interrupt'),false);
-  if(variant==='foreign')assert.equal(calls.includes('thread/turns/list'),false);
- }
+test('paginated missing, unknown, failed read and foreign ownership never become completed', async () => {
+  for (const variant of ['empty', 'unknown', 'error', 'foreign']) {
+    const calls = [];
+    const host = {
+      async request(method, p) {
+        calls.push(method);
+        if (method === 'thread/read')
+          return {
+            thread: {
+              parentThreadId: variant === 'foreign' ? 'elsewhere' : 'parent',
+              historyMode: 'paginated',
+              status: {type: 'notLoaded'},
+              turns: [{id: 'stale', status: 'completed'}]
+            }
+          };
+        if (method === 'thread/turns/list') {
+          if (variant === 'error') throw Error('read failed');
+          return {data: variant === 'empty' ? [] : [{id: 'latest', status: 'unknown'}]};
+        }
+        throw Error('unexpected mutation');
+      }
+    };
+    const [row] = await checkNativeWorkers(host, 'parent', ['child'], {stop: true});
+    assert.equal(row.status, 'unresolved', variant);
+    assert.equal(row.settled, false, variant);
+    assert.equal(calls.includes('turn/interrupt'), false);
+    if (variant === 'foreign') assert.equal(calls.includes('thread/turns/list'), false);
+  }
 });
 
-test('large historical worker set is read with bounded native queue pressure and stable order, never retried',async()=>{
- let inFlight=0,max=0,calls=0;const ids=Array.from({length:461},(_,i)=>`child-${i}`);
- const host={async request(method,{threadId}){calls++;inFlight++;max=Math.max(max,inFlight);await new Promise(r=>setTimeout(r,1));inFlight--;if(method==='thread/read')return {thread:{id:threadId,parentThreadId:'main',historyMode:'paginated',status:{type:'notLoaded'}}};return {data:[{id:`turn-${threadId}`,status:threadId==='child-460'?'failed':'completed'}]};}};
- const rows=await checkNativeWorkers(host,'main',ids);assert.equal(rows.length,461);assert.deepEqual(rows.map(r=>r.threadId),ids);assert.ok(rows.every(r=>r.settled));assert.ok(max<=12);assert.equal(calls,922);
+test('large historical worker set is read with bounded native queue pressure and stable order, never retried', async () => {
+  let inFlight = 0,
+    max = 0,
+    calls = 0;
+  const ids = Array.from({length: 461}, (_, i) => `child-${i}`);
+  const host = {
+    async request(method, {threadId}) {
+      calls++;
+      inFlight++;
+      max = Math.max(max, inFlight);
+      await new Promise(r => setTimeout(r, 1));
+      inFlight--;
+      if (method === 'thread/read')
+        return {thread: {id: threadId, parentThreadId: 'main', historyMode: 'paginated', status: {type: 'notLoaded'}}};
+      return {data: [{id: `turn-${threadId}`, status: threadId === 'child-460' ? 'failed' : 'completed'}]};
+    }
+  };
+  const rows = await checkNativeWorkers(host, 'main', ids);
+  assert.equal(rows.length, 461);
+  assert.deepEqual(
+    rows.map(r => r.threadId),
+    ids
+  );
+  assert.ok(rows.every(r => r.settled));
+  assert.ok(max <= 12);
+  assert.equal(calls, 922);
 });
 
-test('native overload stays unresolved with original diagnostic; no hidden retry',async()=>{
- let calls=0;const rows=await checkNativeWorkers({async request(){calls++;throw Error('Server overloaded; retry later.')}},'main',['child']);assert.equal(calls,1);assert.equal(rows[0].settled,false);assert.equal(rows[0].diagnostic,'Server overloaded; retry later.');
+test('native overload stays unresolved with original diagnostic; no hidden retry', async () => {
+  let calls = 0;
+  const rows = await checkNativeWorkers(
+    {
+      async request() {
+        calls++;
+        throw Error('Server overloaded; retry later.');
+      }
+    },
+    'main',
+    ['child']
+  );
+  assert.equal(calls, 1);
+  assert.equal(rows[0].settled, false);
+  assert.equal(rows[0].diagnostic, 'Server overloaded; retry later.');
 });
 
-test('paginated newest summary overrides stale embedded historical turns',async()=>{
- const rows=await checkNativeWorkers({async request(method){return method==='thread/read'?{thread:{parentThreadId:'main',historyMode:'paginated',status:{type:'idle'},turns:[{id:'old',status:'completed'}]}}:{data:[{id:'new',status:'inProgress'}]};}},'main',['child']);assert.equal(rows[0].turnId,'new');assert.equal(rows[0].status,'running');assert.equal(rows[0].settled,false);
+test('paginated newest summary overrides stale embedded historical turns', async () => {
+  const rows = await checkNativeWorkers(
+    {
+      async request(method) {
+        return method === 'thread/read'
+          ? {
+              thread: {
+                parentThreadId: 'main',
+                historyMode: 'paginated',
+                status: {type: 'idle'},
+                turns: [{id: 'old', status: 'completed'}]
+              }
+            }
+          : {data: [{id: 'new', status: 'inProgress'}]};
+      }
+    },
+    'main',
+    ['child']
+  );
+  assert.equal(rows[0].turnId, 'new');
+  assert.equal(rows[0].status, 'running');
+  assert.equal(rows[0].settled, false);
 });
 
-test('systemError settles only an owned explicit terminal latest turn, not an Error alone',async()=>{
- for(const status of ['failed','completed','interrupted','inProgress','unknown',null]){
-  const calls=[];const host={async request(method,p){calls.push(method);return method==='thread/read'?{thread:{parentThreadId:'parent',historyMode:'paginated',status:{type:'systemError'}}}:{data:status?[{id:'latest',status}]:[]};}};
-  const [row]=await checkNativeWorkers(host,'parent',['child']);
-  const terminal=['failed','completed','interrupted'].includes(status);
-  assert.equal(row.settled,terminal,String(status));assert.equal(row.status,terminal?status==='interrupted'?'cancelled':status:status==='inProgress'?'running':'unresolved',String(status));
-  assert.deepEqual(calls,['thread/read','thread/turns/list']);
- }
- const [foreign]=await checkNativeWorkers({async request(){return {thread:{parentThreadId:'foreign',status:{type:'systemError'},turns:[{id:'latest',status:'failed'}]}};}},'parent',['child']);
- assert.equal(foreign.settled,false);
+test('systemError settles only an owned explicit terminal latest turn, not an Error alone', async () => {
+  for (const status of ['failed', 'completed', 'interrupted', 'inProgress', 'unknown', null]) {
+    const calls = [];
+    const host = {
+      async request(method, p) {
+        calls.push(method);
+        return method === 'thread/read'
+          ? {thread: {parentThreadId: 'parent', historyMode: 'paginated', status: {type: 'systemError'}}}
+          : {data: status ? [{id: 'latest', status}] : []};
+      }
+    };
+    const [row] = await checkNativeWorkers(host, 'parent', ['child']);
+    const terminal = ['failed', 'completed', 'interrupted'].includes(status);
+    assert.equal(row.settled, terminal, String(status));
+    assert.equal(
+      row.status,
+      terminal ? (status === 'interrupted' ? 'cancelled' : status) : status === 'inProgress' ? 'running' : 'unresolved',
+      String(status)
+    );
+    assert.deepEqual(calls, ['thread/read', 'thread/turns/list']);
+  }
+  const [foreign] = await checkNativeWorkers(
+    {
+      async request() {
+        return {
+          thread: {parentThreadId: 'foreign', status: {type: 'systemError'}, turns: [{id: 'latest', status: 'failed'}]}
+        };
+      }
+    },
+    'parent',
+    ['child']
+  );
+  assert.equal(foreign.settled, false);
 });

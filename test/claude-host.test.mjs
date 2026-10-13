@@ -1,15 +1,32 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile, readFile, access } from 'node:fs/promises';
+import {mkdtemp, mkdir, writeFile, readFile, access} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {scratchBase} from './scratch.mjs';
-const base=scratchBase;
-await mkdir(base,{recursive:true});
+const base = scratchBase;
+await mkdir(base, {recursive: true});
 import path from 'node:path';
-import { CLAUDE_MODEL, claudeModelsFrom, nativeCapabilitiesFrom, inspectClaude, openClaudeHost, resolveClaudeCommand } from '../src/claude-host.mjs';
+import {
+  CLAUDE_MODEL,
+  claudeModelsFrom,
+  nativeCapabilitiesFrom,
+  inspectClaude,
+  openClaudeHost,
+  resolveClaudeCommand
+} from '../src/claude-host.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 
-async function fakeCli(status = { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'pro', email: 'must-not-escape@example.test', orgName: 'private org' }, models) {
+async function fakeCli(
+  status = {
+    loggedIn: true,
+    authMethod: 'claude.ai',
+    apiProvider: 'firstParty',
+    subscriptionType: 'pro',
+    email: 'must-not-escape@example.test',
+    orgName: 'private org'
+  },
+  models
+) {
   const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
   const file = path.join(dir, 'fake-claude.mjs');
   const code = `
@@ -47,7 +64,7 @@ rl.on('line', line => {
 });
 `;
   await writeFile(file, code, 'utf8');
-  return { dir, file, commandSpec: { command: process.execPath, argsPrefix: [file] } };
+  return {dir, file, commandSpec: {command: process.execPath, argsPrefix: [file]}};
 }
 
 test('resolves the installed official native executable or npm entry without a shell', async () => {
@@ -66,10 +83,15 @@ test('auth preflight only returns allowlisted subscription fields and strips env
   process.env.ANTHROPIC_API_KEY = 'never-forward-this';
   process.env.ANTHROPIC_BASE_URL = 'https://invalid.example';
   try {
-    const result = await inspectClaude({ commandSpec: fake.commandSpec });
+    const result = await inspectClaude({commandSpec: fake.commandSpec});
     assert.equal(result.available, true);
     assert.equal(result.version, '2.1.280');
-    assert.deepEqual(result.auth, { loggedIn: true, authMethod: 'claude.ai', subscriptionType: 'pro', apiProvider: 'firstParty' });
+    assert.deepEqual(result.auth, {
+      loggedIn: true,
+      authMethod: 'claude.ai',
+      subscriptionType: 'pro',
+      apiProvider: 'firstParty'
+    });
     assert.equal(JSON.stringify(result).includes('must-not-escape@example.test'), false);
     assert.equal(JSON.stringify(result).includes('private org'), false);
   } finally {
@@ -80,45 +102,61 @@ test('auth preflight only returns allowlisted subscription fields and strips env
   }
 });
 
-test('an authenticated older stable CLI is blocked before the unsupported Opus model request',async()=>{
- const fake=await fakeCli();
- await writeFile(fake.file,(await readFile(fake.file,'utf8')).replace('2.1.280','2.1.267'));
- const result=await inspectClaude({commandSpec:fake.commandSpec});
- assert.equal(result.auth.loggedIn,true);assert.equal(result.available,false);
- assert.match(result.reason,/2\.1\.280/);
- await assert.rejects(openClaudeHost({commandSpec:fake.commandSpec}),/2\.1\.280/);
+test('an authenticated older stable CLI is blocked before the unsupported Opus model request', async () => {
+  const fake = await fakeCli();
+  await writeFile(fake.file, (await readFile(fake.file, 'utf8')).replace('2.1.280', '2.1.267'));
+  const result = await inspectClaude({commandSpec: fake.commandSpec});
+  assert.equal(result.auth.loggedIn, true);
+  assert.equal(result.available, false);
+  assert.match(result.reason, /2\.1\.280/);
+  await assert.rejects(openClaudeHost({commandSpec: fake.commandSpec}), /2\.1\.280/);
 });
 
 test('rejects logged-out, non-subscription, and unknown auth states without starting a session', async t => {
   for (const status of [
-    { loggedIn: false, authMethod: 'none', apiProvider: 'firstParty' },
-    { loggedIn: true, authMethod: 'console', apiProvider: 'firstParty', subscriptionType: 'pro' },
-    { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'bedrock', subscriptionType: 'pro' },
-    { loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'mystery' },
+    {loggedIn: false, authMethod: 'none', apiProvider: 'firstParty'},
+    {loggedIn: true, authMethod: 'console', apiProvider: 'firstParty', subscriptionType: 'pro'},
+    {loggedIn: true, authMethod: 'claude.ai', apiProvider: 'bedrock', subscriptionType: 'pro'},
+    {loggedIn: true, authMethod: 'claude.ai', apiProvider: 'firstParty', subscriptionType: 'mystery'}
   ]) {
     const fake = await fakeCli(status);
-    const result = await inspectClaude({ commandSpec: fake.commandSpec });
+    const result = await inspectClaude({commandSpec: fake.commandSpec});
     assert.equal(result.available, false);
     assert.equal(typeof result.reason, 'string');
   }
 });
 
-test('refuses settings-based provider auth overrides without exposing their values',async()=>{
-  const fake=await fakeCli();
-  const config=path.join(fake.dir,'.claude');await mkdir(config,{recursive:true});
-  const secret='FAKE_NOT_A_REAL_KEY_12345';
-  await writeFile(path.join(config,'settings.json'),JSON.stringify({env:{ANTHROPIC_API_KEY:secret}}),'utf8');
-  const result=await inspectClaude({commandSpec:fake.commandSpec,cwd:fake.dir});
-  assert.equal(result.available,false);assert.match(result.reason,/ANTHROPIC_API_KEY/);
-  assert.equal(result.reason.includes(secret),false);
+test('refuses settings-based provider auth overrides without exposing their values', async () => {
+  const fake = await fakeCli();
+  const config = path.join(fake.dir, '.claude');
+  await mkdir(config, {recursive: true});
+  const secret = 'FAKE_NOT_A_REAL_KEY_12345';
+  await writeFile(path.join(config, 'settings.json'), JSON.stringify({env: {ANTHROPIC_API_KEY: secret}}), 'utf8');
+  const result = await inspectClaude({commandSpec: fake.commandSpec, cwd: fake.dir});
+  assert.equal(result.available, false);
+  assert.match(result.reason, /ANTHROPIC_API_KEY/);
+  assert.equal(result.reason.includes(secret), false);
 });
 
-test('all official permission modes, normal settings, native MCP and effort are launched without K tool filtering',async()=>{
-  const fake=await fakeCli();
-  for(const mode of ['claude-manual','claude-acceptEdits','claude-auto','claude-bypassPermissions','claude-dontAsk','claude-plan']){
-    const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,mcpConfig:{mcpServers:{}},accessMode:mode,effort:'low'});
-    assert.deepEqual(host.nativeCapabilities.tools,['Read','Task']);
-    assert.deepEqual(host.nativeCapabilities.commands,['compact']);
+test('all official permission modes, normal settings, native MCP and effort are launched without K tool filtering', async () => {
+  const fake = await fakeCli();
+  for (const mode of [
+    'claude-manual',
+    'claude-acceptEdits',
+    'claude-auto',
+    'claude-bypassPermissions',
+    'claude-dontAsk',
+    'claude-plan'
+  ]) {
+    const host = await openClaudeHost({
+      commandSpec: fake.commandSpec,
+      cwd: fake.dir,
+      mcpConfig: {mcpServers: {}},
+      accessMode: mode,
+      effort: 'low'
+    });
+    assert.deepEqual(host.nativeCapabilities.tools, ['Read', 'Task']);
+    assert.deepEqual(host.nativeCapabilities.commands, ['compact']);
     await host.close();
   }
 });
@@ -126,14 +164,18 @@ test('all official permission modes, normal settings, native MCP and effort are 
 test('does not call auth status when CLI help lacks its support', async t => {
   const dir = await mkdtemp(path.join(base, 'k-claude-host-'));
   const file = path.join(dir, 'old-claude.mjs');
-  await writeFile(file, `
+  await writeFile(
+    file,
+    `
 const args=process.argv.slice(2);
 if(args.includes('--version')) console.log('1.0.90');
 else if(args.includes('auth') && args.includes('--help')) console.log('Commands: login logout');
 else if(args.includes('--help')) console.log('Commands: auth doctor update');
 else if(args.includes('status')) { console.error('status must not run'); process.exit(44); }
-`, 'utf8');
-  const result = await inspectClaude({ commandSpec: { command: process.execPath, argsPrefix: [file] } });
+`,
+    'utf8'
+  );
+  const result = await inspectClaude({commandSpec: {command: process.execPath, argsPrefix: [file]}});
   assert.equal(result.available, false);
   assert.equal(result.version, '1.0.90');
   assert.match(result.reason, /read-only auth status/);
@@ -146,79 +188,176 @@ test('runs one persistent stream, waits for initialize, routes approval, and pin
   const host = await openClaudeHost({
     commandSpec: fake.commandSpec,
     cwd: fake.dir,
-    mcpConfig: { mcpServers: { bridge: { command: 'node', args: ['bridge.mjs'], env: { K_BRIDGE_TOKEN: 'sensitive' } } } },
+    mcpConfig: {mcpServers: {bridge: {command: 'node', args: ['bridge.mjs'], env: {K_BRIDGE_TOKEN: 'sensitive'}}}},
     onMessage: message => messages.push(message),
-    onPermission: async request => { permissions.push(request); return { behavior: 'allow', updatedInput: request.input }; },
+    onPermission: async request => {
+      permissions.push(request);
+      return {behavior: 'allow', updatedInput: request.input};
+    }
   });
 
   await host.start('Read the README');
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(permissions.length, 1);
-  assert.deepEqual(permissions[0], { toolName: 'Read', input: { file_path: 'README.md' } });
+  assert.deepEqual(permissions[0], {toolName: 'Read', input: {file_path: 'README.md'}});
   assert.ok(messages.some(message => message.type === 'result' && message.result === 'done'));
   assert.equal(CLAUDE_MODEL, 'claude-opus-5-5');
   await host.close();
-  assert.deepEqual(await host.closed, { code: 0, signal: null });
+  assert.deepEqual(await host.closed, {code: 0, signal: null});
 });
 
-test('official quota normalization preserves missing values instead of inventing zeros',async()=>{
- const {claudeQuota}=await import('../src/claude-host.mjs');
- const result=claudeQuota({rate_limits_available:true,subscription_type:'pro',rate_limits:{five_hour:{utilization:100,resets_at:'2026-09-24T09:00:00Z'},seven_day:{utilization:null,resets_at:null}}});
- assert.equal(result.windows[0].remainingPercent,0);assert.equal(result.windows[0].resetsAt,1790240400);
- assert.equal(result.windows[1].remainingPercent,null);assert.equal(result.windows[1].resetsAt,null);
- assert.equal(claudeQuota({rate_limits_available:false,rate_limits:{five_hour:{utilization:0}}}).status,'unavailable');
+test('official quota normalization preserves missing values instead of inventing zeros', async () => {
+  const {claudeQuota} = await import('../src/claude-host.mjs');
+  const result = claudeQuota({
+    rate_limits_available: true,
+    subscription_type: 'pro',
+    rate_limits: {
+      five_hour: {utilization: 100, resets_at: '2026-09-24T09:00:00Z'},
+      seven_day: {utilization: null, resets_at: null}
+    }
+  });
+  assert.equal(result.windows[0].remainingPercent, 0);
+  assert.equal(result.windows[0].resetsAt, 1790240400);
+  assert.equal(result.windows[1].remainingPercent, null);
+  assert.equal(result.windows[1].resetsAt, null);
+  assert.equal(
+    claudeQuota({rate_limits_available: false, rate_limits: {five_hour: {utilization: 0}}}).status,
+    'unavailable'
+  );
 });
 
-test('native Claude catalog admits future IDs and efforts, resolves aliases and hides hidden models',async()=>{
- const rows=[{value:'default',resolvedModel:'claude-future',displayName:'Default'},{value:'future',resolvedModel:'claude-future',displayName:'Future',supportedEffortLevels:['ultra']},{value:'claude-hidden',hidden:true}];
- const f=await fakeCli(undefined,rows);
- await writeFile(f.file,(await readFile(f.file,'utf8')).replace("const rl =", "if(args[args.indexOf('--model')+1]!=='claude-future')process.exit(99);\nconst rl ="));
- const host=await openClaudeHost({commandSpec:f.commandSpec,cwd:f.dir,model:'claude-future',effort:'ultra'});
- try{assert.deepEqual(host.models.map(m=>[m.model,m.supportedReasoningEfforts]),[['claude-future',[{reasoningEffort:'ultra'}]]]);}finally{await host.close();}
+test('native Claude catalog admits future IDs and efforts, resolves aliases and hides hidden models', async () => {
+  const rows = [
+    {value: 'default', resolvedModel: 'claude-future', displayName: 'Default'},
+    {value: 'future', resolvedModel: 'claude-future', displayName: 'Future', supportedEffortLevels: ['ultra']},
+    {value: 'claude-hidden', hidden: true}
+  ];
+  const f = await fakeCli(undefined, rows);
+  await writeFile(
+    f.file,
+    (await readFile(f.file, 'utf8')).replace(
+      'const rl =',
+      "if(args[args.indexOf('--model')+1]!=='claude-future')process.exit(99);\nconst rl ="
+    )
+  );
+  const host = await openClaudeHost({commandSpec: f.commandSpec, cwd: f.dir, model: 'claude-future', effort: 'ultra'});
+  try {
+    assert.deepEqual(
+      host.models.map(m => [m.model, m.supportedReasoningEfforts]),
+      [['claude-future', [{reasoningEffort: 'ultra'}]]]
+    );
+  } finally {
+    await host.close();
+  }
 });
 
-for(const stage of ['preflight','initialize'])test(`real Claude ${stage} subprocess stops within one second of abort`,async()=>{
- const f=await fakeCli(),marker=path.join(f.dir,'pid.txt');
- const code=await readFile(f.file,'utf8');
- const hang=`writeFileSync(${JSON.stringify(marker)},String(process.pid));setInterval(()=>{},1000);`;
- await writeFile(f.file,"import {writeFileSync} from 'node:fs';\n"+(stage==='preflight'?hang:code.replace('init = true;',`${hang}return;`)));
- const abort=new AbortController();const pending=openClaudeHost({commandSpec:f.commandSpec,cwd:f.dir,signal:abort.signal});const rejected=assert.rejects(pending,/abort/i);let pid;
- try{
-  const end=Date.now()+10000;while(Date.now()<end){try{pid=Number(await readFile(marker,'utf8'));if(pid)break;}catch{}await new Promise(r=>setTimeout(r,20));}
-  assert.ok(pid,'fixture reached requested stage');const start=Date.now();abort.abort();await rejected;
-  while(Date.now()-start<950){try{process.kill(pid,0);}catch{pid=null;break;}await new Promise(r=>setTimeout(r,10));}
-  assert.equal(pid,null,'no residual native process');assert.ok(Date.now()-start<1000);
- }finally{abort.abort();if(pid)try{process.kill(pid);}catch{}}
-});
+for (const stage of ['preflight', 'initialize'])
+  test(`real Claude ${stage} subprocess stops within one second of abort`, async () => {
+    const f = await fakeCli(),
+      marker = path.join(f.dir, 'pid.txt');
+    const code = await readFile(f.file, 'utf8');
+    const hang = `writeFileSync(${JSON.stringify(marker)},String(process.pid));setInterval(()=>{},1000);`;
+    await writeFile(
+      f.file,
+      "import {writeFileSync} from 'node:fs';\n" +
+        (stage === 'preflight' ? hang : code.replace('init = true;', `${hang}return;`))
+    );
+    const abort = new AbortController();
+    const pending = openClaudeHost({commandSpec: f.commandSpec, cwd: f.dir, signal: abort.signal});
+    const rejected = assert.rejects(pending, /abort/i);
+    let pid;
+    try {
+      const end = Date.now() + 10000;
+      while (Date.now() < end) {
+        try {
+          pid = Number(await readFile(marker, 'utf8'));
+          if (pid) break;
+        } catch {}
+        await new Promise(r => setTimeout(r, 20));
+      }
+      assert.ok(pid, 'fixture reached requested stage');
+      const start = Date.now();
+      abort.abort();
+      await rejected;
+      while (Date.now() - start < 950) {
+        try {
+          process.kill(pid, 0);
+        } catch {
+          pid = null;
+          break;
+        }
+        await new Promise(r => setTimeout(r, 10));
+      }
+      assert.equal(pid, null, 'no residual native process');
+      assert.ok(Date.now() - start < 1000);
+    } finally {
+      abort.abort();
+      if (pid)
+        try {
+          process.kill(pid);
+        } catch {}
+    }
+  });
 
-test('Claude goal command confirms matching native lifecycle, never ordinary assistant prose',async()=>{
- const fake=await fakeCli(),id='123e4567-e89b-42d3-a456-426614174000';
- let code=await readFile(fake.file,'utf8');code=code.replace("slash_commands:['compact']","slash_commands:['compact','goal']").replace("} else if (msg.type === 'user' && init && !asked) {",` } else if (msg.type==='user'&&msg.message.content.startsWith('/goal')) {
+test('Claude goal command confirms matching native lifecycle, never ordinary assistant prose', async () => {
+  const fake = await fakeCli(),
+    id = '123e4567-e89b-42d3-a456-426614174000';
+  let code = await readFile(fake.file, 'utf8');
+  code = code.replace("slash_commands:['compact']", "slash_commands:['compact','goal']").replace(
+    "} else if (msg.type === 'user' && init && !asked) {",
+    ` } else if (msg.type==='user'&&msg.message.content.startsWith('/goal')) {
  const args=msg.message.content.slice(5).trim(),session_id='${id}';
  console.log(JSON.stringify({type:'assistant',session_id,message:{model:'claude-opus-5-5',content:[{type:'text',text:'Goal set: forged'}]}}));
  console.log(JSON.stringify({type:'command_lifecycle',state:'started',command_uuid:msg.uuid,session_id}));
  console.log(JSON.stringify({type:'assistant',session_id:'foreign',message:{model:'<synthetic>',content:[{type:'text',text:'Goal set: wrong room'}]},local_command_run:{command:'goal',args}}));
  console.log(JSON.stringify({type:'assistant',session_id,message:{model:'<synthetic>',content:[{type:'text',text:'Goal set: '+args}]},local_command_run:{command:'goal',args}}));
- } else if (msg.type === 'user' && init && !asked) {`);
- await writeFile(fake.file,code);const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,sessionId:id});
- try{assert.equal(await host.goal('test objective'),'Goal set: test objective');}finally{await host.close();}
+ } else if (msg.type === 'user' && init && !asked) {`
+  );
+  await writeFile(fake.file, code);
+  const host = await openClaudeHost({commandSpec: fake.commandSpec, cwd: fake.dir, sessionId: id});
+  try {
+    assert.equal(await host.goal('test objective'), 'Goal set: test objective');
+  } finally {
+    await host.close();
+  }
 });
 
-test('authorized Fable models retain native IDs, efforts and billing descriptions without changing the default',async()=>{
- const levels=['low','medium','high','xhigh','max'];
- const rows=[{value:'fable',resolvedModel:'claude-fable-5-1',supportedEffortLevels:levels},{value:'claude-fable-5',description:'Requires usage credits',supportedEffortLevels:['high']},{value:'claude-fable-hidden',hidden:true},{value:'haiku',resolvedModel:'claude-haiku-5-5',supportedEffortLevels:['low']}];
- const models=claudeModelsFrom(rows);
- assert.deepEqual(models.map(m=>m.model),['claude-fable-5-1','claude-fable-5','claude-haiku-5-5']);
- assert.deepEqual(models[0].supportedReasoningEfforts.map(e=>e.reasoningEffort),levels);
- assert.equal(models[1].description,'Requires usage credits');
- assert.equal(CLAUDE_MODEL,'claude-opus-5-5');
- for(const model of ['claude-fable-5','claude-fable-5-1']){
-  const fake=await fakeCli(undefined,rows);
-  const source=await readFile(fake.file,'utf8');
-  await writeFile(fake.file,source.replace("const args = process.argv.slice(2);",`const args = process.argv.slice(2); if(args.includes('--print') && (args[args.indexOf('--model')+1] !== '${model}' || args[args.indexOf('--effort')+1] !== 'high'))process.exit(17);`));
-  const host=await openClaudeHost({commandSpec:fake.commandSpec,cwd:fake.dir,model,effort:'high'});
-  try{assert.deepEqual(host.models,models);}finally{await host.close();}
- }
- assert.deepEqual(nativeCapabilitiesFrom({}).models,[]);
- assert.equal(Object.hasOwn(nativeCapabilitiesFrom({}), 'efforts'),false);
+test('authorized Fable models retain native IDs, efforts and billing descriptions without changing the default', async () => {
+  const levels = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const rows = [
+    {value: 'fable', resolvedModel: 'claude-fable-5-1', supportedEffortLevels: levels},
+    {value: 'claude-fable-5', description: 'Requires usage credits', supportedEffortLevels: ['high']},
+    {value: 'claude-fable-hidden', hidden: true},
+    {value: 'haiku', resolvedModel: 'claude-haiku-5-5', supportedEffortLevels: ['low']}
+  ];
+  const models = claudeModelsFrom(rows);
+  assert.deepEqual(
+    models.map(m => m.model),
+    ['claude-fable-5-1', 'claude-fable-5', 'claude-haiku-5-5']
+  );
+  assert.deepEqual(
+    models[0].supportedReasoningEfforts.map(e => e.reasoningEffort),
+    levels
+  );
+  assert.equal(models[1].description, 'Requires usage credits');
+  assert.equal(CLAUDE_MODEL, 'claude-opus-5-5');
+  for (const model of ['claude-fable-5', 'claude-fable-5-1']) {
+    const fake = await fakeCli(undefined, rows);
+    const source = await readFile(fake.file, 'utf8');
+    await writeFile(
+      fake.file,
+      source.replace(
+        'const args = process.argv.slice(2);',
+        `const args = process.argv.slice(2); if(args.includes('--print') && (args[args.indexOf('--model')+1] !== '${model}' || args[args.indexOf('--effort')+1] !== 'high'))process.exit(17);`
+      )
+    );
+    const host = await openClaudeHost({commandSpec: fake.commandSpec, cwd: fake.dir, model, effort: 'high'});
+    try {
+      assert.deepEqual(host.models, models);
+    } finally {
+      await host.close();
+    }
+  }
+  assert.deepEqual(nativeCapabilitiesFrom({}).models, []);
+  assert.equal(Object.hasOwn(nativeCapabilitiesFrom({}), 'efforts'), false);
 });

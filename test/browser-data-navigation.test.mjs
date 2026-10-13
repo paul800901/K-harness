@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { restrictedBrowserTransport } from '../src/browser-mcp-stdio.mjs';
+import {restrictedBrowserTransport} from '../src/browser-mcp-stdio.mjs';
 
 function harness(liveSession = null) {
   const forwarded = [];
@@ -9,13 +9,17 @@ function harness(liveSession = null) {
   const raw = {
     onmessage: null,
     async start() {},
-    async send(message) { sent.push(message); },
+    async send(message) {
+      sent.push(message);
+    },
     async close() {},
-    async receive(message) { return this.onmessage(message); },
+    async receive(message) {
+      return this.onmessage(message);
+    }
   };
   const transport = restrictedBrowserTransport(raw, process.cwd(), liveSession);
   transport.onmessage = message => forwarded.push(message);
-  return { raw, transport, forwarded, sent };
+  return {raw, transport, forwarded, sent};
 }
 
 function navigate(id, url = 'data:text/html,<title>fake</title>') {
@@ -23,12 +27,12 @@ function navigate(id, url = 'data:text/html,<title>fake</title>') {
     jsonrpc: '2.0',
     id,
     method: 'tools/call',
-    params: { name: 'browser_navigate', arguments: { url } },
+    params: {name: 'browser_navigate', arguments: {url}}
   };
 }
 
 function response(id, text = 'Tab selected.') {
-  return { jsonrpc: '2.0', id, result: { content: [{ type: 'text', text }] } };
+  return {jsonrpc: '2.0', id, result: {content: [{type: 'text', text}]}};
 }
 
 test('data navigation opens a new page, forwards select with the original id, and explains the preserved page', async () => {
@@ -36,7 +40,10 @@ test('data navigation opens a new page, forwards select with the original id, an
   const live = {
     beginAiCall: () => true,
     endAiCall: () => calls.push('end'),
-    openDataPage: async url => { calls.push(['open', url]); return 3; },
+    openDataPage: async url => {
+      calls.push(['open', url]);
+      return 3;
+    }
   };
   const h = harness(live);
   await h.transport.start();
@@ -45,12 +52,14 @@ test('data navigation opens a new page, forwards select with the original id, an
   await h.raw.receive(original);
 
   assert.deepEqual(calls, [['open', 'data:text/html,<title>fake</title>']]);
-  assert.deepEqual(h.forwarded, [{
-    jsonrpc: '2.0',
-    id: 41,
-    method: 'tools/call',
-    params: { name: 'browser_tabs', arguments: { action: 'select', index: 3 } },
-  }]);
+  assert.deepEqual(h.forwarded, [
+    {
+      jsonrpc: '2.0',
+      id: 41,
+      method: 'tools/call',
+      params: {name: 'browser_tabs', arguments: {action: 'select', index: 3}}
+    }
+  ]);
   await h.transport.send(response(41));
   assert.equal(h.sent.length, 1);
   assert.equal(h.sent[0].id, 41);
@@ -65,7 +74,10 @@ test('ordinary HTTP navigation is forwarded unchanged and does not create a data
   const h = harness({
     beginAiCall: () => true,
     endAiCall() {},
-    async openDataPage() { openCalls++; return 2; },
+    async openDataPage() {
+      openCalls++;
+      return 2;
+    }
   });
   await h.transport.start();
   const original = navigate(42, 'http://127.0.0.1:4321/fake');
@@ -81,7 +93,10 @@ test('native browser context returning null keeps data navigation on the origina
   const h = harness({
     beginAiCall: () => true,
     endAiCall() {},
-    async openDataPage() { openCalls++; return null; },
+    async openDataPage() {
+      openCalls++;
+      return null;
+    }
   });
   await h.transport.start();
   const original = navigate(43);
@@ -97,7 +112,9 @@ test('data page creation exception returns a tool error and releases the AI call
   const h = harness({
     beginAiCall: () => true,
     endAiCall: () => calls.push('end'),
-    async openDataPage() { throw new Error('new data page failed'); },
+    async openDataPage() {
+      throw new Error('new data page failed');
+    }
   });
   await h.transport.start();
 
@@ -117,7 +134,10 @@ test('human-control rejection does not attempt to open a data page', async () =>
   const h = harness({
     beginAiCall: () => false,
     endAiCall: () => endCalls++,
-    async openDataPage() { openCalls++; return 0; },
+    async openDataPage() {
+      openCalls++;
+      return 0;
+    }
   });
   await h.transport.start();
 
@@ -133,7 +153,9 @@ test('human-control rejection does not attempt to open a data page', async () =>
 test('cancellation during data-page creation must not continue with tab selection', async () => {
   let resolvePage;
   let markOpenStarted;
-  const openStarted = new Promise(resolve => { markOpenStarted = resolve; });
+  const openStarted = new Promise(resolve => {
+    markOpenStarted = resolve;
+  });
   let endCalls = 0;
   const h = harness({
     beginAiCall: () => true,
@@ -141,8 +163,10 @@ test('cancellation during data-page creation must not continue with tab selectio
     failClosed: async () => {},
     openDataPage() {
       markOpenStarted();
-      return new Promise(resolve => { resolvePage = resolve; });
-    },
+      return new Promise(resolve => {
+        resolvePage = resolve;
+      });
+    }
   });
   await h.transport.start();
   const pending = h.raw.receive(navigate(46));
@@ -151,7 +175,7 @@ test('cancellation during data-page creation must not continue with tab selectio
   await h.raw.receive({
     jsonrpc: '2.0',
     method: 'notifications/cancelled',
-    params: { requestId: 46 },
+    params: {requestId: 46}
   });
   await new Promise(resolve => setImmediate(resolve));
   resolvePage(5);
@@ -161,40 +185,69 @@ test('cancellation during data-page creation must not continue with tab selectio
   assert.equal(
     h.forwarded.some(message => message.method === 'tools/call'),
     false,
-    'cancelled data navigation must not select the new tab',
+    'cancelled data navigation must not select the new tab'
   );
-  assert.equal(h.forwarded.some(message => message.method === 'notifications/cancelled'), true);
+  assert.equal(
+    h.forwarded.some(message => message.method === 'notifications/cancelled'),
+    true
+  );
   assert.equal(endCalls, 1, 'the browser call lock is released after fail-closed cancellation');
 });
 
 function deferred() {
   let resolve, reject;
-  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
-  return { promise, resolve, reject };
+  const promise = new Promise((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return {promise, resolve, reject};
 }
 
 function cancelled(id) {
-  return { jsonrpc: '2.0', method: 'notifications/cancelled', params: { requestId: id } };
+  return {jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: id}};
 }
 
-function lockedSession({ pagePromise, failPromise, markOpenStarted, markFailStarted }) {
+function lockedSession({pagePromise, failPromise, markOpenStarted, markFailStarted}) {
   let locked = false;
   let endCalls = 0;
   const live = {
-    beginAiCall() { if (locked) return false; locked = true; return true; },
-    endAiCall() { endCalls++; locked = false; },
-    failClosed() { markFailStarted(); return failPromise; },
-    openDataPage() { markOpenStarted(); return pagePromise; },
+    beginAiCall() {
+      if (locked) return false;
+      locked = true;
+      return true;
+    },
+    endAiCall() {
+      endCalls++;
+      locked = false;
+    },
+    failClosed() {
+      markFailStarted();
+      return failPromise;
+    },
+    openDataPage() {
+      markOpenStarted();
+      return pagePromise;
+    }
   };
-  return { live, isLocked: () => locked, endCalls: () => endCalls };
+  return {live, isLocked: () => locked, endCalls: () => endCalls};
 }
 
 test('data resolve before slow fail-closed keeps the lock until fail-closed and never selects', async () => {
-  const page = deferred(), fail = deferred();
+  const page = deferred(),
+    fail = deferred();
   let openStartedResolve, failStartedResolve;
-  const openStarted = new Promise(resolve => { openStartedResolve = resolve; });
-  const failStarted = new Promise(resolve => { failStartedResolve = resolve; });
-  const session = lockedSession({ pagePromise: page.promise, failPromise: fail.promise, markOpenStarted: openStartedResolve, markFailStarted: failStartedResolve });
+  const openStarted = new Promise(resolve => {
+    openStartedResolve = resolve;
+  });
+  const failStarted = new Promise(resolve => {
+    failStartedResolve = resolve;
+  });
+  const session = lockedSession({
+    pagePromise: page.promise,
+    failPromise: fail.promise,
+    markOpenStarted: openStartedResolve,
+    markFailStarted: failStartedResolve
+  });
   const h = harness(session.live);
   await h.transport.start();
   const pending = h.raw.receive(navigate(47));
@@ -204,7 +257,10 @@ test('data resolve before slow fail-closed keeps the lock until fail-closed and 
 
   page.resolve(7);
   await pending;
-  assert.equal(h.forwarded.some(message => message.method === 'tools/call'), false);
+  assert.equal(
+    h.forwarded.some(message => message.method === 'tools/call'),
+    false
+  );
   assert.equal(session.isLocked(), true, 'a successful page result must not unlock before fail-closed completes');
   assert.equal(session.endCalls(), 0);
 
@@ -215,11 +271,21 @@ test('data resolve before slow fail-closed keeps the lock until fail-closed and 
 });
 
 test('data rejection before slow fail-closed keeps the lock until fail-closed and suppresses the error', async () => {
-  const page = deferred(), fail = deferred();
+  const page = deferred(),
+    fail = deferred();
   let openStartedResolve, failStartedResolve;
-  const openStarted = new Promise(resolve => { openStartedResolve = resolve; });
-  const failStarted = new Promise(resolve => { failStartedResolve = resolve; });
-  const session = lockedSession({ pagePromise: page.promise, failPromise: fail.promise, markOpenStarted: openStartedResolve, markFailStarted: failStartedResolve });
+  const openStarted = new Promise(resolve => {
+    openStartedResolve = resolve;
+  });
+  const failStarted = new Promise(resolve => {
+    failStartedResolve = resolve;
+  });
+  const session = lockedSession({
+    pagePromise: page.promise,
+    failPromise: fail.promise,
+    markOpenStarted: openStartedResolve,
+    markFailStarted: failStartedResolve
+  });
   const h = harness(session.live);
   await h.transport.start();
   const pending = h.raw.receive(navigate(48));
@@ -229,7 +295,10 @@ test('data rejection before slow fail-closed keeps the lock until fail-closed an
 
   page.reject(new Error('late data navigation failure'));
   await pending;
-  assert.equal(h.forwarded.some(message => message.method === 'tools/call'), false);
+  assert.equal(
+    h.forwarded.some(message => message.method === 'tools/call'),
+    false
+  );
   assert.equal(h.sent.length, 0, 'a canceled request should not receive a late tool error');
   assert.equal(session.isLocked(), true);
   assert.equal(session.endCalls(), 0);
@@ -241,11 +310,21 @@ test('data rejection before slow fail-closed keeps the lock until fail-closed an
 });
 
 test('fail-closed may finish before data rejection without reopening selection or releasing twice', async () => {
-  const page = deferred(), fail = deferred();
+  const page = deferred(),
+    fail = deferred();
   let openStartedResolve, failStartedResolve;
-  const openStarted = new Promise(resolve => { openStartedResolve = resolve; });
-  const failStarted = new Promise(resolve => { failStartedResolve = resolve; });
-  const session = lockedSession({ pagePromise: page.promise, failPromise: fail.promise, markOpenStarted: openStartedResolve, markFailStarted: failStartedResolve });
+  const openStarted = new Promise(resolve => {
+    openStartedResolve = resolve;
+  });
+  const failStarted = new Promise(resolve => {
+    failStartedResolve = resolve;
+  });
+  const session = lockedSession({
+    pagePromise: page.promise,
+    failPromise: fail.promise,
+    markOpenStarted: openStartedResolve,
+    markFailStarted: failStartedResolve
+  });
   const h = harness(session.live);
   await h.transport.start();
   const pending = h.raw.receive(navigate(49));
@@ -260,7 +339,10 @@ test('fail-closed may finish before data rejection without reopening selection o
 
   page.reject(new Error('data navigation failed after fail-closed'));
   await pending;
-  assert.equal(h.forwarded.some(message => message.method === 'tools/call'), false);
+  assert.equal(
+    h.forwarded.some(message => message.method === 'tools/call'),
+    false
+  );
   assert.equal(h.sent.length, 0);
   assert.equal(session.endCalls(), 1, 'the later rejection must not release the lock a second time');
 });

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,mkdir,readFile,writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createClaudeController} from '../src/claude-controller.mjs';
@@ -13,1575 +13,3902 @@ import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 import {scratchBase} from './scratch.mjs';
 
-test('Claude close drains result persistence before a durable immutable parent fork snapshot',async t=>{
- const f=await fixture();let blocked,release,patched;
- const entered=new Promise(resolve=>{blocked=resolve;}),gate=new Promise(resolve=>{release=resolve;});
- try{
-  const {threadId:parent}=await f.controller.open({accessMode:'claude-plan'});
-  const attachment=await f.controller.upload({threadId:parent,name:'parent.txt',base64:'cGFyZW50'});
-  const attachmentPaths=[path.join(f.root,attachment.path),path.join(f.root,'.runtime/uploads',attachment.id,'attachment.json')];
-  const attachmentBefore=await Promise.all(attachmentPaths.map(p=>readFile(p)));
-  await f.controller.send({text:'parent fake work',attachmentIds:[attachment.id]});
-  f.hostOptions.onMessage({type:'assistant',uuid:'parent-answer',message:{content:[{type:'text',text:'parent answer'}]}});
-  await f.controller.metadata({threadId:parent,title:'stable fake parent'});
-  const file=path.join(f.root,'.runtime/claude-sessions',parent+'.json'),originalRename=fs.rename;let armed=true;
-  patched=t.mock.method(fs,'rename',async(from,to)=>{
-   if(armed&&path.resolve(to)===path.resolve(file)){armed=false;blocked();await gate;}
-   return originalRename(from,to);
-  });syncBuiltinESMExports();
-  f.hostOptions.onMessage({type:'result',is_error:false});await entered;
-  assert.equal(f.controller.state.busy,false);
-  assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true,'result callback is not a disk barrier');
-  let closed=false;const closing=f.controller.close().then(()=>{closed=true;});
-  await new Promise(setImmediate);assert.equal(closed,false,'close must await the blocked atomic write');
-  release();await closing;patched.mock.restore();syncBuiltinESMExports();patched=null;
-  const before=await readFile(file);assert.equal(JSON.parse(before).compactions.inFlight,false);
-  await writeFile(path.join(f.root,'parent-before-forks.json'),before);
-  await f.controller.fork({messageId:'parent-answer',accessMode:'claude-plan'});
-  await f.controller.send({text:'child fake work'});
-  f.hostOptions.onMessage({type:'assistant',uuid:'child-answer',message:{content:[{type:'text',text:'child answer'}]}});
-  f.hostOptions.onMessage({type:'result',is_error:false});await f.controller.close();
-  await f.controller.fork({messageId:'child-answer',accessMode:'claude-plan'});await f.controller.close();
-  assert.deepEqual(await readFile(file),before,'child and grandchild activity must not rewrite the drained parent');
-  assert.deepEqual(await Promise.all(attachmentPaths.map(p=>readFile(p))),attachmentBefore);
- }finally{release?.();if(patched){patched.mock.restore();syncBuiltinESMExports();}await f.controller.close();}
-});
-
-const fakeWorkerProvider=model=>model?.startsWith('claude-')?'claude':model?.startsWith('gpt-')?'codex':'gemini';
-
-async function fixture({models,waitForHost,browser=false,bridgeFactory}={}) {
-  const base=scratchBase;
-  await mkdir(base,{recursive:true});
-  const root=await mkdtemp(path.join(base,'claude-controller-'));
-  await writeFile(path.join(root,'README.md'),'fixture read target');
-  await writeFile(path.join(root,'result.txt'),'fixture write target');
-  const uuid='123e4567-e89b-42d3-a456-426614174000';
-  let hostOptions,bridgeOptions,gatewayOptions,closeHost;
-  const makeHost=()=>{let resolveClosed;return {startCalls:[],closed:new Promise(resolve=>{resolveClosed=resolve;}),async start(content){this.startCalls.push(content);},async interrupt(){this.interrupted=true;},async close(){resolveClosed();}};};let host;
-  const bridge={closed:false,async list(){return this.records??[];},async start(args){this.records??=[];return {...args,provider:fakeWorkerProvider(args.model)};},async cancel(){return {settled:true};},async wait(){return {settled:true};},async inspect(){return {settled:true};},async close(){this.closed=true;}};
-  const gateway={mcpConfig:{mcpServers:{k_luna:{type:'http',url:'http://127.0.0.1:4567/mcp',headers:{Authorization:'Bearer test-token'}}}},async close(){this.closed=true;await gatewayOptions.bridge.close();}};
-  const controllerOptions={...(browser?await fixtureBrowser(root):{}),root,executable:'codex-test',commandSpec:{command:'claude-test',argsPrefix:[]},
-    hostFactory:async options=>{hostOptions=options;host=makeHost();host.models=models;await waitForHost?.(options,host);return host;},
-    bridgeFactory:async options=>{bridgeOptions=options;return bridgeFactory?bridgeFactory(options):bridge;},
-    gatewayFactory:async options=>{gatewayOptions=options;return gateway;}};
-  const createController=()=>createClaudeController(controllerOptions),controller=createController();
-  return {root,uuid,controller,createController,get host(){return host;},bridge,gateway,get hostOptions(){return hostOptions;},get bridgeOptions(){return bridgeOptions;},get gatewayOptions(){return gatewayOptions;}};
-}
-
-test('Claude work telemetry ignores replay, child output and elapsed tool heartbeats',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'fake work'});
-  const emit=f.hostOptions.onMessage;assert.equal(f.controller.state.activity.lastEventAt,null);
-  emit({type:'stream_event',event:{type:'message_start',message:{id:'live'}}});
-  const before=structuredClone(f.controller.state.activity);assert.ok(before.lastEventAt);
-  emit({type:'tool_progress',tool_use_id:'a',elapsed_time_seconds:900});
-  emit({type:'assistant',isReplay:true,message:{content:[]}});
-  emit({type:'stream_event',parent_tool_use_id:'child',event:{type:'content_block_delta',delta:{type:'text_delta',text:'child'}}});
-  assert.deepEqual(f.controller.state.activity,before);
-  const child=f.controller.state.workers.find(w=>w.requestId==='child');assert.ok(child.activity.lastEventAt);
-  const childActivity=structuredClone(child.activity);
-  emit({type:'tool_progress',parent_tool_use_id:'child',elapsed_time_seconds:999});
-  emit({type:'assistant',isReplay:true,parent_tool_use_id:'child',message:{content:[]}});
-  assert.deepEqual(child.activity,childActivity);
-  emit({type:'assistant',uuid:'tool',message:{id:'model-output',content:[{type:'tool_use',id:'a',name:'Read',input:{file_path:'fake'}}]}});assert.equal(f.controller.state.activity.phase,'tool');
-  emit({type:'user',message:{content:[{type:'tool_result',tool_use_id:'a',content:'fake output'}]}});assert.equal(f.controller.state.activity.phase,'active');
- }finally{await f.controller.close();}
-});
-
-test('Claude sends and steers more than eight scoped attachments without expanding the user bubble',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});const attachments=[];
-  for(let n=0;n<12;n++)attachments.push(await f.controller.upload({threadId,name:`fake-${n}.txt`,base64:Buffer.from(`fake body ${n}`).toString('base64')}));
-  const image=await f.controller.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
-  const attachmentIds=[...attachments.map(a=>a.id),image.id];
-  await f.controller.send({text:'initial files',attachmentIds});await f.controller.steer({text:'follow-up files',attachmentIds});
-  assert.equal(f.host.startCalls.length,2);
-  for(const input of f.host.startCalls){assert.equal(input.length,14);assert.match(input[1].text,/fake body 0/);assert.equal(input.at(-1).type,'image');}
-  assert.deepEqual(f.controller.state.messages.map(m=>m.text),['initial files','follow-up files']);
-  assert(f.controller.state.messages.every(m=>m.attachments.length===13));
-  const steered=f.controller.state.messages[1];f.hostOptions.onMessage({type:'user',uuid:steered.id,isReplay:true,message:{content:f.host.startCalls[1]}});
-  assert.equal(steered.text,'follow-up files');assert.equal(steered.delivery,'received');
-  await f.controller.close();await f.controller.open({threadId});
-  assert.equal(f.controller.state.messages[1].text,'follow-up files');assert.equal(f.controller.state.messages[1].attachments.length,13);
- }finally{await f.controller.close();}
-});
-
-test('Claude accepted steering stays accepted if its activity save fails',async t=>{
- const f=await fixture();let armed=false;let failed;const failure=new Promise(resolve=>{failed=resolve;});
- const originalRename=fs.rename;let mocked;
- try{
-  await f.controller.open({});await f.controller.send({text:'initial fake work'});
-  const originalStart=f.host.start.bind(f.host);f.host.start=async(...args)=>{await originalStart(...args);armed=true;};
-  mocked=t.mock.method(fs,'rename',async(from,to)=>{if(armed&&String(to).includes('claude-sessions')){armed=false;failed();throw Object.assign(new Error('fake activity disk failure'),{code:'EIO'});}return originalRename(from,to);});syncBuiltinESMExports();
-  assert.equal((await f.controller.steer({text:'accepted fake correction'})).steered,true);
-  await failure;await new Promise(setImmediate);
-  const message=f.controller.state.messages.at(-1);assert.notEqual(message.delivery,'uncertain');
-  assert.equal(f.host.startCalls.length,2);assert.equal(f.controller.state.busy,true);
-  assert.match(f.controller.state.error,/投影保存失敗/);
-  f.hostOptions.onMessage({type:'user',uuid:message.id,isReplay:true,message:{content:f.host.startCalls[1]}});
-  assert.equal(message.delivery,'received');assert.equal(f.host.startCalls.length,2);
-  mocked.mock.restore();syncBuiltinESMExports();mocked=null;
-  const recovered=observeAtomicWrite(t,path.join(f.root,'.runtime/main-sessions',`${f.controller.state.threadId}-current.json`),()=>true);
-  f.hostOptions.onMessage({type:'result',is_error:false,result:'fake completed'});await recovered;await new Promise(setImmediate);
- }finally{mocked?.mock.restore();syncBuiltinESMExports();await f.controller.close();}
-});
-
-test('Claude attachment steering rejects a foreign conversation before native delivery',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'active'});
-  const foreign=await saveAttachment(f.root,'foreign-thread',{name:'fake.txt',base64:'YQ=='});
-  await assert.rejects(f.controller.steer({text:'must not deliver',attachmentIds:[foreign.id]}),/其他對話/);
-  assert.equal(f.host.startCalls.length,1);assert.equal(f.controller.state.messages.length,1);
- }finally{await f.controller.close();}
-});
-
-test('saving one Claude conversation does not read other conversation projections',async()=>{
- const f=await fixture();const original=fs.readFile;let otherReads=0;
- try{
-  const {threadId}=await f.controller.open({});
-  const projection=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${threadId}.json`),'utf8'));
-  const id='claude-123e4567-e89b-42d3-a456-426614174099';
-  const other=path.join(f.root,'.runtime/claude-sessions',`${id}.json`);
-  await writeFile(other,JSON.stringify({...projection,threadId:id,nativeSessionId:id.slice(7),messages:[{role:'user',text:'unrelated'.repeat(10000)}]}));
-  fs.readFile=(file,...args)=>{if(String(file)===other)otherReads++;return original(file,...args);};syncBuiltinESMExports();
-  await f.controller.send({text:'only this conversation'});
-  await f.controller.close();
-  assert.equal(otherReads,0);
-  assert.equal(JSON.parse(await original(other,'utf8')).threadId,id);
- }finally{fs.readFile=original;syncBuiltinESMExports();await f.controller.close();}
-});
-
-test('owned Luna artifacts are shown without accepting work or allowing foreign paths',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});await f.gatewayOptions.bridge.start({requestId:'one',task:'bounded'});
-  f.bridgeOptions.onChange({requestId:'one',parentId:f.controller.state.threadId,outputFiles:['result.txt','../outside.txt'],acceptance:'not-reviewed',settled:true,status:'completed'});
-  assert.deepEqual(f.controller.state.artifacts,['result.txt']);
-  assert.equal(f.controller.state.workers[0].acceptance,'not-reviewed');
-  assert.equal((await f.controller.artifact('result.txt')).bytes.toString(),'fixture write target');
-  f.bridgeOptions.onChange({requestId:'other',parentId:'another-session',outputFiles:['README.md']});
-  assert.deepEqual(f.controller.state.artifacts,['result.txt']);
- }finally{await f.controller.close();}
-});
-
-test('opens subscription host with native UUID and K Luna gateway, saves only a UI projection',async()=>{
-  const f=await fixture();
+test('Claude close drains result persistence before a durable immutable parent fork snapshot', async t => {
+  const f = await fixture();
+  let blocked, release, patched;
+  const entered = new Promise(resolve => {
+      blocked = resolve;
+    }),
+    gate = new Promise(resolve => {
+      release = resolve;
+    });
   try {
-    const opened=await f.controller.open({});
-    assert.match(opened.threadId,/^claude-[0-9a-f-]{36}$/i);
-    assert.equal(f.hostOptions.sessionId,opened.threadId.slice(7));
-    assert.equal(f.hostOptions.resume,false);
-    assert.equal(typeof f.gatewayOptions.bridge.start,'function');
-    assert.equal(f.bridgeOptions,undefined,'opening Claude must not require or preflight Codex subscription');
-    assert.deepEqual(f.hostOptions.mcpConfig,f.gateway.mcpConfig);
-    assert.equal(f.controller.state.capabilities.steer,true);
-    assert.equal(f.controller.state.capabilities.goal,false);
-    assert.equal(f.controller.state.capabilities.compact,true);
-    const projection=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${opened.threadId}.json`),'utf8'));
-    assert.equal(projection.nativeSessionId,f.uuid === projection.nativeSessionId ? f.uuid : f.hostOptions.sessionId);
-    assert.equal(projection.messages.length,0);
-    assert.equal((await f.controller.sessions()).sessions.length,1);
-    const common=await listMainSessions(f.root);assert.equal(common.sessions[0].provider,'claude');
-    assert.deepEqual(common.sessions[0].workerPolicy,{model:'auto',effort:'auto'});
-  } finally { await f.controller.close(); }
-});
-
-test('project browser opt-in adds a dedicated MCP profile beside Luna for the Claude conversation',async()=>{
- const f=await fixture({browser:true});
- try{
-  const opened=await f.controller.open({});
-  const servers=f.hostOptions.mcpConfig.mcpServers;
-  assert.deepEqual(Object.keys(servers).sort(),['k_browser','k_luna']);
-  assert.equal(servers.k_luna,f.gateway.mcpConfig.mcpServers.k_luna);
-  assert.equal(servers.k_browser.url,'http://127.0.0.1:45678/mcp');
-  assert.deepEqual(servers.k_browser.headers,{Authorization:'Bearer fixture'});
-  assert.deepEqual(Object.keys(servers.k_browser).sort(),['headers','type','url']);
-  await f.controller.send({text:'以新的推理設定重開同一對話。',effort:'high'});
-  assert.deepEqual(f.hostOptions.mcpConfig.mcpServers.k_browser,servers.k_browser);
-  assert.equal(f.hostOptions.sessionId,opened.threadId.slice(7));
- }finally{await f.controller.close();}
-});
-
-test('Claude browser MCP is absent in plan mode and changes with native mode restarts',async()=>{
- const f=await fixture({browser:true});
- try{
-  await f.controller.open({accessMode:'claude-plan'});
-  assert.equal(f.controller.state.browserAccess.enabled,false);
-  assert.equal(f.hostOptions.mcpConfig.mcpServers.k_browser,undefined);
-  const {threadId}=await f.controller.open({accessMode:'claude-manual'});
-  assert.equal(f.controller.state.browserAccess.enabled,true);
-  assert.ok(f.hostOptions.mcpConfig.mcpServers.k_browser);
-  await f.controller.send({text:'以計畫模式重新接續',accessMode:'claude-plan'});
-  assert.equal(f.controller.state.threadId,threadId);
-  assert.equal(f.controller.state.browserAccess.enabled,false);
-  assert.equal(f.hostOptions.mcpConfig.mcpServers.k_browser,undefined);
-  assert.equal(f.hostOptions.sessionId,threadId.slice(7));
- }finally{await f.controller.close();}
-});
-
-test('sends one prompt, requires per-tool UI approval and persists resulting projection',async t=>{
-  const f=await fixture();
-  try {
-    await f.controller.open({});
-    await f.controller.send({text:'請檢查這個工作區'});
-    assert.equal(f.host.startCalls.length,1);
-    assert.equal(f.host.startCalls[0][0].text,'請檢查這個工作區');
-    const permission=f.hostOptions.onPermission({toolName:'Read',input:{file_path:'README.md'}});
-    await new Promise(resolve=>setTimeout(resolve,30));
-    assert.equal(f.controller.state.questions.length,1);
-    const question=f.controller.state.questions[0];
-    assert.equal(question.details.toolName,'Read');
-    await f.controller.answer({id:question.id,accept:true});
-    assert.deepEqual(await permission,{behavior:'allow',updatedInput:{file_path:'README.md'}});
-    const file=path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`);
-    const persisted=observeAtomicWrite(t,file,record=>record.messages.length===2);
-    f.hostOptions.onMessage({type:'assistant',uuid:'assistant-1',message:{content:[{type:'text',text:'已檢查。'}]}});
-    f.hostOptions.onMessage({type:'result',is_error:false});
-    assert.equal(f.controller.state.status,'completed');
-    assert.equal(f.controller.state.messages.at(-1).text,'已檢查。');
-    await persisted;
-    assert.equal(f.controller.state.error,null);
-    const projection=JSON.parse(await readFile(file,'utf8'));
-    assert.equal(projection.messages.length,2);
-    await f.controller.send({text:'下一個正常回合'});
-    assert.equal(f.host.startCalls.length,2);
-  } finally { await f.controller.close(); }
-});
-
-test('Claude exposes only native public status and actual context usage, never thinking blocks or inferred totals',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});
-  const sent=await f.controller.send({text:'Check native visibility'});
-  const turnId=f.controller.state.messages.at(-1).id;
-  f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting',uuid:'status-1'});
-  f.hostOptions.onMessage({type:'assistant',uuid:'assistant-1',message:{content:[{type:'thinking',thinking:'private hidden reasoning must not enter UI'},{type:'text',text:'visible answer'}]}});
-  f.hostOptions.onMessage({type:'stream_event',event:{type:'message_start',message:{model:'claude-opus-5-5',usage:{input_tokens:4,cache_read_input_tokens:12,cache_creation_input_tokens:3,output_tokens:2}}}});
-   f.hostOptions.onMessage({type:'rate_limit_event',uuid:'rate-limit-1',rate_limit_info:{status:'allowed',rateLimitType:'five_hour',overageStatus:'rejected',overageDisabledReason:'org_level_disabled'}});
-   f.hostOptions.onMessage({type:'rate_limit_event',uuid:'rate-limit-2',rate_limit_info:{status:'allowed',rateLimitType:'five_hour',overageStatus:'rejected',overageDisabledReason:'org_level_disabled'}});
-  f.hostOptions.onMessage({type:'result',is_error:false,user_message_uuid:turnId,usage:{input_tokens:4,cache_read_input_tokens:12,cache_creation_input_tokens:3,output_tokens:2},modelUsage:{'claude-opus-5-5':{inputTokens:140,cacheReadInputTokens:120,cacheCreationInputTokens:30,outputTokens:200,contextWindow:1000000}}});
-  const state=f.controller.state;
-  assert.equal(sent.sent,true);
-  assert.deepEqual(state.notices,[]);
-   assert.equal(state.usage.claude.rateLimitStatus,'allowed');
-   assert.equal(state.usage.claude.extraUsageDisabled,true);
-  for(const notice of state.notices)assert.ok(!Number.isNaN(Date.parse(notice.createdAt)));
-  assert.equal(state.messages.at(-1).text,'visible answer');
-  assert.deepEqual(state.reasoning,[]);
-  assert.deepEqual(state.turnDiffs,[]);
-  assert.equal(state.capabilities.reasoningSummary,false);
-  assert.equal(state.capabilities.fileSearch,false);
-  assert.equal(state.capabilities.review,false);
-  assert.equal(state.capabilities.turnDiffs,false);
-  assert.deepEqual(state.progress.tokenUsage,{last:{totalTokens:19,inputTokens:4,cacheReadInputTokens:12,cacheCreationInputTokens:3,measurement:'latest-native-request-input',source:'Claude Code stream-json message_start usage'},modelContextWindow:1000000});
-  assert.equal(state.progress.tokenUsage.last.totalTokens,19,'context figure excludes output and is not result/modelUsage turn aggregate');
-  assert.equal(state.progress.tokenUsage.total,undefined,'Claude emits per-result usage, not cumulative session token totals');
-  assert.equal(JSON.stringify(state).includes('private hidden reasoning'),false);
- }finally{await f.controller.close();}
-});
-
-test('Claude quota exhaustion retains the native error without adding a second K notice or retrying work',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});await f.controller.send({text:'one fake request'});
-  const original="You've hit your session limit · resets 5:30pm (Asia/Taipei)";
-  for(const status of ['allowed_warning','rejected','rejected'])f.hostOptions.onMessage({type:'rate_limit_event',rate_limit_info:{status,rateLimitType:'five_hour'}});
-  f.hostOptions.onMessage({type:'result',is_error:true,result:original});
-  assert.equal(f.controller.state.error,original,'backend preserves the native wording');
-  assert.equal(f.controller.state.usage.claude.rateLimitStatus,'rejected');
-  assert.equal(f.controller.state.busy,false);
-  assert.deepEqual(f.controller.state.notices,[]);
-  assert.equal(f.host.startCalls.length,1);
- }finally{await f.controller.close();}
-});
-
-test('forwards Luna Codex approvals to the same UI queue and stop cancels pending approval',async()=>{
-  const f=await fixture();
-  try {
-    await f.controller.open({});
-    await f.gatewayOptions.bridge.start({requestId:'req-one',task:'檢查'});
-    const approval=f.bridgeOptions.onRequest({id:1,method:'item/commandExecution/requestApproval',params:{command:'node test.mjs',cwd:f.root,reason:'執行測試'}});
-    assert.equal(f.controller.state.questions.length,1);
-    const q=f.controller.state.questions[0];assert.equal(q.provider,'codex-luna');assert.equal(q.details.command,'node test.mjs');
-    await f.controller.answer({id:q.id,accept:false});
-    assert.deepEqual(await approval,{decision:'decline'});
-    const pending=f.hostOptions.onPermission({toolName:'Write',input:{file_path:'result.txt',content:'x'}});
-    await new Promise(resolve=>setTimeout(resolve,30));
-    assert.equal(f.controller.state.questions.length,1);
-    await f.controller.stop();
-    assert.deepEqual(await pending,{behavior:'deny',message:'使用者未核准或工作已停止。'});
-    assert.equal(f.controller.state.status,'interrupted');
-    assert.equal(f.gateway.closed,true);
-    assert.equal(f.bridge.closed,true);
-  } finally { await f.controller.close(); }
-});
-
-for(const [mode,workerMode] of [['bypassPermissions','danger-full-access'],['plan','read-only'],['manual','workspace-write'],['acceptEdits','workspace-write'],['auto','workspace-write'],['dontAsk','workspace-write']]){
- test(`Claude ${mode} delegates workers with ${workerMode}`,async()=>{
-  const f=await fixture();try{
-   await f.controller.open({accessMode:`claude-${mode}`});
-   await f.gatewayOptions.bridge.start({requestId:'mode',task:'bounded'});
-   assert.equal(f.bridgeOptions.accessMode,workerMode);
-  }finally{await f.controller.close();}
- });
-}
-
-test('permission switches close the previous bridge and rebuild with the new worker mode',async()=>{
- const bridges=[];let f;
- f=await fixture({bridgeFactory:options=>{const bridge={...f.bridge,closed:false,records:[],mode:options.accessMode};bridges.push(bridge);return bridge;}});
- try{
-  await f.controller.open({accessMode:'claude-manual'});
-  await f.gatewayOptions.bridge.start({requestId:'before',task:'bounded'});
-  await f.controller.send({text:'switch',accessMode:'claude-bypassPermissions'});
-  assert.equal(bridges[0].closed,true);
-  await f.gatewayOptions.bridge.start({requestId:'after',task:'bounded'});
-  assert.equal(bridges[1].mode,'danger-full-access');
-  assert.notEqual(bridges[1],bridges[0]);
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  await f.controller.send({text:'switch back',accessMode:'claude-manual'});
-  assert.equal(bridges[1].closed,true);
-  await f.gatewayOptions.bridge.start({requestId:'manual',task:'bounded'});
-  assert.equal(bridges[2].mode,'workspace-write');
- }finally{await f.controller.close();}
-});
-
-test('Claude permission switch closes a bridge loaded with only old unowned unresolved Gemini work',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({accessMode:'claude-manual'});
-  const old={requestId:'old-unowned-mode-switch',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
-  f.bridge.records=[structuredClone(old)];let cancelCalls=0,startCalls=0;f.bridge.cancel=async()=>{cancelCalls++;return {settled:true};};
-  const start=f.bridge.start.bind(f.bridge);f.bridge.start=async args=>{startCalls++;return start(args);};
-  const originalBridge=f.gatewayOptions.bridge;
-  assert.deepEqual(await originalBridge.list(),[old],'listing initializes the persisted unowned record');
-  await f.controller.send({text:'切換模式',accessMode:'claude-bypassPermissions'});
-  assert.equal(f.bridge.closed,true,'the old worker bridge can be closed');
-  assert.equal(cancelCalls,0,'do not cancel unowned historical work');assert.deepEqual(f.bridge.records,[old]);
-  assert.equal(startCalls,0,'a permission change does not dispatch new worker work');
-  assert.equal(f.controller.state.accessMode,'claude-bypassPermissions');
- }finally{await f.controller.close();}
-});
-
-test('unsettled workers prevent a permission switch without closing the existing bridge',async()=>{
- const f=await fixture();try{
-  await f.controller.open({accessMode:'claude-manual'});
-  await f.gatewayOptions.bridge.start({requestId:'active',task:'bounded'});
-  const old={requestId:'old-unowned-mixed',provider:'gemini',status:'unresolved',settled:false,executionUnowned:true};
-  f.bridge.records=[old,{requestId:'active',settled:false}];
-  await assert.rejects(f.controller.send({text:'switch',accessMode:'claude-bypassPermissions'}),/子代理尚未結束/);
-  assert.equal(f.controller.state.accessMode,'claude-manual');
-  assert.equal(f.bridge.closed,false);
-  assert.equal(f.bridgeOptions.accessMode,'workspace-write');
-  assert.deepEqual(f.bridge.records,[old,{requestId:'active',settled:false}],'the unowned row stays unresolved and owned pending work still blocks switching');
- }finally{f.bridge.records=[];await f.controller.close();}
-});
-
-test('worker file changes can be accepted only when the native item has changes',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.gatewayOptions.bridge.start({requestId:'file',task:'bounded'});
-  const request={method:'item/fileChange/requestApproval',params:{itemId:'file-item'}};
-  const item={id:'file-item',type:'fileChange',changes:[{path:'result.txt',kind:{type:'add'},diff:'+fixture'}]};
-  const approval=f.bridgeOptions.onRequest(request,item);
-  const q=f.controller.state.questions[0];
-  assert.equal(q.canAccept,true);assert.deepEqual(q.details.changes,item.changes);
-  await f.controller.answer({id:q.id,accept:true});assert.deepEqual(await approval,{decision:'accept'});
-  const missing=f.bridgeOptions.onRequest(request);
-  const unavailable=f.controller.state.questions[0];assert.equal(unavailable.canAccept,false);
-  await f.controller.answer({id:unavailable.id,accept:false});assert.deepEqual(await missing,{decision:'decline'});
- }finally{await f.controller.close();}
-});
-
-test('resumes only a saved Claude projection and forwards native UUID, never a Codex id',async()=>{
-  const f=await fixture();
-  try {
-    const created=await f.controller.open({});
-    await f.controller.send({text:'首個原生回合'});
+    const {threadId: parent} = await f.controller.open({accessMode: 'claude-plan'});
+    const attachment = await f.controller.upload({threadId: parent, name: 'parent.txt', base64: 'cGFyZW50'});
+    const attachmentPaths = [
+      path.join(f.root, attachment.path),
+      path.join(f.root, '.runtime/uploads', attachment.id, 'attachment.json')
+    ];
+    const attachmentBefore = await Promise.all(attachmentPaths.map(p => readFile(p)));
+    await f.controller.send({text: 'parent fake work', attachmentIds: [attachment.id]});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'parent-answer',
+      message: {content: [{type: 'text', text: 'parent answer'}]}
+    });
+    await f.controller.metadata({threadId: parent, title: 'stable fake parent'});
+    const file = path.join(f.root, '.runtime/claude-sessions', parent + '.json'),
+      originalRename = fs.rename;
+    let armed = true;
+    patched = t.mock.method(fs, 'rename', async (from, to) => {
+      if (armed && path.resolve(to) === path.resolve(file)) {
+        armed = false;
+        blocked();
+        await gate;
+      }
+      return originalRename(from, to);
+    });
+    syncBuiltinESMExports();
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await entered;
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(
+      JSON.parse(await readFile(file, 'utf8')).compactions.inFlight,
+      true,
+      'result callback is not a disk barrier'
+    );
+    let closed = false;
+    const closing = f.controller.close().then(() => {
+      closed = true;
+    });
+    await new Promise(setImmediate);
+    assert.equal(closed, false, 'close must await the blocked atomic write');
+    release();
+    await closing;
+    patched.mock.restore();
+    syncBuiltinESMExports();
+    patched = null;
+    const before = await readFile(file);
+    assert.equal(JSON.parse(before).compactions.inFlight, false);
+    await writeFile(path.join(f.root, 'parent-before-forks.json'), before);
+    await f.controller.fork({messageId: 'parent-answer', accessMode: 'claude-plan'});
+    await f.controller.send({text: 'child fake work'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'child-answer',
+      message: {content: [{type: 'text', text: 'child answer'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
     await f.controller.close();
-    const reopened=await f.controller.open({threadId:created.threadId});
-    assert.equal(reopened.threadId,created.threadId);
-    assert.equal(f.hostOptions.sessionId,created.threadId.slice(7));
-    assert.equal(f.hostOptions.resume,true);
-  } finally { await f.controller.close(); }
+    await f.controller.fork({messageId: 'child-answer', accessMode: 'claude-plan'});
+    await f.controller.close();
+    assert.deepEqual(await readFile(file), before, 'child and grandchild activity must not rewrite the drained parent');
+    assert.deepEqual(await Promise.all(attachmentPaths.map(p => readFile(p))), attachmentBefore);
+  } finally {
+    release?.();
+    if (patched) {
+      patched.mock.restore();
+      syncBuiltinESMExports();
+    }
+    await f.controller.close();
+  }
 });
 
-test('native plan and manual modes defer all decisions to Claude Code and the UI',async()=>{
- const f=await fixture();
- try {
-  await f.controller.open({accessMode:'read-only'});
-    assert.equal(f.hostOptions.accessMode,'claude-plan');
-    const planTool=f.hostOptions.onPermission({toolName:'Write',input:{file_path:'result.txt'}});
-    await new Promise(resolve=>setImmediate(resolve));
-    await f.controller.answer({id:f.controller.state.questions[0].id,accept:false});
-    assert.equal((await planTool).behavior,'deny');
-    await f.controller.stop();
-    await f.controller.open({accessMode:'workspace-write'});
-    const command=f.hostOptions.onPermission({toolName:'Bash',input:{command:'echo unsafe'}});
-    await new Promise(resolve=>setImmediate(resolve));
-    assert.equal(f.controller.state.questions[0].details.toolName,'Bash');
-    await f.controller.answer({id:f.controller.state.questions[0].id,accept:false});
-    assert.equal((await command).behavior,'deny');
-  } finally { await f.controller.close(); }
-});
+const fakeWorkerProvider = model =>
+  model?.startsWith('claude-') ? 'claude' : model?.startsWith('gpt-') ? 'codex' : 'gemini';
 
-test('native AskUserQuestion is presented and returned with native question-text keys',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});
-  const pending=f.hostOptions.onPermission({toolName:'AskUserQuestion',input:{questions:[{question:'Which?',options:[{label:'A',description:'first'},{label:'B',description:'second'}]}]}});
-  await new Promise(resolve=>setImmediate(resolve));
-  const q=f.controller.state.questions[0];assert.equal(q.kind,'question');assert.equal(q.questions[0].id,'Which?');
-  await f.controller.answer({id:q.id,answers:{'Which?':'A'}});
-  assert.deepEqual(await pending,{behavior:'allow',updatedInput:{questions:[{question:'Which?',options:[{label:'A',description:'first'},{label:'B',description:'second'}]}],answers:{'Which?':'A'}}});
-  const multiple=f.hostOptions.onPermission({toolName:'AskUserQuestion',input:{questions:[{question:'Choose several',multiSelect:true,options:[{label:'A'},{label:'B'}]}]}});
-  await new Promise(resolve=>setImmediate(resolve));
-  await f.controller.answer({id:f.controller.state.questions[0].id,answers:{'Choose several':['A','Other: custom']}});
-  assert.equal((await multiple).updatedInput.answers['Choose several'],'A, Other: custom');
- }finally{await f.controller.close();}
-});
-
-test('changes native permission mode by reopening the same session before sending',async()=>{
- const f=await fixture();
- try{
-  const opened=await f.controller.open({});
-  await f.controller.send({text:'first'});
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  const old=f.host;
-  await f.controller.send({text:'second',accessMode:'claude-acceptEdits'});
-  assert.equal(old.closed!==undefined,true);
-  assert.equal(f.hostOptions.accessMode,'claude-acceptEdits');
-  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${opened.threadId}.json`),'utf8'));
-  assert.equal(saved.accessMode,'claude-acceptEdits');
- }finally{await f.controller.close();}
-});
-
-test('compact uses Claude Code native slash command in the same session',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});
-  await f.controller.compact();
-  assert.equal(f.host.startCalls[0],'/compact');
-  assert.equal(f.controller.state.progress.compaction,'compacting');
-  assert.equal(f.controller.state.progress.compactions,0);
-  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${f.controller.state.threadId}.json`),'utf8'));
-  assert.equal(saved.nativeStarted,true);
-  const boundary={type:'system',subtype:'compact_boundary',session_id:f.controller.state.threadId.slice(7),uuid:'manual-complete'};
-  f.hostOptions.onMessage(boundary);f.hostOptions.onMessage(boundary);
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  assert.equal(f.controller.state.progress.compactions,1);
- }finally{await f.controller.close();}
-});
-
-test('choosing Claude effort updates persisted selection and restarts actual host on next send',async()=>{
- const f=await fixture();
- try{
-  const {threadId}=await f.controller.open({effort:'low'});
-  await f.controller.selectModel({threadId,model:'claude-opus-5-5',effort:'high'});
-  assert.equal((await listMainSessions(f.root)).sessions[0].effort,'high');
-  assert.equal(f.hostOptions.effort,'low');
-  await f.controller.send({text:'Use selected effort'});
-  assert.equal(f.hostOptions.effort,'high');
-  assert.equal(f.controller.state.status,'working');
-  assert.equal(f.controller.state.busy,true);
-  f.hostOptions.onMessage({type:'stream_event',event:{type:'message_start',message:{id:'restarted-answer'}}});
-  f.hostOptions.onMessage({type:'stream_event',event:{type:'content_block_start',index:0,content_block:{type:'text',text:''}}});
-  f.hostOptions.onMessage({type:'stream_event',event:{type:'content_block_delta',index:0,delta:{type:'text_delta',text:'Reply from replacement host'}}});
-  assert.equal(f.controller.state.messages.at(-1).text,'Reply from replacement host');
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  assert.equal(f.controller.state.status,'completed');
-  await f.controller.selectModel({threadId,model:'claude-opus-5-5',effort:null});
-  await f.controller.send({text:'Use native default'});
-  assert.equal(f.hostOptions.effort,null);
- }finally{await f.controller.close();}
-});
-
-test('unexpected Claude host exit still transitions the conversation offline',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'active turn'});
-  await f.host.close();await tick();
-  assert.equal(f.controller.state.status,'offline');
-  assert.equal(f.controller.state.busy,false);
- }finally{await f.controller.close();}
-});
-
-test('failed settings restart close remains uncertain and retains the existing host',async()=>{
- const f=await fixture();let restoreClose;try{
-  const {threadId}=await f.controller.open({effort:'low'});
-  await f.controller.selectModel({threadId,model:'claude-opus-5-5',effort:'high'});
-  const retained=f.host;restoreClose=retained.close.bind(retained);
-  retained.close=async()=>{throw new Error('settings close unconfirmed');};
-  await assert.rejects(f.controller.send({text:'do not restart without confirmed close'}),/settings close unconfirmed/);
-  assert.equal(f.host,retained);
-  assert.equal(f.controller.state.status,'uncertain');
-  assert.match(f.controller.state.error,/settings close unconfirmed/);
- }finally{if(f.host&&restoreClose)f.host.close=restoreClose;await f.controller.close();}
-});
-
-const tick=()=>new Promise(resolve=>setTimeout(resolve,40));
-test('mid-work steering preserves both completed replies in storage and after reopen',async()=>{
- const f=await fixture();let reopened;
- try{
-  const {threadId}=await f.controller.open({});await f.controller.send({text:'fake original work'});
-  const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'process',message:{content:[{type:'text',text:'fake tool work in progress'}]}});
-  await f.controller.steer({text:'fake first interruption'});
-  await f.controller.steer({text:'fake second interruption'});
-  for(const user of f.controller.state.messages.filter(m=>m.source==='steer'))emit({type:'user',uuid:user.id,isReplay:true,message:{content:[{type:'text',text:user.text}]}});
-  emit({type:'assistant',uuid:'first-final',message:{content:[{type:'text',text:'FIRST_COMPLETED_REPLY'}]}});
-  emit({type:'result',is_error:false});await tick();
-  emit({type:'assistant',uuid:'second-final',message:{content:[{type:'text',text:'SECOND_COMPLETED_REPLY'}]}});
-  emit({type:'result',is_error:false});await tick();
-  const expected=structuredClone(f.controller.state.messages);
-  assert.equal(new Set(expected.map(m=>m.groupId)).size,1);
-  for(const id of ['first-final','second-final']){const m=expected.find(m=>m.id===id);assert.ok(m.completedAt);assert.ok(!m.partial&&!m.streaming);}
-  assert.equal(expected.find(m=>m.id==='process').partial,true);
-  await f.controller.close();
-  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${threadId}.json`),'utf8'));
-  assert.deepEqual(saved.messages,expected);
-  reopened=f.createController();await reopened.open({threadId});assert.deepEqual(reopened.state.messages,expected);
- }finally{await reopened?.close();await f.controller.close();}
-});
-
-async function waitFor(predicate){
- const deadline=Date.now()+5000;
- while(!predicate()){
-  assert.ok(Date.now()<deadline,'Expected asynchronous controller result was not observed.');
-  await new Promise(resolve=>setTimeout(resolve,10));
- }
+async function fixture({models, waitForHost, browser = false, bridgeFactory} = {}) {
+  const base = scratchBase;
+  await mkdir(base, {recursive: true});
+  const root = await mkdtemp(path.join(base, 'claude-controller-'));
+  await writeFile(path.join(root, 'README.md'), 'fixture read target');
+  await writeFile(path.join(root, 'result.txt'), 'fixture write target');
+  const uuid = '123e4567-e89b-42d3-a456-426614174000';
+  let hostOptions, bridgeOptions, gatewayOptions, closeHost;
+  const makeHost = () => {
+    let resolveClosed;
+    return {
+      startCalls: [],
+      closed: new Promise(resolve => {
+        resolveClosed = resolve;
+      }),
+      async start(content) {
+        this.startCalls.push(content);
+      },
+      async interrupt() {
+        this.interrupted = true;
+      },
+      async close() {
+        resolveClosed();
+      }
+    };
+  };
+  let host;
+  const bridge = {
+    closed: false,
+    async list() {
+      return this.records ?? [];
+    },
+    async start(args) {
+      this.records ??= [];
+      return {...args, provider: fakeWorkerProvider(args.model)};
+    },
+    async cancel() {
+      return {settled: true};
+    },
+    async wait() {
+      return {settled: true};
+    },
+    async inspect() {
+      return {settled: true};
+    },
+    async close() {
+      this.closed = true;
+    }
+  };
+  const gateway = {
+    mcpConfig: {
+      mcpServers: {
+        k_luna: {type: 'http', url: 'http://127.0.0.1:4567/mcp', headers: {Authorization: 'Bearer test-token'}}
+      }
+    },
+    async close() {
+      this.closed = true;
+      await gatewayOptions.bridge.close();
+    }
+  };
+  const controllerOptions = {
+    ...(browser ? await fixtureBrowser(root) : {}),
+    root,
+    executable: 'codex-test',
+    commandSpec: {command: 'claude-test', argsPrefix: []},
+    hostFactory: async options => {
+      hostOptions = options;
+      host = makeHost();
+      host.models = models;
+      await waitForHost?.(options, host);
+      return host;
+    },
+    bridgeFactory: async options => {
+      bridgeOptions = options;
+      return bridgeFactory ? bridgeFactory(options) : bridge;
+    },
+    gatewayFactory: async options => {
+      gatewayOptions = options;
+      return gateway;
+    }
+  };
+  const createController = () => createClaudeController(controllerOptions),
+    controller = createController();
+  return {
+    root,
+    uuid,
+    controller,
+    createController,
+    get host() {
+      return host;
+    },
+    bridge,
+    gateway,
+    get hostOptions() {
+      return hostOptions;
+    },
+    get bridgeOptions() {
+      return bridgeOptions;
+    },
+    get gatewayOptions() {
+      return gatewayOptions;
+    }
+  };
 }
 
-test('Claude preserves a saved native model and rejects removed catalog IDs without replay',async()=>{
- const models=[{model:'claude-future',displayName:'Future',supportedReasoningEfforts:[{reasoningEffort:'ultra'}]},{model:'claude-second',displayName:'Second',supportedReasoningEfforts:[]}];
- const f=await fixture({models});
- try{
-  const {threadId}=await f.controller.open({model:'claude-future',effort:'ultra'});
-  await f.controller.open({threadId,model:'claude-future'});assert.equal(f.hostOptions.model,'claude-future');assert.equal(f.hostOptions.effort,'ultra');
-  await f.controller.selectModel({threadId,model:'claude-second'});assert.equal(f.hostOptions.model,'claude-second');assert.equal((await listMainSessions(f.root)).sessions[0].model,'claude-second');assert.equal(f.host.startCalls.length,0);
-  models.splice(1,1);await assert.rejects(f.controller.open({threadId,model:'claude-second'}),/未提供/);
-  assert.equal((await listMainSessions(f.root)).sessions[0].model,'claude-second');
- }finally{await f.controller.close();}
-});
-
-test('cancelled Claude initialization closes a late host and does not turn ready; next open succeeds',async()=>{
- let entered,release,calls=0;const started=new Promise(r=>{entered=r;}),gate=new Promise(r=>{release=r;});
- const f=await fixture({waitForHost:async()=>{if(++calls===1){entered();await gate;}}});
- const pending=f.controller.open({});const rejected=assert.rejects(pending,/取消/);await started;
- const late=f.host;let closed=false;void late.closed.then(()=>{closed=true;});const stop=f.controller.stop();release();await stop;await rejected;
- assert.equal(closed,true);assert.notEqual(f.controller.state.status,'ready');assert.equal(f.controller.state.threadId,null);
- await f.controller.open({});assert.equal(f.controller.state.status,'ready');await f.controller.close();
-});
-
-test('cancelled Claude reconnect stays interrupted and only a new send resumes the same conversation',async()=>{
- let entered,release,calls=0;const started=new Promise(r=>{entered=r;}),gate=new Promise(r=>{release=r;});
- const f=await fixture({waitForHost:async()=>{if(++calls===2){entered();await gate;}}});
- try{
-  const {threadId}=await f.controller.open({});
-  await f.controller.send({text:'original request'});f.hostOptions.onMessage({type:'result',is_error:false});
-  const old=f.host,messages=structuredClone(f.controller.state.messages);
-  const reconnect=f.controller.open({threadId,effort:'high'}),rejected=assert.rejects(reconnect,/取消/);await started;
-  const late=f.host;let lateClosed=false;void late.closed.then(()=>{lateClosed=true;});
-  const stopping=f.controller.stop();release();await stopping;await rejected;
-  assert.equal(f.controller.state.status,'interrupted');assert.equal(f.controller.state.error,null);
-  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.threadId,threadId);
-  assert.deepEqual(f.controller.state.messages,messages);assert.equal(lateClosed,true);
-  assert.equal(calls,2);assert.equal(old.startCalls.length,1);assert.equal(late.startCalls.length,0);
-  await f.controller.send({text:'new explicit request'});
-  assert.equal(calls,3);assert.equal(f.hostOptions.sessionId,threadId.slice(7));assert.equal(f.hostOptions.resume,true);
-  assert.equal(f.hostOptions.effort,null,'cancelled setting is not silently applied');
-  assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'new explicit request');
- }finally{release();await f.controller.close();}
-});
-for(const [provider,model] of [['codex','gpt-6.1-sol'],['gemini','gemini-3.8-flash'],['claude','claude-opus-5-5']])test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`,async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'delegate bounded work'});
-  await f.gatewayOptions.bridge.start({requestId:'notify',model,task:'bounded'});
-  const record={provider,parentId:f.controller.state.threadId,requestId:'notify',settled:true,status:'completed',output:'done',outputFiles:[]};
-  f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,1);
-  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
-  assert.equal(f.host.startCalls.length,2);assert.match(f.host.startCalls[1][0].text,/K 工人完成通知/);
-  const notification=JSON.parse(f.host.startCalls[1][0].text.split('\n').slice(1).join('\n'));assert.equal(notification[0].provider,provider);
-  f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  assert.equal(f.host.startCalls.length,2);
-  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',`${f.controller.state.threadId}.json`),'utf8'));
-  assert.equal(saved.workerNotifications.notify,'delivery-attempted');
- }finally{await f.controller.close();}
-});
-test('stopping clears queued notifications and late completion cannot wake Claude',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'stop',task:'bounded'});
-  const old=f.host,callback=f.bridgeOptions.onChange;
-  callback({parentId:f.controller.state.threadId,requestId:'stop',settled:true,status:'completed',output:'done'});
-  await f.controller.stop();callback({parentId:f.controller.state.threadId,requestId:'stop',settled:true,status:'completed',output:'done'});await tick();
-  assert.equal(old.startCalls.length,1);assert.equal(old.interrupted,true);assert.equal(f.controller.state.status,'interrupted');
- }finally{await f.controller.close();}
-});
-test('uncertain completion delivery is not automatically retried',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'uncertain',task:'bounded'});
-  f.host.start=async()=>{throw Error('pipe uncertain');};
-  const r={parentId:f.controller.state.threadId,requestId:'uncertain',settled:true,status:'completed',output:'done'};
-  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.controller.state.status==='uncertain');
-  assert.equal(f.controller.state.status,'uncertain');assert.match(f.controller.state.error,/未重送/);
-  f.bridgeOptions.onChange(r);await tick();assert.equal(f.controller.state.status,'uncertain');
- }finally{await f.controller.close();}
-});
-test('text attachments use UTF-8 byte threshold and workspace Read paths in plan mode',async()=>{
- const f=await fixture();try{
-  await f.controller.open({accessMode:'claude-plan'});
-  for(const text of ['a'.repeat(8192),'a'.repeat(8193),'中'.repeat(2800)]){
-   const a=await f.controller.upload({threadId:f.controller.state.threadId,name:'input.txt',base64:Buffer.from(text).toString('base64')});
-   await f.controller.send({text:'read the full attachment',attachmentIds:[a.id]});
-   const sent=f.host.startCalls.at(-1)[1].text;
-   const large=Buffer.byteLength(text)>8192;
-   assert.equal(sent.includes('preview="true"'),large);
-   assert.equal(sent.includes(text),!large);
-   assert.ok(sent.includes(`bytes="${Buffer.byteLength(text)}"`));
-   assert.ok(sent.includes(path.resolve(f.root,a.textPath)));
-   assert.ok(sent.includes(`originalPath="${path.resolve(f.root,a.path)}"`));
-   assert.equal(await readFile(path.join(f.root,a.textPath),'utf8'),text);
-   assert.equal(f.hostOptions.accessMode,'claude-plan');
-   f.hostOptions.onMessage({type:'result',is_error:false});
+test('Claude work telemetry ignores replay, child output and elapsed tool heartbeats', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'fake work'});
+    const emit = f.hostOptions.onMessage;
+    assert.equal(f.controller.state.activity.lastEventAt, null);
+    emit({type: 'stream_event', event: {type: 'message_start', message: {id: 'live'}}});
+    const before = structuredClone(f.controller.state.activity);
+    assert.ok(before.lastEventAt);
+    emit({type: 'tool_progress', tool_use_id: 'a', elapsed_time_seconds: 900});
+    emit({type: 'assistant', isReplay: true, message: {content: []}});
+    emit({
+      type: 'stream_event',
+      parent_tool_use_id: 'child',
+      event: {type: 'content_block_delta', delta: {type: 'text_delta', text: 'child'}}
+    });
+    assert.deepEqual(f.controller.state.activity, before);
+    const child = f.controller.state.workers.find(w => w.requestId === 'child');
+    assert.ok(child.activity.lastEventAt);
+    const childActivity = structuredClone(child.activity);
+    emit({type: 'tool_progress', parent_tool_use_id: 'child', elapsed_time_seconds: 999});
+    emit({type: 'assistant', isReplay: true, parent_tool_use_id: 'child', message: {content: []}});
+    assert.deepEqual(child.activity, childActivity);
+    emit({
+      type: 'assistant',
+      uuid: 'tool',
+      message: {id: 'model-output', content: [{type: 'tool_use', id: 'a', name: 'Read', input: {file_path: 'fake'}}]}
+    });
+    assert.equal(f.controller.state.activity.phase, 'tool');
+    emit({type: 'user', message: {content: [{type: 'tool_result', tool_use_id: 'a', content: 'fake output'}]}});
+    assert.equal(f.controller.state.activity.phase, 'active');
+  } finally {
+    await f.controller.close();
   }
- }finally{await f.controller.close();}
-});
-test('Claude preserves PDF extraction warnings in native attachment context',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({accessMode:'claude-plan'});
-  const doc=await f.controller.upload({threadId,name:'broken.pdf',base64:Buffer.from('synthetic invalid PDF').toString('base64')});
-  assert.ok(doc.warning);
-  await f.controller.send({text:'report extraction limitations',attachmentIds:[doc.id]});
-  const context=f.host.startCalls.at(-1)[1].text;
-  assert.ok(context.includes(`warning="${doc.warning.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;')}"`));
-  assert.ok(context.includes(`originalPath="${path.resolve(f.root,doc.path)}"`));
-  assert.equal((await readFile(path.join(f.root,doc.path),'utf8')),'synthetic invalid PDF');
- }finally{await f.controller.close();}
 });
 
-test('Claude gateway approval stays with its parent, requires write content, and survives parent idle',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});const parentId=f.controller.state.threadId;
-  await f.gatewayOptions.bridge.start({requestId:'claude-child',model:'claude-opus-5-5',effort:'high',task:'bounded'});
-  f.bridge.records=[{requestId:'claude-child',provider:'claude',parentId,status:'running',settled:false}];
-  f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
-  assert.equal((await f.controller.workers()).find(row=>row.requestId==='claude-child').settled,false,'the child remains active after its parent turn ends');
-
-  const callback=f.bridgeOptions.onRequest;
-  const approval=callback({method:'k/claude/requestApproval',params:{parentId,requestId:'claude-child',toolName:'Write',input:{file_path:'result.txt',content:'approved'}}});
-  const question=f.controller.state.questions.at(-1);assert.equal(question.canAccept,true);assert.equal(question.provider,'codex-luna');
-  await f.controller.answer({id:question.id,accept:true});assert.deepEqual(await approval,{behavior:'allow',updatedInput:{file_path:'result.txt',content:'approved'}});
-
-  const wrongParent=callback({method:'k/claude/requestApproval',params:{parentId:'claude-other-parent',requestId:'foreign-child',toolName:'Write',input:{file_path:'result.txt',content:'no'}}});
-  assert.equal(f.controller.state.questions.length,0,'a request owned by another parent must not enter this conversation UI');
-  assert.equal(wrongParent,undefined,'a foreign-parent request is rejected without creating an approval');
-
-  const missing=callback({method:'k/claude/requestApproval',params:{parentId,requestId:'claude-child',toolName:'Write',input:{file_path:'result.txt'}}});
-  const unavailable=f.controller.state.questions.at(-1);assert.equal(unavailable.canAccept,false);
-  await assert.rejects(f.controller.answer({id:unavailable.id,accept:true}),/缺少實際變更內容/);
-  assert.ok(f.controller.state.questions.some(row=>row.id===unavailable.id),'a rejected accept must leave the request available for an explicit denial');
-  await f.controller.answer({id:unavailable.id,accept:false});assert.equal((await missing).behavior,'deny');
- }finally{await f.controller.close();}
+test('Claude sends and steers more than eight scoped attachments without expanding the user bubble', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    const attachments = [];
+    for (let n = 0; n < 12; n++)
+      attachments.push(
+        await f.controller.upload({
+          threadId,
+          name: `fake-${n}.txt`,
+          base64: Buffer.from(`fake body ${n}`).toString('base64')
+        })
+      );
+    const image = await f.controller.upload({
+      threadId,
+      name: 'pixel.png',
+      base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='
+    });
+    const attachmentIds = [...attachments.map(a => a.id), image.id];
+    await f.controller.send({text: 'initial files', attachmentIds});
+    await f.controller.steer({text: 'follow-up files', attachmentIds});
+    assert.equal(f.host.startCalls.length, 2);
+    for (const input of f.host.startCalls) {
+      assert.equal(input.length, 14);
+      assert.match(input[1].text, /fake body 0/);
+      assert.equal(input.at(-1).type, 'image');
+    }
+    assert.deepEqual(
+      f.controller.state.messages.map(m => m.text),
+      ['initial files', 'follow-up files']
+    );
+    assert(f.controller.state.messages.every(m => m.attachments.length === 13));
+    const steered = f.controller.state.messages[1];
+    f.hostOptions.onMessage({type: 'user', uuid: steered.id, isReplay: true, message: {content: f.host.startCalls[1]}});
+    assert.equal(steered.text, 'follow-up files');
+    assert.equal(steered.delivery, 'received');
+    await f.controller.close();
+    await f.controller.open({threadId});
+    assert.equal(f.controller.state.messages[1].text, 'follow-up files');
+    assert.equal(f.controller.state.messages[1].attachments.length, 13);
+  } finally {
+    await f.controller.close();
+  }
 });
-test('Claude gives generic media original file path without reading it into the native prompt',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});const media=await f.controller.upload({threadId,name:'synthetic.m4a',base64:Buffer.from([0,1,2,3,255]).toString('base64')});
-  await f.controller.send({text:'inspect through native file tools',attachmentIds:[media.id]});
-  const part=f.host.startCalls.at(-1).find(item=>item.type==='text'&&item.text.includes('<K_ATTACHMENT'))?.text;
-  assert.ok(part.includes(`originalPath="${path.resolve(f.root,media.path)}"`));assert.ok(part.includes('bytes="5"'));assert.ok(part.includes('只能作為檔案參考'));
-  assert.ok(!part.includes('0,1,2,3'));
- }finally{await f.controller.close();}
+
+test('Claude accepted steering stays accepted if its activity save fails', async t => {
+  const f = await fixture();
+  let armed = false;
+  let failed;
+  const failure = new Promise(resolve => {
+    failed = resolve;
+  });
+  const originalRename = fs.rename;
+  let mocked;
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'initial fake work'});
+    const originalStart = f.host.start.bind(f.host);
+    f.host.start = async (...args) => {
+      await originalStart(...args);
+      armed = true;
+    };
+    mocked = t.mock.method(fs, 'rename', async (from, to) => {
+      if (armed && String(to).includes('claude-sessions')) {
+        armed = false;
+        failed();
+        throw Object.assign(new Error('fake activity disk failure'), {code: 'EIO'});
+      }
+      return originalRename(from, to);
+    });
+    syncBuiltinESMExports();
+    assert.equal((await f.controller.steer({text: 'accepted fake correction'})).steered, true);
+    await failure;
+    await new Promise(setImmediate);
+    const message = f.controller.state.messages.at(-1);
+    assert.notEqual(message.delivery, 'uncertain');
+    assert.equal(f.host.startCalls.length, 2);
+    assert.equal(f.controller.state.busy, true);
+    assert.match(f.controller.state.error, /投影保存失敗/);
+    f.hostOptions.onMessage({type: 'user', uuid: message.id, isReplay: true, message: {content: f.host.startCalls[1]}});
+    assert.equal(message.delivery, 'received');
+    assert.equal(f.host.startCalls.length, 2);
+    mocked.mock.restore();
+    syncBuiltinESMExports();
+    mocked = null;
+    const recovered = observeAtomicWrite(
+      t,
+      path.join(f.root, '.runtime/main-sessions', `${f.controller.state.threadId}-current.json`),
+      () => true
+    );
+    f.hostOptions.onMessage({type: 'result', is_error: false, result: 'fake completed'});
+    await recovered;
+    await new Promise(setImmediate);
+  } finally {
+    mocked?.mock.restore();
+    syncBuiltinESMExports();
+    await f.controller.close();
+  }
 });
-test('Claude image and text attachment metadata survives native replay and projection reopen',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});
-  const pngBytes=Buffer.from([137,80,78,71,13,10,26,10]);
-  const image=await f.controller.upload({threadId,name:'screen.png',base64:pngBytes.toString('base64')});
-  const text=await f.controller.upload({threadId,name:'notes.txt',base64:Buffer.from('fixture notes').toString('base64')});
-  await f.controller.send({text:'看看？',attachmentIds:[image.id,text.id]});
 
-  const sent=f.host.startCalls.at(-1);
-  assert.deepEqual(sent.find(part=>part.type==='image')?.source,{type:'base64',media_type:'image/png',data:pngBytes.toString('base64')});
-  assert.ok(sent.some(part=>part.type==='text'&&part.text.includes('fixture notes')));
-  const user=f.controller.state.messages.find(message=>message.role==='user'&&message.text==='看看？');
-  const expected=[image,text].map(({id,name,size,kind})=>({id,name,size,kind}));
-  assert.deepEqual(user.attachments.map(({id,name,size,kind})=>({id,name,size,kind})),expected);
+test('Claude attachment steering rejects a foreign conversation before native delivery', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'active'});
+    const foreign = await saveAttachment(f.root, 'foreign-thread', {name: 'fake.txt', base64: 'YQ=='});
+    await assert.rejects(f.controller.steer({text: 'must not deliver', attachmentIds: [foreign.id]}), /其他對話/);
+    assert.equal(f.host.startCalls.length, 1);
+    assert.equal(f.controller.state.messages.length, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
 
-  f.hostOptions.onMessage({type:'user',uuid:user.id,isReplay:true,message:{content:[{type:'image'}]}});
-  assert.equal(user.delivery,'received');
-  assert.deepEqual(user.attachments.map(({id,name,size,kind})=>({id,name,size,kind})),expected);
-  f.hostOptions.onMessage({type:'result',is_error:false});
+test('saving one Claude conversation does not read other conversation projections', async () => {
+  const f = await fixture();
+  const original = fs.readFile;
+  let otherReads = 0;
+  try {
+    const {threadId} = await f.controller.open({});
+    const projection = JSON.parse(
+      await readFile(path.join(f.root, '.runtime/claude-sessions', `${threadId}.json`), 'utf8')
+    );
+    const id = 'claude-123e4567-e89b-42d3-a456-426614174099';
+    const other = path.join(f.root, '.runtime/claude-sessions', `${id}.json`);
+    await writeFile(
+      other,
+      JSON.stringify({
+        ...projection,
+        threadId: id,
+        nativeSessionId: id.slice(7),
+        messages: [{role: 'user', text: 'unrelated'.repeat(10000)}]
+      })
+    );
+    fs.readFile = (file, ...args) => {
+      if (String(file) === other) otherReads++;
+      return original(file, ...args);
+    };
+    syncBuiltinESMExports();
+    await f.controller.send({text: 'only this conversation'});
+    await f.controller.close();
+    assert.equal(otherReads, 0);
+    assert.equal(JSON.parse(await original(other, 'utf8')).threadId, id);
+  } finally {
+    fs.readFile = original;
+    syncBuiltinESMExports();
+    await f.controller.close();
+  }
+});
+
+test('owned Luna artifacts are shown without accepting work or allowing foreign paths', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.gatewayOptions.bridge.start({requestId: 'one', task: 'bounded'});
+    f.bridgeOptions.onChange({
+      requestId: 'one',
+      parentId: f.controller.state.threadId,
+      outputFiles: ['result.txt', '../outside.txt'],
+      acceptance: 'not-reviewed',
+      settled: true,
+      status: 'completed'
+    });
+    assert.deepEqual(f.controller.state.artifacts, ['result.txt']);
+    assert.equal(f.controller.state.workers[0].acceptance, 'not-reviewed');
+    assert.equal((await f.controller.artifact('result.txt')).bytes.toString(), 'fixture write target');
+    f.bridgeOptions.onChange({requestId: 'other', parentId: 'another-session', outputFiles: ['README.md']});
+    assert.deepEqual(f.controller.state.artifacts, ['result.txt']);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('opens subscription host with native UUID and K Luna gateway, saves only a UI projection', async () => {
+  const f = await fixture();
+  try {
+    const opened = await f.controller.open({});
+    assert.match(opened.threadId, /^claude-[0-9a-f-]{36}$/i);
+    assert.equal(f.hostOptions.sessionId, opened.threadId.slice(7));
+    assert.equal(f.hostOptions.resume, false);
+    assert.equal(typeof f.gatewayOptions.bridge.start, 'function');
+    assert.equal(f.bridgeOptions, undefined, 'opening Claude must not require or preflight Codex subscription');
+    assert.deepEqual(f.hostOptions.mcpConfig, f.gateway.mcpConfig);
+    assert.equal(f.controller.state.capabilities.steer, true);
+    assert.equal(f.controller.state.capabilities.goal, false);
+    assert.equal(f.controller.state.capabilities.compact, true);
+    const projection = JSON.parse(
+      await readFile(path.join(f.root, '.runtime', 'claude-sessions', `${opened.threadId}.json`), 'utf8')
+    );
+    assert.equal(projection.nativeSessionId, f.uuid === projection.nativeSessionId ? f.uuid : f.hostOptions.sessionId);
+    assert.equal(projection.messages.length, 0);
+    assert.equal((await f.controller.sessions()).sessions.length, 1);
+    const common = await listMainSessions(f.root);
+    assert.equal(common.sessions[0].provider, 'claude');
+    assert.deepEqual(common.sessions[0].workerPolicy, {model: 'auto', effort: 'auto'});
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('project browser opt-in adds a dedicated MCP profile beside Luna for the Claude conversation', async () => {
+  const f = await fixture({browser: true});
+  try {
+    const opened = await f.controller.open({});
+    const servers = f.hostOptions.mcpConfig.mcpServers;
+    assert.deepEqual(Object.keys(servers).sort(), ['k_browser', 'k_luna']);
+    assert.equal(servers.k_luna, f.gateway.mcpConfig.mcpServers.k_luna);
+    assert.equal(servers.k_browser.url, 'http://127.0.0.1:45678/mcp');
+    assert.deepEqual(servers.k_browser.headers, {Authorization: 'Bearer fixture'});
+    assert.deepEqual(Object.keys(servers.k_browser).sort(), ['headers', 'type', 'url']);
+    await f.controller.send({text: '以新的推理設定重開同一對話。', effort: 'high'});
+    assert.deepEqual(f.hostOptions.mcpConfig.mcpServers.k_browser, servers.k_browser);
+    assert.equal(f.hostOptions.sessionId, opened.threadId.slice(7));
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude browser MCP is absent in plan mode and changes with native mode restarts', async () => {
+  const f = await fixture({browser: true});
+  try {
+    await f.controller.open({accessMode: 'claude-plan'});
+    assert.equal(f.controller.state.browserAccess.enabled, false);
+    assert.equal(f.hostOptions.mcpConfig.mcpServers.k_browser, undefined);
+    const {threadId} = await f.controller.open({accessMode: 'claude-manual'});
+    assert.equal(f.controller.state.browserAccess.enabled, true);
+    assert.ok(f.hostOptions.mcpConfig.mcpServers.k_browser);
+    await f.controller.send({text: '以計畫模式重新接續', accessMode: 'claude-plan'});
+    assert.equal(f.controller.state.threadId, threadId);
+    assert.equal(f.controller.state.browserAccess.enabled, false);
+    assert.equal(f.hostOptions.mcpConfig.mcpServers.k_browser, undefined);
+    assert.equal(f.hostOptions.sessionId, threadId.slice(7));
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('sends one prompt, requires per-tool UI approval and persists resulting projection', async t => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: '請檢查這個工作區'});
+    assert.equal(f.host.startCalls.length, 1);
+    assert.equal(f.host.startCalls[0][0].text, '請檢查這個工作區');
+    const permission = f.hostOptions.onPermission({toolName: 'Read', input: {file_path: 'README.md'}});
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(f.controller.state.questions.length, 1);
+    const question = f.controller.state.questions[0];
+    assert.equal(question.details.toolName, 'Read');
+    await f.controller.answer({id: question.id, accept: true});
+    assert.deepEqual(await permission, {behavior: 'allow', updatedInput: {file_path: 'README.md'}});
+    const file = path.join(f.root, '.runtime', 'claude-sessions', `${f.controller.state.threadId}.json`);
+    const persisted = observeAtomicWrite(t, file, record => record.messages.length === 2);
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'assistant-1',
+      message: {content: [{type: 'text', text: '已檢查。'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.status, 'completed');
+    assert.equal(f.controller.state.messages.at(-1).text, '已檢查。');
+    await persisted;
+    assert.equal(f.controller.state.error, null);
+    const projection = JSON.parse(await readFile(file, 'utf8'));
+    assert.equal(projection.messages.length, 2);
+    await f.controller.send({text: '下一個正常回合'});
+    assert.equal(f.host.startCalls.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude exposes only native public status and actual context usage, never thinking blocks or inferred totals', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const sent = await f.controller.send({text: 'Check native visibility'});
+    const turnId = f.controller.state.messages.at(-1).id;
+    f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting', uuid: 'status-1'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'assistant-1',
+      message: {
+        content: [
+          {type: 'thinking', thinking: 'private hidden reasoning must not enter UI'},
+          {type: 'text', text: 'visible answer'}
+        ]
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'stream_event',
+      event: {
+        type: 'message_start',
+        message: {
+          model: 'claude-opus-5-5',
+          usage: {input_tokens: 4, cache_read_input_tokens: 12, cache_creation_input_tokens: 3, output_tokens: 2}
+        }
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'rate_limit_event',
+      uuid: 'rate-limit-1',
+      rate_limit_info: {
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled'
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'rate_limit_event',
+      uuid: 'rate-limit-2',
+      rate_limit_info: {
+        status: 'allowed',
+        rateLimitType: 'five_hour',
+        overageStatus: 'rejected',
+        overageDisabledReason: 'org_level_disabled'
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'result',
+      is_error: false,
+      user_message_uuid: turnId,
+      usage: {input_tokens: 4, cache_read_input_tokens: 12, cache_creation_input_tokens: 3, output_tokens: 2},
+      modelUsage: {
+        'claude-opus-5-5': {
+          inputTokens: 140,
+          cacheReadInputTokens: 120,
+          cacheCreationInputTokens: 30,
+          outputTokens: 200,
+          contextWindow: 1000000
+        }
+      }
+    });
+    const state = f.controller.state;
+    assert.equal(sent.sent, true);
+    assert.deepEqual(state.notices, []);
+    assert.equal(state.usage.claude.rateLimitStatus, 'allowed');
+    assert.equal(state.usage.claude.extraUsageDisabled, true);
+    for (const notice of state.notices) assert.ok(!Number.isNaN(Date.parse(notice.createdAt)));
+    assert.equal(state.messages.at(-1).text, 'visible answer');
+    assert.deepEqual(state.reasoning, []);
+    assert.deepEqual(state.turnDiffs, []);
+    assert.equal(state.capabilities.reasoningSummary, false);
+    assert.equal(state.capabilities.fileSearch, false);
+    assert.equal(state.capabilities.review, false);
+    assert.equal(state.capabilities.turnDiffs, false);
+    assert.deepEqual(state.progress.tokenUsage, {
+      last: {
+        totalTokens: 19,
+        inputTokens: 4,
+        cacheReadInputTokens: 12,
+        cacheCreationInputTokens: 3,
+        measurement: 'latest-native-request-input',
+        source: 'Claude Code stream-json message_start usage'
+      },
+      modelContextWindow: 1000000
+    });
+    assert.equal(
+      state.progress.tokenUsage.last.totalTokens,
+      19,
+      'context figure excludes output and is not result/modelUsage turn aggregate'
+    );
+    assert.equal(
+      state.progress.tokenUsage.total,
+      undefined,
+      'Claude emits per-result usage, not cumulative session token totals'
+    );
+    assert.equal(JSON.stringify(state).includes('private hidden reasoning'), false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude quota exhaustion retains the native error without adding a second K notice or retrying work', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'one fake request'});
+    const original = "You've hit your session limit · resets 5:30pm (Asia/Taipei)";
+    for (const status of ['allowed_warning', 'rejected', 'rejected'])
+      f.hostOptions.onMessage({type: 'rate_limit_event', rate_limit_info: {status, rateLimitType: 'five_hour'}});
+    f.hostOptions.onMessage({type: 'result', is_error: true, result: original});
+    assert.equal(f.controller.state.error, original, 'backend preserves the native wording');
+    assert.equal(f.controller.state.usage.claude.rateLimitStatus, 'rejected');
+    assert.equal(f.controller.state.busy, false);
+    assert.deepEqual(f.controller.state.notices, []);
+    assert.equal(f.host.startCalls.length, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('forwards Luna Codex approvals to the same UI queue and stop cancels pending approval', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.gatewayOptions.bridge.start({requestId: 'req-one', task: '檢查'});
+    const approval = f.bridgeOptions.onRequest({
+      id: 1,
+      method: 'item/commandExecution/requestApproval',
+      params: {command: 'node test.mjs', cwd: f.root, reason: '執行測試'}
+    });
+    assert.equal(f.controller.state.questions.length, 1);
+    const q = f.controller.state.questions[0];
+    assert.equal(q.provider, 'codex-luna');
+    assert.equal(q.details.command, 'node test.mjs');
+    await f.controller.answer({id: q.id, accept: false});
+    assert.deepEqual(await approval, {decision: 'decline'});
+    const pending = f.hostOptions.onPermission({toolName: 'Write', input: {file_path: 'result.txt', content: 'x'}});
+    await new Promise(resolve => setTimeout(resolve, 30));
+    assert.equal(f.controller.state.questions.length, 1);
+    await f.controller.stop();
+    assert.deepEqual(await pending, {behavior: 'deny', message: '使用者未核准或工作已停止。'});
+    assert.equal(f.controller.state.status, 'interrupted');
+    assert.equal(f.gateway.closed, true);
+    assert.equal(f.bridge.closed, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const [mode, workerMode] of [
+  ['bypassPermissions', 'danger-full-access'],
+  ['plan', 'read-only'],
+  ['manual', 'workspace-write'],
+  ['acceptEdits', 'workspace-write'],
+  ['auto', 'workspace-write'],
+  ['dontAsk', 'workspace-write']
+]) {
+  test(`Claude ${mode} delegates workers with ${workerMode}`, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({accessMode: `claude-${mode}`});
+      await f.gatewayOptions.bridge.start({requestId: 'mode', task: 'bounded'});
+      assert.equal(f.bridgeOptions.accessMode, workerMode);
+    } finally {
+      await f.controller.close();
+    }
+  });
+}
+
+test('permission switches close the previous bridge and rebuild with the new worker mode', async () => {
+  const bridges = [];
+  let f;
+  f = await fixture({
+    bridgeFactory: options => {
+      const bridge = {...f.bridge, closed: false, records: [], mode: options.accessMode};
+      bridges.push(bridge);
+      return bridge;
+    }
+  });
+  try {
+    await f.controller.open({accessMode: 'claude-manual'});
+    await f.gatewayOptions.bridge.start({requestId: 'before', task: 'bounded'});
+    await f.controller.send({text: 'switch', accessMode: 'claude-bypassPermissions'});
+    assert.equal(bridges[0].closed, true);
+    await f.gatewayOptions.bridge.start({requestId: 'after', task: 'bounded'});
+    assert.equal(bridges[1].mode, 'danger-full-access');
+    assert.notEqual(bridges[1], bridges[0]);
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await f.controller.send({text: 'switch back', accessMode: 'claude-manual'});
+    assert.equal(bridges[1].closed, true);
+    await f.gatewayOptions.bridge.start({requestId: 'manual', task: 'bounded'});
+    assert.equal(bridges[2].mode, 'workspace-write');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude permission switch closes a bridge loaded with only old unowned unresolved Gemini work', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({accessMode: 'claude-manual'});
+    const old = {
+      requestId: 'old-unowned-mode-switch',
+      provider: 'gemini',
+      status: 'unresolved',
+      settled: false,
+      executionUnowned: true
+    };
+    f.bridge.records = [structuredClone(old)];
+    let cancelCalls = 0,
+      startCalls = 0;
+    f.bridge.cancel = async () => {
+      cancelCalls++;
+      return {settled: true};
+    };
+    const start = f.bridge.start.bind(f.bridge);
+    f.bridge.start = async args => {
+      startCalls++;
+      return start(args);
+    };
+    const originalBridge = f.gatewayOptions.bridge;
+    assert.deepEqual(await originalBridge.list(), [old], 'listing initializes the persisted unowned record');
+    await f.controller.send({text: '切換模式', accessMode: 'claude-bypassPermissions'});
+    assert.equal(f.bridge.closed, true, 'the old worker bridge can be closed');
+    assert.equal(cancelCalls, 0, 'do not cancel unowned historical work');
+    assert.deepEqual(f.bridge.records, [old]);
+    assert.equal(startCalls, 0, 'a permission change does not dispatch new worker work');
+    assert.equal(f.controller.state.accessMode, 'claude-bypassPermissions');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('unsettled workers prevent a permission switch without closing the existing bridge', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({accessMode: 'claude-manual'});
+    await f.gatewayOptions.bridge.start({requestId: 'active', task: 'bounded'});
+    const old = {
+      requestId: 'old-unowned-mixed',
+      provider: 'gemini',
+      status: 'unresolved',
+      settled: false,
+      executionUnowned: true
+    };
+    f.bridge.records = [old, {requestId: 'active', settled: false}];
+    await assert.rejects(f.controller.send({text: 'switch', accessMode: 'claude-bypassPermissions'}), /子代理尚未結束/);
+    assert.equal(f.controller.state.accessMode, 'claude-manual');
+    assert.equal(f.bridge.closed, false);
+    assert.equal(f.bridgeOptions.accessMode, 'workspace-write');
+    assert.deepEqual(
+      f.bridge.records,
+      [old, {requestId: 'active', settled: false}],
+      'the unowned row stays unresolved and owned pending work still blocks switching'
+    );
+  } finally {
+    f.bridge.records = [];
+    await f.controller.close();
+  }
+});
+
+test('worker file changes can be accepted only when the native item has changes', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.gatewayOptions.bridge.start({requestId: 'file', task: 'bounded'});
+    const request = {method: 'item/fileChange/requestApproval', params: {itemId: 'file-item'}};
+    const item = {
+      id: 'file-item',
+      type: 'fileChange',
+      changes: [{path: 'result.txt', kind: {type: 'add'}, diff: '+fixture'}]
+    };
+    const approval = f.bridgeOptions.onRequest(request, item);
+    const q = f.controller.state.questions[0];
+    assert.equal(q.canAccept, true);
+    assert.deepEqual(q.details.changes, item.changes);
+    await f.controller.answer({id: q.id, accept: true});
+    assert.deepEqual(await approval, {decision: 'accept'});
+    const missing = f.bridgeOptions.onRequest(request);
+    const unavailable = f.controller.state.questions[0];
+    assert.equal(unavailable.canAccept, false);
+    await f.controller.answer({id: unavailable.id, accept: false});
+    assert.deepEqual(await missing, {decision: 'decline'});
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('resumes only a saved Claude projection and forwards native UUID, never a Codex id', async () => {
+  const f = await fixture();
+  try {
+    const created = await f.controller.open({});
+    await f.controller.send({text: '首個原生回合'});
+    await f.controller.close();
+    const reopened = await f.controller.open({threadId: created.threadId});
+    assert.equal(reopened.threadId, created.threadId);
+    assert.equal(f.hostOptions.sessionId, created.threadId.slice(7));
+    assert.equal(f.hostOptions.resume, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native plan and manual modes defer all decisions to Claude Code and the UI', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({accessMode: 'read-only'});
+    assert.equal(f.hostOptions.accessMode, 'claude-plan');
+    const planTool = f.hostOptions.onPermission({toolName: 'Write', input: {file_path: 'result.txt'}});
+    await new Promise(resolve => setImmediate(resolve));
+    await f.controller.answer({id: f.controller.state.questions[0].id, accept: false});
+    assert.equal((await planTool).behavior, 'deny');
+    await f.controller.stop();
+    await f.controller.open({accessMode: 'workspace-write'});
+    const command = f.hostOptions.onPermission({toolName: 'Bash', input: {command: 'echo unsafe'}});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.controller.state.questions[0].details.toolName, 'Bash');
+    await f.controller.answer({id: f.controller.state.questions[0].id, accept: false});
+    assert.equal((await command).behavior, 'deny');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native AskUserQuestion is presented and returned with native question-text keys', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const pending = f.hostOptions.onPermission({
+      toolName: 'AskUserQuestion',
+      input: {
+        questions: [
+          {
+            question: 'Which?',
+            options: [
+              {label: 'A', description: 'first'},
+              {label: 'B', description: 'second'}
+            ]
+          }
+        ]
+      }
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const q = f.controller.state.questions[0];
+    assert.equal(q.kind, 'question');
+    assert.equal(q.questions[0].id, 'Which?');
+    await f.controller.answer({id: q.id, answers: {'Which?': 'A'}});
+    assert.deepEqual(await pending, {
+      behavior: 'allow',
+      updatedInput: {
+        questions: [
+          {
+            question: 'Which?',
+            options: [
+              {label: 'A', description: 'first'},
+              {label: 'B', description: 'second'}
+            ]
+          }
+        ],
+        answers: {'Which?': 'A'}
+      }
+    });
+    const multiple = f.hostOptions.onPermission({
+      toolName: 'AskUserQuestion',
+      input: {questions: [{question: 'Choose several', multiSelect: true, options: [{label: 'A'}, {label: 'B'}]}]}
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    await f.controller.answer({
+      id: f.controller.state.questions[0].id,
+      answers: {'Choose several': ['A', 'Other: custom']}
+    });
+    assert.equal((await multiple).updatedInput.answers['Choose several'], 'A, Other: custom');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('changes native permission mode by reopening the same session before sending', async () => {
+  const f = await fixture();
+  try {
+    const opened = await f.controller.open({});
+    await f.controller.send({text: 'first'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const old = f.host;
+    await f.controller.send({text: 'second', accessMode: 'claude-acceptEdits'});
+    assert.equal(old.closed !== undefined, true);
+    assert.equal(f.hostOptions.accessMode, 'claude-acceptEdits');
+    const saved = JSON.parse(
+      await readFile(path.join(f.root, '.runtime', 'claude-sessions', `${opened.threadId}.json`), 'utf8')
+    );
+    assert.equal(saved.accessMode, 'claude-acceptEdits');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('compact uses Claude Code native slash command in the same session', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.compact();
+    assert.equal(f.host.startCalls[0], '/compact');
+    assert.equal(f.controller.state.progress.compaction, 'compacting');
+    assert.equal(f.controller.state.progress.compactions, 0);
+    const saved = JSON.parse(
+      await readFile(path.join(f.root, '.runtime', 'claude-sessions', `${f.controller.state.threadId}.json`), 'utf8')
+    );
+    assert.equal(saved.nativeStarted, true);
+    const boundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: f.controller.state.threadId.slice(7),
+      uuid: 'manual-complete'
+    };
+    f.hostOptions.onMessage(boundary);
+    f.hostOptions.onMessage(boundary);
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.progress.compactions, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('choosing Claude effort updates persisted selection and restarts actual host on next send', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({effort: 'low'});
+    await f.controller.selectModel({threadId, model: 'claude-opus-5-5', effort: 'high'});
+    assert.equal((await listMainSessions(f.root)).sessions[0].effort, 'high');
+    assert.equal(f.hostOptions.effort, 'low');
+    await f.controller.send({text: 'Use selected effort'});
+    assert.equal(f.hostOptions.effort, 'high');
+    assert.equal(f.controller.state.status, 'working');
+    assert.equal(f.controller.state.busy, true);
+    f.hostOptions.onMessage({type: 'stream_event', event: {type: 'message_start', message: {id: 'restarted-answer'}}});
+    f.hostOptions.onMessage({
+      type: 'stream_event',
+      event: {type: 'content_block_start', index: 0, content_block: {type: 'text', text: ''}}
+    });
+    f.hostOptions.onMessage({
+      type: 'stream_event',
+      event: {type: 'content_block_delta', index: 0, delta: {type: 'text_delta', text: 'Reply from replacement host'}}
+    });
+    assert.equal(f.controller.state.messages.at(-1).text, 'Reply from replacement host');
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.status, 'completed');
+    await f.controller.selectModel({threadId, model: 'claude-opus-5-5', effort: null});
+    await f.controller.send({text: 'Use native default'});
+    assert.equal(f.hostOptions.effort, null);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('unexpected Claude host exit still transitions the conversation offline', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'active turn'});
+    await f.host.close();
+    await tick();
+    assert.equal(f.controller.state.status, 'offline');
+    assert.equal(f.controller.state.busy, false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('failed settings restart close remains uncertain and retains the existing host', async () => {
+  const f = await fixture();
+  let restoreClose;
+  try {
+    const {threadId} = await f.controller.open({effort: 'low'});
+    await f.controller.selectModel({threadId, model: 'claude-opus-5-5', effort: 'high'});
+    const retained = f.host;
+    restoreClose = retained.close.bind(retained);
+    retained.close = async () => {
+      throw new Error('settings close unconfirmed');
+    };
+    await assert.rejects(
+      f.controller.send({text: 'do not restart without confirmed close'}),
+      /settings close unconfirmed/
+    );
+    assert.equal(f.host, retained);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.match(f.controller.state.error, /settings close unconfirmed/);
+  } finally {
+    if (f.host && restoreClose) f.host.close = restoreClose;
+    await f.controller.close();
+  }
+});
+
+const tick = () => new Promise(resolve => setTimeout(resolve, 40));
+test('mid-work steering preserves both completed replies in storage and after reopen', async () => {
+  const f = await fixture();
+  let reopened;
+  try {
+    const {threadId} = await f.controller.open({});
+    await f.controller.send({text: 'fake original work'});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'process',
+      message: {content: [{type: 'text', text: 'fake tool work in progress'}]}
+    });
+    await f.controller.steer({text: 'fake first interruption'});
+    await f.controller.steer({text: 'fake second interruption'});
+    for (const user of f.controller.state.messages.filter(m => m.source === 'steer'))
+      emit({type: 'user', uuid: user.id, isReplay: true, message: {content: [{type: 'text', text: user.text}]}});
+    emit({type: 'assistant', uuid: 'first-final', message: {content: [{type: 'text', text: 'FIRST_COMPLETED_REPLY'}]}});
+    emit({type: 'result', is_error: false});
+    await tick();
+    emit({
+      type: 'assistant',
+      uuid: 'second-final',
+      message: {content: [{type: 'text', text: 'SECOND_COMPLETED_REPLY'}]}
+    });
+    emit({type: 'result', is_error: false});
+    await tick();
+    const expected = structuredClone(f.controller.state.messages);
+    assert.equal(new Set(expected.map(m => m.groupId)).size, 1);
+    for (const id of ['first-final', 'second-final']) {
+      const m = expected.find(m => m.id === id);
+      assert.ok(m.completedAt);
+      assert.ok(!m.partial && !m.streaming);
+    }
+    assert.equal(expected.find(m => m.id === 'process').partial, true);
+    await f.controller.close();
+    const saved = JSON.parse(await readFile(path.join(f.root, '.runtime/claude-sessions', `${threadId}.json`), 'utf8'));
+    assert.deepEqual(saved.messages, expected);
+    reopened = f.createController();
+    await reopened.open({threadId});
+    assert.deepEqual(reopened.state.messages, expected);
+  } finally {
+    await reopened?.close();
+    await f.controller.close();
+  }
+});
+
+// Controller results can include file saves, which wait up to 10s for a transient Windows lock.
+async function waitFor(predicate) {
+  const deadline = Date.now() + 15000;
+  while (!predicate()) {
+    assert.ok(Date.now() < deadline, 'Expected asynchronous controller result was not observed.');
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}
+
+test('Claude preserves a saved native model and rejects removed catalog IDs without replay', async () => {
+  const models = [
+    {model: 'claude-future', displayName: 'Future', supportedReasoningEfforts: [{reasoningEffort: 'ultra'}]},
+    {model: 'claude-second', displayName: 'Second', supportedReasoningEfforts: []}
+  ];
+  const f = await fixture({models});
+  try {
+    const {threadId} = await f.controller.open({model: 'claude-future', effort: 'ultra'});
+    await f.controller.open({threadId, model: 'claude-future'});
+    assert.equal(f.hostOptions.model, 'claude-future');
+    assert.equal(f.hostOptions.effort, 'ultra');
+    await f.controller.selectModel({threadId, model: 'claude-second'});
+    assert.equal(f.hostOptions.model, 'claude-second');
+    assert.equal((await listMainSessions(f.root)).sessions[0].model, 'claude-second');
+    assert.equal(f.host.startCalls.length, 0);
+    models.splice(1, 1);
+    await assert.rejects(f.controller.open({threadId, model: 'claude-second'}), /未提供/);
+    assert.equal((await listMainSessions(f.root)).sessions[0].model, 'claude-second');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('cancelled Claude initialization closes a late host and does not turn ready; next open succeeds', async () => {
+  let entered,
+    release,
+    calls = 0;
+  const started = new Promise(r => {
+      entered = r;
+    }),
+    gate = new Promise(r => {
+      release = r;
+    });
+  const f = await fixture({
+    waitForHost: async () => {
+      if (++calls === 1) {
+        entered();
+        await gate;
+      }
+    }
+  });
+  const pending = f.controller.open({});
+  const rejected = assert.rejects(pending, /取消/);
+  await started;
+  const late = f.host;
+  let closed = false;
+  void late.closed.then(() => {
+    closed = true;
+  });
+  const stop = f.controller.stop();
+  release();
+  await stop;
+  await rejected;
+  assert.equal(closed, true);
+  assert.notEqual(f.controller.state.status, 'ready');
+  assert.equal(f.controller.state.threadId, null);
+  await f.controller.open({});
+  assert.equal(f.controller.state.status, 'ready');
   await f.controller.close();
-
-  await f.controller.open({threadId});
-  const reopened=f.controller.state.messages.find(message=>message.id===user.id);
-  assert.deepEqual(reopened.attachments.map(({id,name,size,kind})=>({id,name,size,kind})),expected);
- }finally{await f.controller.close();}
-});
-test('Claude rejects a foreign-thread attachment before starting a native turn',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});
-  const foreign=await saveAttachment(f.root,'foreign-thread',{name:'foreign.txt',base64:Buffer.from('foreign').toString('base64')});
-  await assert.rejects(f.controller.send({text:'不可送出',attachmentIds:[foreign.id]}),/不能把其他對話的附件帶入/);
-  assert.equal(f.host.startCalls.length,0);
-  assert.notEqual(f.controller.state.status,'working');
- }finally{await f.controller.close();}
-});
-test('quota reads official control without model turns, throttles, preserves stale values',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});let calls=0;
-  f.host.usage=async()=>{calls++;return {rate_limits_available:true,subscription_type:'pro',rate_limits:{five_hour:{utilization:4,resets_at:'2026-09-24T09:00:00Z'},seven_day:{utilization:1,resets_at:null}}};};
-  const first=await f.controller.usage();assert.equal(first.claude.windows[0].remainingPercent,96);
-  await f.controller.usage();assert.equal(calls,1);assert.equal(f.host.startCalls.length,0);
-  f.host.usage=async()=>{throw Error('offline');};
-  const stale=await f.controller.usage(true);assert.equal(stale.claude.status,'stale');assert.equal(stale.claude.windows[0].remainingPercent,96);
-  f.hostOptions.onMessage({type:'rate_limit_event',uuid:'rate-limit-usage',rate_limit_info:{status:'allowed',overageStatus:'rejected',overageDisabledReason:'org_level_disabled'}});
-  const refreshed=await f.controller.usage(true);assert.equal(refreshed.claude.rateLimitStatus,'allowed');assert.equal(refreshed.claude.extraUsageDisabled,true);
- }finally{await f.controller.close();}
-});
-
-for(const method of ['start','wait','inspect','cancel'])test(`manual ${method} settled result suppresses subsequent completion notification`,async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});
-  await f.gatewayOptions.bridge.start({requestId:'manual',task:'bounded'});
-  const r={parentId:f.controller.state.threadId,requestId:'manual',settled:true,status:'completed',output:'done'};
-  f.bridgeOptions.onChange(r);f.bridge[method]=async()=>r;
-  const result=await f.gatewayOptions.bridge[method]({requestId:'manual',task:'bounded'});
-  f.gatewayOptions.bridge.resultReady({requestId:'manual'},result);
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,1);
- }finally{await f.controller.close();}
-});
-for(const status of ['failed','unresolved'])test(`${status} observation is a separate status notice and does not consume final completion`,async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'later',task:'bounded'});
-  const r={parentId:f.controller.state.threadId,requestId:'later',settled:false,status};
-  f.bridgeOptions.onChange(r);f.bridgeOptions.onChange(r);
-  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
-  const attention=f.host.startCalls[1][0].text;assert.match(attention,/K 子代理狀態通知/);assert.match(attention,/不是完成通知/);assert.doesNotMatch(attention,/K 工人完成通知/);
-  assert.match(f.controller.state.messages.at(-1).summary,/狀態待確認/);assert.doesNotMatch(f.controller.state.messages.at(-1).summary,/工作完成/);
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  f.bridgeOptions.onChange(r);f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,2,'repeated unknown observation uses the same status notice key');
-  const settled={...r,settled:true,status:'completed',output:'done'};
-  f.bridgeOptions.onChange(settled);await waitFor(()=>f.host.startCalls.length===3);
-  assert.match(f.host.startCalls[2][0].text,/K 工人完成通知/);assert.doesNotMatch(f.host.startCalls[2][0].text,/K 子代理狀態通知/);
-  f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onChange(settled);await tick();assert.equal(f.host.startCalls.length,3,'final completion is delivered once');
- }finally{await f.controller.close();}
-});
-test('pre-send result preparation failure keeps conversation usable without replay',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'bad',task:'bounded'});
-  const r={parentId:f.controller.state.threadId,requestId:'bad',settled:true,status:'completed',output:'x'.repeat(5000),workspace:'relative-invalid'};
-  f.bridgeOptions.onChange(r);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.controller.state.error?.includes('luna_inspect'));
-  assert.equal(f.controller.state.status,'completed');assert.equal(f.controller.state.busy,false);assert.match(f.controller.state.error,/luna_inspect/);
-  assert.equal(f.host.startCalls.length,1);f.bridgeOptions.onChange(r);await tick();assert.equal(f.host.startCalls.length,1);
-  await f.controller.send({text:'continue normally'});assert.equal(f.host.startCalls.length,2);
- }finally{await f.controller.close();}
-});
-test('switching workspace suppresses cancellation and late completion events',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'switch',task:'bounded'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const old=f.host,r={parentId:f.controller.state.threadId,requestId:'switch',settled:false,status:'running'};
-  f.bridge.records=[r];f.bridge.cancel=async()=>{f.bridgeOptions.onChange({...r,settled:true,status:'cancelled'});await tick();return {settled:true};};
-  await f.controller.selectWorkspace({path:f.root});f.bridgeOptions.onChange({...r,settled:true,status:'completed'});await tick();
-  assert.equal(old.startCalls.length,1);assert.equal(f.controller.state.status,'idle');
- }finally{await f.controller.close();}
-});
-test('idle quota refresh uses five-minute interval and manual refresh bypasses it',async()=>{
- const f=await fixture();const now=Date.now;let time=now();Date.now=()=>time;
- try{
-  await f.controller.usage();const first=f.host;
-  time+=61000;await f.controller.usage();assert.equal(f.host,first);
-  time+=240000;await f.controller.usage();assert.notEqual(f.host,first);
-  const second=f.host;await f.controller.usage(true);assert.notEqual(f.host,second);
- }finally{Date.now=now;await f.controller.close();}
-});
-
-test('manual unfinished inspection keeps automatic completion armed',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'running',task:'bounded'});
-  f.gatewayOptions.bridge.resultReady({requestId:'running'},{settled:false,status:'running'});
-  f.bridgeOptions.onChange({parentId:f.controller.state.threadId,requestId:'running',settled:true,status:'completed',output:'done'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);assert.equal(f.host.startCalls.length,2);
- }finally{await f.controller.close();}
-});
-test('manual cancel disarms before an uncertain cancellation result',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'cancel-uncertain',task:'bounded'});
-  f.bridge.cancel=async()=>{throw Error('cancel unconfirmed');};
-  await assert.rejects(f.gatewayOptions.bridge.cancel({requestId:'cancel-uncertain'}),/unconfirmed/);
-  f.bridgeOptions.onChange({parentId:f.controller.state.threadId,requestId:'cancel-uncertain',settled:true,status:'completed',output:'late'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,1);
- }finally{await f.controller.close();}
-});
-
-test('native Claude input acknowledges UUID and does not finish before deferred input result',async()=>{
- const f=await fixture();try{
- await f.controller.open({});await f.controller.send({text:'A'});
- await f.controller.steer({text:'C'});const c=f.controller.state.messages.at(-1);
- assert.equal(c.source,'steer');assert.equal(c.groupId,f.controller.state.messages[0].groupId);
- f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.busy,true);
- f.hostOptions.onMessage({type:'user',uuid:c.id,isReplay:true,message:{content:'C'}});assert.equal(c.delivery,'received');
- f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
- }finally{await f.controller.close();}
-});
-
-test('native Claude fork requests new session with source history and preserves original projection',async()=>{
- const f=await fixture();try{
- await f.controller.open({});await f.controller.send({text:'ORIGINAL'});
- f.hostOptions.onMessage({type:'assistant',uuid:'answer',message:{content:[{type:'text',text:'conclusion'}]}});
- f.hostOptions.onMessage({type:'result',is_error:false});
- assert.equal(f.controller.state.messages.at(-1).partial,undefined);
- const parent=f.controller.state.threadId;
- const r=await f.controller.fork({messageId:'answer',accessMode:'claude-auto'});
- assert.notEqual(r.threadId,parent);assert.equal(f.hostOptions.forkFrom,parent.slice(7));assert.equal(f.hostOptions.accessMode,'claude-auto');
- assert.equal(f.controller.state.messages[0].text,'ORIGINAL');
- const original=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',parent+'.json'),'utf8'));
- assert.equal(original.messages.at(-1).text,'conclusion');
- }finally{await f.controller.close();}
-});
-
-test('Claude inherited attachment preview and download survive reopen, second fork and workspace move without granting send',async()=>{
- const f=await fixture();try{
-  const {threadId:parent}=await f.controller.open({});
-  const a=await f.controller.upload({threadId:parent,name:'繼承.txt',base64:Buffer.from('Claude 假原文').toString('base64')});
-  await f.controller.send({text:'ORIGINAL',attachmentIds:[a.id]});
-  f.hostOptions.onMessage({type:'assistant',uuid:'answer',message:{content:[{type:'text',text:'conclusion'}]}});f.hostOptions.onMessage({type:'result',is_error:false});
-  const {threadId:child}=await f.controller.fork({messageId:'answer',accessMode:'claude-auto'});
-  const check=async()=>{assert.equal((await f.controller.attachmentFile(a.id)).bytes.toString(),'Claude 假原文');const source=await f.controller.attachmentSource(a.id,{threadId:f.controller.state.threadId});assert.equal((await readFile(source.path)).toString(),'Claude 假原文');};
-  await check();await f.controller.close();await f.controller.open({threadId:child});await check();
-  const destination=path.join(f.root,'moved');await mkdir(destination);await f.controller.close();await f.controller.open({threadId:child},{relocation:{workspace:destination,previousWorkspaces:[f.root],previousArtifacts:[]}});await check();
-  const {threadId:grandchild}=await f.controller.fork({messageId:'answer',accessMode:'claude-auto'});await check();await f.controller.close();await f.controller.open({threadId:grandchild});await check();
-  await assert.rejects(f.controller.send({text:'not sent',attachmentIds:[a.id]}),/其他對話/);assert.equal(f.host.startCalls.length,0);
-  f.controller.state.busy=true;await assert.rejects(f.controller.steer({text:'not steered',attachmentIds:[a.id]}),/其他對話/);f.controller.state.busy=false;assert.equal(f.host.startCalls.length,0);
-  const foreign=await saveAttachment(f.root,'unrelated',{name:'foreign.txt',base64:'eA=='});await assert.rejects(f.controller.attachmentFile(foreign.id));
-  const card=f.controller.state.messages[0].attachments[0];const owner=card.threadId;card.threadId='unrelated';await assert.rejects(f.controller.attachmentFile(a.id));card.threadId=owner;
- }finally{await f.controller.close();}
-});
-
-test('Claude fork requires explicit confirmation when escalating to bypass permissions',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'ORIGINAL'});
-  f.hostOptions.onMessage({type:'assistant',uuid:'answer',message:{content:[{type:'text',text:'conclusion'}]}});
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  await assert.rejects(f.controller.fork({messageId:'answer',accessMode:'claude-bypassPermissions'}),/permissionConfirmed:true/);
-  await f.controller.fork({messageId:'answer',accessMode:'claude-bypassPermissions',permissionConfirmed:true});
-  assert.equal(f.hostOptions.accessMode,'claude-bypassPermissions');
- }finally{await f.controller.close();}
-});
-
-test('stopped Claude partial answer is persisted and cannot be forked',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'ORIGINAL'});
-  f.hostOptions.onMessage({type:'assistant',uuid:'answer-partial',message:{content:[{type:'text',text:'unfinished'}]}});
-  assert.equal(f.controller.state.messages.at(-1).partial,true);
-  await f.controller.stop();
-  assert.equal(f.controller.state.messages.at(-1).partial,true);
-  await assert.rejects(f.controller.fork({messageId:'answer-partial'}),/尚未完成/);
-  const saved=JSON.parse(await readFile(path.join(f.root,'.runtime/claude-sessions',f.controller.state.threadId+'.json'),'utf8'));
-  assert.equal(saved.messages.at(-1).partial,true);
- }finally{await f.controller.close();}
-});
-
-test('replay does not restart Claude while fresh assistant and tool-result events start the next native turn',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'first'});
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.status,'completed');
-  f.hostOptions.onMessage({type:'assistant',isReplay:true,uuid:'old-assistant',message:{content:[{type:'text',text:'old answer'}]}});
-  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.status,'completed');
-  f.hostOptions.onMessage({type:'assistant',uuid:'tool-call',message:{content:[{type:'tool_use',id:'tool-1',name:'Read',input:{file_path:'README.md'}}]}});
-  assert.equal(f.controller.state.busy,true);assert.equal(f.controller.state.status,'working');
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.status,'completed');
-  f.hostOptions.onMessage({type:'user',message:{content:[{type:'tool_result',tool_use_id:'tool-1',content:'read'}]}});
-  assert.equal(f.controller.state.busy,true);assert.equal(f.controller.state.status,'working');
-  await f.controller.stop();
-  f.hostOptions.onMessage({type:'assistant',uuid:'late-answer',message:{content:[{type:'text',text:'late'}]}});
-  f.hostOptions.onMessage({type:'result',is_error:false});
-  assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.status,'interrupted');
- }finally{await f.controller.close();}
-});
-
-test('native partial text merges with final envelopes despite intervening thinking and child events',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'stream test'});const emit=f.hostOptions.onMessage;
-  const stream=event=>emit({type:'stream_event',event,parent_tool_use_id:null});
-  stream({type:'message_start',message:{id:'native-msg',usage:{input_tokens:12,cache_read_input_tokens:3,cache_creation_input_tokens:0}}});
-  emit({type:'assistant',uuid:'thinking-envelope',message:{id:'native-msg',content:[{type:'thinking',thinking:'not displayed'}]}});
-  stream({type:'content_block_start',index:1,content_block:{type:'text',text:''}});
-  stream({type:'content_block_delta',index:1,delta:{type:'text_delta',text:'Hello'}});
-  assert.equal(f.controller.state.messages.at(-1).text,'Hello');
-  assert.equal(f.controller.state.messages.at(-1).streaming,true);
-  emit({type:'stream_event',parent_tool_use_id:'child-tool',event:{type:'message_start',message:{id:'child-msg'}}});
-  stream({type:'content_block_delta',index:1,delta:{type:'text_delta',text:' world'}});
-  emit({type:'assistant',uuid:'final-envelope',message:{id:'native-msg',content:[{type:'text',text:'Hello world'}]}});
-  stream({type:'message_stop'});
-  const rows=f.controller.state.messages.filter(m=>m.role==='assistant');assert.equal(rows.length,1);assert.equal(rows[0].text,'Hello world');assert.equal(rows[0].streaming,undefined);
-  assert.equal(f.controller.state.progress.tokenUsage.last.totalTokens,15);
-  emit({type:'result',is_error:false});assert.equal(f.controller.state.messages.at(-1).partial,undefined);
-  stream({type:'content_block_delta',index:1,delta:{type:'text_delta',text:'orphan'}});assert.equal(f.controller.state.busy,false);
-  // Native next turn can begin after the preceding result, while replay cannot wake it.
-  emit({type:'stream_event',isReplay:true,event:{type:'message_start',message:{id:'replay'}}});assert.equal(f.controller.state.busy,false);
-  stream({type:'message_start',message:{id:'next'}});assert.equal(f.controller.state.busy,true);
-  await f.controller.stop();stream({type:'content_block_delta',index:0,delta:{type:'text_delta',text:'late'}});assert.equal(f.controller.state.busy,false);assert.equal(f.controller.state.messages.at(-1).text,'Hello world');
- }finally{await f.controller.close();}
-});
-
-
-test('busy Claude accepts draft attachments without sending or interrupting the active turn',async()=>{
- const f=await fixture();try{await f.controller.open({});await f.controller.send({text:'A'});
- for(let i=0;i<3;i++)f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting',uuid:`status-${i}`});
- assert.deepEqual(f.controller.state.notices,[]);
- const a=await f.controller.upload({threadId:f.controller.state.threadId,name:'queued.txt',base64:Buffer.from('B fixture').toString('base64')});
- assert.ok(a.id);assert.equal(f.controller.state.busy,true);assert.equal(f.host.startCalls.length,1);
- await assert.rejects(f.controller.upload({threadId:'foreign',name:'x.txt',base64:'WA=='}),/對話已切換/);
- }finally{await f.controller.close();}
-});
-
-test('native Claude child events belong to workers and do not enter the main conclusion',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});
-  const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'agent-call',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'agent-1',name:'Agent',input:{description:'Inspect the tests',prompt:'Find relevant tests'}}]}});
-  emit({type:'user',uuid:'child-prompt',parent_tool_use_id:'agent-1',message:{content:'Find relevant tests'}});
-  emit({type:'assistant',uuid:'child-answer',parent_tool_use_id:'agent-1',message:{content:[{type:'text',text:'Found two focused tests.'}]}});
-  assert.equal(f.controller.state.workers.length,1);
-  assert.equal(f.controller.state.workers[0].provider,'claude-native');
-  assert.equal(f.controller.state.workers[0].requestId,'agent-1');
-  assert.equal(f.controller.state.workers[0].task,'Inspect the tests');
-  assert.equal(f.controller.state.workers[0].prompt,'Find relevant tests');
-  assert.equal(f.controller.state.workers[0].output,'Found two focused tests.');
-  assert.equal(f.controller.state.messages.some(item=>item.text?.includes('Found two focused tests.')),false);
-  emit({type:'user',uuid:'tool-return',parent_tool_use_id:null,message:{content:[{type:'tool_result',tool_use_id:'agent-1',content:'completed'}]}});
-  assert.equal(f.controller.state.workers[0].status,'unresolved','a result block alone cannot distinguish completed from async_launched');
-  emit({type:'user',uuid:'tool-return-authoritative',parent_tool_use_id:null,tool_use_result:{status:'completed',agentId:'native-agent-1',content:[],totalToolUseCount:2,totalDurationMs:40,totalTokens:12,usage:{input_tokens:8,output_tokens:4}},message:{content:[{type:'tool_result',tool_use_id:'agent-1',content:'completed'}]}});
-  assert.equal(f.controller.state.workers[0].status,'completed','explicit SDK AgentOutput metadata establishes synchronous completion');
-  assert.equal(f.controller.state.workers[0].settled,true);
-  emit({type:'assistant',uuid:'child-answer-late-new-id',parent_tool_use_id:'agent-1',message:{content:[{type:'text',text:'late child event'}]}});
-  assert.equal(f.controller.state.workers[0].status,'completed','late child events cannot revive a settled worker');
-  assert.equal(f.controller.state.messages.some(item=>item.text?.includes('Find relevant tests')),false);
- }finally{await f.controller.close();}
-});
-
-test('native AgentOutput async and ambiguous results never claim synchronous completion',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'agent-async-call',message:{content:[{type:'tool_use',id:'agent-async',name:'Agent',input:{description:'Async child',prompt:'Continue later'}}]}});
-  emit({type:'assistant',uuid:'child-async',parent_tool_use_id:'agent-async',message:{content:[{type:'text',text:'started'}]}});
-  emit({type:'user',uuid:'async-result',toolUseResult:{status:'async_launched',agentId:'native-agent-async'},message:{content:[{type:'tool_result',tool_use_id:'agent-async',content:'running'}]}});
-  assert.equal(f.controller.state.workers[0].status,'unresolved');
-  emit({type:'assistant',uuid:'agent-other-call',message:{content:[{type:'tool_use',id:'agent-other',name:'Agent',input:{description:'Other child',prompt:'Continue'}}]}});
-  emit({type:'assistant',uuid:'child-other',parent_tool_use_id:'agent-other',message:{content:[{type:'text',text:'started'}]}});
-  emit({type:'user',uuid:'ambiguous-result',tool_use_result:{status:'completed',agentId:'wrong-association'},message:{content:[{type:'tool_result',tool_use_id:'agent-other',content:'done'},{type:'tool_result',tool_use_id:'agent-async',content:'done'}]}});
-  assert.equal(f.controller.state.workers.find(item=>item.requestId==='agent-other').status,'unresolved');
- }finally{await f.controller.close();}
-});
-
-test('native background Agent starts before child text and settles from task notification',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'synthetic background agent'});
-  const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',message:{content:[{type:'tool_use',id:'agent-bg',name:'Agent',input:{run_in_background:true}}]}});
-  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'native-bg',tool_use_id:'agent-bg',is_backgrounded:true});
-  assert.equal(f.controller.state.workers[0].status,'running');
-  assert.equal(f.controller.state.workers[0].kind,undefined,'agents are not background commands');
-  emit({type:'user',tool_use_result:{status:'async_launched'},message:{content:[{type:'tool_result',tool_use_id:'agent-bg',content:'launched'}]}});
-  assert.equal(f.controller.state.workers[0].status,'running');
-  emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg',message:{content:[{type:'text',text:'BG_DONE'}]}});
-  assert.equal(f.controller.state.workers.length,1);
-  emit({type:'system',subtype:'task_notification',task_id:'native-bg',status:'completed',summary:'BG_DONE'});
-  assert.equal(f.controller.state.workers[0].status,'completed');assert.equal(f.controller.state.workers[0].settled,true);
-  emit({type:'user',tool_use_result:{status:'async_launched'},message:{content:[{type:'tool_result',tool_use_id:'agent-bg',content:'late launch result'}]}});
-  emit({type:'assistant',parent_tool_use_id:'agent-bg',uuid:'child-bg-late',message:{content:[{type:'text',text:'late child text'}]}});
-  assert.equal(f.controller.state.workers[0].status,'completed','late events cannot revive a completed child');
- }finally{await f.controller.close();}
-});
-
-test('Claude persists unique automatic and manual boundaries across a fresh controller and separate rooms',async()=>{
- const f=await fixture();let reopened;
- try{
-  const {threadId}=await f.controller.open({});
-  const boundary={type:'system',subtype:'compact_boundary',uuid:'auto-complete',session_id:threadId.slice(7),compact_metadata:{trigger:'auto'}};
-  f.hostOptions.onMessage({...boundary,parent_tool_use_id:'child'});f.hostOptions.onMessage({...boundary,session_id:'foreign'});assert.equal(f.controller.state.progress.compactions,0);
-  f.hostOptions.onMessage(boundary);f.hostOptions.onMessage({...boundary,isReplay:true});assert.equal(f.controller.state.progress.compactions,1);
-  // Flush through an ordinary UI operation, not close: the completed boundary saves immediately.
-  await f.controller.metadata({threadId,title:'saved boundary'});
-  let record=JSON.parse(await readFile(path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`),'utf8'));
-  assert.deepEqual(record.compactions,{ids:['auto-complete'],complete:true,inFlight:false});
-  await f.controller.open({});assert.equal(f.controller.state.progress.compactions,0);
-  await f.controller.close();reopened=f.createController();await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,true);
-  f.hostOptions.onMessage({...boundary,isReplay:true});assert.equal(reopened.state.progress.compactions,1);
-  await reopened.open({forkFrom:threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,true);
- }finally{await f.controller.close();await reopened?.close();}
-});
-
-test('Claude old or interrupted projections stay unknown, and result success alone never counts',async()=>{
- const f=await fixture();let reopened;
- try{
-  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
-  await f.controller.compact();f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.progress.compactions,0);assert.equal(f.controller.state.progress.compactionsComplete,false);
-  await f.controller.close();const record=JSON.parse(await readFile(file,'utf8'));delete record.compactions;await writeFile(file,JSON.stringify(record));
-  reopened=f.createController();await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,null);assert.equal(reopened.state.progress.compactionsComplete,false);
-  const boundary={type:'system',subtype:'compact_boundary',uuid:'new-confirmed',session_id:threadId.slice(7)};
-  f.hostOptions.onMessage(boundary);assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,false);
-  await reopened.close();const known=JSON.parse(await readFile(file,'utf8'));known.compactions={ids:['new-confirmed'],complete:true,inFlight:true};await writeFile(file,JSON.stringify(known));
-  await reopened.open({threadId});assert.equal(reopened.state.progress.compactions,1);assert.equal(reopened.state.progress.compactionsComplete,false);
- }finally{await f.controller.close();await reopened?.close();}
-});
-
-test('Claude failed manual compression does not count; late confirmed boundary does not restart work',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});await f.controller.compact();f.hostOptions.onMessage({type:'result',is_error:true});assert.equal(f.controller.state.progress.compactions,0);
-  f.controller.state.status='interrupted';f.controller.state.busy=false;
-  f.hostOptions.onMessage({type:'system',subtype:'compact_boundary',uuid:'late-confirmed',session_id:threadId.slice(7)});
-  assert.equal(f.controller.state.progress.compactions,1);assert.equal(f.controller.state.status,'interrupted');assert.equal(f.controller.state.busy,false);
- }finally{await f.controller.close();}
-});
-
-test('Claude marks native submission and autonomous continuation in flight before a crash',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
-  const read=async()=>JSON.parse(await readFile(file,'utf8'));
-  f.host.start=async()=>assert.equal((await read()).compactions.inFlight,true,'saved before native start');
-  await f.controller.send({text:'fake work'});f.hostOptions.onMessage({type:'result',is_error:false});
-  await f.controller.metadata({threadId,title:'completed'});assert.equal((await read()).compactions.inFlight,false);
-  f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting'});
-  await f.controller.metadata({threadId,title:'autonomous turn'});assert.equal((await read()).compactions.inFlight,true);
-  await f.host.close();await new Promise(resolve=>setImmediate(resolve));await f.controller.metadata({threadId,title:'disconnected'});
-  assert.equal(f.controller.state.progress.compactionsComplete,false);assert.equal((await read()).compactions.complete,false);
- }finally{await f.controller.close();}
-});
-
-test('closing an already closed Claude controller cannot overwrite newer persisted counts',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});await f.controller.close();
-  const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`),record=JSON.parse(await readFile(file,'utf8'));
-  record.compactions={ids:['newer'],complete:true,inFlight:false};await writeFile(file,JSON.stringify(record));
-  await f.controller.close();assert.deepEqual(JSON.parse(await readFile(file,'utf8')).compactions,record.compactions);
- }finally{await f.controller.close();}
-});
-
-test('Claude failed target workspace validation and close never mix the old room into the target record',async()=>{
- const f=await fixture();try{
-  const {threadId:target}=await f.controller.open({});await f.controller.metadata({threadId:target,title:'target untouched'});
-  const file=path.join(f.root,'.runtime','claude-sessions',`${target}.json`),before=JSON.parse(await readFile(file,'utf8'));
-  const {threadId:source}=await f.controller.open({});await f.controller.metadata({threadId:source,title:'different source'});
-  f.hostOptions.onMessage({type:'system',subtype:'compact_boundary',uuid:'source-only',session_id:source.slice(7)});
-  await assert.rejects(f.controller.open({threadId:target},{relocation:{workspace:path.join(f.root,'does-not-exist')}}));
-  assert.equal(f.controller.state.threadId,source);assert.equal(f.controller.state.progress.compactions,1);
-  await f.controller.close();assert.deepEqual(JSON.parse(await readFile(file,'utf8')),before);
- }finally{await f.controller.close();}
-});
-
-for(const operation of ['send','compact'])test(`Claude ${operation} serializes its in-flight marker after an older result snapshot`,async t=>{
- const f=await fixture();let release;
- try{
-  const {threadId}=await f.controller.open({});const file=path.join(f.root,'.runtime','claude-sessions',`${threadId}.json`);
-  let enter,nativeStart;const entered=new Promise(resolve=>{enter=resolve;}),gate=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{nativeStart=resolve;});
-  const original=fs.rename;let held=false;
-  const mock=t.mock.method(fs,'rename',async(from,to)=>{
-   if(!held&&to===file&&JSON.parse(await fs.readFile(from,'utf8')).compactions?.inFlight===false){held=true;enter();await gate;}
-   return original(from,to);
-  });syncBuiltinESMExports();t.after(()=>{mock.mock.restore();syncBuiltinESMExports();});
-  f.host.start=async()=>{nativeStart();assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true);};
-  f.hostOptions.onMessage({type:'result',is_error:false});await entered;
-  const pending=f.controller[operation]({text:'fake next turn'});
-  assert.equal(await Promise.race([started.then(()=>true),new Promise(resolve=>setTimeout(()=>resolve(false),100))]),false,'old snapshot must settle before sending native work');
-  release();await pending;await f.controller.metadata({threadId,title:'queue flushed'});
-  assert.equal(JSON.parse(await readFile(file,'utf8')).compactions.inFlight,true);
- }finally{release?.();await f.controller.close();}
-});
-
-test('an unsent Claude room survives close and a new controller, with or without a rename',async()=>{
- for(const title of ['', 'named before first message']){
-  const f=await fixture(),policy={model:'gpt-6.1-sol',effort:'xhigh'};let controller=f.controller;
-  try{
-   const {threadId}=await controller.open({model:'claude-opus-5-5',effort:'high',accessMode:'claude-plan',workerPolicy:policy});
-   if(title)await controller.metadata({threadId,title});
-   assert.equal(controller.state.messages.length,0);assert.deepEqual(f.host.startCalls,[]);
-   await controller.close();controller=f.createController();
-   await controller.open({threadId,model:'claude-opus-5-5'});
-   assert.equal(controller.state.title,title);assert.equal(controller.state.model,'claude-opus-5-5');assert.equal(controller.state.effort,'high');
-   assert.equal(controller.state.accessMode,'claude-plan');assert.deepEqual(controller.state.workerPolicy,policy);
-   assert.equal(controller.state.workspace,f.root);assert.equal(f.hostOptions.resume,false);
-   await controller.send({text:'first turn after reopen'});
-   assert.equal(f.host.startCalls.length,1);assert.equal(f.host.startCalls[0][0].text,'first turn after reopen');
-   assert.equal(f.hostOptions.resume,false);
-  }finally{await controller.close();}
- }
-});
-
-test('renaming an inactive unsent Claude room preserves its own effort and worker policy',async()=>{
- const f=await fixture(),firstPolicy={model:'gpt-6.1-sol',effort:'xhigh'},secondPolicy={model:'gpt-6-luna',effort:'low'};
- try{
-  const first=await f.controller.open({effort:'low',workerPolicy:firstPolicy}),second=await f.controller.open({effort:'high',workerPolicy:secondPolicy});
-  await f.controller.metadata({threadId:first.threadId,title:'renamed while inactive'});
-  const listed=(await listMainSessions(f.root)).sessions;
-  const firstSummary=listed.find(row=>row.threadId===first.threadId),secondSummary=listed.find(row=>row.threadId===second.threadId);
-  assert.equal(firstSummary.title,'renamed while inactive');assert.equal(firstSummary.effort,'low');assert.deepEqual(firstSummary.workerPolicy,firstPolicy);
-  assert.equal(secondSummary.effort,'high');assert.deepEqual(secondSummary.workerPolicy,secondPolicy);
-  await f.controller.open({threadId:first.threadId});
-  assert.equal(f.controller.state.effort,'low');assert.deepEqual(f.controller.state.workerPolicy,firstPolicy);
- }finally{await f.controller.close();}
-});
-
-test('late native child events after stop cannot recreate or revive workers',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'agent-live-call',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'agent-live',name:'Agent',input:{description:'Live child',prompt:'Probe only'}}]}});
-  emit({type:'assistant',uuid:'child-live',parent_tool_use_id:'agent-live',message:{content:[{type:'text',text:'Working'}]}});
-  await f.controller.stop();
-  emit({type:'assistant',uuid:'child-late',parent_tool_use_id:'late-agent',message:{content:[{type:'text',text:'late'}]}});
-  emit({type:'assistant',uuid:'child-live',parent_tool_use_id:'agent-live',message:{content:[{type:'text',text:'Working'}]}});
-  assert.equal(f.controller.state.workers.length,1);
-  assert.equal(f.controller.state.workers[0].status,'interrupted');
-  assert.equal(f.controller.state.workers[0].settled,true);
-  assert.equal(f.controller.state.workers[0].output,'Working');
- }finally{await f.controller.close();}
-});
-
-test('native child is not settled by interrupt request until host closure is confirmed',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});
-  f.hostOptions.onMessage({type:'assistant',uuid:'agent-stop-call',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'agent-stop',name:'Agent',input:{description:'Pending child',prompt:'Wait'}}]}});
-  f.hostOptions.onMessage({type:'assistant',uuid:'child-stop',parent_tool_use_id:'agent-stop',message:{content:[{type:'text',text:'Still working'}]}});
-  let confirmClose;
-  f.host.close=()=>new Promise(resolve=>{confirmClose=resolve;});
-  const stopping=f.controller.stop();
-  await tick();
-  assert.equal(f.host.interrupted,true);
-  assert.notEqual(f.controller.state.workers[0].settled,true,'interrupt request alone is not proof of termination');
-  confirmClose();await stopping;
-  assert.equal(f.controller.state.workers[0].status,'interrupted');
-  assert.equal(f.controller.state.workers[0].settled,true);
- }finally{await f.controller.close();}
-});
-
-test('failed Claude close retains host for retries and never reports a second failed close as success',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});
-  const retained=f.host,original=retained.close.bind(retained);let closes=0;
-  retained.close=async()=>{closes++;if(closes<3)throw new Error(`close attempt ${closes} unconfirmed`);return original();};
-  await assert.rejects(f.controller.close(),/close attempt 1 unconfirmed/);
-  assert.equal(f.controller.state.status,'uncertain');assert.equal(f.host,retained);
-  await assert.rejects(f.controller.close(),/close attempt 2 unconfirmed/);
-  assert.equal(f.controller.state.status,'uncertain');assert.equal(f.host,retained);assert.equal(closes,2);
-  await f.controller.close();
-  assert.equal(closes,3);assert.equal(f.controller.state.status,'offline');
- }finally{await f.controller.close();}
-});
-
-test('failed Claude stop retains host and a later confirmed stop can retry it',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});
-  const retained=f.host,original=retained.close.bind(retained);let closes=0;
-  retained.close=async()=>{closes++;if(closes===1)throw new Error('stop close unconfirmed');return original();};
-  await assert.rejects(f.controller.stop(),/stop close unconfirmed/);
-  assert.equal(f.controller.state.status,'uncertain');assert.equal(f.host,retained);assert.equal(closes,1);
-  await f.controller.stop();
-  assert.equal(closes,2);assert.equal(f.controller.state.status,'interrupted');
- }finally{await f.controller.close();}
-});
-
-test('Claude TodoWrite replaces the progress plan using the official schema',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'todos',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'todo-1',name:'TodoWrite',input:{todos:[{content:'Inspect events',status:'in_progress',activeForm:'Inspecting events'},{content:'Add tests',status:'pending',activeForm:'Adding tests'}]}}]}});
-  assert.deepEqual(f.controller.state.progress.plan,[{step:'Inspect events',status:'in_progress',activeForm:'Inspecting events'},{step:'Add tests',status:'pending',activeForm:'Adding tests'}]);
-  emit({type:'assistant',uuid:'bad-todos',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'todo-2',name:'TodoWrite',input:{todos:[{content:'Bad',status:'unknown',activeForm:'Bad'}]}}]}});
-  assert.equal(f.controller.state.progress.plan.length,2);
- }finally{await f.controller.close();}
-});
-
-test('Claude ExitPlanMode presents existing plan at the native approval entry point',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});const emit=f.hostOptions.onMessage;
-  emit({type:'assistant',uuid:'todos-for-plan',parent_tool_use_id:null,message:{content:[{type:'tool_use',id:'todo-plan',name:'TodoWrite',input:{todos:[{content:'Review scope',status:'completed',activeForm:'Reviewing scope'}]}}]}});
-  const pending=f.hostOptions.onPermission({toolName:'ExitPlanMode',input:{plan:'# 驗收計畫\n1. 檢查回歸測試',planFilePath:'C:/unread-plan.md'}});
-  await new Promise(resolve=>setImmediate(resolve));
-  const question=f.controller.state.questions[0];
-  assert.equal(question.kind,'approval');assert.equal(question.title,'Claude Code 提出計畫');
-  assert.match(question.text,/檢視工作計畫/);assert.match(question.text,/# 驗收計畫/);assert.equal(question.details.plan,'# 驗收計畫\n1. 檢查回歸測試');
-  await f.controller.answer({id:question.id,accept:false});
-  assert.equal((await pending).behavior,'deny');
- }finally{await f.controller.close();}
-});
-
-test('Claude preserves chosen worker defaults through saving and reconnect, with lazy Codex startup',async()=>{
- const f=await fixture();const policy={model:'gpt-6.1-sol',effort:'xhigh'};
- try{
-  const {threadId}=await f.controller.open({workerPolicy:policy});
-  assert.deepEqual(f.controller.state.workerPolicy,policy);assert.equal(f.bridgeOptions,undefined);
-  assert.deepEqual((await f.controller.sessions()).sessions[0].workerPolicy,policy);
-  await f.controller.stop();await f.controller.open({threadId});
-  assert.deepEqual(f.controller.state.workerPolicy,policy);
-  await f.gatewayOptions.bridge.start({requestId:'selected',task:'fake task',model:'gpt-6-luna',effort:'low'});
-  assert.deepEqual(f.bridgeOptions.workerPolicy,policy);
- }finally{await f.controller.close();}
-});
-
-for(const model of ['claude-sonnet-5','claude-sonnet-5-5'])test(`${model} from the official catalog can be the main agent and retain its exact model`,async()=>{
- const models=[{model,displayName:'Sonnet',supportedReasoningEfforts:[{reasoningEffort:'low'},{reasoningEffort:'max'}]}];
- const f=await fixture({models});
- try{
-  assert.deepEqual((await f.controller.models()).models,models);
-  const {threadId}=await f.controller.open({model,effort:'low'});
-  assert.equal(f.hostOptions.model,model);assert.equal(f.hostOptions.effort,'low');
-  await f.controller.send({text:'fake Sonnet task'});assert.equal(f.host.startCalls.length,1);
-  await f.controller.stop();await f.controller.open({threadId,model});
-  assert.equal(f.controller.state.model,model);
-  assert.equal((await f.controller.sessions()).sessions[0].model,model);
-  await assert.rejects(f.controller.selectModel({threadId,model:'claude-not-in-catalog'}),/目前帳號未提供/);
- }finally{await f.controller.close();}
-});
-
-test('Claude lazy gateway exposes the same read-only Gemini account list without starting a worker',async()=>{
- const f=await fixture();let reads=0;f.bridge.accounts=async()=>{reads++;return {accounts:[{id:'a'.repeat(32),email:'fake@example.test'}]};};
- try{
-  await f.controller.open({});assert.equal(f.bridgeOptions,undefined);
-  const result=await f.gatewayOptions.bridge.accounts();assert.equal(result.accounts[0].email,'fake@example.test');assert.equal(reads,1);
-  assert.equal(f.bridge.records,undefined);assert.equal(f.controller.state.workers.length,0);
- }finally{await f.controller.close();}
-});
-
-test('Claude official Gemini ready notifies once after failed live goal and native backgrounds settle',async()=>{
- const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>args==='clear'?'Goal cleared: fake goal':args?'Goal set: '+args:'Goal active: fake goal (not yet evaluated)';}});try{
-  await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota-a',model:'gemini-3.8-flash'});await f.gatewayOptions.bridge.start({requestId:'quota-b',model:'gemini-3.8-flash'});
-  const event={parentId:f.controller.state.threadId,requestIds:['quota-a','quota-b'],accountId:'new-fake-account'},emit=f.hostOptions.onMessage;
-  f.bridgeOptions.onGeminiHandoff({...event,status:'waiting'});emit({type:'system',subtype:'task_started',task_type:'local_bash',task_id:'bg',tool_use_id:'bg-tool'});emit({type:'result',is_error:true,subtype:'error_during_execution',result:'fixture stream error'});await tick();assert.equal(f.host.startCalls.length,0);
-  f.bridgeOptions.onGeminiHandoff({...event,status:'ready'});await tick();assert.equal(f.host.startCalls.length,0);
-  emit({type:'system',subtype:'task_notification',task_id:'bg',status:'completed'});await waitFor(()=>f.host.startCalls.length===1);
-  assert.match(f.host.startCalls[0][0].text,/quota-a.*quota-b/);assert.match(f.host.startCalls[0][0].text,/handoffFrom/);assert.match(f.host.startCalls[0][0].text,/已保存成果/);
-  f.bridgeOptions.onGeminiHandoff({...event,status:'ready'});emit({type:'result',is_error:true,result:'fixture audit failed'});await tick();assert.equal(f.host.startCalls.length,1);
- }finally{await f.controller.close();}
-});
-
-for(const action of ['clear','stop','human-send','blocked','budget','unknown-goal','permission','stale-bridge'])test('Claude Gemini ready does not bypass '+action,async()=>{
- let nativeGoal='fake goal';const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake goal';}if(args){nativeGoal=args;return 'Goal set: '+args;}return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});try{
-  const {threadId}=await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});
-  const callback=f.bridgeOptions.onGeminiHandoff,event={parentId:threadId,requestIds:['quota'],accountId:'fake-account'};callback({...event,status:'waiting'});
-  f.hostOptions.onMessage({type:'result',is_error:true,result:'fixture failure',subtype:action==='budget'?'error_max_budget_usd':'error_during_execution',...(action==='permission'?{permission_denials:[{tool_name:'Write'}]}:{})});await tick();
-  if(action==='clear')await f.controller.goal({clear:true});
-  if(action==='stop')await f.controller.stop();
-  if(action==='human-send'){await f.controller.send({text:'new human work'});f.hostOptions.onMessage({type:'result',is_error:false});}
-  if(action==='unknown-goal')f.host.goal=async()=>{throw Error('fixture unknown native goal');};
-  if(action==='stale-bridge'){await f.controller.close();await f.controller.open({threadId});}
-  const before=f.host.startCalls.length;callback({...event,status:action==='blocked'?'blocked':'ready',reason:'fixture official result unknown'});await tick();assert.equal(f.host.startCalls.length,before);
- }finally{await f.controller.close();}
-});
-
-test('Claude Gemini ready rechecks clear after awaited native goal read',async()=>{
- let nativeGoal='fake goal',release,gate;const f=await fixture({waitForHost:async(_o,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake goal';}if(args){nativeGoal=args;return 'Goal set: '+args;}if(gate)await gate;return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});try{
-  await f.controller.open({});await f.controller.goal({objective:'fake goal'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:true,result:'fixture failure'});await tick();
-  gate=new Promise(r=>release=r);f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await tick();f.hostOptions.onMessage({type:'assistant',message:{model:'<synthetic>',content:[{type:'text',text:'Goal cleared: fake goal'}]},session_id:f.controller.state.threadId,local_command_run:{command:'goal'}});nativeGoal=null;release();await tick();assert.equal(f.host.startCalls.length,0);
- }finally{release?.();await f.controller.close();}
-});
-
-for(const action of ['native-takeover','human-send'])test('Claude completed Gemini ready preflight '+action+' preserves original results',async t=>{
- const f=await fixture();let release,patched,hit=false;const gate=new Promise(r=>release=r);try{
-  await f.controller.open({});await f.controller.send({text:'original work'});f.hostOptions.onMessage({type:'result',is_error:false});await tick();await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});
-  const row={parentId:f.controller.state.threadId,provider:'gemini',requestId:'quota',settled:true,status:'failed',output:'saved original result'};f.bridge.records=[row];
-  const original=fs.rename;patched=t.mock.method(fs,'rename',async(from,to)=>{if(!hit&&String(to).includes('claude-sessions')&&JSON.parse(await readFile(from,'utf8')).workerNotifications?.quota==='delivery-attempted'){hit=true;await gate;}return original(from,to);});syncBuiltinESMExports();
-  f.bridgeOptions.onChange(row);f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await waitFor(()=>hit);
-  let sending;if(action==='native-takeover')f.hostOptions.onMessage({type:'system',subtype:'status',status:'requesting'});else sending=f.controller.send({text:'new human work'});
-  release();await sending;await tick();patched.mock.restore();syncBuiltinESMExports();patched=null;
-  assert.equal(f.host.startCalls.length,action==='native-takeover'?1:2);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===(action==='native-takeover'?2:3));assert.match(f.host.startCalls.at(-1)[0].text,/saved original result/);
- }finally{release?.();if(patched){patched.mock.restore();syncBuiltinESMExports();}await f.controller.close();}
-});
-
-test('Claude completed Gemini ready consumes one episode and resolves ready info',async()=>{
- const f=await fixture();try{await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await waitFor(()=>f.host.startCalls.length===2&&!f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved));assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);f.hostOptions.onMessage({type:'result',is_error:false});await tick();assert.equal(f.host.startCalls.length,2);}finally{await f.controller.close();}
-});
-
-test('Claude accepted human steer suppresses old account-ready callback',async()=>{
- const f=await fixture();try{await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'quota',model:'gemini-3.8-flash'});const callback=f.bridgeOptions.onGeminiHandoff;callback({parentId:f.controller.state.threadId,requestIds:['quota'],status:'waiting'});assert.equal((await f.controller.steer({text:'new correction'})).steered,true);const steered=f.controller.state.messages.at(-1);f.hostOptions.onMessage({type:'user',uuid:steered.id,isReplay:true,message:{content:f.host.startCalls[1]}});f.hostOptions.onMessage({type:'result',is_error:false});callback({parentId:f.controller.state.threadId,requestIds:['quota'],status:'ready',accountId:'fake'});await tick();assert.equal(f.host.startCalls.length,2);}finally{await f.controller.close();}
-});
-
-for(const switched of [false,true])test('Claude Gemini ready account facts match switched='+switched,async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});await f.gatewayOptions.bridge.start({requestId:'not-started',model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});
-  f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['not-started'],status:'ready',accountId:'fake-a',switched,reason:'fixture official account check'});
-  await waitFor(()=>f.host.startCalls.length===2);const text=f.host.startCalls.at(-1)[0].text;
-  assert.match(text,/handoffFrom/);assert.match(text,/新的 requestId/);assert.match(text,/fixture official account check/);
-  if(switched){assert.match(text,/官方額度確認歸零/);assert.match(text,/查核切換就緒/);}else{assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);assert.match(text,/本次通知未切換帳號/);assert.match(text,/不表示之前沒有其他聊天室換過帳號/);assert.match(text,/已執行後失敗/);}
- }finally{await f.controller.close();}
-});
-
-test('Claude same-account mixed batch excludes executed failed work from ready scope',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'work'});for(const requestId of ['rate-failed','not-started'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const rows=['rate-failed','not-started'].map(requestId=>({parentId:f.controller.state.threadId,provider:'gemini',requestId,status:'failed',settled:true,output:'saved '+requestId}));f.bridge.records=rows;for(const row of rows)f.bridgeOptions.onChange(row);
-  f.bridgeOptions.onGeminiHandoff({parentId:f.controller.state.threadId,requestIds:['not-started'],status:'ready',accountId:'fake-a',switched:false});await waitFor(()=>f.host.startCalls.length===2);
-  const text=f.host.startCalls.at(-1)[0].text;assert.match(text,/saved rate-failed/);assert.match(text,/saved not-started/);assert.deepEqual(JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"'))).requestIds,['not-started']);
-  assert.match(text,/本次就緒只涵蓋 event.requestIds 中先前未送出的工作/);assert.match(text,/其他已執行後失敗工單不因本次通知自動重啟/);assert.match(text,/接手僅限通知 requestIds 的剩餘工作/);assert.doesNotMatch(text,/官方額度確認歸零|帳號已查核切換就緒/);
- }finally{await f.controller.close();}
-});
-
-
-test('Claude receives read-only Google Ops MCP without replacing worker gateway or native mode',async()=>{
- const f=await fixture();
- try{
-  await mkdir(path.join(f.root,'google_ops_worker'),{recursive:true});await mkdir(path.join(f.root,'.venv/Scripts'),{recursive:true});
-  await writeFile(path.join(f.root,'google_ops_worker/google_ops_client.py'),'# fixture');await writeFile(path.join(f.root,'.venv/Scripts/python.exe'),'fixture');
-  await mkdir(path.join(f.root,'.runtime'),{recursive:true});await writeFile(path.join(f.root,'.runtime/google-ops.json'),JSON.stringify({directory:f.root}));
-  await f.controller.open({});
-  const config=f.hostOptions.mcpConfig.mcpServers;
-  assert.equal(config.k_google_ops.type,'stdio');assert.ok(config.k_google_ops.args.includes(f.root));assert.deepEqual(config.k_luna,f.gateway.mcpConfig.mcpServers.k_luna);
-  assert.equal(f.hostOptions.accessMode,f.controller.state.accessMode);
- }finally{await f.controller.close();}
-});
-
-test('Claude relocation keeps native identity and old attachments and artifacts without copying files',async()=>{
- const f=await fixture();try{
-  const c=f.controller,{threadId}=await c.open({});const native=f.hostOptions.sessionId;
-  const upload=await c.upload({threadId,name:'before.txt',base64:Buffer.from('old upload').toString('base64')});
-  const dest=path.join(f.root,'destination');await mkdir(dest);
-  await c.open({threadId},{relocation:{workspace:dest,previousWorkspaces:[f.root],previousArtifacts:[path.join(f.root,'result.txt')]}});
-  assert.equal(f.hostOptions.sessionId,native);assert.equal(f.hostOptions.cwd,dest);assert.match(f.hostOptions.workspaceInstructions,/目前工作區/);
-  assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');assert.equal((await c.artifact(path.join(f.root,'result.txt'))).bytes.toString(),'fixture write target');
-  await assert.rejects(c.artifact(path.join(f.root,'README.md')),/只開啟/);
-  await c.close();await c.open({threadId});assert.equal(c.state.workspace,dest);assert.equal((await c.attachmentFile(upload.id)).bytes.toString(),'old upload');
- }finally{await f.controller.close();}
-});
-
-test('forking moved Claude conversation retains original artifact roots after reopen',async()=>{
- const f=await fixture();try{
-  const c=f.controller,{threadId}=await c.open({});await c.send({text:'original'});
-  f.hostOptions.onMessage({type:'assistant',uuid:'move-answer',message:{content:[{type:'text',text:'done'}]}});f.hostOptions.onMessage({type:'result',is_error:false});
-  const dest=path.join(f.root,'destination');await mkdir(dest);const artifact=path.join(f.root,'result.txt');
-  await c.open({threadId},{relocation:{workspace:dest,previousWorkspaces:[f.root],previousArtifacts:[artifact]}});
-  const fork=await c.fork({messageId:'move-answer',accessMode:'claude-manual'});
-  assert.equal((await c.artifact(artifact)).bytes.toString(),'fixture write target');await c.close();await c.open({threadId:fork.threadId});assert.equal((await c.artifact(artifact)).bytes.toString(),'fixture write target');
- }finally{await f.controller.close();}
-});
-
-test('native background Bash remains unsettled after the main reply until its own completion',async()=>{
- const f=await fixture();
- try{
-  await f.controller.open({});const emit=f.hostOptions.onMessage;
-  emit({type:'system',subtype:'task_started',task_type:'local_bash',task_id:'bg-one',tool_use_id:'tool-one',description:'synthetic sleep'});
-  assert.equal((await f.controller.workers())[0].kind,'command','Background commands must not count as subagents');
-  emit({type:'result',is_error:false});
-  assert.equal(f.controller.state.busy,false);assert.equal((await f.controller.workers())[0].settled,false);
-  emit({type:'system',subtype:'task_notification',task_id:'unrelated',status:'completed'});
-  assert.equal((await f.controller.workers())[0].settled,false);
-  emit({type:'system',subtype:'task_notification',task_id:'bg-one',status:'completed',summary:'exit 0'});
-  assert.equal((await f.controller.workers())[0].settled,true);
-  emit({type:'system',subtype:'status',status:'requesting'});assert.equal(f.controller.state.busy,true);
-  emit({type:'result',is_error:false});assert.equal(f.controller.state.busy,false);
- }finally{await f.controller.close();}
-});
-
-test('native Claude goals set, read back, clear on stop and persist without fake messages',async()=>{
- let nativeGoal=null;const operations=[];
- const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:['high']};host.goal=async args=>{operations.push(args);if(args==='clear'){nativeGoal=null;return 'Goal cleared: fake objective';}if(args){nativeGoal=args;return 'Goal set: '+args;}return nativeGoal?'Goal active: '+nativeGoal+' (not yet evaluated)':'No goal set. Usage: `/goal <condition>`';};}});
- try{
-  const {threadId}=await f.controller.open({});assert.equal(f.controller.state.capabilities.goal,true);
-  await f.controller.goal({objective:'fake objective'});assert.equal(f.controller.state.goal.status,'active');assert.equal(f.controller.state.messages.length,0);
-  const file=path.join(f.root,'.runtime/claude-sessions',threadId+'.json');assert.equal(JSON.parse(await readFile(file)).nativeStarted,true);
-  nativeGoal=null;f.hostOptions.onMessage({type:'result',is_error:false});
-  await new Promise(r=>setImmediate(r));await f.controller.close();
-  await f.controller.open({threadId});assert.equal(f.controller.state.goal.status,'ended');assert.equal(f.controller.state.goal.objective,'fake objective');
-  await f.controller.goal({objective:'stop objective'});await f.controller.stop();assert.equal(f.controller.state.goal,null);assert.equal(f.controller.state.status,'interrupted');assert.equal(operations.at(-1),'clear');
-  await f.controller.open({threadId});assert.equal(f.controller.state.goal,null);assert.equal(f.controller.state.busy,false);
-  await assert.rejects(f.controller.goal({objective:'clear'}),/保留指令/);
- }finally{await f.controller.close();}
-});
-
-test('Claude native goal read failure remains unknown rather than completed',async()=>{
- const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>args?'Goal set: '+args:Promise.reject(Error('native unavailable'));}});
- try{await f.controller.open({});await f.controller.goal({objective:'fake'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(f.controller.state.goal.status,'unknown');assert.match(f.controller.state.goalError,/unavailable/);}finally{await f.controller.close();}
-});
-
-test('Claude goal query result cannot recursively refresh and ended records do not refresh every ordinary turn',async()=>{
- let reads=0;const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args)return 'Goal set: '+args;reads++;options.onMessage({type:'result',is_error:false});return 'No goal set. Usage: '+String.fromCharCode(96)+'/goal <condition>'+String.fromCharCode(96);};}});
- try{await f.controller.open({});await f.controller.goal({objective:'fake'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(reads,1);assert.equal(f.controller.state.goal.status,'ended');await f.controller.send({text:'ordinary'});f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(r=>setTimeout(r,40));assert.equal(reads,1);}finally{await f.controller.close();}
-});
-
-test('Claude stop closes the host even when clearing the native goal is unconfirmed',async()=>{
- const f=await fixture({waitForHost:async(options,host)=>{host.nativeCapabilities={commands:['goal'],efforts:[]};host.goal=async args=>{if(args==='clear')throw Error('clear unavailable');return 'Goal set: '+args;};}});
- try{await f.controller.open({});await f.controller.goal({objective:'fake'});let closed=false;const close=f.host.close.bind(f.host);f.host.close=async()=>{closed=true;await close();};await assert.rejects(f.controller.stop(),/clear unavailable/);assert.equal(f.controller.state.status,'uncertain');assert.match(f.controller.state.goalError,/clear unavailable/);assert.equal(closed,true);}finally{await f.controller.close();}
-});
-
-test('Claude cannot silently turn an edit-only request into new work',async()=>{
- const f=await fixture();try{await f.controller.open({});await assert.rejects(f.controller.goal({objective:'not a new run',editOnly:true}),/不支援只修改/);assert.equal(f.host.startCalls.length,0);}finally{await f.controller.close();}
-});
-
-for(const [provider,model] of [['gemini','gemini-3.8-flash'],['codex','gpt-6.1-sol'],['claude','claude-opus-5-5']])test(`${provider} quiet notice wakes Claude only once and preserves later completion`,async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'synthetic long work'});await f.gatewayOptions.bridge.start({requestId:'quiet',model,task:'bounded'});
-  const record={provider,parentId:f.controller.state.threadId,requestId:'quiet',status:'running',settled:false,inspection:{noticeId:'quiet-one',checkedAt:1000,lastActivityAt:0}};
-  f.bridgeOptions.onChange(record);f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===2);
-  assert.match(f.host.startCalls[1][0].text,/久無活動也不等於卡死/);
-  f.hostOptions.onMessage({type:'result',is_error:false});f.bridgeOptions.onChange(record);await tick();assert.equal(f.host.startCalls.length,2);
-  record.settled=true;record.status='completed';delete record.inspection;record.output='done';f.bridgeOptions.onChange(record);await waitFor(()=>f.host.startCalls.length===3);
-  assert.match(f.host.startCalls[2][0].text,/工人完成通知/);
- }finally{await f.controller.close();}
-});
-
-test('Claude native progress ignores elapsed pulses; full background snapshot is not completion',async()=>{
- const f=await fixture();try{
-  await f.controller.open({});await f.controller.send({text:'synthetic'});const emit=f.hostOptions.onMessage;
-  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'bg-task',tool_use_id:'bg-tool'});
-  emit({type:'system',subtype:'task_started',task_type:'local_agent',task_id:'fg-task',tool_use_id:'fg-tool'});
-  const worker=f.controller.state.workers.find(w=>w.nativeTaskId==='bg-task');
-  emit({type:'system',subtype:'task_progress',task_id:'bg-task',usage:{total_tokens:9,tool_uses:1,duration_ms:5},last_tool_name:'Read'});
-  const progress=worker.lastActivityAt;assert(Number.isFinite(progress));assert.equal(worker.lastToolName,'Read');
-  emit({type:'system',subtype:'task_progress',task_id:'bg-task',usage:{total_tokens:9,tool_uses:1,duration_ms:50000}});assert.equal(worker.lastActivityAt,progress);
-  emit({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'bg-task',task_type:'local_agent'}]});
-  emit({type:'system',subtype:'background_tasks_changed',tasks:[]});
-  assert.equal(worker.status,'unresolved');assert.equal(worker.settled,false);assert.equal(worker.lastActivityAt,progress);
-  assert.equal(f.controller.state.workers.find(w=>w.nativeTaskId==='fg-task').status,'running','not a background task, absence is not authoritative');
-  emit({type:'system',subtype:'task_notification',task_id:'bg-task',status:'completed',summary:'done'});
-  assert.equal(worker.status,'completed');assert.equal(worker.settled,true);
-  assert.equal(worker.backgroundMissing,undefined);assert.equal(worker.error,undefined);
-  emit({type:'system',subtype:'background_tasks_changed',tasks:[{task_id:'bg-task'}]});assert.equal(worker.status,'completed');
-  assert.equal(f.host.startCalls.length,1,'native notifications remain the native core responsibility, no duplicate K wake');
- }finally{await f.controller.close();}
-});
-
-for(const [model,levels] of [['claude-haiku-4-5-20251001',[]],['claude-opus-4-6',['low','medium','high','max']],['claude-future-effort',['ultra']]])test(model+' keeps model-native efforts across init and a host restart',async()=>{
- const f=await fixture({models:[{model,displayName:model,provider:'claude',supportedReasoningEfforts:levels.map(reasoningEffort=>({reasoningEffort}))}]});
- try{
-  await f.controller.open({model});assert.deepEqual(f.controller.state.efforts,levels);
-  f.hostOptions.onMessage({type:'system',subtype:'init',tools:['Read']});assert.deepEqual(f.controller.state.efforts,levels);
-  await f.controller.send({text:'fake scoped restart',accessMode:'claude-plan'});
-  f.hostOptions.onMessage({type:'system',subtype:'init',tools:['Read']});assert.deepEqual(f.controller.state.efforts,levels);
-  assert.equal(f.hostOptions.model,model);assert.equal(f.controller.state.effort,null);
- }finally{await f.controller.close();}
-});
-
-
-test('Claude confirms pre-dispatch rejection, but never labels an attempted native send as unsent',async()=>{
- const f=await fixture();try{
-  await assert.rejects(f.controller.send({text:'fake'}),e=>e.notSent===true);
-  await f.controller.open({});
-  await assert.rejects(f.controller.send({text:''}),e=>e.notSent===true);
-  await assert.rejects(f.controller.send({text:'fake',attachmentIds:['missing']}),e=>e.notSent===true);
-  f.host.start=async()=>{throw Error('unknown native delivery');};
-  await assert.rejects(f.controller.send({text:'fake'}),e=>e.notSent!==true);
-  assert.equal(f.controller.state.status,'uncertain');
- }finally{await f.controller.close();}
-});
-
-
-test('cold Claude history is exposed before host connection and opening never bumps order',async()=>{
- let previews=0,hosts=0;const f=await fixture({waitForHost:async()=>{hosts++;if(hosts===2)assert.equal(previews,1);}});const c=f.controller;
- try{
-  await c.open({});await c.send({text:'fake saved request'});f.hostOptions.onMessage({type:'assistant',message:{content:[{type:'text',text:'fake saved reply'}]}});f.hostOptions.onMessage({type:'result',result:'fake saved reply',is_error:false});
-  await c.close();const id=c.state.threadId,before=(await listMainSessions(f.root)).sessions[0].sortAt;
-  const reopened=f.createController();try{
-   await reopened.open({threadId:id,model:'claude-opus-5-5'},{onHistory:async state=>{previews++;assert.ok(state.messages.some(m=>m.text==='fake saved reply'));assert.equal(hosts,1);}});
-   assert.equal(previews,1);assert.equal((await listMainSessions(f.root)).sessions[0].sortAt,before);
-  }finally{await reopened.close();}
- }finally{await c.close();}
-});
-
-
-test('Claude sends and steers image-only content with no empty text block',async()=>{
- const f=await fixture();try{
-  const {threadId}=await f.controller.open({});
-  for(const input of [{text:''},{text:'   '},{text:null,attachmentIds:['fake']},{text:'x'.repeat(32001),attachmentIds:['fake']}])await assert.rejects(f.controller.send(input),/訊息/);
-  const image=await f.controller.upload({threadId,name:'pixel.png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='});
-  await assert.rejects(f.controller.send({text:'',attachmentIds:['missing']}));assert.equal(f.host.startCalls.length,0);
-  await f.controller.send({attachmentIds:[image.id]});await f.controller.steer({text:'   ',attachmentIds:[image.id]});
-  assert.equal(f.host.startCalls.length,2);for(const content of f.host.startCalls){assert.equal(content.length,1);assert.equal(content[0].type,'image');}
-  assert.deepEqual(f.controller.state.messages.filter(m=>m.role==='user'&&m.attachments.length).map(m=>m.text),['','   ']);assert.equal(f.controller.state.title,'pixel.png');
- }finally{await f.controller.close();}
-});
-
-test('Claude Gemini ready arriving during bridge-list preflight replaces the receipt and still reaches native start once',{timeout:5000},async()=>{
- const f=await fixture();let release;const gate=new Promise(resolve=>{release=resolve;});let entered,listCalls=0;
- const preflightEntered=new Promise(resolve=>{entered=resolve;});
- try{
-  await f.controller.open({});await f.controller.send({text:'bounded fake work for receipt preflight'});
-  for(const requestId of ['preflight-first','preflight-new'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const list=f.bridge.list.bind(f.bridge);f.bridge.list=async()=>{listCalls++;if(listCalls===1){entered();await gate;}return list();};
-  const parentId=f.controller.state.threadId,ready=requestId=>({parentId,requestIds:[requestId],status:'ready',accountId:'fake-shared-account',switched:false});
-  f.bridgeOptions.onGeminiHandoff(ready('preflight-first'));await preflightEntered;
-  assert.equal(f.host.startCalls.length,1,'old receipt has not passed read-only preflight');
-  f.bridgeOptions.onGeminiHandoff(ready('preflight-new'));await tick();
-  assert.equal(f.host.startCalls.length,1,'new receipt cannot send while old preflight is still held');
-  release();await waitFor(()=>f.host.startCalls.length===2);
-  assert.equal(listCalls,2,'new material receipt gets its own preflight after cancelling the old object snapshot');
-  const text=f.host.startCalls[1][0].text,receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
-  assert.deepEqual(receipt.requestIds,['preflight-first','preflight-new']);assert.equal(receipt.parentId,parentId);
-  assert.match(text,/先核對最新本人意圖/);assert.equal(f.controller.state.busy,true);
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  for(const requestId of ['preflight-first','preflight-new'])f.bridgeOptions.onGeminiHandoff(ready(requestId));
-  await tick();assert.equal(f.host.startCalls.length,2,'both receipts are consumed by one accepted notification, not stranded or replayed');
-  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);
- }finally{release?.();await f.controller.close();}
-});
-
-test('Claude Gemini ready arriving while native start awaits acceptance survives consumption of only the sent receipt',{timeout:5000},async()=>{
- const f=await fixture();let release;const gate=new Promise(resolve=>{release=resolve;});let entered,hold=true;
- const nativeStartEntered=new Promise(resolve=>{entered=resolve;});
- try{
-  await f.controller.open({});await f.controller.send({text:'bounded fake work for accepted-send receipt race'});
-  for(const requestId of ['send-first','send-new'])await f.gatewayOptions.bridge.start({requestId,model:'gemini-3.8-flash'});
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const start=f.host.start.bind(f.host);f.host.start=async(...args)=>{await start(...args);if(hold){hold=false;entered();await gate;}};
-  const parentId=f.controller.state.threadId,ready=requestId=>({parentId,requestIds:[requestId],status:'ready',accountId:'fake-shared-account',switched:false});
-  f.bridgeOptions.onGeminiHandoff(ready('send-first'));await nativeStartEntered;
-  assert.equal(f.host.startCalls.length,2);assert.equal(f.controller.state.busy,true);
-  f.bridgeOptions.onGeminiHandoff(ready('send-new'));await tick();assert.equal(f.host.startCalls.length,2,'active native send owns this turn');
-  release();await waitFor(()=>!f.controller.state.completionPending);
-  const first=JSON.parse(f.host.startCalls[1][0].text.split('\n').find(line=>line.startsWith('{"parentId"')));
-  assert.deepEqual(first.requestIds,['send-first']);assert.equal(first.parentId,parentId);
-  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),true,'new receipt stays pending after the old accepted send');
-  f.hostOptions.onMessage({type:'result',is_error:false});await waitFor(()=>f.host.startCalls.length===3);
-  const text=f.host.startCalls[2][0].text,second=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
-  assert.deepEqual(second.requestIds,['send-new']);assert.equal(second.parentId,parentId);assert.doesNotMatch(text,/send-first/);
-  f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  for(const requestId of ['send-first','send-new'])f.bridgeOptions.onGeminiHandoff(ready(requestId));
-  await tick();assert.equal(f.host.startCalls.length,3,'each independent receipt was sent once; old IDs never reappear');
-  assert.equal(f.controller.state.notices.some(n=>n.kind==='gemini-handoff'&&n.level==='info'&&!n.resolved),false);
- }finally{release?.();await f.controller.close();}
-});
-
-for(const terminal of ['blocked','ready'])test(`Claude query-only ${terminal} receipt after an early native result is delivered when the earlier start finally returns`,{timeout:8000},async()=>{
- const f=await fixture();let release,entered,hold=true,queryNumber=0;const gate=new Promise(resolve=>{release=resolve;}),startEntered=new Promise(resolve=>{entered=resolve;});
- try{
-  await f.controller.open({});await f.controller.send({text:'bounded fake query-only scheduling work'});
-  const parentId=f.controller.state.threadId;
-  f.bridge.accounts=async()=>{const waitId=`query-early-${++queryNumber}`;f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[waitId],status:'waiting'});return {scheduling:{status:'waiting',notificationRegistered:true,waitId}};};
-  const first=await f.gatewayOptions.bridge.accounts();f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const start=f.host.start.bind(f.host);f.host.start=async(...args)=>{await start(...args);if(hold){hold=false;entered();await gate;}};
-  f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[first.scheduling.waitId],status:'ready',accountId:'fake-account',switched:false});await startEntered;
-  assert.equal(f.host.startCalls.length,2);assert.deepEqual(await f.gatewayOptions.bridge.list(),[],'query-only callbacks create no worker records or worker result queue');
-  // Native stream completion is allowed to precede the native start response.
-  f.hostOptions.onMessage({type:'result',is_error:false});assert.equal(f.controller.state.status,'completed');
-  const next=await f.gatewayOptions.bridge.accounts();assert.notEqual(next.scheduling.waitId,first.scheduling.waitId);
-  f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[next.scheduling.waitId],status:terminal,accountId:'fake-account',switched:false,reason:'new material fake scheduling result'});
-  await tick();assert.equal(f.host.startCalls.length,2,'new terminal waits behind the still-pending native start response');
-  release();await waitFor(()=>f.host.startCalls.length===3);
-  const before=JSON.parse(f.host.startCalls[1][0].text.split('\n').find(line=>line.startsWith('{"parentId"'))),text=f.host.startCalls[2][0].text;
-  const receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
-  assert.deepEqual(before.queryIds,[first.scheduling.waitId]);assert.deepEqual(receipt.requestIds,[]);assert.deepEqual(receipt.queryIds,[next.scheduling.waitId]);assert.equal(receipt.status,terminal);assert.doesNotMatch(text,new RegExp(first.scheduling.waitId));
-  if(terminal==='blocked')assert.match(text,/不是.*恢復原生目標的授權/);
-  await waitFor(()=>!f.controller.state.completionPending);f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(resolve=>setTimeout(resolve,1100));
-  assert.equal(f.host.startCalls.length,3,'new material query result is sent once, with no unchanged-state model polling');
-  assert.deepEqual(await f.gatewayOptions.bridge.list(),[]);
- }finally{release?.();await f.controller.close();}
-});
-
-test('Claude query-only new blocked receipt during blocked preflight gets a fresh check and one combined native notification',{timeout:8000},async()=>{
- const f=await fixture();let release,entered,listCalls=0,queryNumber=0;const gate=new Promise(resolve=>{release=resolve;}),preflightEntered=new Promise(resolve=>{entered=resolve;});
- try{
-  await f.controller.open({});await f.controller.send({text:'bounded fake query-only blocked preflight'});const parentId=f.controller.state.threadId;
-  f.bridge.accounts=async()=>{const waitId=`query-blocked-${++queryNumber}`;f.bridgeOptions.onGeminiHandoff({parentId,requestIds:[],queryIds:[waitId],status:'waiting'});return {scheduling:{status:'waiting',notificationRegistered:true,waitId}};};
-  const first=await f.gatewayOptions.bridge.accounts();f.hostOptions.onMessage({type:'result',is_error:false});await tick();
-  const list=f.bridge.list.bind(f.bridge);f.bridge.list=async()=>{listCalls++;if(listCalls===1){entered();await gate;}return list();};
-  const blocked=id=>({parentId,requestIds:[],queryIds:[id],status:'blocked',reason:'distinct fake scheduling result remains unready'});
-  f.bridgeOptions.onGeminiHandoff(blocked(first.scheduling.waitId));await preflightEntered;
-  const next=await f.gatewayOptions.bridge.accounts();f.bridgeOptions.onGeminiHandoff(blocked(next.scheduling.waitId));await tick();
-  assert.equal(f.host.startCalls.length,1);release();await waitFor(()=>f.host.startCalls.length===2);
-  assert.equal(listCalls,2,'new blocked receipt rechecks after the old snapshot is cancelled');
-  const text=f.host.startCalls[1][0].text,receipt=JSON.parse(text.split('\n').find(line=>line.startsWith('{"parentId"')));
-  assert.equal(receipt.status,'blocked');assert.deepEqual(receipt.requestIds,[]);assert.deepEqual(receipt.queryIds,[first.scheduling.waitId,next.scheduling.waitId]);assert.match(text,/不是.*恢復原生目標的授權/);
-  await waitFor(()=>!f.controller.state.completionPending);f.hostOptions.onMessage({type:'result',is_error:false});await new Promise(resolve=>setTimeout(resolve,1100));
-  assert.equal(f.host.startCalls.length,2);assert.equal(listCalls,2,'unchanged blocked result does not schedule another preflight or model turn');
- }finally{release?.();await f.controller.close();}
 });
+
+test('cancelled Claude reconnect stays interrupted and only a new send resumes the same conversation', async () => {
+  let entered,
+    release,
+    calls = 0;
+  const started = new Promise(r => {
+      entered = r;
+    }),
+    gate = new Promise(r => {
+      release = r;
+    });
+  const f = await fixture({
+    waitForHost: async () => {
+      if (++calls === 2) {
+        entered();
+        await gate;
+      }
+    }
+  });
+  try {
+    const {threadId} = await f.controller.open({});
+    await f.controller.send({text: 'original request'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const old = f.host,
+      messages = structuredClone(f.controller.state.messages);
+    const reconnect = f.controller.open({threadId, effort: 'high'}),
+      rejected = assert.rejects(reconnect, /取消/);
+    await started;
+    const late = f.host;
+    let lateClosed = false;
+    void late.closed.then(() => {
+      lateClosed = true;
+    });
+    const stopping = f.controller.stop();
+    release();
+    await stopping;
+    await rejected;
+    assert.equal(f.controller.state.status, 'interrupted');
+    assert.equal(f.controller.state.error, null);
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.threadId, threadId);
+    assert.deepEqual(f.controller.state.messages, messages);
+    assert.equal(lateClosed, true);
+    assert.equal(calls, 2);
+    assert.equal(old.startCalls.length, 1);
+    assert.equal(late.startCalls.length, 0);
+    await f.controller.send({text: 'new explicit request'});
+    assert.equal(calls, 3);
+    assert.equal(f.hostOptions.sessionId, threadId.slice(7));
+    assert.equal(f.hostOptions.resume, true);
+    assert.equal(f.hostOptions.effort, null, 'cancelled setting is not silently applied');
+    assert.equal(f.host.startCalls.length, 1);
+    assert.equal(f.host.startCalls[0][0].text, 'new explicit request');
+  } finally {
+    release();
+    await f.controller.close();
+  }
+});
+for (const [provider, model] of [
+  ['codex', 'gpt-6.1-sol'],
+  ['gemini', 'gemini-3.8-flash'],
+  ['claude', 'claude-opus-5-5']
+])
+  test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'delegate bounded work'});
+      await f.gatewayOptions.bridge.start({requestId: 'notify', model, task: 'bounded'});
+      const record = {
+        provider,
+        parentId: f.controller.state.threadId,
+        requestId: 'notify',
+        settled: true,
+        status: 'completed',
+        output: 'done',
+        outputFiles: []
+      };
+      f.bridgeOptions.onChange(record);
+      await tick();
+      assert.equal(f.host.startCalls.length, 1);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await waitFor(() => f.host.startCalls.length === 2);
+      assert.equal(f.host.startCalls.length, 2);
+      assert.match(f.host.startCalls[1][0].text, /K 工人完成通知/);
+      const notification = JSON.parse(f.host.startCalls[1][0].text.split('\n').slice(1).join('\n'));
+      assert.equal(notification[0].provider, provider);
+      f.bridgeOptions.onChange(record);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      assert.equal(f.host.startCalls.length, 2);
+      const saved = JSON.parse(
+        await readFile(path.join(f.root, '.runtime/claude-sessions', `${f.controller.state.threadId}.json`), 'utf8')
+      );
+      assert.equal(saved.workerNotifications.notify, 'delivery-attempted');
+    } finally {
+      await f.controller.close();
+    }
+  });
+test('stopping clears queued notifications and late completion cannot wake Claude', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'stop', task: 'bounded'});
+    const old = f.host,
+      callback = f.bridgeOptions.onChange;
+    callback({
+      parentId: f.controller.state.threadId,
+      requestId: 'stop',
+      settled: true,
+      status: 'completed',
+      output: 'done'
+    });
+    await f.controller.stop();
+    callback({
+      parentId: f.controller.state.threadId,
+      requestId: 'stop',
+      settled: true,
+      status: 'completed',
+      output: 'done'
+    });
+    await tick();
+    assert.equal(old.startCalls.length, 1);
+    assert.equal(old.interrupted, true);
+    assert.equal(f.controller.state.status, 'interrupted');
+  } finally {
+    await f.controller.close();
+  }
+});
+test('uncertain completion delivery is not automatically retried', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'uncertain', task: 'bounded'});
+    f.host.start = async () => {
+      throw Error('pipe uncertain');
+    };
+    const r = {
+      parentId: f.controller.state.threadId,
+      requestId: 'uncertain',
+      settled: true,
+      status: 'completed',
+      output: 'done'
+    };
+    f.bridgeOptions.onChange(r);
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await waitFor(() => f.controller.state.status === 'uncertain');
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.match(f.controller.state.error, /未重送/);
+    f.bridgeOptions.onChange(r);
+    await tick();
+    assert.equal(f.controller.state.status, 'uncertain');
+  } finally {
+    await f.controller.close();
+  }
+});
+test('text attachments use UTF-8 byte threshold and workspace Read paths in plan mode', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({accessMode: 'claude-plan'});
+    for (const text of ['a'.repeat(8192), 'a'.repeat(8193), '中'.repeat(2800)]) {
+      const a = await f.controller.upload({
+        threadId: f.controller.state.threadId,
+        name: 'input.txt',
+        base64: Buffer.from(text).toString('base64')
+      });
+      await f.controller.send({text: 'read the full attachment', attachmentIds: [a.id]});
+      const sent = f.host.startCalls.at(-1)[1].text;
+      const large = Buffer.byteLength(text) > 8192;
+      assert.equal(sent.includes('preview="true"'), large);
+      assert.equal(sent.includes(text), !large);
+      assert.ok(sent.includes(`bytes="${Buffer.byteLength(text)}"`));
+      assert.ok(sent.includes(path.resolve(f.root, a.textPath)));
+      assert.ok(sent.includes(`originalPath="${path.resolve(f.root, a.path)}"`));
+      assert.equal(await readFile(path.join(f.root, a.textPath), 'utf8'), text);
+      assert.equal(f.hostOptions.accessMode, 'claude-plan');
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+    }
+  } finally {
+    await f.controller.close();
+  }
+});
+test('Claude preserves PDF extraction warnings in native attachment context', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({accessMode: 'claude-plan'});
+    const doc = await f.controller.upload({
+      threadId,
+      name: 'broken.pdf',
+      base64: Buffer.from('synthetic invalid PDF').toString('base64')
+    });
+    assert.ok(doc.warning);
+    await f.controller.send({text: 'report extraction limitations', attachmentIds: [doc.id]});
+    const context = f.host.startCalls.at(-1)[1].text;
+    assert.ok(
+      context.includes(
+        `warning="${doc.warning.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')}"`
+      )
+    );
+    assert.ok(context.includes(`originalPath="${path.resolve(f.root, doc.path)}"`));
+    assert.equal(await readFile(path.join(f.root, doc.path), 'utf8'), 'synthetic invalid PDF');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude gateway approval stays with its parent, requires write content, and survives parent idle', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const parentId = f.controller.state.threadId;
+    await f.gatewayOptions.bridge.start({
+      requestId: 'claude-child',
+      model: 'claude-opus-5-5',
+      effort: 'high',
+      task: 'bounded'
+    });
+    f.bridge.records = [{requestId: 'claude-child', provider: 'claude', parentId, status: 'running', settled: false}];
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(
+      (await f.controller.workers()).find(row => row.requestId === 'claude-child').settled,
+      false,
+      'the child remains active after its parent turn ends'
+    );
+
+    const callback = f.bridgeOptions.onRequest;
+    const approval = callback({
+      method: 'k/claude/requestApproval',
+      params: {
+        parentId,
+        requestId: 'claude-child',
+        toolName: 'Write',
+        input: {file_path: 'result.txt', content: 'approved'}
+      }
+    });
+    const question = f.controller.state.questions.at(-1);
+    assert.equal(question.canAccept, true);
+    assert.equal(question.provider, 'codex-luna');
+    await f.controller.answer({id: question.id, accept: true});
+    assert.deepEqual(await approval, {behavior: 'allow', updatedInput: {file_path: 'result.txt', content: 'approved'}});
+
+    const wrongParent = callback({
+      method: 'k/claude/requestApproval',
+      params: {
+        parentId: 'claude-other-parent',
+        requestId: 'foreign-child',
+        toolName: 'Write',
+        input: {file_path: 'result.txt', content: 'no'}
+      }
+    });
+    assert.equal(
+      f.controller.state.questions.length,
+      0,
+      'a request owned by another parent must not enter this conversation UI'
+    );
+    assert.equal(wrongParent, undefined, 'a foreign-parent request is rejected without creating an approval');
+
+    const missing = callback({
+      method: 'k/claude/requestApproval',
+      params: {parentId, requestId: 'claude-child', toolName: 'Write', input: {file_path: 'result.txt'}}
+    });
+    const unavailable = f.controller.state.questions.at(-1);
+    assert.equal(unavailable.canAccept, false);
+    await assert.rejects(f.controller.answer({id: unavailable.id, accept: true}), /缺少實際變更內容/);
+    assert.ok(
+      f.controller.state.questions.some(row => row.id === unavailable.id),
+      'a rejected accept must leave the request available for an explicit denial'
+    );
+    await f.controller.answer({id: unavailable.id, accept: false});
+    assert.equal((await missing).behavior, 'deny');
+  } finally {
+    await f.controller.close();
+  }
+});
+test('Claude gives generic media original file path without reading it into the native prompt', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    const media = await f.controller.upload({
+      threadId,
+      name: 'synthetic.m4a',
+      base64: Buffer.from([0, 1, 2, 3, 255]).toString('base64')
+    });
+    await f.controller.send({text: 'inspect through native file tools', attachmentIds: [media.id]});
+    const part = f.host.startCalls
+      .at(-1)
+      .find(item => item.type === 'text' && item.text.includes('<K_ATTACHMENT'))?.text;
+    assert.ok(part.includes(`originalPath="${path.resolve(f.root, media.path)}"`));
+    assert.ok(part.includes('bytes="5"'));
+    assert.ok(part.includes('只能作為檔案參考'));
+    assert.ok(!part.includes('0,1,2,3'));
+  } finally {
+    await f.controller.close();
+  }
+});
+test('Claude image and text attachment metadata survives native replay and projection reopen', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    const pngBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    const image = await f.controller.upload({threadId, name: 'screen.png', base64: pngBytes.toString('base64')});
+    const text = await f.controller.upload({
+      threadId,
+      name: 'notes.txt',
+      base64: Buffer.from('fixture notes').toString('base64')
+    });
+    await f.controller.send({text: '看看？', attachmentIds: [image.id, text.id]});
+
+    const sent = f.host.startCalls.at(-1);
+    assert.deepEqual(sent.find(part => part.type === 'image')?.source, {
+      type: 'base64',
+      media_type: 'image/png',
+      data: pngBytes.toString('base64')
+    });
+    assert.ok(sent.some(part => part.type === 'text' && part.text.includes('fixture notes')));
+    const user = f.controller.state.messages.find(message => message.role === 'user' && message.text === '看看？');
+    const expected = [image, text].map(({id, name, size, kind}) => ({id, name, size, kind}));
+    assert.deepEqual(
+      user.attachments.map(({id, name, size, kind}) => ({id, name, size, kind})),
+      expected
+    );
+
+    f.hostOptions.onMessage({type: 'user', uuid: user.id, isReplay: true, message: {content: [{type: 'image'}]}});
+    assert.equal(user.delivery, 'received');
+    assert.deepEqual(
+      user.attachments.map(({id, name, size, kind}) => ({id, name, size, kind})),
+      expected
+    );
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await f.controller.close();
+
+    await f.controller.open({threadId});
+    const reopened = f.controller.state.messages.find(message => message.id === user.id);
+    assert.deepEqual(
+      reopened.attachments.map(({id, name, size, kind}) => ({id, name, size, kind})),
+      expected
+    );
+  } finally {
+    await f.controller.close();
+  }
+});
+test('Claude rejects a foreign-thread attachment before starting a native turn', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    const foreign = await saveAttachment(f.root, 'foreign-thread', {
+      name: 'foreign.txt',
+      base64: Buffer.from('foreign').toString('base64')
+    });
+    await assert.rejects(
+      f.controller.send({text: '不可送出', attachmentIds: [foreign.id]}),
+      /不能把其他對話的附件帶入/
+    );
+    assert.equal(f.host.startCalls.length, 0);
+    assert.notEqual(f.controller.state.status, 'working');
+  } finally {
+    await f.controller.close();
+  }
+});
+test('quota reads official control without model turns, throttles, preserves stale values', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    let calls = 0;
+    f.host.usage = async () => {
+      calls++;
+      return {
+        rate_limits_available: true,
+        subscription_type: 'pro',
+        rate_limits: {
+          five_hour: {utilization: 4, resets_at: '2026-09-24T09:00:00Z'},
+          seven_day: {utilization: 1, resets_at: null}
+        }
+      };
+    };
+    const first = await f.controller.usage();
+    assert.equal(first.claude.windows[0].remainingPercent, 96);
+    await f.controller.usage();
+    assert.equal(calls, 1);
+    assert.equal(f.host.startCalls.length, 0);
+    f.host.usage = async () => {
+      throw Error('offline');
+    };
+    const stale = await f.controller.usage(true);
+    assert.equal(stale.claude.status, 'stale');
+    assert.equal(stale.claude.windows[0].remainingPercent, 96);
+    f.hostOptions.onMessage({
+      type: 'rate_limit_event',
+      uuid: 'rate-limit-usage',
+      rate_limit_info: {status: 'allowed', overageStatus: 'rejected', overageDisabledReason: 'org_level_disabled'}
+    });
+    const refreshed = await f.controller.usage(true);
+    assert.equal(refreshed.claude.rateLimitStatus, 'allowed');
+    assert.equal(refreshed.claude.extraUsageDisabled, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const method of ['start', 'wait', 'inspect', 'cancel'])
+  test(`manual ${method} settled result suppresses subsequent completion notification`, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'work'});
+      await f.gatewayOptions.bridge.start({requestId: 'manual', task: 'bounded'});
+      const r = {
+        parentId: f.controller.state.threadId,
+        requestId: 'manual',
+        settled: true,
+        status: 'completed',
+        output: 'done'
+      };
+      f.bridgeOptions.onChange(r);
+      f.bridge[method] = async () => r;
+      const result = await f.gatewayOptions.bridge[method]({requestId: 'manual', task: 'bounded'});
+      f.gatewayOptions.bridge.resultReady({requestId: 'manual'}, result);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      f.bridgeOptions.onChange(r);
+      await tick();
+      assert.equal(f.host.startCalls.length, 1);
+    } finally {
+      await f.controller.close();
+    }
+  });
+for (const status of ['failed', 'unresolved'])
+  test(`${status} observation is a separate status notice and does not consume final completion`, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'work'});
+      await f.gatewayOptions.bridge.start({requestId: 'later', task: 'bounded'});
+      const r = {parentId: f.controller.state.threadId, requestId: 'later', settled: false, status};
+      f.bridgeOptions.onChange(r);
+      f.bridgeOptions.onChange(r);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await waitFor(() => f.host.startCalls.length === 2);
+      const attention = f.host.startCalls[1][0].text;
+      assert.match(attention, /K 子代理狀態通知/);
+      assert.match(attention, /不是完成通知/);
+      assert.doesNotMatch(attention, /K 工人完成通知/);
+      assert.match(f.controller.state.messages.at(-1).summary, /狀態待確認/);
+      assert.doesNotMatch(f.controller.state.messages.at(-1).summary, /工作完成/);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      f.bridgeOptions.onChange(r);
+      f.bridgeOptions.onChange(r);
+      await tick();
+      assert.equal(f.host.startCalls.length, 2, 'repeated unknown observation uses the same status notice key');
+      const settled = {...r, settled: true, status: 'completed', output: 'done'};
+      f.bridgeOptions.onChange(settled);
+      await waitFor(() => f.host.startCalls.length === 3);
+      assert.match(f.host.startCalls[2][0].text, /K 工人完成通知/);
+      assert.doesNotMatch(f.host.startCalls[2][0].text, /K 子代理狀態通知/);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      f.bridgeOptions.onChange(settled);
+      await tick();
+      assert.equal(f.host.startCalls.length, 3, 'final completion is delivered once');
+    } finally {
+      await f.controller.close();
+    }
+  });
+test('pre-send result preparation failure keeps conversation usable without replay', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'bad', task: 'bounded'});
+    const r = {
+      parentId: f.controller.state.threadId,
+      requestId: 'bad',
+      settled: true,
+      status: 'completed',
+      output: 'x'.repeat(5000),
+      workspace: 'relative-invalid'
+    };
+    f.bridgeOptions.onChange(r);
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await waitFor(() => f.controller.state.error?.includes('luna_inspect'));
+    assert.equal(f.controller.state.status, 'completed');
+    assert.equal(f.controller.state.busy, false);
+    assert.match(f.controller.state.error, /luna_inspect/);
+    assert.equal(f.host.startCalls.length, 1);
+    f.bridgeOptions.onChange(r);
+    await tick();
+    assert.equal(f.host.startCalls.length, 1);
+    await f.controller.send({text: 'continue normally'});
+    assert.equal(f.host.startCalls.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+test('switching workspace suppresses cancellation and late completion events', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'switch', task: 'bounded'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await tick();
+    const old = f.host,
+      r = {parentId: f.controller.state.threadId, requestId: 'switch', settled: false, status: 'running'};
+    f.bridge.records = [r];
+    f.bridge.cancel = async () => {
+      f.bridgeOptions.onChange({...r, settled: true, status: 'cancelled'});
+      await tick();
+      return {settled: true};
+    };
+    await f.controller.selectWorkspace({path: f.root});
+    f.bridgeOptions.onChange({...r, settled: true, status: 'completed'});
+    await tick();
+    assert.equal(old.startCalls.length, 1);
+    assert.equal(f.controller.state.status, 'idle');
+  } finally {
+    await f.controller.close();
+  }
+});
+test('idle quota refresh uses five-minute interval and manual refresh bypasses it', async () => {
+  const f = await fixture();
+  const now = Date.now;
+  let time = now();
+  Date.now = () => time;
+  try {
+    await f.controller.usage();
+    const first = f.host;
+    time += 61000;
+    await f.controller.usage();
+    assert.equal(f.host, first);
+    time += 240000;
+    await f.controller.usage();
+    assert.notEqual(f.host, first);
+    const second = f.host;
+    await f.controller.usage(true);
+    assert.notEqual(f.host, second);
+  } finally {
+    Date.now = now;
+    await f.controller.close();
+  }
+});
+
+test('manual unfinished inspection keeps automatic completion armed', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'running', task: 'bounded'});
+    f.gatewayOptions.bridge.resultReady({requestId: 'running'}, {settled: false, status: 'running'});
+    f.bridgeOptions.onChange({
+      parentId: f.controller.state.threadId,
+      requestId: 'running',
+      settled: true,
+      status: 'completed',
+      output: 'done'
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await waitFor(() => f.host.startCalls.length === 2);
+    assert.equal(f.host.startCalls.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+test('manual cancel disarms before an uncertain cancellation result', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'cancel-uncertain', task: 'bounded'});
+    f.bridge.cancel = async () => {
+      throw Error('cancel unconfirmed');
+    };
+    await assert.rejects(f.gatewayOptions.bridge.cancel({requestId: 'cancel-uncertain'}), /unconfirmed/);
+    f.bridgeOptions.onChange({
+      parentId: f.controller.state.threadId,
+      requestId: 'cancel-uncertain',
+      settled: true,
+      status: 'completed',
+      output: 'late'
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await tick();
+    assert.equal(f.host.startCalls.length, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude input acknowledges UUID and does not finish before deferred input result', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'A'});
+    await f.controller.steer({text: 'C'});
+    const c = f.controller.state.messages.at(-1);
+    assert.equal(c.source, 'steer');
+    assert.equal(c.groupId, f.controller.state.messages[0].groupId);
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, true);
+    f.hostOptions.onMessage({type: 'user', uuid: c.id, isReplay: true, message: {content: 'C'}});
+    assert.equal(c.delivery, 'received');
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude fork requests new session with source history and preserves original projection', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'ORIGINAL'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'answer',
+      message: {content: [{type: 'text', text: 'conclusion'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.messages.at(-1).partial, undefined);
+    const parent = f.controller.state.threadId;
+    const r = await f.controller.fork({messageId: 'answer', accessMode: 'claude-auto'});
+    assert.notEqual(r.threadId, parent);
+    assert.equal(f.hostOptions.forkFrom, parent.slice(7));
+    assert.equal(f.hostOptions.accessMode, 'claude-auto');
+    assert.equal(f.controller.state.messages[0].text, 'ORIGINAL');
+    const original = JSON.parse(
+      await readFile(path.join(f.root, '.runtime/claude-sessions', parent + '.json'), 'utf8')
+    );
+    assert.equal(original.messages.at(-1).text, 'conclusion');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude inherited attachment preview and download survive reopen, second fork and workspace move without granting send', async () => {
+  const f = await fixture();
+  try {
+    const {threadId: parent} = await f.controller.open({});
+    const a = await f.controller.upload({
+      threadId: parent,
+      name: '繼承.txt',
+      base64: Buffer.from('Claude 假原文').toString('base64')
+    });
+    await f.controller.send({text: 'ORIGINAL', attachmentIds: [a.id]});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'answer',
+      message: {content: [{type: 'text', text: 'conclusion'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const {threadId: child} = await f.controller.fork({messageId: 'answer', accessMode: 'claude-auto'});
+    const check = async () => {
+      assert.equal((await f.controller.attachmentFile(a.id)).bytes.toString(), 'Claude 假原文');
+      const source = await f.controller.attachmentSource(a.id, {threadId: f.controller.state.threadId});
+      assert.equal((await readFile(source.path)).toString(), 'Claude 假原文');
+    };
+    await check();
+    await f.controller.close();
+    await f.controller.open({threadId: child});
+    await check();
+    const destination = path.join(f.root, 'moved');
+    await mkdir(destination);
+    await f.controller.close();
+    await f.controller.open(
+      {threadId: child},
+      {relocation: {workspace: destination, previousWorkspaces: [f.root], previousArtifacts: []}}
+    );
+    await check();
+    const {threadId: grandchild} = await f.controller.fork({messageId: 'answer', accessMode: 'claude-auto'});
+    await check();
+    await f.controller.close();
+    await f.controller.open({threadId: grandchild});
+    await check();
+    await assert.rejects(f.controller.send({text: 'not sent', attachmentIds: [a.id]}), /其他對話/);
+    assert.equal(f.host.startCalls.length, 0);
+    f.controller.state.busy = true;
+    await assert.rejects(f.controller.steer({text: 'not steered', attachmentIds: [a.id]}), /其他對話/);
+    f.controller.state.busy = false;
+    assert.equal(f.host.startCalls.length, 0);
+    const foreign = await saveAttachment(f.root, 'unrelated', {name: 'foreign.txt', base64: 'eA=='});
+    await assert.rejects(f.controller.attachmentFile(foreign.id));
+    const card = f.controller.state.messages[0].attachments[0];
+    const owner = card.threadId;
+    card.threadId = 'unrelated';
+    await assert.rejects(f.controller.attachmentFile(a.id));
+    card.threadId = owner;
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude fork requires explicit confirmation when escalating to bypass permissions', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'ORIGINAL'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'answer',
+      message: {content: [{type: 'text', text: 'conclusion'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await assert.rejects(
+      f.controller.fork({messageId: 'answer', accessMode: 'claude-bypassPermissions'}),
+      /permissionConfirmed:true/
+    );
+    await f.controller.fork({messageId: 'answer', accessMode: 'claude-bypassPermissions', permissionConfirmed: true});
+    assert.equal(f.hostOptions.accessMode, 'claude-bypassPermissions');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('stopped Claude partial answer is persisted and cannot be forked', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'ORIGINAL'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'answer-partial',
+      message: {content: [{type: 'text', text: 'unfinished'}]}
+    });
+    assert.equal(f.controller.state.messages.at(-1).partial, true);
+    await f.controller.stop();
+    assert.equal(f.controller.state.messages.at(-1).partial, true);
+    await assert.rejects(f.controller.fork({messageId: 'answer-partial'}), /尚未完成/);
+    const saved = JSON.parse(
+      await readFile(path.join(f.root, '.runtime/claude-sessions', f.controller.state.threadId + '.json'), 'utf8')
+    );
+    assert.equal(saved.messages.at(-1).partial, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('replay does not restart Claude while fresh assistant and tool-result events start the next native turn', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'first'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.status, 'completed');
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      isReplay: true,
+      uuid: 'old-assistant',
+      message: {content: [{type: 'text', text: 'old answer'}]}
+    });
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.status, 'completed');
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'tool-call',
+      message: {content: [{type: 'tool_use', id: 'tool-1', name: 'Read', input: {file_path: 'README.md'}}]}
+    });
+    assert.equal(f.controller.state.busy, true);
+    assert.equal(f.controller.state.status, 'working');
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.status, 'completed');
+    f.hostOptions.onMessage({
+      type: 'user',
+      message: {content: [{type: 'tool_result', tool_use_id: 'tool-1', content: 'read'}]}
+    });
+    assert.equal(f.controller.state.busy, true);
+    assert.equal(f.controller.state.status, 'working');
+    await f.controller.stop();
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'late-answer',
+      message: {content: [{type: 'text', text: 'late'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.status, 'interrupted');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native partial text merges with final envelopes despite intervening thinking and child events', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'stream test'});
+    const emit = f.hostOptions.onMessage;
+    const stream = event => emit({type: 'stream_event', event, parent_tool_use_id: null});
+    stream({
+      type: 'message_start',
+      message: {id: 'native-msg', usage: {input_tokens: 12, cache_read_input_tokens: 3, cache_creation_input_tokens: 0}}
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'thinking-envelope',
+      message: {id: 'native-msg', content: [{type: 'thinking', thinking: 'not displayed'}]}
+    });
+    stream({type: 'content_block_start', index: 1, content_block: {type: 'text', text: ''}});
+    stream({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: 'Hello'}});
+    assert.equal(f.controller.state.messages.at(-1).text, 'Hello');
+    assert.equal(f.controller.state.messages.at(-1).streaming, true);
+    emit({
+      type: 'stream_event',
+      parent_tool_use_id: 'child-tool',
+      event: {type: 'message_start', message: {id: 'child-msg'}}
+    });
+    stream({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: ' world'}});
+    emit({
+      type: 'assistant',
+      uuid: 'final-envelope',
+      message: {id: 'native-msg', content: [{type: 'text', text: 'Hello world'}]}
+    });
+    stream({type: 'message_stop'});
+    const rows = f.controller.state.messages.filter(m => m.role === 'assistant');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].text, 'Hello world');
+    assert.equal(rows[0].streaming, undefined);
+    assert.equal(f.controller.state.progress.tokenUsage.last.totalTokens, 15);
+    emit({type: 'result', is_error: false});
+    assert.equal(f.controller.state.messages.at(-1).partial, undefined);
+    stream({type: 'content_block_delta', index: 1, delta: {type: 'text_delta', text: 'orphan'}});
+    assert.equal(f.controller.state.busy, false);
+    // Native next turn can begin after the preceding result, while replay cannot wake it.
+    emit({type: 'stream_event', isReplay: true, event: {type: 'message_start', message: {id: 'replay'}}});
+    assert.equal(f.controller.state.busy, false);
+    stream({type: 'message_start', message: {id: 'next'}});
+    assert.equal(f.controller.state.busy, true);
+    await f.controller.stop();
+    stream({type: 'content_block_delta', index: 0, delta: {type: 'text_delta', text: 'late'}});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.controller.state.messages.at(-1).text, 'Hello world');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('busy Claude accepts draft attachments without sending or interrupting the active turn', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'A'});
+    for (let i = 0; i < 3; i++)
+      f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting', uuid: `status-${i}`});
+    assert.deepEqual(f.controller.state.notices, []);
+    const a = await f.controller.upload({
+      threadId: f.controller.state.threadId,
+      name: 'queued.txt',
+      base64: Buffer.from('B fixture').toString('base64')
+    });
+    assert.ok(a.id);
+    assert.equal(f.controller.state.busy, true);
+    assert.equal(f.host.startCalls.length, 1);
+    await assert.rejects(f.controller.upload({threadId: 'foreign', name: 'x.txt', base64: 'WA=='}), /對話已切換/);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude child events belong to workers and do not enter the main conclusion', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'agent-call',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-1',
+            name: 'Agent',
+            input: {description: 'Inspect the tests', prompt: 'Find relevant tests'}
+          }
+        ]
+      }
+    });
+    emit({
+      type: 'user',
+      uuid: 'child-prompt',
+      parent_tool_use_id: 'agent-1',
+      message: {content: 'Find relevant tests'}
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'child-answer',
+      parent_tool_use_id: 'agent-1',
+      message: {content: [{type: 'text', text: 'Found two focused tests.'}]}
+    });
+    assert.equal(f.controller.state.workers.length, 1);
+    assert.equal(f.controller.state.workers[0].provider, 'claude-native');
+    assert.equal(f.controller.state.workers[0].requestId, 'agent-1');
+    assert.equal(f.controller.state.workers[0].task, 'Inspect the tests');
+    assert.equal(f.controller.state.workers[0].prompt, 'Find relevant tests');
+    assert.equal(f.controller.state.workers[0].output, 'Found two focused tests.');
+    assert.equal(
+      f.controller.state.messages.some(item => item.text?.includes('Found two focused tests.')),
+      false
+    );
+    emit({
+      type: 'user',
+      uuid: 'tool-return',
+      parent_tool_use_id: null,
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-1', content: 'completed'}]}
+    });
+    assert.equal(
+      f.controller.state.workers[0].status,
+      'unresolved',
+      'a result block alone cannot distinguish completed from async_launched'
+    );
+    emit({
+      type: 'user',
+      uuid: 'tool-return-authoritative',
+      parent_tool_use_id: null,
+      tool_use_result: {
+        status: 'completed',
+        agentId: 'native-agent-1',
+        content: [],
+        totalToolUseCount: 2,
+        totalDurationMs: 40,
+        totalTokens: 12,
+        usage: {input_tokens: 8, output_tokens: 4}
+      },
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-1', content: 'completed'}]}
+    });
+    assert.equal(
+      f.controller.state.workers[0].status,
+      'completed',
+      'explicit SDK AgentOutput metadata establishes synchronous completion'
+    );
+    assert.equal(f.controller.state.workers[0].settled, true);
+    emit({
+      type: 'assistant',
+      uuid: 'child-answer-late-new-id',
+      parent_tool_use_id: 'agent-1',
+      message: {content: [{type: 'text', text: 'late child event'}]}
+    });
+    assert.equal(f.controller.state.workers[0].status, 'completed', 'late child events cannot revive a settled worker');
+    assert.equal(
+      f.controller.state.messages.some(item => item.text?.includes('Find relevant tests')),
+      false
+    );
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native AgentOutput async and ambiguous results never claim synchronous completion', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'agent-async-call',
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'agent-async',
+            name: 'Agent',
+            input: {description: 'Async child', prompt: 'Continue later'}
+          }
+        ]
+      }
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'child-async',
+      parent_tool_use_id: 'agent-async',
+      message: {content: [{type: 'text', text: 'started'}]}
+    });
+    emit({
+      type: 'user',
+      uuid: 'async-result',
+      toolUseResult: {status: 'async_launched', agentId: 'native-agent-async'},
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-async', content: 'running'}]}
+    });
+    assert.equal(f.controller.state.workers[0].status, 'unresolved');
+    emit({
+      type: 'assistant',
+      uuid: 'agent-other-call',
+      message: {
+        content: [
+          {type: 'tool_use', id: 'agent-other', name: 'Agent', input: {description: 'Other child', prompt: 'Continue'}}
+        ]
+      }
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'child-other',
+      parent_tool_use_id: 'agent-other',
+      message: {content: [{type: 'text', text: 'started'}]}
+    });
+    emit({
+      type: 'user',
+      uuid: 'ambiguous-result',
+      tool_use_result: {status: 'completed', agentId: 'wrong-association'},
+      message: {
+        content: [
+          {type: 'tool_result', tool_use_id: 'agent-other', content: 'done'},
+          {type: 'tool_result', tool_use_id: 'agent-async', content: 'done'}
+        ]
+      }
+    });
+    assert.equal(f.controller.state.workers.find(item => item.requestId === 'agent-other').status, 'unresolved');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native background Agent starts before child text and settles from task notification', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'synthetic background agent'});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      message: {content: [{type: 'tool_use', id: 'agent-bg', name: 'Agent', input: {run_in_background: true}}]}
+    });
+    emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_type: 'local_agent',
+      task_id: 'native-bg',
+      tool_use_id: 'agent-bg',
+      is_backgrounded: true
+    });
+    assert.equal(f.controller.state.workers[0].status, 'running');
+    assert.equal(f.controller.state.workers[0].kind, undefined, 'agents are not background commands');
+    emit({
+      type: 'user',
+      tool_use_result: {status: 'async_launched'},
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-bg', content: 'launched'}]}
+    });
+    assert.equal(f.controller.state.workers[0].status, 'running');
+    emit({
+      type: 'assistant',
+      parent_tool_use_id: 'agent-bg',
+      uuid: 'child-bg',
+      message: {content: [{type: 'text', text: 'BG_DONE'}]}
+    });
+    assert.equal(f.controller.state.workers.length, 1);
+    emit({type: 'system', subtype: 'task_notification', task_id: 'native-bg', status: 'completed', summary: 'BG_DONE'});
+    assert.equal(f.controller.state.workers[0].status, 'completed');
+    assert.equal(f.controller.state.workers[0].settled, true);
+    emit({
+      type: 'user',
+      tool_use_result: {status: 'async_launched'},
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-bg', content: 'late launch result'}]}
+    });
+    emit({
+      type: 'assistant',
+      parent_tool_use_id: 'agent-bg',
+      uuid: 'child-bg-late',
+      message: {content: [{type: 'text', text: 'late child text'}]}
+    });
+    assert.equal(f.controller.state.workers[0].status, 'completed', 'late events cannot revive a completed child');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude persists unique automatic and manual boundaries across a fresh controller and separate rooms', async () => {
+  const f = await fixture();
+  let reopened;
+  try {
+    const {threadId} = await f.controller.open({});
+    const boundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'auto-complete',
+      session_id: threadId.slice(7),
+      compact_metadata: {trigger: 'auto'}
+    };
+    f.hostOptions.onMessage({...boundary, parent_tool_use_id: 'child'});
+    f.hostOptions.onMessage({...boundary, session_id: 'foreign'});
+    assert.equal(f.controller.state.progress.compactions, 0);
+    f.hostOptions.onMessage(boundary);
+    f.hostOptions.onMessage({...boundary, isReplay: true});
+    assert.equal(f.controller.state.progress.compactions, 1);
+    // Flush through an ordinary UI operation, not close: the completed boundary saves immediately.
+    await f.controller.metadata({threadId, title: 'saved boundary'});
+    let record = JSON.parse(
+      await readFile(path.join(f.root, '.runtime', 'claude-sessions', `${threadId}.json`), 'utf8')
+    );
+    assert.deepEqual(record.compactions, {ids: ['auto-complete'], complete: true, inFlight: false});
+    await f.controller.open({});
+    assert.equal(f.controller.state.progress.compactions, 0);
+    await f.controller.close();
+    reopened = f.createController();
+    await reopened.open({threadId});
+    assert.equal(reopened.state.progress.compactions, 1);
+    assert.equal(reopened.state.progress.compactionsComplete, true);
+    f.hostOptions.onMessage({...boundary, isReplay: true});
+    assert.equal(reopened.state.progress.compactions, 1);
+    await reopened.open({forkFrom: threadId});
+    assert.equal(reopened.state.progress.compactions, 1);
+    assert.equal(reopened.state.progress.compactionsComplete, true);
+  } finally {
+    await f.controller.close();
+    await reopened?.close();
+  }
+});
+
+test('Claude old or interrupted projections stay unknown, and result success alone never counts', async () => {
+  const f = await fixture();
+  let reopened;
+  try {
+    const {threadId} = await f.controller.open({});
+    const file = path.join(f.root, '.runtime', 'claude-sessions', `${threadId}.json`);
+    await f.controller.compact();
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    assert.equal(f.controller.state.progress.compactions, 0);
+    assert.equal(f.controller.state.progress.compactionsComplete, false);
+    await f.controller.close();
+    const record = JSON.parse(await readFile(file, 'utf8'));
+    delete record.compactions;
+    await writeFile(file, JSON.stringify(record));
+    reopened = f.createController();
+    await reopened.open({threadId});
+    assert.equal(reopened.state.progress.compactions, null);
+    assert.equal(reopened.state.progress.compactionsComplete, false);
+    const boundary = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'new-confirmed',
+      session_id: threadId.slice(7)
+    };
+    f.hostOptions.onMessage(boundary);
+    assert.equal(reopened.state.progress.compactions, 1);
+    assert.equal(reopened.state.progress.compactionsComplete, false);
+    await reopened.close();
+    const known = JSON.parse(await readFile(file, 'utf8'));
+    known.compactions = {ids: ['new-confirmed'], complete: true, inFlight: true};
+    await writeFile(file, JSON.stringify(known));
+    await reopened.open({threadId});
+    assert.equal(reopened.state.progress.compactions, 1);
+    assert.equal(reopened.state.progress.compactionsComplete, false);
+  } finally {
+    await f.controller.close();
+    await reopened?.close();
+  }
+});
+
+test('Claude failed manual compression does not count; late confirmed boundary does not restart work', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    await f.controller.compact();
+    f.hostOptions.onMessage({type: 'result', is_error: true});
+    assert.equal(f.controller.state.progress.compactions, 0);
+    f.controller.state.status = 'interrupted';
+    f.controller.state.busy = false;
+    f.hostOptions.onMessage({
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'late-confirmed',
+      session_id: threadId.slice(7)
+    });
+    assert.equal(f.controller.state.progress.compactions, 1);
+    assert.equal(f.controller.state.status, 'interrupted');
+    assert.equal(f.controller.state.busy, false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude marks native submission and autonomous continuation in flight before a crash', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    const file = path.join(f.root, '.runtime', 'claude-sessions', `${threadId}.json`);
+    const read = async () => JSON.parse(await readFile(file, 'utf8'));
+    f.host.start = async () => assert.equal((await read()).compactions.inFlight, true, 'saved before native start');
+    await f.controller.send({text: 'fake work'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await f.controller.metadata({threadId, title: 'completed'});
+    assert.equal((await read()).compactions.inFlight, false);
+    f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting'});
+    await f.controller.metadata({threadId, title: 'autonomous turn'});
+    assert.equal((await read()).compactions.inFlight, true);
+    await f.host.close();
+    await new Promise(resolve => setImmediate(resolve));
+    await f.controller.metadata({threadId, title: 'disconnected'});
+    assert.equal(f.controller.state.progress.compactionsComplete, false);
+    assert.equal((await read()).compactions.complete, false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('closing an already closed Claude controller cannot overwrite newer persisted counts', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    await f.controller.close();
+    const file = path.join(f.root, '.runtime', 'claude-sessions', `${threadId}.json`),
+      record = JSON.parse(await readFile(file, 'utf8'));
+    record.compactions = {ids: ['newer'], complete: true, inFlight: false};
+    await writeFile(file, JSON.stringify(record));
+    await f.controller.close();
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')).compactions, record.compactions);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude failed target workspace validation and close never mix the old room into the target record', async () => {
+  const f = await fixture();
+  try {
+    const {threadId: target} = await f.controller.open({});
+    await f.controller.metadata({threadId: target, title: 'target untouched'});
+    const file = path.join(f.root, '.runtime', 'claude-sessions', `${target}.json`),
+      before = JSON.parse(await readFile(file, 'utf8'));
+    const {threadId: source} = await f.controller.open({});
+    await f.controller.metadata({threadId: source, title: 'different source'});
+    f.hostOptions.onMessage({
+      type: 'system',
+      subtype: 'compact_boundary',
+      uuid: 'source-only',
+      session_id: source.slice(7)
+    });
+    await assert.rejects(
+      f.controller.open({threadId: target}, {relocation: {workspace: path.join(f.root, 'does-not-exist')}})
+    );
+    assert.equal(f.controller.state.threadId, source);
+    assert.equal(f.controller.state.progress.compactions, 1);
+    await f.controller.close();
+    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), before);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const operation of ['send', 'compact'])
+  test(`Claude ${operation} serializes its in-flight marker after an older result snapshot`, async t => {
+    const f = await fixture();
+    let release;
+    try {
+      const {threadId} = await f.controller.open({});
+      const file = path.join(f.root, '.runtime', 'claude-sessions', `${threadId}.json`);
+      let enter, nativeStart;
+      const entered = new Promise(resolve => {
+          enter = resolve;
+        }),
+        gate = new Promise(resolve => {
+          release = resolve;
+        }),
+        started = new Promise(resolve => {
+          nativeStart = resolve;
+        });
+      const original = fs.rename;
+      let held = false;
+      const mock = t.mock.method(fs, 'rename', async (from, to) => {
+        if (!held && to === file && JSON.parse(await fs.readFile(from, 'utf8')).compactions?.inFlight === false) {
+          held = true;
+          enter();
+          await gate;
+        }
+        return original(from, to);
+      });
+      syncBuiltinESMExports();
+      t.after(() => {
+        mock.mock.restore();
+        syncBuiltinESMExports();
+      });
+      f.host.start = async () => {
+        nativeStart();
+        assert.equal(JSON.parse(await readFile(file, 'utf8')).compactions.inFlight, true);
+      };
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await entered;
+      const pending = f.controller[operation]({text: 'fake next turn'});
+      assert.equal(
+        await Promise.race([started.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 100))]),
+        false,
+        'old snapshot must settle before sending native work'
+      );
+      release();
+      await pending;
+      await f.controller.metadata({threadId, title: 'queue flushed'});
+      assert.equal(JSON.parse(await readFile(file, 'utf8')).compactions.inFlight, true);
+    } finally {
+      release?.();
+      await f.controller.close();
+    }
+  });
+
+test('an unsent Claude room survives close and a new controller, with or without a rename', async () => {
+  for (const title of ['', 'named before first message']) {
+    const f = await fixture(),
+      policy = {model: 'gpt-6.1-sol', effort: 'xhigh'};
+    let controller = f.controller;
+    try {
+      const {threadId} = await controller.open({
+        model: 'claude-opus-5-5',
+        effort: 'high',
+        accessMode: 'claude-plan',
+        workerPolicy: policy
+      });
+      if (title) await controller.metadata({threadId, title});
+      assert.equal(controller.state.messages.length, 0);
+      assert.deepEqual(f.host.startCalls, []);
+      await controller.close();
+      controller = f.createController();
+      await controller.open({threadId, model: 'claude-opus-5-5'});
+      assert.equal(controller.state.title, title);
+      assert.equal(controller.state.model, 'claude-opus-5-5');
+      assert.equal(controller.state.effort, 'high');
+      assert.equal(controller.state.accessMode, 'claude-plan');
+      assert.deepEqual(controller.state.workerPolicy, policy);
+      assert.equal(controller.state.workspace, f.root);
+      assert.equal(f.hostOptions.resume, false);
+      await controller.send({text: 'first turn after reopen'});
+      assert.equal(f.host.startCalls.length, 1);
+      assert.equal(f.host.startCalls[0][0].text, 'first turn after reopen');
+      assert.equal(f.hostOptions.resume, false);
+    } finally {
+      await controller.close();
+    }
+  }
+});
+
+test('renaming an inactive unsent Claude room preserves its own effort and worker policy', async () => {
+  const f = await fixture(),
+    firstPolicy = {model: 'gpt-6.1-sol', effort: 'xhigh'},
+    secondPolicy = {model: 'gpt-6-luna', effort: 'low'};
+  try {
+    const first = await f.controller.open({effort: 'low', workerPolicy: firstPolicy}),
+      second = await f.controller.open({effort: 'high', workerPolicy: secondPolicy});
+    await f.controller.metadata({threadId: first.threadId, title: 'renamed while inactive'});
+    const listed = (await listMainSessions(f.root)).sessions;
+    const firstSummary = listed.find(row => row.threadId === first.threadId),
+      secondSummary = listed.find(row => row.threadId === second.threadId);
+    assert.equal(firstSummary.title, 'renamed while inactive');
+    assert.equal(firstSummary.effort, 'low');
+    assert.deepEqual(firstSummary.workerPolicy, firstPolicy);
+    assert.equal(secondSummary.effort, 'high');
+    assert.deepEqual(secondSummary.workerPolicy, secondPolicy);
+    await f.controller.open({threadId: first.threadId});
+    assert.equal(f.controller.state.effort, 'low');
+    assert.deepEqual(f.controller.state.workerPolicy, firstPolicy);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('late native child events after stop cannot recreate or revive workers', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'agent-live-call',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {type: 'tool_use', id: 'agent-live', name: 'Agent', input: {description: 'Live child', prompt: 'Probe only'}}
+        ]
+      }
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'child-live',
+      parent_tool_use_id: 'agent-live',
+      message: {content: [{type: 'text', text: 'Working'}]}
+    });
+    await f.controller.stop();
+    emit({
+      type: 'assistant',
+      uuid: 'child-late',
+      parent_tool_use_id: 'late-agent',
+      message: {content: [{type: 'text', text: 'late'}]}
+    });
+    emit({
+      type: 'assistant',
+      uuid: 'child-live',
+      parent_tool_use_id: 'agent-live',
+      message: {content: [{type: 'text', text: 'Working'}]}
+    });
+    assert.equal(f.controller.state.workers.length, 1);
+    assert.equal(f.controller.state.workers[0].status, 'interrupted');
+    assert.equal(f.controller.state.workers[0].settled, true);
+    assert.equal(f.controller.state.workers[0].output, 'Working');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native child is not settled by interrupt request until host closure is confirmed', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'agent-stop-call',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {type: 'tool_use', id: 'agent-stop', name: 'Agent', input: {description: 'Pending child', prompt: 'Wait'}}
+        ]
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'child-stop',
+      parent_tool_use_id: 'agent-stop',
+      message: {content: [{type: 'text', text: 'Still working'}]}
+    });
+    let confirmClose;
+    f.host.close = () =>
+      new Promise(resolve => {
+        confirmClose = resolve;
+      });
+    const stopping = f.controller.stop();
+    await tick();
+    assert.equal(f.host.interrupted, true);
+    assert.notEqual(f.controller.state.workers[0].settled, true, 'interrupt request alone is not proof of termination');
+    confirmClose();
+    await stopping;
+    assert.equal(f.controller.state.workers[0].status, 'interrupted');
+    assert.equal(f.controller.state.workers[0].settled, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('failed Claude close retains host for retries and never reports a second failed close as success', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const retained = f.host,
+      original = retained.close.bind(retained);
+    let closes = 0;
+    retained.close = async () => {
+      closes++;
+      if (closes < 3) throw new Error(`close attempt ${closes} unconfirmed`);
+      return original();
+    };
+    await assert.rejects(f.controller.close(), /close attempt 1 unconfirmed/);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.equal(f.host, retained);
+    await assert.rejects(f.controller.close(), /close attempt 2 unconfirmed/);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.equal(f.host, retained);
+    assert.equal(closes, 2);
+    await f.controller.close();
+    assert.equal(closes, 3);
+    assert.equal(f.controller.state.status, 'offline');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('failed Claude stop retains host and a later confirmed stop can retry it', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const retained = f.host,
+      original = retained.close.bind(retained);
+    let closes = 0;
+    retained.close = async () => {
+      closes++;
+      if (closes === 1) throw new Error('stop close unconfirmed');
+      return original();
+    };
+    await assert.rejects(f.controller.stop(), /stop close unconfirmed/);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.equal(f.host, retained);
+    assert.equal(closes, 1);
+    await f.controller.stop();
+    assert.equal(closes, 2);
+    assert.equal(f.controller.state.status, 'interrupted');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude TodoWrite replaces the progress plan using the official schema', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'todos',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'todo-1',
+            name: 'TodoWrite',
+            input: {
+              todos: [
+                {content: 'Inspect events', status: 'in_progress', activeForm: 'Inspecting events'},
+                {content: 'Add tests', status: 'pending', activeForm: 'Adding tests'}
+              ]
+            }
+          }
+        ]
+      }
+    });
+    assert.deepEqual(f.controller.state.progress.plan, [
+      {step: 'Inspect events', status: 'in_progress', activeForm: 'Inspecting events'},
+      {step: 'Add tests', status: 'pending', activeForm: 'Adding tests'}
+    ]);
+    emit({
+      type: 'assistant',
+      uuid: 'bad-todos',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'todo-2',
+            name: 'TodoWrite',
+            input: {todos: [{content: 'Bad', status: 'unknown', activeForm: 'Bad'}]}
+          }
+        ]
+      }
+    });
+    assert.equal(f.controller.state.progress.plan.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude ExitPlanMode presents existing plan at the native approval entry point', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'todos-for-plan',
+      parent_tool_use_id: null,
+      message: {
+        content: [
+          {
+            type: 'tool_use',
+            id: 'todo-plan',
+            name: 'TodoWrite',
+            input: {todos: [{content: 'Review scope', status: 'completed', activeForm: 'Reviewing scope'}]}
+          }
+        ]
+      }
+    });
+    const pending = f.hostOptions.onPermission({
+      toolName: 'ExitPlanMode',
+      input: {plan: '# 驗收計畫\n1. 檢查回歸測試', planFilePath: 'C:/unread-plan.md'}
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const question = f.controller.state.questions[0];
+    assert.equal(question.kind, 'approval');
+    assert.equal(question.title, 'Claude Code 提出計畫');
+    assert.match(question.text, /檢視工作計畫/);
+    assert.match(question.text, /# 驗收計畫/);
+    assert.equal(question.details.plan, '# 驗收計畫\n1. 檢查回歸測試');
+    await f.controller.answer({id: question.id, accept: false});
+    assert.equal((await pending).behavior, 'deny');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude preserves chosen worker defaults through saving and reconnect, with lazy Codex startup', async () => {
+  const f = await fixture();
+  const policy = {model: 'gpt-6.1-sol', effort: 'xhigh'};
+  try {
+    const {threadId} = await f.controller.open({workerPolicy: policy});
+    assert.deepEqual(f.controller.state.workerPolicy, policy);
+    assert.equal(f.bridgeOptions, undefined);
+    assert.deepEqual((await f.controller.sessions()).sessions[0].workerPolicy, policy);
+    await f.controller.stop();
+    await f.controller.open({threadId});
+    assert.deepEqual(f.controller.state.workerPolicy, policy);
+    await f.gatewayOptions.bridge.start({requestId: 'selected', task: 'fake task', model: 'gpt-6-luna', effort: 'low'});
+    assert.deepEqual(f.bridgeOptions.workerPolicy, policy);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const model of ['claude-sonnet-5', 'claude-sonnet-5-5'])
+  test(`${model} from the official catalog can be the main agent and retain its exact model`, async () => {
+    const models = [
+      {model, displayName: 'Sonnet', supportedReasoningEfforts: [{reasoningEffort: 'low'}, {reasoningEffort: 'max'}]}
+    ];
+    const f = await fixture({models});
+    try {
+      assert.deepEqual((await f.controller.models()).models, models);
+      const {threadId} = await f.controller.open({model, effort: 'low'});
+      assert.equal(f.hostOptions.model, model);
+      assert.equal(f.hostOptions.effort, 'low');
+      await f.controller.send({text: 'fake Sonnet task'});
+      assert.equal(f.host.startCalls.length, 1);
+      await f.controller.stop();
+      await f.controller.open({threadId, model});
+      assert.equal(f.controller.state.model, model);
+      assert.equal((await f.controller.sessions()).sessions[0].model, model);
+      await assert.rejects(f.controller.selectModel({threadId, model: 'claude-not-in-catalog'}), /目前帳號未提供/);
+    } finally {
+      await f.controller.close();
+    }
+  });
+
+test('Claude lazy gateway exposes the same read-only Gemini account list without starting a worker', async () => {
+  const f = await fixture();
+  let reads = 0;
+  f.bridge.accounts = async () => {
+    reads++;
+    return {accounts: [{id: 'a'.repeat(32), email: 'fake@example.test'}]};
+  };
+  try {
+    await f.controller.open({});
+    assert.equal(f.bridgeOptions, undefined);
+    const result = await f.gatewayOptions.bridge.accounts();
+    assert.equal(result.accounts[0].email, 'fake@example.test');
+    assert.equal(reads, 1);
+    assert.equal(f.bridge.records, undefined);
+    assert.equal(f.controller.state.workers.length, 0);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude official Gemini ready notifies once after failed live goal and native backgrounds settle', async () => {
+  const f = await fixture({
+    waitForHost: async (_o, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: []};
+      host.goal = async args =>
+        args === 'clear'
+          ? 'Goal cleared: fake goal'
+          : args
+            ? 'Goal set: ' + args
+            : 'Goal active: fake goal (not yet evaluated)';
+    }
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.goal({objective: 'fake goal'});
+    await f.gatewayOptions.bridge.start({requestId: 'quota-a', model: 'gemini-3.8-flash'});
+    await f.gatewayOptions.bridge.start({requestId: 'quota-b', model: 'gemini-3.8-flash'});
+    const event = {
+        parentId: f.controller.state.threadId,
+        requestIds: ['quota-a', 'quota-b'],
+        accountId: 'new-fake-account'
+      },
+      emit = f.hostOptions.onMessage;
+    f.bridgeOptions.onGeminiHandoff({...event, status: 'waiting'});
+    emit({type: 'system', subtype: 'task_started', task_type: 'local_bash', task_id: 'bg', tool_use_id: 'bg-tool'});
+    emit({type: 'result', is_error: true, subtype: 'error_during_execution', result: 'fixture stream error'});
+    await tick();
+    assert.equal(f.host.startCalls.length, 0);
+    f.bridgeOptions.onGeminiHandoff({...event, status: 'ready'});
+    await tick();
+    assert.equal(f.host.startCalls.length, 0);
+    emit({type: 'system', subtype: 'task_notification', task_id: 'bg', status: 'completed'});
+    await waitFor(() => f.host.startCalls.length === 1);
+    assert.match(f.host.startCalls[0][0].text, /quota-a.*quota-b/);
+    assert.match(f.host.startCalls[0][0].text, /handoffFrom/);
+    assert.match(f.host.startCalls[0][0].text, /已保存成果/);
+    f.bridgeOptions.onGeminiHandoff({...event, status: 'ready'});
+    emit({type: 'result', is_error: true, result: 'fixture audit failed'});
+    await tick();
+    assert.equal(f.host.startCalls.length, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const action of ['clear', 'stop', 'human-send', 'blocked', 'budget', 'unknown-goal', 'permission', 'stale-bridge'])
+  test('Claude Gemini ready does not bypass ' + action, async () => {
+    let nativeGoal = 'fake goal';
+    const f = await fixture({
+      waitForHost: async (_o, host) => {
+        host.nativeCapabilities = {commands: ['goal'], efforts: []};
+        host.goal = async args => {
+          if (args === 'clear') {
+            nativeGoal = null;
+            return 'Goal cleared: fake goal';
+          }
+          if (args) {
+            nativeGoal = args;
+            return 'Goal set: ' + args;
+          }
+          return nativeGoal
+            ? 'Goal active: ' + nativeGoal + ' (not yet evaluated)'
+            : 'No goal set. Usage: `/goal <condition>`';
+        };
+      }
+    });
+    try {
+      const {threadId} = await f.controller.open({});
+      await f.controller.goal({objective: 'fake goal'});
+      await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+      const callback = f.bridgeOptions.onGeminiHandoff,
+        event = {parentId: threadId, requestIds: ['quota'], accountId: 'fake-account'};
+      callback({...event, status: 'waiting'});
+      f.hostOptions.onMessage({
+        type: 'result',
+        is_error: true,
+        result: 'fixture failure',
+        subtype: action === 'budget' ? 'error_max_budget_usd' : 'error_during_execution',
+        ...(action === 'permission' ? {permission_denials: [{tool_name: 'Write'}]} : {})
+      });
+      await tick();
+      if (action === 'clear') await f.controller.goal({clear: true});
+      if (action === 'stop') await f.controller.stop();
+      if (action === 'human-send') {
+        await f.controller.send({text: 'new human work'});
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+      }
+      if (action === 'unknown-goal')
+        f.host.goal = async () => {
+          throw Error('fixture unknown native goal');
+        };
+      if (action === 'stale-bridge') {
+        await f.controller.close();
+        await f.controller.open({threadId});
+      }
+      const before = f.host.startCalls.length;
+      callback({
+        ...event,
+        status: action === 'blocked' ? 'blocked' : 'ready',
+        reason: 'fixture official result unknown'
+      });
+      await tick();
+      assert.equal(f.host.startCalls.length, before);
+    } finally {
+      await f.controller.close();
+    }
+  });
+
+test('Claude Gemini ready rechecks clear after awaited native goal read', async () => {
+  let nativeGoal = 'fake goal',
+    release,
+    gate;
+  const f = await fixture({
+    waitForHost: async (_o, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: []};
+      host.goal = async args => {
+        if (args === 'clear') {
+          nativeGoal = null;
+          return 'Goal cleared: fake goal';
+        }
+        if (args) {
+          nativeGoal = args;
+          return 'Goal set: ' + args;
+        }
+        if (gate) await gate;
+        return nativeGoal
+          ? 'Goal active: ' + nativeGoal + ' (not yet evaluated)'
+          : 'No goal set. Usage: `/goal <condition>`';
+      };
+    }
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.goal({objective: 'fake goal'});
+    await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+    f.hostOptions.onMessage({type: 'result', is_error: true, result: 'fixture failure'});
+    await tick();
+    gate = new Promise(r => (release = r));
+    f.bridgeOptions.onGeminiHandoff({
+      parentId: f.controller.state.threadId,
+      requestIds: ['quota'],
+      status: 'ready',
+      accountId: 'fake'
+    });
+    await tick();
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      message: {model: '<synthetic>', content: [{type: 'text', text: 'Goal cleared: fake goal'}]},
+      session_id: f.controller.state.threadId,
+      local_command_run: {command: 'goal'}
+    });
+    nativeGoal = null;
+    release();
+    await tick();
+    assert.equal(f.host.startCalls.length, 0);
+  } finally {
+    release?.();
+    await f.controller.close();
+  }
+});
+
+for (const action of ['native-takeover', 'human-send'])
+  test('Claude completed Gemini ready preflight ' + action + ' preserves original results', async t => {
+    const f = await fixture();
+    let release,
+      patched,
+      hit = false;
+    const gate = new Promise(r => (release = r));
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'original work'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+      const row = {
+        parentId: f.controller.state.threadId,
+        provider: 'gemini',
+        requestId: 'quota',
+        settled: true,
+        status: 'failed',
+        output: 'saved original result'
+      };
+      f.bridge.records = [row];
+      const original = fs.rename;
+      patched = t.mock.method(fs, 'rename', async (from, to) => {
+        if (
+          !hit &&
+          String(to).includes('claude-sessions') &&
+          JSON.parse(await readFile(from, 'utf8')).workerNotifications?.quota === 'delivery-attempted'
+        ) {
+          hit = true;
+          await gate;
+        }
+        return original(from, to);
+      });
+      syncBuiltinESMExports();
+      f.bridgeOptions.onChange(row);
+      f.bridgeOptions.onGeminiHandoff({
+        parentId: f.controller.state.threadId,
+        requestIds: ['quota'],
+        status: 'ready',
+        accountId: 'fake'
+      });
+      await waitFor(() => hit);
+      let sending;
+      if (action === 'native-takeover')
+        f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting'});
+      else sending = f.controller.send({text: 'new human work'});
+      release();
+      await sending;
+      await tick();
+      patched.mock.restore();
+      syncBuiltinESMExports();
+      patched = null;
+      assert.equal(f.host.startCalls.length, action === 'native-takeover' ? 1 : 2);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await waitFor(() => f.host.startCalls.length === (action === 'native-takeover' ? 2 : 3));
+      assert.match(f.host.startCalls.at(-1)[0].text, /saved original result/);
+    } finally {
+      release?.();
+      if (patched) {
+        patched.mock.restore();
+        syncBuiltinESMExports();
+      }
+      await f.controller.close();
+    }
+  });
+
+test('Claude completed Gemini ready consumes one episode and resolves ready info', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    f.bridgeOptions.onGeminiHandoff({
+      parentId: f.controller.state.threadId,
+      requestIds: ['quota'],
+      status: 'ready',
+      accountId: 'fake'
+    });
+    await waitFor(
+      () =>
+        f.host.startCalls.length === 2 &&
+        !f.controller.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved)
+    );
+    assert.equal(
+      f.controller.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved),
+      false
+    );
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await tick();
+    assert.equal(f.host.startCalls.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude accepted human steer suppresses old account-ready callback', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+    const callback = f.bridgeOptions.onGeminiHandoff;
+    callback({parentId: f.controller.state.threadId, requestIds: ['quota'], status: 'waiting'});
+    assert.equal((await f.controller.steer({text: 'new correction'})).steered, true);
+    const steered = f.controller.state.messages.at(-1);
+    f.hostOptions.onMessage({type: 'user', uuid: steered.id, isReplay: true, message: {content: f.host.startCalls[1]}});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    callback({parentId: f.controller.state.threadId, requestIds: ['quota'], status: 'ready', accountId: 'fake'});
+    await tick();
+    assert.equal(f.host.startCalls.length, 2);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const switched of [false, true])
+  test('Claude Gemini ready account facts match switched=' + switched, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'work'});
+      await f.gatewayOptions.bridge.start({requestId: 'not-started', model: 'gemini-3.8-flash'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      f.bridgeOptions.onGeminiHandoff({
+        parentId: f.controller.state.threadId,
+        requestIds: ['not-started'],
+        status: 'ready',
+        accountId: 'fake-a',
+        switched,
+        reason: 'fixture official account check'
+      });
+      await waitFor(() => f.host.startCalls.length === 2);
+      const text = f.host.startCalls.at(-1)[0].text;
+      assert.match(text, /handoffFrom/);
+      assert.match(text, /新的 requestId/);
+      assert.match(text, /fixture official account check/);
+      if (switched) {
+        assert.match(text, /官方額度確認歸零/);
+        assert.match(text, /查核切換就緒/);
+      } else {
+        assert.doesNotMatch(text, /官方額度確認歸零|帳號已查核切換就緒/);
+        assert.match(text, /本次通知未切換帳號/);
+        assert.match(text, /不表示之前沒有其他聊天室換過帳號/);
+        assert.match(text, /已執行後失敗/);
+      }
+    } finally {
+      await f.controller.close();
+    }
+  });
+
+test('Claude same-account mixed batch excludes executed failed work from ready scope', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'work'});
+    for (const requestId of ['rate-failed', 'not-started'])
+      await f.gatewayOptions.bridge.start({requestId, model: 'gemini-3.8-flash'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await tick();
+    const rows = ['rate-failed', 'not-started'].map(requestId => ({
+      parentId: f.controller.state.threadId,
+      provider: 'gemini',
+      requestId,
+      status: 'failed',
+      settled: true,
+      output: 'saved ' + requestId
+    }));
+    f.bridge.records = rows;
+    for (const row of rows) f.bridgeOptions.onChange(row);
+    f.bridgeOptions.onGeminiHandoff({
+      parentId: f.controller.state.threadId,
+      requestIds: ['not-started'],
+      status: 'ready',
+      accountId: 'fake-a',
+      switched: false
+    });
+    await waitFor(() => f.host.startCalls.length === 2);
+    const text = f.host.startCalls.at(-1)[0].text;
+    assert.match(text, /saved rate-failed/);
+    assert.match(text, /saved not-started/);
+    assert.deepEqual(JSON.parse(text.split('\n').find(line => line.startsWith('{"parentId"'))).requestIds, [
+      'not-started'
+    ]);
+    assert.match(text, /本次就緒只涵蓋 event.requestIds 中先前未送出的工作/);
+    assert.match(text, /其他已執行後失敗工單不因本次通知自動重啟/);
+    assert.match(text, /接手僅限通知 requestIds 的剩餘工作/);
+    assert.doesNotMatch(text, /官方額度確認歸零|帳號已查核切換就緒/);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude receives read-only Google Ops MCP without replacing worker gateway or native mode', async () => {
+  const f = await fixture();
+  try {
+    await mkdir(path.join(f.root, 'google_ops_worker'), {recursive: true});
+    await mkdir(path.join(f.root, '.venv/Scripts'), {recursive: true});
+    await writeFile(path.join(f.root, 'google_ops_worker/google_ops_client.py'), '# fixture');
+    await writeFile(path.join(f.root, '.venv/Scripts/python.exe'), 'fixture');
+    await mkdir(path.join(f.root, '.runtime'), {recursive: true});
+    await writeFile(path.join(f.root, '.runtime/google-ops.json'), JSON.stringify({directory: f.root}));
+    await f.controller.open({});
+    const config = f.hostOptions.mcpConfig.mcpServers;
+    assert.equal(config.k_google_ops.type, 'stdio');
+    assert.ok(config.k_google_ops.args.includes(f.root));
+    assert.deepEqual(config.k_luna, f.gateway.mcpConfig.mcpServers.k_luna);
+    assert.equal(f.hostOptions.accessMode, f.controller.state.accessMode);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude relocation keeps native identity and old attachments and artifacts without copying files', async () => {
+  const f = await fixture();
+  try {
+    const c = f.controller,
+      {threadId} = await c.open({});
+    const native = f.hostOptions.sessionId;
+    const upload = await c.upload({threadId, name: 'before.txt', base64: Buffer.from('old upload').toString('base64')});
+    const dest = path.join(f.root, 'destination');
+    await mkdir(dest);
+    await c.open(
+      {threadId},
+      {
+        relocation: {
+          workspace: dest,
+          previousWorkspaces: [f.root],
+          previousArtifacts: [path.join(f.root, 'result.txt')]
+        }
+      }
+    );
+    assert.equal(f.hostOptions.sessionId, native);
+    assert.equal(f.hostOptions.cwd, dest);
+    assert.match(f.hostOptions.workspaceInstructions, /目前工作區/);
+    assert.equal((await c.attachmentFile(upload.id)).bytes.toString(), 'old upload');
+    assert.equal((await c.artifact(path.join(f.root, 'result.txt'))).bytes.toString(), 'fixture write target');
+    await assert.rejects(c.artifact(path.join(f.root, 'README.md')), /只開啟/);
+    await c.close();
+    await c.open({threadId});
+    assert.equal(c.state.workspace, dest);
+    assert.equal((await c.attachmentFile(upload.id)).bytes.toString(), 'old upload');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('forking moved Claude conversation retains original artifact roots after reopen', async () => {
+  const f = await fixture();
+  try {
+    const c = f.controller,
+      {threadId} = await c.open({});
+    await c.send({text: 'original'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'move-answer',
+      message: {content: [{type: 'text', text: 'done'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const dest = path.join(f.root, 'destination');
+    await mkdir(dest);
+    const artifact = path.join(f.root, 'result.txt');
+    await c.open(
+      {threadId},
+      {relocation: {workspace: dest, previousWorkspaces: [f.root], previousArtifacts: [artifact]}}
+    );
+    const fork = await c.fork({messageId: 'move-answer', accessMode: 'claude-manual'});
+    assert.equal((await c.artifact(artifact)).bytes.toString(), 'fixture write target');
+    await c.close();
+    await c.open({threadId: fork.threadId});
+    assert.equal((await c.artifact(artifact)).bytes.toString(), 'fixture write target');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native background Bash remains unsettled after the main reply until its own completion', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_type: 'local_bash',
+      task_id: 'bg-one',
+      tool_use_id: 'tool-one',
+      description: 'synthetic sleep'
+    });
+    assert.equal((await f.controller.workers())[0].kind, 'command', 'Background commands must not count as subagents');
+    emit({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+    assert.equal((await f.controller.workers())[0].settled, false);
+    emit({type: 'system', subtype: 'task_notification', task_id: 'unrelated', status: 'completed'});
+    assert.equal((await f.controller.workers())[0].settled, false);
+    emit({type: 'system', subtype: 'task_notification', task_id: 'bg-one', status: 'completed', summary: 'exit 0'});
+    assert.equal((await f.controller.workers())[0].settled, true);
+    emit({type: 'system', subtype: 'status', status: 'requesting'});
+    assert.equal(f.controller.state.busy, true);
+    emit({type: 'result', is_error: false});
+    assert.equal(f.controller.state.busy, false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude goals set, read back, clear on stop and persist without fake messages', async () => {
+  let nativeGoal = null;
+  const operations = [];
+  const f = await fixture({
+    waitForHost: async (options, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: ['high']};
+      host.goal = async args => {
+        operations.push(args);
+        if (args === 'clear') {
+          nativeGoal = null;
+          return 'Goal cleared: fake objective';
+        }
+        if (args) {
+          nativeGoal = args;
+          return 'Goal set: ' + args;
+        }
+        return nativeGoal
+          ? 'Goal active: ' + nativeGoal + ' (not yet evaluated)'
+          : 'No goal set. Usage: `/goal <condition>`';
+      };
+    }
+  });
+  try {
+    const {threadId} = await f.controller.open({});
+    assert.equal(f.controller.state.capabilities.goal, true);
+    await f.controller.goal({objective: 'fake objective'});
+    assert.equal(f.controller.state.goal.status, 'active');
+    assert.equal(f.controller.state.messages.length, 0);
+    const file = path.join(f.root, '.runtime/claude-sessions', threadId + '.json');
+    assert.equal(JSON.parse(await readFile(file)).nativeStarted, true);
+    nativeGoal = null;
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await new Promise(r => setImmediate(r));
+    await f.controller.close();
+    await f.controller.open({threadId});
+    assert.equal(f.controller.state.goal.status, 'ended');
+    assert.equal(f.controller.state.goal.objective, 'fake objective');
+    await f.controller.goal({objective: 'stop objective'});
+    await f.controller.stop();
+    assert.equal(f.controller.state.goal, null);
+    assert.equal(f.controller.state.status, 'interrupted');
+    assert.equal(operations.at(-1), 'clear');
+    await f.controller.open({threadId});
+    assert.equal(f.controller.state.goal, null);
+    assert.equal(f.controller.state.busy, false);
+    await assert.rejects(f.controller.goal({objective: 'clear'}), /保留指令/);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude native goal read failure remains unknown rather than completed', async () => {
+  const f = await fixture({
+    waitForHost: async (options, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: []};
+      host.goal = async args => (args ? 'Goal set: ' + args : Promise.reject(Error('native unavailable')));
+    }
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.goal({objective: 'fake'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(f.controller.state.goal.status, 'unknown');
+    assert.match(f.controller.state.goalError, /unavailable/);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude goal query result cannot recursively refresh and ended records do not refresh every ordinary turn', async () => {
+  let reads = 0;
+  const f = await fixture({
+    waitForHost: async (options, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: []};
+      host.goal = async args => {
+        if (args) return 'Goal set: ' + args;
+        reads++;
+        options.onMessage({type: 'result', is_error: false});
+        return 'No goal set. Usage: ' + String.fromCharCode(96) + '/goal <condition>' + String.fromCharCode(96);
+      };
+    }
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.goal({objective: 'fake'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(reads, 1);
+    assert.equal(f.controller.state.goal.status, 'ended');
+    await f.controller.send({text: 'ordinary'});
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await new Promise(r => setTimeout(r, 40));
+    assert.equal(reads, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude stop closes the host even when clearing the native goal is unconfirmed', async () => {
+  const f = await fixture({
+    waitForHost: async (options, host) => {
+      host.nativeCapabilities = {commands: ['goal'], efforts: []};
+      host.goal = async args => {
+        if (args === 'clear') throw Error('clear unavailable');
+        return 'Goal set: ' + args;
+      };
+    }
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.goal({objective: 'fake'});
+    let closed = false;
+    const close = f.host.close.bind(f.host);
+    f.host.close = async () => {
+      closed = true;
+      await close();
+    };
+    await assert.rejects(f.controller.stop(), /clear unavailable/);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.match(f.controller.state.goalError, /clear unavailable/);
+    assert.equal(closed, true);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude cannot silently turn an edit-only request into new work', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await assert.rejects(f.controller.goal({objective: 'not a new run', editOnly: true}), /不支援只修改/);
+    assert.equal(f.host.startCalls.length, 0);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const [provider, model] of [
+  ['gemini', 'gemini-3.8-flash'],
+  ['codex', 'gpt-6.1-sol'],
+  ['claude', 'claude-opus-5-5']
+])
+  test(`${provider} quiet notice wakes Claude only once and preserves later completion`, async () => {
+    const f = await fixture();
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'synthetic long work'});
+      await f.gatewayOptions.bridge.start({requestId: 'quiet', model, task: 'bounded'});
+      const record = {
+        provider,
+        parentId: f.controller.state.threadId,
+        requestId: 'quiet',
+        status: 'running',
+        settled: false,
+        inspection: {noticeId: 'quiet-one', checkedAt: 1000, lastActivityAt: 0}
+      };
+      f.bridgeOptions.onChange(record);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await waitFor(() => f.host.startCalls.length === 2);
+      assert.match(f.host.startCalls[1][0].text, /久無活動也不等於卡死/);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      f.bridgeOptions.onChange(record);
+      await tick();
+      assert.equal(f.host.startCalls.length, 2);
+      record.settled = true;
+      record.status = 'completed';
+      delete record.inspection;
+      record.output = 'done';
+      f.bridgeOptions.onChange(record);
+      await waitFor(() => f.host.startCalls.length === 3);
+      assert.match(f.host.startCalls[2][0].text, /工人完成通知/);
+    } finally {
+      await f.controller.close();
+    }
+  });
+
+test('Claude native progress ignores elapsed pulses; full background snapshot is not completion', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'synthetic'});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_type: 'local_agent',
+      task_id: 'bg-task',
+      tool_use_id: 'bg-tool'
+    });
+    emit({
+      type: 'system',
+      subtype: 'task_started',
+      task_type: 'local_agent',
+      task_id: 'fg-task',
+      tool_use_id: 'fg-tool'
+    });
+    const worker = f.controller.state.workers.find(w => w.nativeTaskId === 'bg-task');
+    emit({
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: 'bg-task',
+      usage: {total_tokens: 9, tool_uses: 1, duration_ms: 5},
+      last_tool_name: 'Read'
+    });
+    const progress = worker.lastActivityAt;
+    assert(Number.isFinite(progress));
+    assert.equal(worker.lastToolName, 'Read');
+    emit({
+      type: 'system',
+      subtype: 'task_progress',
+      task_id: 'bg-task',
+      usage: {total_tokens: 9, tool_uses: 1, duration_ms: 50000}
+    });
+    assert.equal(worker.lastActivityAt, progress);
+    emit({
+      type: 'system',
+      subtype: 'background_tasks_changed',
+      tasks: [{task_id: 'bg-task', task_type: 'local_agent'}]
+    });
+    emit({type: 'system', subtype: 'background_tasks_changed', tasks: []});
+    assert.equal(worker.status, 'unresolved');
+    assert.equal(worker.settled, false);
+    assert.equal(worker.lastActivityAt, progress);
+    assert.equal(
+      f.controller.state.workers.find(w => w.nativeTaskId === 'fg-task').status,
+      'running',
+      'not a background task, absence is not authoritative'
+    );
+    emit({type: 'system', subtype: 'task_notification', task_id: 'bg-task', status: 'completed', summary: 'done'});
+    assert.equal(worker.status, 'completed');
+    assert.equal(worker.settled, true);
+    assert.equal(worker.backgroundMissing, undefined);
+    assert.equal(worker.error, undefined);
+    emit({type: 'system', subtype: 'background_tasks_changed', tasks: [{task_id: 'bg-task'}]});
+    assert.equal(worker.status, 'completed');
+    assert.equal(
+      f.host.startCalls.length,
+      1,
+      'native notifications remain the native core responsibility, no duplicate K wake'
+    );
+  } finally {
+    await f.controller.close();
+  }
+});
+
+for (const [model, levels] of [
+  ['claude-haiku-4-5-20251001', []],
+  ['claude-opus-4-6', ['low', 'medium', 'high', 'max']],
+  ['claude-future-effort', ['ultra']]
+])
+  test(model + ' keeps model-native efforts across init and a host restart', async () => {
+    const f = await fixture({
+      models: [
+        {
+          model,
+          displayName: model,
+          provider: 'claude',
+          supportedReasoningEfforts: levels.map(reasoningEffort => ({reasoningEffort}))
+        }
+      ]
+    });
+    try {
+      await f.controller.open({model});
+      assert.deepEqual(f.controller.state.efforts, levels);
+      f.hostOptions.onMessage({type: 'system', subtype: 'init', tools: ['Read']});
+      assert.deepEqual(f.controller.state.efforts, levels);
+      await f.controller.send({text: 'fake scoped restart', accessMode: 'claude-plan'});
+      f.hostOptions.onMessage({type: 'system', subtype: 'init', tools: ['Read']});
+      assert.deepEqual(f.controller.state.efforts, levels);
+      assert.equal(f.hostOptions.model, model);
+      assert.equal(f.controller.state.effort, null);
+    } finally {
+      await f.controller.close();
+    }
+  });
+
+test('Claude confirms pre-dispatch rejection, but never labels an attempted native send as unsent', async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(f.controller.send({text: 'fake'}), e => e.notSent === true);
+    await f.controller.open({});
+    await assert.rejects(f.controller.send({text: ''}), e => e.notSent === true);
+    await assert.rejects(f.controller.send({text: 'fake', attachmentIds: ['missing']}), e => e.notSent === true);
+    f.host.start = async () => {
+      throw Error('unknown native delivery');
+    };
+    await assert.rejects(f.controller.send({text: 'fake'}), e => e.notSent !== true);
+    assert.equal(f.controller.state.status, 'uncertain');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('cold Claude history is exposed before host connection and opening never bumps order', async () => {
+  let previews = 0,
+    hosts = 0;
+  const f = await fixture({
+    waitForHost: async () => {
+      hosts++;
+      if (hosts === 2) assert.equal(previews, 1);
+    }
+  });
+  const c = f.controller;
+  try {
+    await c.open({});
+    await c.send({text: 'fake saved request'});
+    f.hostOptions.onMessage({type: 'assistant', message: {content: [{type: 'text', text: 'fake saved reply'}]}});
+    f.hostOptions.onMessage({type: 'result', result: 'fake saved reply', is_error: false});
+    await c.close();
+    const id = c.state.threadId,
+      before = (await listMainSessions(f.root)).sessions[0].sortAt;
+    const reopened = f.createController();
+    try {
+      await reopened.open(
+        {threadId: id, model: 'claude-opus-5-5'},
+        {
+          onHistory: async state => {
+            previews++;
+            assert.ok(state.messages.some(m => m.text === 'fake saved reply'));
+            assert.equal(hosts, 1);
+          }
+        }
+      );
+      assert.equal(previews, 1);
+      assert.equal((await listMainSessions(f.root)).sessions[0].sortAt, before);
+    } finally {
+      await reopened.close();
+    }
+  } finally {
+    await c.close();
+  }
+});
+
+test('Claude sends and steers image-only content with no empty text block', async () => {
+  const f = await fixture();
+  try {
+    const {threadId} = await f.controller.open({});
+    for (const input of [
+      {text: ''},
+      {text: '   '},
+      {text: null, attachmentIds: ['fake']},
+      {text: 'x'.repeat(32001), attachmentIds: ['fake']}
+    ])
+      await assert.rejects(f.controller.send(input), /訊息/);
+    const image = await f.controller.upload({
+      threadId,
+      name: 'pixel.png',
+      base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jY9kAAAAASUVORK5CYII='
+    });
+    await assert.rejects(f.controller.send({text: '', attachmentIds: ['missing']}));
+    assert.equal(f.host.startCalls.length, 0);
+    await f.controller.send({attachmentIds: [image.id]});
+    await f.controller.steer({text: '   ', attachmentIds: [image.id]});
+    assert.equal(f.host.startCalls.length, 2);
+    for (const content of f.host.startCalls) {
+      assert.equal(content.length, 1);
+      assert.equal(content[0].type, 'image');
+    }
+    assert.deepEqual(
+      f.controller.state.messages.filter(m => m.role === 'user' && m.attachments.length).map(m => m.text),
+      ['', '   ']
+    );
+    assert.equal(f.controller.state.title, 'pixel.png');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test(
+  'Claude Gemini ready arriving during bridge-list preflight replaces the receipt and still reaches native start once',
+  {timeout: 5000},
+  async () => {
+    const f = await fixture();
+    let release;
+    const gate = new Promise(resolve => {
+      release = resolve;
+    });
+    let entered,
+      listCalls = 0;
+    const preflightEntered = new Promise(resolve => {
+      entered = resolve;
+    });
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'bounded fake work for receipt preflight'});
+      for (const requestId of ['preflight-first', 'preflight-new'])
+        await f.gatewayOptions.bridge.start({requestId, model: 'gemini-3.8-flash'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      const list = f.bridge.list.bind(f.bridge);
+      f.bridge.list = async () => {
+        listCalls++;
+        if (listCalls === 1) {
+          entered();
+          await gate;
+        }
+        return list();
+      };
+      const parentId = f.controller.state.threadId,
+        ready = requestId => ({
+          parentId,
+          requestIds: [requestId],
+          status: 'ready',
+          accountId: 'fake-shared-account',
+          switched: false
+        });
+      f.bridgeOptions.onGeminiHandoff(ready('preflight-first'));
+      await preflightEntered;
+      assert.equal(f.host.startCalls.length, 1, 'old receipt has not passed read-only preflight');
+      f.bridgeOptions.onGeminiHandoff(ready('preflight-new'));
+      await tick();
+      assert.equal(f.host.startCalls.length, 1, 'new receipt cannot send while old preflight is still held');
+      release();
+      await waitFor(() => f.host.startCalls.length === 2);
+      assert.equal(
+        listCalls,
+        2,
+        'new material receipt gets its own preflight after cancelling the old object snapshot'
+      );
+      const text = f.host.startCalls[1][0].text,
+        receipt = JSON.parse(text.split('\n').find(line => line.startsWith('{"parentId"')));
+      assert.deepEqual(receipt.requestIds, ['preflight-first', 'preflight-new']);
+      assert.equal(receipt.parentId, parentId);
+      assert.match(text, /先核對最新本人意圖/);
+      assert.equal(f.controller.state.busy, true);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      for (const requestId of ['preflight-first', 'preflight-new']) f.bridgeOptions.onGeminiHandoff(ready(requestId));
+      await tick();
+      assert.equal(
+        f.host.startCalls.length,
+        2,
+        'both receipts are consumed by one accepted notification, not stranded or replayed'
+      );
+      assert.equal(
+        f.controller.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved),
+        false
+      );
+    } finally {
+      release?.();
+      await f.controller.close();
+    }
+  }
+);
+
+test(
+  'Claude Gemini ready arriving while native start awaits acceptance survives consumption of only the sent receipt',
+  {timeout: 5000},
+  async () => {
+    const f = await fixture();
+    let release;
+    const gate = new Promise(resolve => {
+      release = resolve;
+    });
+    let entered,
+      hold = true;
+    const nativeStartEntered = new Promise(resolve => {
+      entered = resolve;
+    });
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'bounded fake work for accepted-send receipt race'});
+      for (const requestId of ['send-first', 'send-new'])
+        await f.gatewayOptions.bridge.start({requestId, model: 'gemini-3.8-flash'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      const start = f.host.start.bind(f.host);
+      f.host.start = async (...args) => {
+        await start(...args);
+        if (hold) {
+          hold = false;
+          entered();
+          await gate;
+        }
+      };
+      const parentId = f.controller.state.threadId,
+        ready = requestId => ({
+          parentId,
+          requestIds: [requestId],
+          status: 'ready',
+          accountId: 'fake-shared-account',
+          switched: false
+        });
+      f.bridgeOptions.onGeminiHandoff(ready('send-first'));
+      await nativeStartEntered;
+      assert.equal(f.host.startCalls.length, 2);
+      assert.equal(f.controller.state.busy, true);
+      f.bridgeOptions.onGeminiHandoff(ready('send-new'));
+      await tick();
+      assert.equal(f.host.startCalls.length, 2, 'active native send owns this turn');
+      release();
+      await waitFor(() => !f.controller.state.completionPending);
+      const first = JSON.parse(f.host.startCalls[1][0].text.split('\n').find(line => line.startsWith('{"parentId"')));
+      assert.deepEqual(first.requestIds, ['send-first']);
+      assert.equal(first.parentId, parentId);
+      assert.equal(
+        f.controller.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved),
+        true,
+        'new receipt stays pending after the old accepted send'
+      );
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await waitFor(() => f.host.startCalls.length === 3);
+      const text = f.host.startCalls[2][0].text,
+        second = JSON.parse(text.split('\n').find(line => line.startsWith('{"parentId"')));
+      assert.deepEqual(second.requestIds, ['send-new']);
+      assert.equal(second.parentId, parentId);
+      assert.doesNotMatch(text, /send-first/);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      for (const requestId of ['send-first', 'send-new']) f.bridgeOptions.onGeminiHandoff(ready(requestId));
+      await tick();
+      assert.equal(f.host.startCalls.length, 3, 'each independent receipt was sent once; old IDs never reappear');
+      assert.equal(
+        f.controller.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved),
+        false
+      );
+    } finally {
+      release?.();
+      await f.controller.close();
+    }
+  }
+);
+
+for (const terminal of ['blocked', 'ready'])
+  test(
+    `Claude query-only ${terminal} receipt after an early native result is delivered when the earlier start finally returns`,
+    {timeout: 8000},
+    async () => {
+      const f = await fixture();
+      let release,
+        entered,
+        hold = true,
+        queryNumber = 0;
+      const gate = new Promise(resolve => {
+          release = resolve;
+        }),
+        startEntered = new Promise(resolve => {
+          entered = resolve;
+        });
+      try {
+        await f.controller.open({});
+        await f.controller.send({text: 'bounded fake query-only scheduling work'});
+        const parentId = f.controller.state.threadId;
+        f.bridge.accounts = async () => {
+          const waitId = `query-early-${++queryNumber}`;
+          f.bridgeOptions.onGeminiHandoff({parentId, requestIds: [], queryIds: [waitId], status: 'waiting'});
+          return {scheduling: {status: 'waiting', notificationRegistered: true, waitId}};
+        };
+        const first = await f.gatewayOptions.bridge.accounts();
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        await tick();
+        const start = f.host.start.bind(f.host);
+        f.host.start = async (...args) => {
+          await start(...args);
+          if (hold) {
+            hold = false;
+            entered();
+            await gate;
+          }
+        };
+        f.bridgeOptions.onGeminiHandoff({
+          parentId,
+          requestIds: [],
+          queryIds: [first.scheduling.waitId],
+          status: 'ready',
+          accountId: 'fake-account',
+          switched: false
+        });
+        await startEntered;
+        assert.equal(f.host.startCalls.length, 2);
+        assert.deepEqual(
+          await f.gatewayOptions.bridge.list(),
+          [],
+          'query-only callbacks create no worker records or worker result queue'
+        );
+        // Native stream completion is allowed to precede the native start response.
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        assert.equal(f.controller.state.status, 'completed');
+        const next = await f.gatewayOptions.bridge.accounts();
+        assert.notEqual(next.scheduling.waitId, first.scheduling.waitId);
+        f.bridgeOptions.onGeminiHandoff({
+          parentId,
+          requestIds: [],
+          queryIds: [next.scheduling.waitId],
+          status: terminal,
+          accountId: 'fake-account',
+          switched: false,
+          reason: 'new material fake scheduling result'
+        });
+        await tick();
+        assert.equal(f.host.startCalls.length, 2, 'new terminal waits behind the still-pending native start response');
+        release();
+        await waitFor(() => f.host.startCalls.length === 3);
+        const before = JSON.parse(
+            f.host.startCalls[1][0].text.split('\n').find(line => line.startsWith('{"parentId"'))
+          ),
+          text = f.host.startCalls[2][0].text;
+        const receipt = JSON.parse(text.split('\n').find(line => line.startsWith('{"parentId"')));
+        assert.deepEqual(before.queryIds, [first.scheduling.waitId]);
+        assert.deepEqual(receipt.requestIds, []);
+        assert.deepEqual(receipt.queryIds, [next.scheduling.waitId]);
+        assert.equal(receipt.status, terminal);
+        assert.doesNotMatch(text, new RegExp(first.scheduling.waitId));
+        if (terminal === 'blocked') assert.match(text, /不是.*恢復原生目標的授權/);
+        await waitFor(() => !f.controller.state.completionPending);
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        await new Promise(resolve => setTimeout(resolve, 1100));
+        assert.equal(
+          f.host.startCalls.length,
+          3,
+          'new material query result is sent once, with no unchanged-state model polling'
+        );
+        assert.deepEqual(await f.gatewayOptions.bridge.list(), []);
+      } finally {
+        release?.();
+        await f.controller.close();
+      }
+    }
+  );
+
+test(
+  'Claude query-only new blocked receipt during blocked preflight gets a fresh check and one combined native notification',
+  {timeout: 8000},
+  async () => {
+    const f = await fixture();
+    let release,
+      entered,
+      listCalls = 0,
+      queryNumber = 0;
+    const gate = new Promise(resolve => {
+        release = resolve;
+      }),
+      preflightEntered = new Promise(resolve => {
+        entered = resolve;
+      });
+    try {
+      await f.controller.open({});
+      await f.controller.send({text: 'bounded fake query-only blocked preflight'});
+      const parentId = f.controller.state.threadId;
+      f.bridge.accounts = async () => {
+        const waitId = `query-blocked-${++queryNumber}`;
+        f.bridgeOptions.onGeminiHandoff({parentId, requestIds: [], queryIds: [waitId], status: 'waiting'});
+        return {scheduling: {status: 'waiting', notificationRegistered: true, waitId}};
+      };
+      const first = await f.gatewayOptions.bridge.accounts();
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await tick();
+      const list = f.bridge.list.bind(f.bridge);
+      f.bridge.list = async () => {
+        listCalls++;
+        if (listCalls === 1) {
+          entered();
+          await gate;
+        }
+        return list();
+      };
+      const blocked = id => ({
+        parentId,
+        requestIds: [],
+        queryIds: [id],
+        status: 'blocked',
+        reason: 'distinct fake scheduling result remains unready'
+      });
+      f.bridgeOptions.onGeminiHandoff(blocked(first.scheduling.waitId));
+      await preflightEntered;
+      const next = await f.gatewayOptions.bridge.accounts();
+      f.bridgeOptions.onGeminiHandoff(blocked(next.scheduling.waitId));
+      await tick();
+      assert.equal(f.host.startCalls.length, 1);
+      release();
+      await waitFor(() => f.host.startCalls.length === 2);
+      assert.equal(listCalls, 2, 'new blocked receipt rechecks after the old snapshot is cancelled');
+      const text = f.host.startCalls[1][0].text,
+        receipt = JSON.parse(text.split('\n').find(line => line.startsWith('{"parentId"')));
+      assert.equal(receipt.status, 'blocked');
+      assert.deepEqual(receipt.requestIds, []);
+      assert.deepEqual(receipt.queryIds, [first.scheduling.waitId, next.scheduling.waitId]);
+      assert.match(text, /不是.*恢復原生目標的授權/);
+      await waitFor(() => !f.controller.state.completionPending);
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await new Promise(resolve => setTimeout(resolve, 1100));
+      assert.equal(f.host.startCalls.length, 2);
+      assert.equal(listCalls, 2, 'unchanged blocked result does not schedule another preflight or model turn');
+    } finally {
+      release?.();
+      await f.controller.close();
+    }
+  }
+);

@@ -7,22 +7,27 @@ export const DIALOGUE_FONT_SIZE_OPTIONS = Object.freeze([14, 15, 16, 17, 18, 19,
 
 export const DEFAULT_APPEARANCE = Object.freeze({
   interfaceScale: 100,
-  dialogueFontSize: 18,
+  dialogueFontSize: 18
 });
 
 const nearestOption = (value, options, fallback) => {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
-  return options.reduce((nearest, option) =>
-    Math.abs(option - number) < Math.abs(nearest - number) ? option : nearest,
-  options[0]);
+  return options.reduce(
+    (nearest, option) => (Math.abs(option - number) < Math.abs(nearest - number) ? option : nearest),
+    options[0]
+  );
 };
 
 export function normalizeAppearance(value = {}) {
   const source = value && typeof value === 'object' ? value : {};
   return {
     interfaceScale: nearestOption(source.interfaceScale, INTERFACE_SCALE_OPTIONS, DEFAULT_APPEARANCE.interfaceScale),
-    dialogueFontSize: nearestOption(source.dialogueFontSize, DIALOGUE_FONT_SIZE_OPTIONS, DEFAULT_APPEARANCE.dialogueFontSize),
+    dialogueFontSize: nearestOption(
+      source.dialogueFontSize,
+      DIALOGUE_FONT_SIZE_OPTIONS,
+      DEFAULT_APPEARANCE.dialogueFontSize
+    )
   };
 }
 
@@ -44,23 +49,27 @@ export function readTheme(storage) {
     // its actual appearance while giving white and warm distinct names.
     const legacy = source?.getItem('k-theme');
     return legacy === 'light' ? 'warm' : legacy === 'dark' ? 'dark' : 'warm';
-  } catch { return 'warm'; }
+  } catch {
+    return 'warm';
+  }
 }
 
 export function saveTheme(theme, storage) {
   const value = THEME_OPTIONS.includes(theme) ? theme : 'warm';
-  try { storageOrNull(storage)?.setItem(THEME_STORAGE_KEY, value); } catch {}
+  try {
+    storageOrNull(storage)?.setItem(THEME_STORAGE_KEY, value);
+  } catch {}
   return value;
 }
 
 export function readAppearance(storage) {
   const source = storageOrNull(storage);
-  if (!source) return { ...DEFAULT_APPEARANCE };
+  if (!source) return {...DEFAULT_APPEARANCE};
   try {
     const raw = source.getItem(APPEARANCE_STORAGE_KEY);
     return normalizeAppearance(raw ? JSON.parse(raw) : DEFAULT_APPEARANCE);
   } catch {
-    return { ...DEFAULT_APPEARANCE };
+    return {...DEFAULT_APPEARANCE};
   }
 }
 

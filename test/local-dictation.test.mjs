@@ -3,8 +3,14 @@ import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {request as httpRequest} from 'node:http';
 import {PassThrough} from 'node:stream';
-import {createLocalDictation, decodePcm16Mono16kWav, validatePcm16Mono16kWav, MAX_WAV_BYTES,
-  LOCAL_DICTATION_PYTHON, LOCAL_DICTATION_MODEL} from '../src/local-dictation.mjs';
+import {
+  createLocalDictation,
+  decodePcm16Mono16kWav,
+  validatePcm16Mono16kWav,
+  MAX_WAV_BYTES,
+  LOCAL_DICTATION_PYTHON,
+  LOCAL_DICTATION_MODEL
+} from '../src/local-dictation.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 
 function wavChunk(id, data) {
@@ -19,14 +25,14 @@ function makeWav({frames = 160, format = 1, channels = 1, sampleRate = 16000, bi
   fmt.writeUInt16LE(format, 0);
   fmt.writeUInt16LE(channels, 2);
   fmt.writeUInt32LE(sampleRate, 4);
-  fmt.writeUInt32LE(sampleRate * channels * bits / 8, 8);
-  fmt.writeUInt16LE(channels * bits / 8, 12);
+  fmt.writeUInt32LE((sampleRate * channels * bits) / 8, 8);
+  fmt.writeUInt16LE((channels * bits) / 8, 12);
   fmt.writeUInt16LE(bits, 14);
   const chunks = [
     ...(ancillary ? [wavChunk('JUNK', Buffer.from([1, 2, 3]))] : []),
     wavChunk('fmt ', fmt),
     ...(ancillary ? [wavChunk('LIST', Buffer.from('INFO', 'ascii'))] : []),
-    wavChunk('data', Buffer.alloc(frames * channels * bits / 8)),
+    wavChunk('data', Buffer.alloc((frames * channels * bits) / 8))
   ];
   const body = Buffer.concat([Buffer.from('WAVE', 'ascii'), ...chunks]);
   const riff = Buffer.alloc(8);
@@ -85,20 +91,37 @@ test('PCM16 validator accepts ancillary RIFF chunks and rejects invalid formats 
 
 test('invalid payload is rejected before starting the fake runner', async () => {
   let spawnCalls = 0;
-  const backend = createLocalDictation({spawnImpl: () => {spawnCalls += 1; throw new Error('unexpected spawn');}});
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      throw new Error('unexpected spawn');
+    }
+  });
   try {
-    await assert.rejects(backend.transcribe(Buffer.from('not a wav').toString('base64')), {code: 'INVALID_AUDIO', statusCode: 400});
+    await assert.rejects(backend.transcribe(Buffer.from('not a wav').toString('base64')), {
+      code: 'INVALID_AUDIO',
+      statusCode: 400
+    });
     await assert.rejects(backend.transcribe('***'), {code: 'INVALID_AUDIO', statusCode: 400});
     assert.equal(spawnCalls, 0);
-  } finally { await backend.close(); }
+  } finally {
+    await backend.close();
+  }
 });
 
 test('local dictation starts one offline child, forwards WAV only on stdin, and permits empty transcript', async () => {
   const audio = makeWav();
   let invocation;
   const child = new FakeChild({response: {ok: true, text: ''}});
-  const backend = createLocalDictation({provider: 'whisper', pythonPath: LOCAL_DICTATION_PYTHON, modelPath: LOCAL_DICTATION_MODEL,
-    spawnImpl: (...args) => { invocation = args; return child; }});
+  const backend = createLocalDictation({
+    provider: 'whisper',
+    pythonPath: LOCAL_DICTATION_PYTHON,
+    modelPath: LOCAL_DICTATION_MODEL,
+    spawnImpl: (...args) => {
+      invocation = args;
+      return child;
+    }
+  });
   try {
     assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: ''});
     assert.equal(invocation[0], LOCAL_DICTATION_PYTHON);
@@ -109,7 +132,9 @@ test('local dictation starts one offline child, forwards WAV only on stdin, and 
     assert.equal(invocation[2].env.TRANSFORMERS_OFFLINE, '1');
     assert.equal(invocation[2].env.K_DICTATION_MODEL, LOCAL_DICTATION_MODEL);
     assert.deepEqual(Buffer.concat(child.input), audio);
-  } finally { await backend.close(); }
+  } finally {
+    await backend.close();
+  }
 });
 
 test('local dictation accepts candidate-local and explicitly configured portable paths', async () => {
@@ -123,25 +148,36 @@ test('local dictation accepts candidate-local and explicitly configured portable
   const previousModel = process.env.K_DICTATION_MODEL;
   process.env.K_DICTATION_PYTHON = pythonPath;
   process.env.K_DICTATION_MODEL = modelPath;
-  const backend = createLocalDictation({provider: 'whisper', spawnImpl: (...args) => {
-    invocation = args;
-    return new FakeChild();
-  }});
+  const backend = createLocalDictation({
+    provider: 'whisper',
+    spawnImpl: (...args) => {
+      invocation = args;
+      return new FakeChild();
+    }
+  });
   try {
     await backend.transcribe(audio.toString('base64'));
     assert.equal(invocation[0], pythonPath);
     assert.equal(invocation[2].env.K_DICTATION_MODEL, modelPath);
   } finally {
     await backend.close();
-    if (previousPython === undefined) delete process.env.K_DICTATION_PYTHON; else process.env.K_DICTATION_PYTHON = previousPython;
-    if (previousModel === undefined) delete process.env.K_DICTATION_MODEL; else process.env.K_DICTATION_MODEL = previousModel;
+    if (previousPython === undefined) delete process.env.K_DICTATION_PYTHON;
+    else process.env.K_DICTATION_PYTHON = previousPython;
+    if (previousModel === undefined) delete process.env.K_DICTATION_MODEL;
+    else process.env.K_DICTATION_MODEL = previousModel;
   }
 });
 
 test('Windows dictation uses the built-in recognizer helper and keeps WAV, cancellation and no API credentials', async () => {
   let invocation;
   const child = new FakeChild({response: {ok: true, text: '東區測試'}});
-  const backend = createLocalDictation({provider: 'windows', spawnImpl: (...args) => {invocation = args; return child;}});
+  const backend = createLocalDictation({
+    provider: 'windows',
+    spawnImpl: (...args) => {
+      invocation = args;
+      return child;
+    }
+  });
   const audio = makeWav();
   try {
     assert.deepEqual(await backend.transcribe(audio.toString('base64')), {ok: true, text: '東區測試'});
@@ -153,7 +189,9 @@ test('Windows dictation uses the built-in recognizer helper and keeps WAV, cance
     assert.equal(invocation[2].env.K_DICTATION_MODEL, undefined);
     assert.equal(invocation[2].env.ANTHROPIC_API_KEY, undefined);
     assert.equal(invocation[2].env.OPENAI_API_KEY, undefined);
-  } finally { await backend.close(); }
+  } finally {
+    await backend.close();
+  }
   const held = new FakeChild({hold: true});
   const cancelable = createLocalDictation({provider: 'windows', spawnImpl: () => held});
   const abort = new AbortController();
@@ -198,7 +236,10 @@ test('local dictation retains active lock after unconfirmed stop and permits clo
   abort.abort();
   await assert.rejects(pending, {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED', statusCode: 503});
   assert.equal(child.kills, 1);
-  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
+  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {
+    code: 'LOCAL_DICTATION_BUSY',
+    statusCode: 409
+  });
   assert.equal(child.exitCode, null, 'unconfirmed process remains alive and tracked');
   child.finish(1, '', 'late exit');
   await backend.close();
@@ -207,20 +248,35 @@ test('local dictation retains active lock after unconfirmed stop and permits clo
 test('local dictation timeout kills its child and preserves timeout failure', async () => {
   const child = new FakeChild({hold: true});
   const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 25});
-  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {code: 'LOCAL_DICTATION_TIMEOUT', statusCode: 504});
+  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {
+    code: 'LOCAL_DICTATION_TIMEOUT',
+    statusCode: 504
+  });
   assert.equal(child.kills, 1);
   await backend.close();
 });
 
 test('transcribe route retains cookie, same-origin, request-header and route-local body limits', async () => {
   let calls = 0;
-  const app = await startDesktop({root: 'test', executable: 'test', port: 0,
+  const app = await startDesktop({
+    root: 'test',
+    executable: 'test',
+    port: 0,
     controllerFactory: () => ({state: {status: 'idle'}, close: async () => {}}),
-    localDictationFactory: () => ({transcribe: async audio => {
-      calls += 1;
-      if (calls === 1) throw Object.assign(new Error('synthetic GPU error'), {code: 'LOCAL_DICTATION_PROCESS', statusCode: 500, diagnostic: 'fake failure'});
-      return {ok: true, text: audio === 'FAKE_WAV' ? '假語音' : ''};
-    }, close: async () => {}})});
+    localDictationFactory: () => ({
+      transcribe: async audio => {
+        calls += 1;
+        if (calls === 1)
+          throw Object.assign(new Error('synthetic GPU error'), {
+            code: 'LOCAL_DICTATION_PROCESS',
+            statusCode: 500,
+            diagnostic: 'fake failure'
+          });
+        return {ok: true, text: audio === 'FAKE_WAV' ? '假語音' : ''};
+      },
+      close: async () => {}
+    })
+  });
   try {
     const url = `${app.origin}/api/dictation/transcribe`;
     const body = JSON.stringify({audioBase64: 'FAKE_WAV'});
@@ -228,63 +284,120 @@ test('transcribe route retains cookie, same-origin, request-header and route-loc
     assert.equal((await fetch(url, {method: 'POST', headers, body})).status, 403);
     assert.equal((await fetch(`${app.origin}/api/state`, {headers: {host: 'wrong.example'}})).status, 403);
     assert.equal((await fetch(`${app.origin}/assets/missing.js`)).status, 400);
-    const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
+    const page = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
     const cookie = page.headers.get('set-cookie').split(';')[0];
-    assert.equal((await fetch(url, {method: 'POST', headers: {...headers, cookie, origin: 'https://foreign.example'}, body})).status, 403);
-    assert.equal((await fetch(url, {method: 'POST', headers: {cookie, 'Content-Type': 'application/json'}, body})).status, 403);
+    assert.equal(
+      (await fetch(url, {method: 'POST', headers: {...headers, cookie, origin: 'https://foreign.example'}, body}))
+        .status,
+      403
+    );
+    assert.equal(
+      (await fetch(url, {method: 'POST', headers: {cookie, 'Content-Type': 'application/json'}, body})).status,
+      403
+    );
     assert.equal(calls, 0);
-    const large = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body: ' '.repeat(16 * 1024 * 1024 + 1)});
+    const large = await fetch(url, {
+      method: 'POST',
+      headers: {...headers, cookie},
+      body: ' '.repeat(16 * 1024 * 1024 + 1)
+    });
     assert.equal(large.status, 413);
     assert.deepEqual(await large.json(), {ok: false, error: '請求過大。', code: 'REQUEST_TOO_LARGE'});
     assert.equal(calls, 0);
-    const regularLarge = await fetch(`${app.origin}/api/workers`, {method: 'POST', headers: {...headers, cookie}, body: ' '.repeat(65_537)});
+    const regularLarge = await fetch(`${app.origin}/api/workers`, {
+      method: 'POST',
+      headers: {...headers, cookie},
+      body: ' '.repeat(65_537)
+    });
     assert.equal(regularLarge.status, 400, 'non-transcribe request limit retains the existing 400 status');
     const invalidJson = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body: '{'});
     assert.equal(invalidJson.status, 400);
     assert.equal((await invalidJson.json()).ok, false);
     const failedJob = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body});
     assert.equal(failedJob.status, 500);
-    assert.deepEqual(await failedJob.json(), {ok: false, error: '轉錄要求無法處理。', code: 'LOCAL_DICTATION_PROCESS', diagnostic: 'fake failure'});
+    assert.deepEqual(await failedJob.json(), {
+      ok: false,
+      error: '轉錄要求無法處理。',
+      code: 'LOCAL_DICTATION_PROCESS',
+      diagnostic: 'fake failure'
+    });
     const valid = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body});
     assert.deepEqual(await valid.json(), {ok: true, text: '假語音'});
     assert.equal(calls, 2);
-  } finally { await app.close(); }
+  } finally {
+    await app.close();
+  }
 });
 
 test('transcribe route propagates client abort and server shutdown to the job signal', async () => {
   let enteredResolve;
-  const entered = new Promise(resolve => { enteredResolve = resolve; });
+  const entered = new Promise(resolve => {
+    enteredResolve = resolve;
+  });
   let abortResolve;
-  const aborted = new Promise(resolve => { abortResolve = resolve; });
+  const aborted = new Promise(resolve => {
+    abortResolve = resolve;
+  });
   let closeCalls = 0;
   let abortCalls = 0;
-  const app = await startDesktop({root: 'test', executable: 'test', port: 0,
+  const app = await startDesktop({
+    root: 'test',
+    executable: 'test',
+    port: 0,
     controllerFactory: () => ({state: {status: 'idle'}, close: async () => {}}),
     localDictationFactory: () => ({
-      transcribe: (_audio, {signal}) => new Promise((resolve, reject) => {
-        enteredResolve();
-        signal.addEventListener('abort', () => {abortCalls += 1; abortResolve(); reject(Object.assign(new Error('cancelled'), {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499}));}, {once: true});
-      }),
-      close: async () => {closeCalls += 1;},
-    })});
+      transcribe: (_audio, {signal}) =>
+        new Promise((resolve, reject) => {
+          enteredResolve();
+          signal.addEventListener(
+            'abort',
+            () => {
+              abortCalls += 1;
+              abortResolve();
+              reject(Object.assign(new Error('cancelled'), {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499}));
+            },
+            {once: true}
+          );
+        }),
+      close: async () => {
+        closeCalls += 1;
+      }
+    })
+  });
   try {
-    const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
+    const page = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
     const cookie = page.headers.get('set-cookie').split(';')[0];
     const target = new URL(`${app.origin}/api/dictation/transcribe`);
-    const request = httpRequest(target, {method: 'POST', headers: {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'}});
+    const request = httpRequest(target, {
+      method: 'POST',
+      headers: {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'}
+    });
     request.on('error', () => {});
     request.end(JSON.stringify({audioBase64: 'FAKE_WAV'}));
     await entered;
     request.destroy(new Error('synthetic client close'));
-    await Promise.race([aborted, new Promise((_, reject) => setTimeout(() => reject(new Error('client abort did not reach dictation signal')), 1000))]);
+    await Promise.race([
+      aborted,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('client abort did not reach dictation signal')), 1000)
+      )
+    ]);
     assert.equal(abortCalls, 1);
     assert.equal(closeCalls, 0);
-  } finally { await app.close(); }
+  } finally {
+    await app.close();
+  }
   assert.equal(closeCalls, 1);
 });
 
 function noOpLogins(closes) {
-  const factory = name => () => ({close: async () => {closes[name] = (closes[name] ?? 0) + 1;}, status: async () => ({}), progress: () => ({})});
+  const factory = name => () => ({
+    close: async () => {
+      closes[name] = (closes[name] ?? 0) + 1;
+    },
+    status: async () => ({}),
+    progress: () => ({})
+  });
   return {claudeLoginFactory: factory('claude'), codexLoginFactory: factory('codex')};
 }
 
@@ -293,22 +406,47 @@ test('desktop close reports partial failure, closes other resources, and retries
   let controllerCloses = 0;
   const child = new FakeChild({hold: true, ignoreKill: true});
   const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 5000, stopTimeoutMs: 20});
-  const app = await startDesktop({root: 'test', executable: 'test', port: 0,
+  const app = await startDesktop({
+    root: 'test',
+    executable: 'test',
+    port: 0,
     ...noOpLogins(closes),
-    controllerFactory: () => ({state: {status: 'idle'}, close: async () => {controllerCloses += 1;}}),
-    localDictationFactory: () => backend});
-  const session = await fetch(app.createLaunchUrl(),{redirect:'manual'});
+    controllerFactory: () => ({
+      state: {status: 'idle'},
+      close: async () => {
+        controllerCloses += 1;
+      }
+    }),
+    localDictationFactory: () => backend
+  });
+  const session = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
   const cookie = session.headers.get('set-cookie').split(';')[0];
   const pending = backend.transcribe(makeWav().toString('base64'));
   pending.catch(() => {});
   await new Promise(resolve => setImmediate(resolve));
-  await assert.rejects(app.close(), error => error.code === 'K_SHUTDOWN_PARTIAL' && error.statusCode === 503 && /本機語音辨識/.test(error.message));
+  await assert.rejects(
+    app.close(),
+    error => error.code === 'K_SHUTDOWN_PARTIAL' && error.statusCode === 503 && /本機語音辨識/.test(error.message)
+  );
   assert.deepEqual(closes, {claude: 1, codex: 1});
   assert.equal(controllerCloses, 1);
   assert.equal((await fetch(`${app.origin}/health`)).status, 200, 'server remains available for retry');
-  assert.equal((await fetch(`${app.origin}/api/state`, {headers: {cookie}})).status, 200, 'state remains available for diagnosis');
-  assert.equal((await fetch(`${app.origin}/api/send`, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-K-Request': '1'}, body: '{}'})).status, 503,
-    'new work is rejected while shutdown is incomplete');
+  assert.equal(
+    (await fetch(`${app.origin}/api/state`, {headers: {cookie}})).status,
+    200,
+    'state remains available for diagnosis'
+  );
+  assert.equal(
+    (
+      await fetch(`${app.origin}/api/send`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-K-Request': '1'},
+        body: '{}'
+      })
+    ).status,
+    503,
+    'new work is rejected while shutdown is incomplete'
+  );
   child.finish(1, '', 'late exit');
   await assert.rejects(pending, {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED'});
   await app.close();
@@ -320,17 +458,34 @@ test('shutdown route returns partial failure and a later request can complete sh
   const closes = {};
   let dictationCloses = 0;
   let controllerCloses = 0;
-  const app = await startDesktop({root: 'test', executable: 'test', port: 0,
+  const app = await startDesktop({
+    root: 'test',
+    executable: 'test',
+    port: 0,
     ...noOpLogins(closes),
-    controllerFactory: () => ({state: {status: 'idle'}, close: async () => {controllerCloses += 1;}}),
-    localDictationFactory: () => ({transcribe: async () => ({ok: true, text: ''}), close: async () => {
-      dictationCloses += 1;
-      if (dictationCloses === 1) throw Object.assign(new Error('synthetic unconfirmed stop'), {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED'});
-    }})});
-  const page = await fetch(app.createLaunchUrl(),{redirect:'manual'});
+    controllerFactory: () => ({
+      state: {status: 'idle'},
+      close: async () => {
+        controllerCloses += 1;
+      }
+    }),
+    localDictationFactory: () => ({
+      transcribe: async () => ({ok: true, text: ''}),
+      close: async () => {
+        dictationCloses += 1;
+        if (dictationCloses === 1)
+          throw Object.assign(new Error('synthetic unconfirmed stop'), {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED'});
+      }
+    })
+  });
+  const page = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
   const cookie = page.headers.get('set-cookie').split(';')[0];
   const url = `${app.origin}/api/shutdown`;
-  const options = {method: 'POST', headers: {cookie, origin: app.origin, 'Content-Type': 'application/json', 'X-K-Request': '1'}, body: '{}'};
+  const options = {
+    method: 'POST',
+    headers: {cookie, origin: app.origin, 'Content-Type': 'application/json', 'X-K-Request': '1'},
+    body: '{}'
+  };
   const first = await fetch(url, options);
   assert.equal(first.status, 503);
   assert.deepEqual(await first.json(), {error: 'K 尚未完全關閉：本機語音辨識。程序停止後請重試。'});

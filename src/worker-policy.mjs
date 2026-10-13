@@ -1,11 +1,19 @@
 export const DEFAULT_WORKER_MODEL = 'auto';
 export const DEFAULT_WORKER_EFFORT = 'auto';
 // The native account catalog is the authority, not a K model allowlist.
-export function availableWorkerModels(models = [], {provider='codex',geminiGateway=false,claudeGateway=false} = {}) {
- if(provider==='gemini')return [];
- return models.filter(row=>row.hidden!==true&&row.available!==false&&(
-  /^gpt-/.test(row.model)||geminiGateway&&/^gemini-/.test(row.model)||claudeGateway&&/^claude-/.test(row.model)
- ));
+export function availableWorkerModels(
+  models = [],
+  {provider = 'codex', geminiGateway = false, claudeGateway = false} = {}
+) {
+  if (provider === 'gemini') return [];
+  return models.filter(
+    row =>
+      row.hidden !== true &&
+      row.available !== false &&
+      (/^gpt-/.test(row.model) ||
+        (geminiGateway && /^gemini-/.test(row.model)) ||
+        (claudeGateway && /^claude-/.test(row.model)))
+  );
 }
 
 // One user preference text shared by the three native main-agent entry points.
@@ -29,46 +37,75 @@ export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-04）：
 
 // Preserve legacy metadata for readback; new execution validates the current policy.
 export function normalizeWorkerPolicy(value = {}) {
- const model=value?.model??DEFAULT_WORKER_MODEL;
- if(typeof model!=='string'||!model.trim())throw new Error('請選擇子代理模型。');
- const effort=Object.hasOwn(value??{},'effort')?value.effort:(model==='auto'?DEFAULT_WORKER_EFFORT:null);
- return {model,effort};
+  const model = value?.model ?? DEFAULT_WORKER_MODEL;
+  if (typeof model !== 'string' || !model.trim()) throw new Error('請選擇子代理模型。');
+  const effort = Object.hasOwn(value ?? {}, 'effort') ? value.effort : model === 'auto' ? DEFAULT_WORKER_EFFORT : null;
+  return {model, effort};
 }
-export function validateWorkerPolicy(value,models=[],{geminiGateway=false,claudeGateway=false}={}) {
- const policy=normalizeWorkerPolicy(value);
- if(policy.model==='auto'&&policy.effort==='auto')return policy;
- if(policy.model==='auto'||policy.effort==='auto')throw new Error('子代理模型與推理程度必須同時設為「AI 自動選擇」，或同時指定。');
- if(policy.model.startsWith('gemini-')&&!geminiGateway||policy.model.startsWith('claude-')&&!claudeGateway)throw Error('子代理需要已接通的 gateway；未自動換模。');
- const selected=availableWorkerModels(models,{geminiGateway,claudeGateway}).find(m=>m.model===policy.model);
- if(!selected)throw new Error(`${policy.model} 目前不可用；未自動換模。`);
- const efforts=selected.supportedReasoningEfforts??[];
- // Older callers saved only the model and inherited high. Preserve that
- // native-supported default without inventing effort for no-effort models.
- if(!Object.hasOwn(value??{},'effort'))policy.effort=efforts.find(e=>e.reasoningEffort==='high')?.reasoningEffort??selected.defaultReasoningEffort??efforts[0]?.reasoningEffort??null;
- if(efforts.length?!efforts.some(item=>item.reasoningEffort===policy.effort):policy.effort!=null)throw new Error(`${policy.model} 不支援 ${policy.effort} 推理程度；未自動換模。`);
- return policy;
+export function validateWorkerPolicy(value, models = [], {geminiGateway = false, claudeGateway = false} = {}) {
+  const policy = normalizeWorkerPolicy(value);
+  if (policy.model === 'auto' && policy.effort === 'auto') return policy;
+  if (policy.model === 'auto' || policy.effort === 'auto')
+    throw new Error('子代理模型與推理程度必須同時設為「AI 自動選擇」，或同時指定。');
+  if ((policy.model.startsWith('gemini-') && !geminiGateway) || (policy.model.startsWith('claude-') && !claudeGateway))
+    throw Error('子代理需要已接通的 gateway；未自動換模。');
+  const selected = availableWorkerModels(models, {geminiGateway, claudeGateway}).find(m => m.model === policy.model);
+  if (!selected) throw new Error(`${policy.model} 目前不可用；未自動換模。`);
+  const efforts = selected.supportedReasoningEfforts ?? [];
+  // Older callers saved only the model and inherited high. Preserve that
+  // native-supported default without inventing effort for no-effort models.
+  if (!Object.hasOwn(value ?? {}, 'effort'))
+    policy.effort =
+      efforts.find(e => e.reasoningEffort === 'high')?.reasoningEffort ??
+      selected.defaultReasoningEffort ??
+      efforts[0]?.reasoningEffort ??
+      null;
+  if (efforts.length ? !efforts.some(item => item.reasoningEffort === policy.effort) : policy.effort != null)
+    throw new Error(`${policy.model} 不支援 ${policy.effort} 推理程度；未自動換模。`);
+  return policy;
 }
-export function workerPolicyConfig(value,{baseInstructions='',models=[],geminiGateway=false,claudeGateway=false,provider='codex'}={}) {
- const policy=validateWorkerPolicy(value,models,{geminiGateway,claudeGateway});
- const auto=policy.model==='auto';
- const native=policy.model.startsWith('gpt-');
- const canUseFlash=geminiGateway;
- const choices=availableWorkerModels(models,{provider,geminiGateway,claudeGateway});
- const autoChoices=choices.map(row=>row.model).join(' or ');
- const gateway=provider==='claude'?'k_luna / luna_start':'k_gemini / gemini_start';
- const prefix=provider==='claude'?'luna':'gemini';
- const instructions=[
-  ...(provider==='claude'?[]:[MODEL_ROLE_GUIDANCE]),
-  'K HARNESS delegation preferences selected by the user:',
-  'Delegation is optional. Work directly when delegation would not help; send only the necessary bounded context.',
-  auto
-   ? `For every delegated task, choose ${autoChoices} based on that task. Pass both model and officially supported effort explicitly (null when the model has no effort setting). This is task-by-task model selection by the main AI, not a K heuristic, failure fallback, or automatic retry; never replay an unknown failure or silently substitute a model. Follow explicit user choices.`
-   : `User-selected default worker: ${policy.model}, reasoning effort ${policy.effort??'native default'}. Honor this manual choice; choose another model only when the user or an explicit task rule requests it, never merely because you consider it more appropriate. Do not silently substitute on failure.`,
-  provider==='codex'?`For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`:`For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
-  `目前官方可派模型與推理程度：${choices.map(m=>`${m.model}: ${(m.supportedReasoningEfforts??[]).map(e=>e.reasoningEffort).join(', ')||'native default (null)'}`).join('; ')}。`,
-  'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',
-  ...(canUseFlash?[`K 程序型工單不在 Codex 原生 list_agents 清單；使用者詢問待確認工人而 requestId 不明時，先用 ${prefix}_list 列出本對話工單，再用 ${prefix}_inspect 查原始 task 與明細，不依賴 Chrome。舊工單 executionUnowned 不代表仍在執行、已完成或確認停止，不可因此重播。對尚無 reconciliation 的舊工單，依原任務核對實際落地檔案與相關後續處理紀錄，再用 ${prefix}_reconcile 留下或修正處理結論、實查依據及仍未知事項；查詢失敗必須寫未查明，不得冒稱已驗證；由主代理完成，不把識別碼管理交給使用者，也不要反覆查同張已註記工單。空 outputFiles 不代表無成果，後續複查完成不等於原交付驗收，其他章節成果更不能當原任務證據。查核註記不是停止證明，不得用來交接重播、換帳號或恢復暫停目標。`]:[]),
-  canUseFlash?'Use the existing Codex subscription for GPT agents; do not change GPT accounts or subscription. Use gemini_accounts only when scheduling information is needed, not before every job. It observes the shared scheduler and registers a single completion notification when waiting, instead of rejecting busy queries or switching through all accounts. End the turn on scheduling.waiting; do not poll or mark the goal blocked solely to wait. Usually omit accountId on new jobs; explicit stale expectations are never silently changed. Dated evidence rules: known official zero is retained until its reset without repeated querying or switching; other candidates are checked before use. If all accounts were confirmed exhausted, the earliest effective reset triggers one complete recheck. Preserve each last official query time; do not treat unknown data or a refused/failed query as exhaustion. Human explicit refresh-all may override suppression. Gemini account selection/handoff is supported only through the gateway tools and their accountId/handoffFrom fields: inspect the original result first, then create a new handoff for remaining work as needed. Do not replay unknown failures or silently substitute a model.':'Use the existing Codex subscription runtime. Never switch credentials, models, providers or billing routes on failure or quota exhaustion; never replay an unknown outcome or silently substitute a model.',
- ].join('\n');
- return {agents:auto||!native?{enabled:true}:{enabled:true,default_subagent_model:policy.model,...(policy.effort!=null?{default_subagent_reasoning_effort:policy.effort}:{})},developer_instructions:[baseInstructions,instructions].filter(Boolean).join('\n\n')};
+export function workerPolicyConfig(
+  value,
+  {baseInstructions = '', models = [], geminiGateway = false, claudeGateway = false, provider = 'codex'} = {}
+) {
+  const policy = validateWorkerPolicy(value, models, {geminiGateway, claudeGateway});
+  const auto = policy.model === 'auto';
+  const native = policy.model.startsWith('gpt-');
+  const canUseFlash = geminiGateway;
+  const choices = availableWorkerModels(models, {provider, geminiGateway, claudeGateway});
+  const autoChoices = choices.map(row => row.model).join(' or ');
+  const gateway = provider === 'claude' ? 'k_luna / luna_start' : 'k_gemini / gemini_start';
+  const prefix = provider === 'claude' ? 'luna' : 'gemini';
+  const instructions = [
+    ...(provider === 'claude' ? [] : [MODEL_ROLE_GUIDANCE]),
+    'K HARNESS delegation preferences selected by the user:',
+    'Delegation is optional. Work directly when delegation would not help; send only the necessary bounded context.',
+    auto
+      ? `For every delegated task, choose ${autoChoices} based on that task. Pass both model and officially supported effort explicitly (null when the model has no effort setting). This is task-by-task model selection by the main AI, not a K heuristic, failure fallback, or automatic retry; never replay an unknown failure or silently substitute a model. Follow explicit user choices.`
+      : `User-selected default worker: ${policy.model}, reasoning effort ${policy.effort ?? 'native default'}. Honor this manual choice; choose another model only when the user or an explicit task rule requests it, never merely because you consider it more appropriate. Do not silently substitute on failure.`,
+    provider === 'codex'
+      ? `For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`
+      : `For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
+    `目前官方可派模型與推理程度：${choices.map(m => `${m.model}: ${(m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).join(', ') || 'native default (null)'}`).join('; ')}。`,
+    'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',
+    ...(canUseFlash
+      ? [
+          `K 程序型工單不在 Codex 原生 list_agents 清單；使用者詢問待確認工人而 requestId 不明時，先用 ${prefix}_list 列出本對話工單，再用 ${prefix}_inspect 查原始 task 與明細，不依賴 Chrome。舊工單 executionUnowned 不代表仍在執行、已完成或確認停止，不可因此重播。對尚無 reconciliation 的舊工單，依原任務核對實際落地檔案與相關後續處理紀錄，再用 ${prefix}_reconcile 留下或修正處理結論、實查依據及仍未知事項；查詢失敗必須寫未查明，不得冒稱已驗證；由主代理完成，不把識別碼管理交給使用者，也不要反覆查同張已註記工單。空 outputFiles 不代表無成果，後續複查完成不等於原交付驗收，其他章節成果更不能當原任務證據。查核註記不是停止證明，不得用來交接重播、換帳號或恢復暫停目標。`
+        ]
+      : []),
+    canUseFlash
+      ? 'Use the existing Codex subscription for GPT agents; do not change GPT accounts or subscription. Use gemini_accounts only when scheduling information is needed, not before every job. It observes the shared scheduler and registers a single completion notification when waiting, instead of rejecting busy queries or switching through all accounts. End the turn on scheduling.waiting; do not poll or mark the goal blocked solely to wait. Usually omit accountId on new jobs; explicit stale expectations are never silently changed. Dated evidence rules: known official zero is retained until its reset without repeated querying or switching; other candidates are checked before use. If all accounts were confirmed exhausted, the earliest effective reset triggers one complete recheck. Preserve each last official query time; do not treat unknown data or a refused/failed query as exhaustion. Human explicit refresh-all may override suppression. Gemini account selection/handoff is supported only through the gateway tools and their accountId/handoffFrom fields: inspect the original result first, then create a new handoff for remaining work as needed. Do not replay unknown failures or silently substitute a model.'
+      : 'Use the existing Codex subscription runtime. Never switch credentials, models, providers or billing routes on failure or quota exhaustion; never replay an unknown outcome or silently substitute a model.'
+  ].join('\n');
+  return {
+    agents:
+      auto || !native
+        ? {enabled: true}
+        : {
+            enabled: true,
+            default_subagent_model: policy.model,
+            ...(policy.effort != null ? {default_subagent_reasoning_effort: policy.effort} : {})
+          },
+    developer_instructions: [baseInstructions, instructions].filter(Boolean).join('\n\n')
+  };
 }

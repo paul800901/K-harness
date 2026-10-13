@@ -12,7 +12,11 @@ function withoutPayload(item, key) {
 }
 
 function signatures(items, key) {
-  return entities(items).map(item => ({id:item.id,value:typeof item[key] === 'string' ? item[key] : '',rest:clone(withoutPayload(item,key))}));
+  return entities(items).map(item => ({
+    id: item.id,
+    value: typeof item[key] === 'string' ? item[key] : '',
+    rest: clone(withoutPayload(item, key))
+  }));
 }
 
 function buildCollection(previous, current, key) {
@@ -25,17 +29,18 @@ function buildCollection(previous, current, key) {
     const old = oldItems.get(item.id);
     const payloadKey = key === 'text' ? 'message' : 'tool';
     if (!old) {
-      upsert.push({id:item.id, op:'set', [payloadKey]:{id:item.id,...item.rest,[key]:item.value}});
+      upsert.push({id: item.id, op: 'set', [payloadKey]: {id: item.id, ...item.rest, [key]: item.value}});
       continue;
     }
     if (old.value !== item.value) {
       const before = old.value;
       const after = item.value;
-      if (after.startsWith(before)) upsert.push({id:item.id, op:'append', [key]:after.slice(before.length)});
-      else if (key === 'output') upsert.push({id:item.id, op:'tail', output:after});
-      else upsert.push({id:item.id, op:'set', [key]:after});
+      if (after.startsWith(before)) upsert.push({id: item.id, op: 'append', [key]: after.slice(before.length)});
+      else if (key === 'output') upsert.push({id: item.id, op: 'tail', output: after});
+      else upsert.push({id: item.id, op: 'set', [key]: after});
     }
-    if (!jsonEqual(old.rest, item.rest)) upsert.push({id:item.id, op:'fields', [payloadKey]:{id:item.id,...item.rest}});
+    if (!jsonEqual(old.rest, item.rest))
+      upsert.push({id: item.id, op: 'fields', [payloadKey]: {id: item.id, ...item.rest}});
   }
   const order = newItems.map(item => item.id);
   const oldOrder = previous.map(item => item.id);
@@ -52,28 +57,41 @@ export function createStateStream() {
   let revision = 0;
   let baseline = null;
   let baselineVersion;
-  const split = (state,reuseHistory=false) => {
-    const {messages=[], tools=[], ...fields} = state;
-    return {fields:clone(fields), messages:reuseHistory?baseline.messages:signatures(messages,'text'), tools:reuseHistory?baseline.tools:signatures(tools,'output')};
+  const split = (state, reuseHistory = false) => {
+    const {messages = [], tools = [], ...fields} = state;
+    return {
+      fields: clone(fields),
+      messages: reuseHistory ? baseline.messages : signatures(messages, 'text'),
+      tools: reuseHistory ? baseline.tools : signatures(tools, 'output')
+    };
   };
-  const snapshot = (state,historyVersion) => {
+  const snapshot = (state, historyVersion) => {
     const captured = split(state);
     baseline = captured;
     baselineVersion = historyVersion;
-    return {type:'snapshot', revision, state:{...captured.fields,messages:clone(state.messages??[]),tools:clone(state.tools??[])}};
+    return {
+      type: 'snapshot',
+      revision,
+      state: {...captured.fields, messages: clone(state.messages ?? []), tools: clone(state.tools ?? [])}
+    };
   };
-  const update = (state,historyVersion) => {
-    if (!baseline) return snapshot(state,historyVersion);
-    const reuseHistory=historyVersion!==undefined&&historyVersion===baselineVersion;
-    const current = split(state,reuseHistory);
+  const update = (state, historyVersion) => {
+    if (!baseline) return snapshot(state, historyVersion);
+    const reuseHistory = historyVersion !== undefined && historyVersion === baselineVersion;
+    const current = split(state, reuseHistory);
     const changes = {};
-    const messageChanges = reuseHistory?{remove:[]}:buildCollection(baseline.messages,current.messages,'text');
-    const toolChanges = reuseHistory?{remove:[]}:buildCollection(baseline.tools,current.tools,'output');
-    if (messageChanges.remove.length || messageChanges.upsert?.length || messageChanges.order) changes.messages = messageChanges;
+    const messageChanges = reuseHistory ? {remove: []} : buildCollection(baseline.messages, current.messages, 'text');
+    const toolChanges = reuseHistory ? {remove: []} : buildCollection(baseline.tools, current.tools, 'output');
+    if (messageChanges.remove.length || messageChanges.upsert?.length || messageChanges.order)
+      changes.messages = messageChanges;
     if (toolChanges.remove.length || toolChanges.upsert?.length || toolChanges.order) changes.tools = toolChanges;
-    for (const key of new Set([...Object.keys(baseline.fields),...Object.keys(current.fields)])) {
-      if (!Object.hasOwn(baseline.fields,key) || !Object.hasOwn(current.fields,key) || !jsonEqual(baseline.fields[key],current.fields[key])) {
-        changes[key] = Object.hasOwn(current.fields,key) ? current.fields[key] : null;
+    for (const key of new Set([...Object.keys(baseline.fields), ...Object.keys(current.fields)])) {
+      if (
+        !Object.hasOwn(baseline.fields, key) ||
+        !Object.hasOwn(current.fields, key) ||
+        !jsonEqual(baseline.fields[key], current.fields[key])
+      ) {
+        changes[key] = Object.hasOwn(current.fields, key) ? current.fields[key] : null;
       }
     }
     // Keep independent copies so subsequent in-place controller mutations cannot
@@ -81,9 +99,9 @@ export function createStateStream() {
     baseline = current;
     baselineVersion = historyVersion;
     if (!Object.keys(changes).length) return null;
-    return {type:'patch',revision:++revision,changes};
+    return {type: 'patch', revision: ++revision, changes};
   };
-  return {snapshot,update};
+  return {snapshot, update};
 }
 
 export function applyStateEvent(previous, event) {
@@ -91,11 +109,11 @@ export function applyStateEvent(previous, event) {
   if (event?.type !== 'patch' || !previous) return previous;
   const next = {...previous};
   const changes = event.changes ?? {};
-  for (const [key,value] of Object.entries(changes)) {
+  for (const [key, value] of Object.entries(changes)) {
     if (key === 'messages' || key === 'tools') continue;
     next[key] = clone(value);
   }
-  for (const collection of ['messages','tools']) {
+  for (const collection of ['messages', 'tools']) {
     const delta = changes[collection];
     if (!delta) continue;
     let values = [...entities(previous[collection])];
@@ -107,24 +125,25 @@ export function applyStateEvent(previous, event) {
       const index = values.findIndex(item => item.id === op.id);
       const payloadKey = collection === 'messages' ? 'message' : 'tool';
       if (op.op === 'set' && op[payloadKey]) {
-        if (index < 0) values.push(clone(op[payloadKey])); else values[index] = clone(op[payloadKey]);
+        if (index < 0) values.push(clone(op[payloadKey]));
+        else values[index] = clone(op[payloadKey]);
       } else if (op.op === 'append' && index >= 0) {
         const field = collection === 'messages' ? 'text' : 'output';
-        values[index] = {...values[index],[field]:(values[index][field] ?? '') + op[field]};
+        values[index] = {...values[index], [field]: (values[index][field] ?? '') + op[field]};
       } else if (op.op === 'tail' && index >= 0) {
-        values[index] = {...values[index],output:op.output};
+        values[index] = {...values[index], output: op.output};
       } else if (op.op === 'fields') {
         const fieldValues = op[payloadKey] ?? {};
         if (index < 0) continue;
         const field = collection === 'messages' ? 'text' : 'output';
-        values[index] = {...fieldValues,[field]:values[index][field]};
+        values[index] = {...fieldValues, [field]: values[index][field]};
       } else if (op.op === 'set' && !op[payloadKey]) {
         const field = collection === 'messages' ? 'text' : 'output';
-        if (index >= 0) values[index] = {...values[index],[field]:op[field]};
+        if (index >= 0) values[index] = {...values[index], [field]: op[field]};
       }
     }
     if (delta.order) {
-      const byId = new Map(values.map(item => [item.id,item]));
+      const byId = new Map(values.map(item => [item.id, item]));
       values = delta.order.map(id => byId.get(id)).filter(Boolean);
       // Preserve any items omitted by a partial order defensively.
       for (const item of byId.values()) if (!delta.order.includes(item.id)) values.push(item);

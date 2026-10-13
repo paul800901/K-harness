@@ -4,11 +4,12 @@ export function claudeRateStatus(previous = {}, event = {}) {
   if (typeof info?.status !== 'string' || !info.status) return previous;
 
   const status = info.status;
-  const extraUsageDisabled = status === 'allowed'
-    && info.overageStatus === 'rejected'
-    && (info.overageDisabledReason === 'org_level_disabled' || info.overageDisableReason === 'org_level_disabled');
+  const extraUsageDisabled =
+    status === 'allowed' &&
+    info.overageStatus === 'rejected' &&
+    (info.overageDisabledReason === 'org_level_disabled' || info.overageDisableReason === 'org_level_disabled');
   return {
     status,
-    extraUsageDisabled: extraUsageDisabled ? true : (status === 'allowed' ? false : null),
+    extraUsageDisabled: extraUsageDisabled ? true : status === 'allowed' ? false : null
   };
 }

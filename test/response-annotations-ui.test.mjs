@@ -1,41 +1,57 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
+import {readSourceSync} from './source-text.mjs';
 
 // main.jsx was split; source checks cover the same UI code across its modules.
-const main=['main.jsx','chat-messages.jsx','dialogs.jsx','app-common.jsx'].map(name=>readFileSync(new URL(`../frontend/${name}`,import.meta.url),'utf8')).join('\n');
-const component=readFileSync(new URL('../frontend/response-annotations.jsx',import.meta.url),'utf8');
+const main = ['main.jsx', 'chat-messages.jsx', 'dialogs.jsx', 'app-common.jsx']
+  .map(name => readSourceSync(new URL(`../frontend/${name}`, import.meta.url)))
+  .join('\n');
+const component = readSourceSync(new URL('../frontend/response-annotations.jsx', import.meta.url));
 
-test('selection toolbar reuses assistant-ui Root and does not wrap or hide messages',()=>{
-  assert.match(main,/import \{[^}]*SelectionToolbarPrimitive[^}]*\} from '@assistant-ui\/react'/);
-  const start=main.indexOf('function SelectionToolbarAction'),end=main.indexOf('function WorkProgress');
-  assert.ok(start>=0&&end>start);
-  const button=main.slice(start,end);
-  assert.match(button,/<SelectionToolbarPrimitive\.Root/);
-  assert.match(button,/aria-label="加入聊天"/);
-  assert.doesNotMatch(button,/ThreadPrimitive\.Messages/);
-  assert.match(main,/<AddResponseSelectionButton[^>]*\/><div className="viewport-region"><ThreadPrimitive\.Viewport[\s\S]*?<ThreadPrimitive\.Messages/);
+test('selection toolbar reuses assistant-ui Root and does not wrap or hide messages', () => {
+  assert.match(main, /import \{[^}]*SelectionToolbarPrimitive[^}]*\} from '@assistant-ui\/react'/);
+  const start = main.indexOf('function SelectionToolbarAction'),
+    end = main.indexOf('function WorkProgress');
+  assert.ok(start >= 0 && end > start);
+  const button = main.slice(start, end);
+  assert.match(button, /<SelectionToolbarPrimitive\.Root/);
+  assert.match(button, /aria-label="加入聊天"/);
+  assert.doesNotMatch(button, /ThreadPrimitive\.Messages/);
+  assert.match(
+    main,
+    /<AddResponseSelectionButton[^>]*\/><div className="viewport-region"><ThreadPrimitive\.Viewport[\s\S]*?<ThreadPrimitive\.Messages/
+  );
 });
 
-test('only complete assistant response text is marked quote-selectable; user and worker messages are excluded',()=>{
-  assert.match(main,/data-aui-quote-selectable=\{quoteable\?'true':'false'\}/);
-  assert.match(main,/className=\{`message user-message\$\{isCapacityContinuation\?' capacity-continuation':''\}`\} data-aui-quote-selectable="false"/);
-  assert.match(main,/className="capacity-model-change-note" role="note" data-aui-quote-selectable="false"/);
-  assert.match(main,/className="message worker-event" data-aui-quote-selectable="false"/);
-  assert.match(main,/source\?\.role!=='assistant'\|\|source\.partial\|\|source\.streaming/);
+test('only complete assistant response text is marked quote-selectable; user and worker messages are excluded', () => {
+  assert.match(main, /data-aui-quote-selectable=\{quoteable\?'true':'false'\}/);
+  assert.match(
+    main,
+    /className=\{`message user-message\$\{isCapacityContinuation\?' capacity-continuation':''\}`\} data-aui-quote-selectable="false"/
+  );
+  assert.match(main, /className="capacity-model-change-note" role="note" data-aui-quote-selectable="false"/);
+  assert.match(main, /className="message worker-event" data-aui-quote-selectable="false"/);
+  assert.match(main, /source\?\.role!=='assistant'\|\|source\.partial\|\|source\.streaming/);
 });
 
-test('selection comment popover and composer annotation list are mutually exclusive; outside and Escape dismiss the list',()=>{
-  assert.match(component,/data-response-comment-popover="true"/);
-  assert.match(component,/aria-label=\{responseQuoteCountLabel\(quotes\.length\)\}/);
-  const quotes=component.slice(component.indexOf('export function ResponseQuotes'),component.indexOf('export function ResponseSelectionPopover'));
-  assert.match(quotes,/useAnchoredPopover\(\{width:360\}\)/);
-  assert.match(quotes,/if\(!quotes\?\.length\|\|collapse\)menu\.close\(false\)/);
-  assert.match(quotes,/popover="auto" onToggle=\{menu\.onToggle\}/);
-  assert.match(quotes,/expanded&&quotes\.map/);
-  assert.match(quotes,/popoverTarget=\{menu\.id\}/);
-  assert.doesNotMatch(component,/response-quotes-actions|aria-label="送出引用與註解"/);
-  assert.match(main,/setQuotePopover\(\{mode:'comment',quoteId:quote\.id,range,rect:range\.getBoundingClientRect\(\)\}\)/);
-  assert.match(main,/<ResponseSelectionPopover selection=\{quotePopover\}/);
-  assert.match(main,/<ResponseQuotes[^>]*collapse=\{!!quotePopover\}/);
+test('selection comment popover and composer annotation list are mutually exclusive; outside and Escape dismiss the list', () => {
+  assert.match(component, /data-response-comment-popover="true"/);
+  assert.match(component, /aria-label=\{responseQuoteCountLabel\(quotes\.length\)\}/);
+  const quotes = component.slice(
+    component.indexOf('export function ResponseQuotes'),
+    component.indexOf('export function ResponseSelectionPopover')
+  );
+  assert.match(quotes, /useAnchoredPopover\(\{width:360\}\)/);
+  assert.match(quotes, /if\(!quotes\?\.length\|\|collapse\)menu\.close\(false\)/);
+  assert.match(quotes, /popover="auto" onToggle=\{menu\.onToggle\}/);
+  assert.match(quotes, /expanded&&quotes\.map/);
+  assert.match(quotes, /popoverTarget=\{menu\.id\}/);
+  assert.doesNotMatch(component, /response-quotes-actions|aria-label="送出引用與註解"/);
+  assert.match(
+    main,
+    /setQuotePopover\(\{mode:'comment',quoteId:quote\.id,range,rect:range\.getBoundingClientRect\(\)\}\)/
+  );
+  assert.match(main, /<ResponseSelectionPopover selection=\{quotePopover\}/);
+  assert.match(main, /<ResponseQuotes[^>]*collapse=\{!!quotePopover\}/);
 });

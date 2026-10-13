@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import {spawn} from 'node:child_process';
 import {readNativeJsonl} from './native-jsonl.mjs';
 import {createCodexHostDiagnostics} from './codex-host-diagnostics.mjs';
 
@@ -6,129 +6,249 @@ import {createCodexHostDiagnostics} from './codex-host-diagnostics.mjs';
 // {enabled:false} only worked when an older home supplied the missing command.
 // This inert transport also overrides inherited entries without activating one.
 export function disabledCodexMcpServer() {
-  return {enabled:false,command:process.execPath,args:['--version']};
+  return {enabled: false, command: process.execPath, args: ['--version']};
 }
 
 // Official local Codex runtime owns login and conversation state. K never reads
 // auth.json or forwards OAuth credentials to Pi or DeepSeek.
-export function openCodexHost({ executable, cwd, env, onEvent = () => {}, onRequest, signal, spawnImpl=spawn,configOverrides=[] }) {
+export function openCodexHost({
+  executable,
+  cwd,
+  env,
+  onEvent = () => {},
+  onRequest,
+  signal,
+  spawnImpl = spawn,
+  configOverrides = []
+}) {
   signal?.throwIfAborted();
   let abortClose;
-  const child = spawnImpl(executable, ['app-server','--stdio','-c','check_for_update_on_startup=false',...configOverrides.flatMap(value=>['-c',value])], { cwd, ...(env===undefined?{}:{env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
-  const diagnostics=createCodexHostDiagnostics({home:env?.CODEX_HOME,pid:child.pid,executable});
-  child.stderr.on('data',diagnostics.stderr);
+  const child = spawnImpl(
+    executable,
+    [
+      'app-server',
+      '--stdio',
+      '-c',
+      'check_for_update_on_startup=false',
+      ...configOverrides.flatMap(value => ['-c', value])
+    ],
+    {cwd, ...(env === undefined ? {} : {env}), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']}
+  );
+  const diagnostics = createCodexHostDiagnostics({home: env?.CODEX_HOME, pid: child.pid, executable});
+  child.stderr.on('data', diagnostics.stderr);
   child.stderr.resume();
-  const pending = new Map(), serverRequests = new Set(); let nextId = 0; let stopped = false,didSpawn=false,processError=null,processClosed=false,processExited=false;
-  const startup = new Map(); const startupWaiters = new Set();
-  function failAll(stopReading=true) {
-    if(stopReading)stopped = true;
+  const pending = new Map(),
+    serverRequests = new Set();
+  let nextId = 0;
+  let stopped = false,
+    didSpawn = false,
+    processError = null,
+    processClosed = false,
+    processExited = false;
+  const startup = new Map();
+  const startupWaiters = new Set();
+  function failAll(stopReading = true) {
+    if (stopReading) stopped = true;
     serverRequests.clear();
-    for (const p of pending.values()) { clearTimeout(p.timer); p.reject(new Error('Codex host stopped; inspect existing work before retrying.')); }
+    for (const p of pending.values()) {
+      clearTimeout(p.timer);
+      p.reject(new Error('Codex host stopped; inspect existing work before retrying.'));
+    }
     pending.clear();
     for (const waiter of startupWaiters) waiter.fail();
   }
-  async function terminateChild(){
-    if(processClosed||processExited)return;
-    if(typeof child.terminate==='function'){await child.terminate();return;}
-    if(child.kill()===false&&!processClosed)throw new Error('Codex host process termination was not accepted.');
+  async function terminateChild() {
+    if (processClosed || processExited) return;
+    if (typeof child.terminate === 'function') {
+      await child.terminate();
+      return;
+    }
+    if (child.kill() === false && !processClosed) throw new Error('Codex host process termination was not accepted.');
   }
   const exited = new Promise(resolve => {
     let drainTimer;
-    const settled=(code,signal)=>{if(processClosed)return;clearTimeout(drainTimer);processClosed=true;processExited=true;failAll();resolve({code,signal});};
-    child.once('exit', (code,signal) => {
-      if(processClosed)return;
-      processExited=true;serverRequests.clear();
+    const settled = (code, signal) => {
+      if (processClosed) return;
+      clearTimeout(drainTimer);
+      processClosed = true;
+      processExited = true;
+      failAll();
+      resolve({code, signal});
+    };
+    child.once('exit', (code, signal) => {
+      if (processClosed) return;
+      processExited = true;
+      serverRequests.clear();
       // Exit precedes stdio close. Keep reading already-written output, but do
       // not let an inherited pipe hold cleanup open indefinitely.
-      drainTimer=setTimeout(()=>{
-        processError??=new Error('Codex host exited but output drain could not be confirmed; inspect existing work before retrying.');
-        child.stdout.destroy();child.stderr.destroy();child.stdin.destroy();lines.close();
-        settled(code,signal);
-      },3000);
+      drainTimer = setTimeout(() => {
+        processError ??= new Error(
+          'Codex host exited but output drain could not be confirmed; inspect existing work before retrying.'
+        );
+        child.stdout.destroy();
+        child.stderr.destroy();
+        child.stdin.destroy();
+        lines.close();
+        settled(code, signal);
+      }, 3000);
     });
-    child.once('close', (code,signal) => settled(code,signal));
-    child.once('error', error => { processError=Object.assign(new Error('Codex host process could not start or continue.'),{cause:error});failAll(false); });
+    child.once('close', (code, signal) => settled(code, signal));
+    child.once('error', error => {
+      processError = Object.assign(new Error('Codex host process could not start or continue.'), {cause: error});
+      failAll(false);
+    });
   });
-  const abort=()=>{failAll();abortClose=terminateChild();void abortClose.catch(()=>{});};
-  signal?.addEventListener('abort',abort,{once:true});
-  void exited.then(()=>signal?.removeEventListener('abort',abort));
-  child.once('spawn',()=>{didSpawn=true;if(signal?.aborted)abort();});
-  child.stdin.on('error',error=>{processError??=Object.assign(new Error('Codex host input failed; inspect existing work before retrying.'),{cause:error});failAll(false);});
-  const send = message => { if (stopped||processExited||processError) throw new Error('Codex host is closed.'); child.stdin.write(JSON.stringify(message)+'\n'); };
+  const abort = () => {
+    failAll();
+    abortClose = terminateChild();
+    void abortClose.catch(() => {});
+  };
+  signal?.addEventListener('abort', abort, {once: true});
+  void exited.then(() => signal?.removeEventListener('abort', abort));
+  child.once('spawn', () => {
+    didSpawn = true;
+    if (signal?.aborted) abort();
+  });
+  child.stdin.on('error', error => {
+    processError ??= Object.assign(new Error('Codex host input failed; inspect existing work before retrying.'), {
+      cause: error
+    });
+    failAll(false);
+  });
+  const send = message => {
+    if (stopped || processExited || processError) throw new Error('Codex host is closed.');
+    child.stdin.write(JSON.stringify(message) + '\n');
+  };
   const lines = readNativeJsonl(child.stdout, line => {
-    if(stopped)return;
-    let message; try { message = JSON.parse(line); } catch { return; }
+    if (stopped) return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      return;
+    }
     if (message.method) {
-      if(message.method==='serverRequest/resolved')serverRequests.delete(message.params?.requestId);
+      if (message.method === 'serverRequest/resolved') serverRequests.delete(message.params?.requestId);
       if (message.method === 'mcpServer/startupStatus/updated') {
-        startup.set(`${message.params.threadId}:${message.params.name}`,message.params);
+        startup.set(`${message.params.threadId}:${message.params.name}`, message.params);
         for (const waiter of startupWaiters) waiter.check();
       }
       // No invisible approvals. Unsupported server requests fail closed.
       if (message.id !== undefined) {
-        if(processExited||processError)return;
+        if (processExited || processError) return;
         serverRequests.add(message.id);
-        Promise.resolve().then(()=>{if(!stopped&&!processExited&&!processError&&serverRequests.has(message.id))return onRequest?.(message);}).then(result=>{
-          if(!serverRequests.delete(message.id)||stopped||processExited||processError)return;
-          if(result===undefined)send({id:message.id,error:{code:-32601,message:'This K client does not grant this request.'}});
-          else send({id:message.id,result});
-        }).catch(()=>{if(serverRequests.delete(message.id)&&!stopped&&!processExited&&!processError)send({id:message.id,error:{code:-32603,message:'K request handler failed; permission not granted.'}});});
+        Promise.resolve()
+          .then(() => {
+            if (!stopped && !processExited && !processError && serverRequests.has(message.id))
+              return onRequest?.(message);
+          })
+          .then(result => {
+            if (!serverRequests.delete(message.id) || stopped || processExited || processError) return;
+            if (result === undefined)
+              send({id: message.id, error: {code: -32601, message: 'This K client does not grant this request.'}});
+            else send({id: message.id, result});
+          })
+          .catch(() => {
+            if (serverRequests.delete(message.id) && !stopped && !processExited && !processError)
+              send({
+                id: message.id,
+                error: {code: -32603, message: 'K request handler failed; permission not granted.'}
+              });
+          });
+      } else {
+        diagnostics.warning(message);
+        onEvent(message);
       }
-      else { diagnostics.warning(message); onEvent(message); }
       return;
     }
-    const p = pending.get(message.id); if (!p) return;
-    pending.delete(message.id); clearTimeout(p.timer);
+    const p = pending.get(message.id);
+    if (!p) return;
+    pending.delete(message.id);
+    clearTimeout(p.timer);
     if (message.error) {
-      const error=new Error(`Codex request ${p.method} failed (code ${message.error.code}).`);
-      error.protocolMessage=message.error.message;
+      const error = new Error(`Codex request ${p.method} failed (code ${message.error.code}).`);
+      error.protocolMessage = message.error.message;
       p.reject(error);
-    }
-    else p.resolve(message.result);
+    } else p.resolve(message.result);
   });
   return {
-    supportsHookOverrides:true,
+    supportsHookOverrides: true,
     closed: exited,
     notify: send,
-    waitForMcp(threadId, name, timeoutMs=35000) {
-      if(stopped||processExited||processError)return Promise.reject(new Error('Codex host is closed.'));
-      return new Promise((resolve,reject)=>{
+    waitForMcp(threadId, name, timeoutMs = 35000) {
+      if (stopped || processExited || processError) return Promise.reject(new Error('Codex host is closed.'));
+      return new Promise((resolve, reject) => {
         let timer;
-        const end=(error,value)=>{clearTimeout(timer);startupWaiters.delete(waiter);error?reject(error):resolve(value);};
-        const waiter={fail:()=>end(new Error('Codex host stopped before MCP readiness.')),check:()=>{
-          const status=startup.get(`${threadId}:${name}`);
-          if(status?.status==='ready')end(null,status);
-          else if(['failed','cancelled'].includes(status?.status))end(new Error('K worker connection failed; no turn started.'));
-        }};
-        startupWaiters.add(waiter);timer=setTimeout(()=>end(new Error('K worker startup timed out; no turn started.')),timeoutMs);waiter.check();
+        const end = (error, value) => {
+          clearTimeout(timer);
+          startupWaiters.delete(waiter);
+          error ? reject(error) : resolve(value);
+        };
+        const waiter = {
+          fail: () => end(new Error('Codex host stopped before MCP readiness.')),
+          check: () => {
+            const status = startup.get(`${threadId}:${name}`);
+            if (status?.status === 'ready') end(null, status);
+            else if (['failed', 'cancelled'].includes(status?.status))
+              end(new Error('K worker connection failed; no turn started.'));
+          }
+        };
+        startupWaiters.add(waiter);
+        timer = setTimeout(() => end(new Error('K worker startup timed out; no turn started.')), timeoutMs);
+        waiter.check();
       });
     },
     request(method, params, timeoutMs = 30000) {
-      if (stopped||processExited||processError) return Promise.reject(new Error('Codex host is closed.'));
-      return new Promise((resolve,reject) => {
-        const id=++nextId;
-        const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Codex ${method} timed out; do not replay automatically.`));},timeoutMs);
-        pending.set(id,{resolve,reject,timer,method});send({id,method,params});
+      if (stopped || processExited || processError) return Promise.reject(new Error('Codex host is closed.'));
+      return new Promise((resolve, reject) => {
+        const id = ++nextId;
+        const timer = setTimeout(() => {
+          pending.delete(id);
+          reject(new Error(`Codex ${method} timed out; do not replay automatically.`));
+        }, timeoutMs);
+        pending.set(id, {resolve, reject, timer, method});
+        send({id, method, params});
       });
     },
     async close() {
-      if(abortClose)await abortClose;
-      if(!processClosed&&!processExited)try{child.stdin.end();}catch{}
-      if(processError){
-        if(!processClosed&&(didSpawn||typeof child.terminate==='function'))try{await terminateChild();}catch(terminationError){throw new AggregateError([processError,terminationError],'Codex host reported a process error and its runner could not confirm termination.');}
+      if (abortClose) await abortClose;
+      if (!processClosed && !processExited)
+        try {
+          child.stdin.end();
+        } catch {}
+      if (processError) {
+        if (!processClosed && (didSpawn || typeof child.terminate === 'function'))
+          try {
+            await terminateChild();
+          } catch (terminationError) {
+            throw new AggregateError(
+              [processError, terminationError],
+              'Codex host reported a process error and its runner could not confirm termination.'
+            );
+          }
         await exited;
         lines.close();
         throw processError;
       }
-      if(processClosed){lines.close();return;}
+      if (processClosed) {
+        lines.close();
+        return;
+      }
       let timer;
-      const graceful=processError?null:await Promise.race([exited,new Promise(resolve=>{timer=setTimeout(()=>resolve(null),3000);})]).finally(()=>clearTimeout(timer));
-      if(!graceful){
+      const graceful = processError
+        ? null
+        : await Promise.race([
+            exited,
+            new Promise(resolve => {
+              timer = setTimeout(() => resolve(null), 3000);
+            })
+          ]).finally(() => clearTimeout(timer));
+      if (!graceful) {
         await terminateChild();
         await exited;
       }
-      if(processError)throw processError;
+      if (processError) throw processError;
       lines.close();
-    },
+    }
   };
 }
