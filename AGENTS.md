@@ -30,7 +30,7 @@
 
 ## 三、訂閱、登入與憑證
 
-- GPT 主代理與 GPT 子代理用 Codex 訂閱，Claude 用 Claude Code 訂閱，Gemini 主代理與 Flash 用 Antigravity 訂閱。不改 API 計費、不用 API key（討論專用 API 例外見第九節）。Fable 額外 usage credits 未授權，不使用。
+- GPT 主代理與 GPT 子代理用 Codex 訂閱，Claude 用 Claude Code 訂閱，Gemini 主代理與 Flash 用 Antigravity 訂閱。不改 API 計費、不用 API key（討論專用 API 例外見第九節）。Fable 系列沿用 Claude Code 原生模型清單、額度與計費處理；K 不另加系列排除或啟動限制，不替本人修改計費設定。
 - 不讀、複製、搬移或提交任何憑證，含其他專案、Chrome 登入資料、Google 密碼與授權碼。登入與 QR／手機驗證一律本人操作，AI 不同時操作。
 - 保留 K 專用 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、Antigravity profile（覆寫 USERPROFILE／HOME）及對話／瀏覽器資料位置；不改真實 `~/.gemini` 或全域 Codex／Claude 設定。唯一全域例外：Codex 全域設定登記 `D:\K-harness` 為 `trust_level = "trusted"`。
 - K 專用 Codex 家目錄缺 `config.toml` 時補上 `[windows] sandbox = "unelevated"`；已有設定檔一律不覆寫。
