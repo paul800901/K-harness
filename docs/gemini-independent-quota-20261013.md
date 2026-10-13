@@ -90,3 +90,7 @@ Fable 指出的等待清空、refresh token 被舊 live 覆蓋、query/activate 
 ## 候選收尾
 
 程式 `94145a0` 已完成本地驗證與真 Fable 5.1 增量末審。正式 runtime 仍為另一批已上線的 `aee9e5ab4bd19b5142ca4d6c22ecd77c94ab52c3`，本批未部署；主工作樹既有 local-dictation test／runtime-cleanup 文件保持原狀。候選留在 `C:/Users/Paulus/.codex/worktrees/quota-scheduler/K-harness`，等待後續明確授權的正式更新與真工作驗收。
+
+## 本人正式更新授權（2026-10-13）
+
+本人於候選收尾後明確要求「更新正式 K」，授權本批沿既有安全更新流程套用與讀回，取代前述候選不部署限制；不恢復或重送四房工作。依本輪指定，以已完成的真正 Fable 5.1 設計／末審為審查來源，不假稱 Opus 複查。同步修正 AGENTS 舊「全部實查須逐帳切換」及四帳描述，使現行規則符合本人五帳獨立查詢要求；程式來源仍是已驗收 94145a0，後續僅文件不同。正式結果另記於下。
