@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {mkdir,mkdtemp,writeFile,readFile,stat} from 'node:fs/promises';
+import {mkdir,mkdtemp,writeFile,readFile,stat,readdir} from 'node:fs/promises';
+import {spawnSync} from 'node:child_process';
 import {activateRuntime,rollbackRuntime,installationPaths,readSettings} from '../scripts/install-runtime.mjs';
 
 const checkStopped=async()=>{};
@@ -58,4 +59,24 @@ test('missing build output does not replace the current runtime',async()=>{
 test('path outside this installation cannot be activated',async()=>{
  const {root}=await fixture();
  await assert.rejects(activateRuntime({root,prepared:path.resolve(root,'../unrelated'),version:'x',checkStopped}),/版本路徑/);
+});
+
+test('installed updater archives the repository root rather than its ignored runtime subtree',{skip:process.platform!=='win32'},async()=>{
+ const {root,p}=await fixture();
+ const git=args=>{const result=spawnSync('git',['-C',root,...args],{encoding:'utf8',windowsHide:true});assert.equal(result.status,0,result.stderr);return result.stdout.trim();};
+ // A dependency-free fixture permits the real prepare flow without downloading packages.
+ await file(path.join(root,'package.json'),JSON.stringify({name:'updater-archive-fixture',version:'1.0.0',private:true}));
+ await file(path.join(root,'package-lock.json'),JSON.stringify({name:'updater-archive-fixture',version:'1.0.0',lockfileVersion:3,packages:{'':{name:'updater-archive-fixture',version:'1.0.0'}}}));
+ await file(path.join(root,'.gitignore'),'.runtime/\nnode_modules/\n');
+ await file(path.join(root,'root-sentinel.txt'),'pinned repository content');
+ git(['init','--quiet']);git(['add','.']);git(['-c','user.name=Fixture','-c','user.email=fixture@example.test','-c','commit.gpgsign=false','-c','core.hooksPath=NUL','commit','--quiet','-m','fixture']);
+ const version=git(['rev-parse','HEAD']);
+ for(const name of ['scripts/manage-install.mjs','scripts/install-runtime.mjs','src/atomic-write.mjs'])await file(path.join(p.runtime,name),await readFile(new URL('../'+name,import.meta.url)));
+ const result=spawnSync(process.execPath,[path.join(p.runtime,'scripts/manage-install.mjs'),'--root',root,'--ref',version,'--prepare-only'],{cwd:p.runtime,encoding:'utf8',windowsHide:true,maxBuffer:1024*1024,env:{...process.env,npm_config_cache:path.join(p.candidate,'npm-cache')}});
+ // The fixture deliberately has no Electron, so it must stop before activation.
+ assert.equal(result.status,1);assert.match(result.stderr,/electron/);
+ const [prepared]=(await readdir(p.candidate,{withFileTypes:true})).filter(entry=>entry.isDirectory()&&entry.name.startsWith('prepare-'));
+ assert.ok(prepared,'candidate archive was prepared');
+ assert.equal(await readFile(path.join(p.candidate,prepared.name,'root-sentinel.txt'),'utf8'),'pinned repository content');
+ assert.equal(await readFile(path.join(p.runtime,'dist-ui/index.html'),'utf8'),'old-ui');
 });
