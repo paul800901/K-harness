@@ -46,3 +46,10 @@ Codex 端屬同一類問題，但只在「瀏覽器需恢復時先關舊 host」
 ## Astra 後續處理（2026-09-30 19:04）
 
 取消重連缺陷已修正、完成 652/652 回歸及部署模組三例驗證，並正式套用兩檔重開 K；詳見 [修正、證據與未驗界線](r3-1-reconnect-cancel-fix-20260930.md)。本段不改寫上方原始複查結論，也不代表 Opus 已複審新修正。
+
+## Opus 複審補修（2026-09-30，d1fb826）
+
+- 正式兩檔（claude-controller、desktop-controller）與 d1fb826 逐位元相同；相對 d7b58ef 只加 10 行、刪 2 行，做法與上方建議一致：Claude 取消後設 `interrupted`，Codex 設 `offline`，都關閉瀏覽器連線標記；沒有新增重試或背景重連。
+- 同一支假 host 探針（`.runtime/audit-20260929/r3-cancel-fix-probe.mjs`，直接載入正式 runtime）：取消重連後 **status=interrupted**，下一則訊息**成功送出**（自動重連一次）。修正前同一流程是 ready 卻送不出。
+- Codex 端：`offline` 時送出會被擋，點回該聊天室會走既有恢復路徑重新 resume。已核對前端點選同一聊天室時，只要狀態不是 ready 就會呼叫 open，所以會觸發恢復。
+- 結論：**通過**。真實模型連線中途取消與正式畫面點按仍未實測，照實保留在未驗事項。

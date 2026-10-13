@@ -42,3 +42,19 @@ GPT/Claude核准都綁parent，主回合idle仍可處理自己活著child的核�
 
 ### 最後 Opus 小差異複查讀回
 session5b53f353-ddeb-401d-a604-c3b6d077aa56，官方Pro／實際claude-opus-5-5／2.1.294、code0/success/is_error=false，9Read/Glob，確認null必修及三個窄修正確、無阻擋部署。主代理另獨立確認src/claude-host.mjs的HOST_INSTRUCTIONS直接包含MODEL_ROLE_GUIDANCE（該檔未放此次小封包，Opus未假稱已確認）；既有claude-host nativefake測試亦驗普通主核心附該文本。既有legacy僅model且漏effort的bridge呼叫可能拒絕，沒有暗換模型；正式新UI與保存設定均有effort，不另造migration。沒有擴張cache或junction處理。
+
+
+### 固定程式候選驗證
+程式版本c5d605d146e10080502fbec61a8f0c2a8b114af3，從git archive建立乾淨獨立候選，沿用既有依賴、不安裝；介面／擴充／啟動器建置、完整1005/1005及桌面/手機快覽、21模型選單built UI再測通過。正式程式交換尚待執行，下方另記。證據deployment/full-tests.txt、worker-quick-ui.txt、worker-model-picker-ui.txt。
+
+## 正式整批套用與讀回（最新狀態）
+2026-10-08 14:14（臺灣時間），先核對47831無監聽、無K執行程序及launcher記錄正常退出，再以既有install-runtime交易交換程式與啟動器，正常從Start-K-Desktop.ps1重開。正式程式版本 **c5d605d146e10080502fbec61a8f0c2a8b114af3**，不是後續文件commit。
+
+- 乾淨固定候選585個Git檔案均與版本一致；正式交換後585檔再次逐一一致。完整1005/1005、兩尺寸快覽／選單built UI、UI／擴充／啟動器建置通過。
+- 保留退版 **D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791439994885**；只退程式與啟動器，不宣稱是對話快照。
+- 67個既有設定／核心指標／瀏覽器助手／對話header逐檔hash不變，既有runtime選項除version/previous皆不變；既有Codex config不覆寫。登入與對話資料不搬動，selected-cores未改，已安裝擴充檔與候選相同，沒有reload或重註冊。
+- 14:14:32 launcher記錄native workbench ready；程序鏈是既有可信桌面啟動器→trusted-runtime啟動程式→Electron，47831由該Electron監聽。正式health 200/native；全部6個對外靜態JS/CSS/manifest/icon逐檔HTTP SHA256與正式built檔一致。未登入api/state仍403，沒有繞過登入讀取正式狀態。
+- 沒有恢復／重派本人暫停工作、沒有push/tag、東區未更新，沒有改API計費或下載／切換原生核心。
+- **驗證限制仍保留**：正式authenticated UI／本人手機實機未重測；新Claude子代理真原生回合及bridge/父controller合成驗證，不等於兩家真正主模型完整新派工回合都驗收；21型號不是逐一全部能力真測。三核心附件原檔接納有實測，音訊／影片工具與理解能力差异見attachment-native-compat-20261008.md，不宣稱所有格式三家都等價。
+
+證據D:\K-harness\.runtime\worker-model-engineering-20261008\deployment\prepared.json、activated.json、live-readback.json及各測試log。原先「待部署／等待本人」段落保留階段歷史，此節取代其現況。
