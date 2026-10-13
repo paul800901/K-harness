@@ -11,6 +11,12 @@ test('quota display separates history and unknown from a current zero balance',(
  assert.equal(quotaPercent({remainingPercent:100}),'100%');
  assert.equal(quotaPercent({remainingPercent:null}),'—');
 });
+
+test('fractional official quota is compact without rounding a positive balance to zero or mutating data',()=>{
+ for(const [remainingPercent,expected]of [[65.86091499999999,'65.9%'],[53.97934,'54%'],[3.9427582,'3.9%'],[85.88634,'85.9%'],[0.01,'<0.1%'],[0.1,'0.1%'],[0,'0%'],[100,'100%']]){
+  const window=Object.freeze({remainingPercent});assert.equal(quotaPercent(window),expected);assert.equal(window.remainingPercent,remainingPercent);
+ }
+});
 test('expired reset stays historical, never rolls forward or invents replenishment',()=>{
  const w={remainingPercent:0,resetsAt:1791237484},now=w.resetsAt*1000+1;
  assert.match(quotaReset(w,now),/（已過）$/u);
