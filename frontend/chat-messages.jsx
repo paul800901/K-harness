@@ -76,10 +76,11 @@ export function NativeImage({src, alt, title}) {
     </span>
   );
 }
-// The main model's start mark for an armed discussion reads as a short note, not a code block.
+// The main model's start mark reads as a short note, not a code block. Whether a discussion actually started
+// shows in the room (the discussion itself, or a "討論未開始" notice).
 const discussionStartMark = {
   CodeHeader: () => null,
-  SyntaxHighlighter: () => <p className="discussion-start-mark">↳ 依此任務書開始討論</p>
+  SyntaxHighlighter: () => <p className="discussion-start-mark">主模型標記：開始討論</p>
 };
 export function Markdown() {
   return (

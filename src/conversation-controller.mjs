@@ -30,7 +30,7 @@ const discussionNote = settings =>
   (settings.mode === 'parallel'
     ? '平行比較的任務書不得放入任何模型（包括你自己）的候選答案、結論或立場，只放需求、本人給的事實與已驗證證據。'
     : '') +
-  `任務書寫完後，在回覆最後單獨放一個標記區塊：${FENCE}k-discussion 換行 start 換行 ${FENCE}。K 會在本回合結束後用這份任務書開始討論，你不用再做別的事。若本人沒有要求開始討論，照常回答，不要加標記。`;
+  `需要讀的檔案與網頁先讀完，再把完整任務書與標記放在同一則、也是本回合最後一則回覆裡：任務書寫完後，在回覆最後單獨放一個標記區塊：${FENCE}k-discussion 換行 start 換行 ${FENCE}。K 會在本回合結束後用這份任務書開始討論，你不用再做別的事。此標記只在附有這段設定的訊息中有效。若本人沒有要求開始討論，照常回答，不要加標記。`;
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
@@ -87,7 +87,9 @@ export function createConversationController({
         : {}),
       messages: d ? d.project(s.messages ?? []) : s.messages,
       discussion: ds,
-      ...(discussionNotices.has(controller) ? {error: s.error ?? discussionNotices.get(controller)} : {}),
+      ...(discussionNotices.has(controller)
+        ? {error: [discussionNotices.get(controller), s.error].filter(Boolean).join('\n')}
+        : {}),
       ...(d?.busy ? {busy: true, status: ds.status === 'stopping' ? 'stopping' : 'working'} : {})
     };
   };
@@ -955,6 +957,7 @@ export function createConversationController({
         controller = target(data);
         previousId = controller.state.threadId;
         noDiscussion(controller);
+        discussionNotices.delete(controller);
         if (discussion(controller)?.messages.some(m => m.id === data.messageId))
           throw Error('這則是共用討論紀錄，不是單一原生分支點；請從一般回覆建立分支。');
         if (controller !== active) throw Error('請先切回要分支的聊天室。');
@@ -1248,21 +1251,30 @@ export function createConversationController({
     noDiscussion(c);
     continuationStates.delete(c);
     discussionNotices.delete(c);
-    armedDiscussions.delete(c);
     const settings = armedSettings?.mode ? await discussionSettings(c, armedSettings) : null;
+    // Settings arm only a turn this message starts; a message that would wait in the queue cannot carry them.
+    if (settings && (c.state.busy || c.state.queuedMessages?.length))
+      throw Object.assign(Error('主模型正在回答；附討論設定的訊息不能排隊，請等這一輪結束再送。草稿已保留。'), {
+        notSent: true
+      });
     if (settings) await loadDiscussion(c);
     const d = discussion(c);
     if (!d) return c.send(data);
     locked.add(c);
-    let handoff;
+    let handoff,
+      armed = false;
     try {
       handoff = await d.handoff(data.text, settings ? discussionNote(settings) : '');
       const after = c.state.messages?.length ?? 0;
       const result = await c.send({...data, text: handoff.text});
       if (result.sent === false && !result.queued) await handoff.rejected?.();
-      else if (settings && !result.queued) {
-        armedDiscussions.set(c, {settings, text: data.text, after});
-        void checkArmedDiscussion(c);
+      else if (!result.queued) {
+        // A message that starts a new turn replaces any earlier armed turn; a queued addition keeps it.
+        armedDiscussions.delete(c);
+        if (settings) {
+          armedDiscussions.set(c, {settings, text: data.text, after});
+          armed = true;
+        }
       }
       return result;
     } catch (error) {
@@ -1270,6 +1282,8 @@ export function createConversationController({
       throw error;
     } finally {
       locked.delete(c);
+      // A turn that already ended is checked now; otherwise the room's next change will check it.
+      if (armed) void checkArmedDiscussion(c);
     }
   };
   api.uploadStream = (data, stream) => target(data).uploadStream(data, stream);

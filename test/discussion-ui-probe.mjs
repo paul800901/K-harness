@@ -167,7 +167,7 @@ try {
   // The settings ride with the message to the main model; its brief starts the discussion.
   assert.match(calls.filter(c => c.op === 'native-send').at(-1).text, /K 討論設定.*平行比較/su);
   assert.equal(await page.getByText('K 討論設定', {exact: false}).count(), 0, 'the person sees only their own words');
-  await page.getByText('↳ 依此任務書開始討論', {exact: true}).first().waitFor();
+  await page.getByText('主模型標記：開始討論', {exact: true}).first().waitFor();
   assert.equal(await page.getByText('k-discussion', {exact: false}).count(), 0, 'the start mark reads as a note');
   await page.getByText('Sol 的原始觀點：重視速度。', {exact: true}).waitFor();
   await page.getByText('Opus 的原始觀點：重視資訊。', {exact: true}).waitFor();

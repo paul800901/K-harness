@@ -63,7 +63,18 @@ async function fixture({hold = false, discussionApi} = {}) {
       },
       async send(data) {
         c.sent.push(data);
+        // During a held turn a further message waits in the queue, as in the real cores.
+        if (c.holdTurns && state.busy) {
+          state.queuedMessages.push({text: data.text});
+          return {queued: true};
+        }
         state.messages.push({id: `native-${c.sent.length}`, role: 'user', text: data.text});
+        // instantReply models a turn that ends before send() returns.
+        if (c.instantReply) {
+          state.messages.push({id: `reply-${state.messages.length}`, role: 'assistant', text: c.instantReply});
+          state.status = 'completed';
+          return {sent: true};
+        }
         // holdTurns models a real turn: busy until finish() writes the reply.
         if (c.holdTurns) Object.assign(state, {busy: true, status: 'working'});
         return {sent: true};
@@ -476,6 +487,53 @@ test('a start the room cannot take is reported in the room instead of silently d
     f.owner.holdTurns = false;
     await f.c.send({...f.a, text: '新訊息'});
     assert.equal(f.c.state.error, undefined, 'a new message clears the notice');
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a follow-up queued during the armed turn keeps it armed; the start it blocks is reported', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '開始討論', discussion: armedSettings});
+    assert.deepEqual(await f.c.send({...f.a, text: '順便注意 X'}), {queued: true});
+    f.owner.finish(`任務書${mark}`);
+    while (!f.c.state.error) await new Promise(r => setTimeout(r, 5));
+    assert.match(f.c.state.error, /討論未開始：.*待送訊息/);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a message with discussion settings is not queued behind a running turn', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '先做這件事'});
+    const sent = f.owner.sent.length;
+    await assert.rejects(f.c.send({...f.a, text: '開始討論', discussion: armedSettings}), error => {
+      assert.equal(error.notSent, true);
+      assert.match(error.message, /不能排隊/);
+      return true;
+    });
+    assert.equal(f.owner.sent.length, sent);
+    assert.equal(f.owner.state.queuedMessages.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('an armed turn that ends before send returns still starts the discussion', async () => {
+  const f = await fixture();
+  try {
+    f.owner.instantReply = `任務書：立即完成。${mark}`;
+    await f.c.send({...f.a, text: '開始討論', discussion: armedSettings});
+    while (!f.c.state.discussion) await new Promise(r => setTimeout(r, 5));
+    await settled(f);
+    assert.equal(f.c.state.discussion.status, 'completed');
+    assert.equal(f.c.state.error, undefined);
   } finally {
     await f.c.close();
   }
