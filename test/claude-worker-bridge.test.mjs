@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
@@ -285,4 +286,37 @@ test('cancel confirms settled cancellation; failed close remains unsettled and u
   assert.equal(uncertainResult.status, 'unresolved');
   assert.match(uncertainResult.error, /do not replay/);
   await assert.rejects(uncertain.bridge.close(), /尚未確認停止/);
+});
+
+test('cancel releases an unconfirmed Claude stop only after its root process is gone, never replaying it', async () => {
+  for (const rootAlive of [true, false]) {
+    // A finished child gives a PID with no live process; this process is certainly alive.
+    const pid = rootAlive ? process.pid : spawnSync(process.execPath, ['-e', '']).pid;
+    let runs = 0;
+    const f = await fixture({
+      claudeFactory: () => ({
+        run: async ({onStart}) => {
+          runs++;
+          onStart(pid);
+          throw Object.assign(Error('Claude 子代理停止未確認：close failed；不得重播。'), {settled: false});
+        }
+      })
+    });
+    await f.bridge.start({requestId: 'claude-stop', task: 'bounded', model: 'claude-opus-5-5', effort: 'high'});
+    // A later, separate cancel: wait until the run has fully ended and no longer owns the process.
+    while ((await f.bridge.inspect({requestId: 'claude-stop'})).observation?.execution !== 'unconfirmed')
+      await new Promise(resolve => setTimeout(resolve, 10));
+    const result = await f.bridge.cancel({requestId: 'claude-stop'});
+    assert.equal(result.status, 'unresolved');
+    assert.equal(result.settled, false);
+    assert.equal(runs, 1);
+    if (rootAlive) {
+      assert.notEqual(result.executionUnowned, true);
+      await assert.rejects(f.bridge.close(), /尚未確認停止/);
+    } else {
+      assert.equal(result.executionUnowned, true);
+      assert.match(result.error, /子代理主程序已確認結束/);
+      await f.bridge.close();
+    }
+  }
 });

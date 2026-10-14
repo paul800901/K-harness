@@ -132,10 +132,11 @@ export function createClaudeWorker({
           onMessage: message,
           onPermission: permission
         });
+        // Record the process as soon as it exists, so a stop that later cannot be confirmed can be re-checked.
+        onStart(host.pid);
         validateWorkerPolicy({model, effort}, host.models, {claudeGateway: true});
         signal?.addEventListener('abort', abort, {once: true});
         signal?.throwIfAborted();
-        onStart();
         activity.begin();
         onActivity(state.activity);
         await host.start(

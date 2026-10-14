@@ -32,7 +32,7 @@
 - UI 回歸涵蓋兩家預設網址／名稱、保存與重開、尾斜線辨識、明確查詢模型、Key 不回填、不進 browser storage、跨服務清除表單 Key／型號、自訂名稱保留、原有訂閱／API 分組及遠端禁管理。
 - 首次完整測試為 1637／1639：乾淨工作樹尚未先建置 `dist-ui/index.html`，使既有 branding 與 desktop HTTP 兩項測試失敗；沒有因此修改產品或測試斷言。補齊原有 UI 建置前置後再跑完整測試，**1639／1639 全數通過**。
 - UI 正式建置成功；既有大型 bundle 提示保留，未擴張拆包工作。
-- 本機證據位於本分支工作樹 `.runtime/archive/discussion-api-presets-20261014/`；不提交私人執行紀錄。
+- 本機證據位於主工作樹 `.runtime/archive/discussion-api-presets-20261014/`（原在該分支工作樹，工作樹收掉前搬入）；不提交私人執行紀錄。
 
 ## 複查與部署狀態
 

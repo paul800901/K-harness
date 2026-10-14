@@ -32,6 +32,7 @@ async function fixture({models = rows, closeError = false} = {}) {
     return {
       models,
       closed,
+      pid: 4242,
       async start(prompt) {
         starts++;
         this.prompt = prompt;
@@ -169,4 +170,16 @@ test('read-only and workspace-write enforce tool and path boundaries', async () 
   assert.equal(allowed.length, 2);
   f.handlers().onMessage({type: 'result', result: 'ok'});
   await run;
+});
+
+test('the worker reports the Claude Code process id when it starts', async () => {
+  const f = await fixture(),
+    started = [];
+  const run = f
+    .worker()
+    .run({task: 'bounded', model: 'claude-opus-5-5', effort: 'low', onStart: pid => started.push(pid)});
+  await new Promise(r => setImmediate(r));
+  f.handlers().onMessage({type: 'result', result: 'done'});
+  await run;
+  assert.deepEqual(started, [4242]);
 });
