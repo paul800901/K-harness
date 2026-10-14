@@ -4,10 +4,11 @@ import {chromium} from 'playwright';
 import {build, preview} from 'vite';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
+import {scratchBase} from './scratch.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const fixtureRoot = path.join(root, 'test/fixtures');
-const output = path.join(fixtureRoot, '.runtime/discussion-api-settings-ui-probe');
+const output = path.join(scratchBase, 'discussion-api-settings-ui-probe');
 await build({
   configFile: false,
   root: fixtureRoot,
@@ -67,6 +68,12 @@ try {
     baseUrl = page.locator('.discussion-api-form input').nth(1),
     apiKey = page.locator('.discussion-api-form input[type="password"]'),
     models = page.locator('.discussion-api-form textarea');
+  assert.deepEqual(await provider.locator('option').evaluateAll(options => options.map(option => option.value)), [
+    'deepseek',
+    'glm',
+    'kimi',
+    'custom'
+  ]);
   await provider.selectOption('custom');
   await baseUrl.fill('https://custom.example/v1');
   await provider.selectOption('deepseek');
@@ -139,6 +146,69 @@ try {
   assert.equal(await participant.count(), 1, 'settings save refreshes an already open participant catalog');
   assert.deepEqual(errors, []);
 
+  for (const preset of [
+    {id: 'glm', name: 'GLM', url: 'https://api.z.ai/api/paas/v4'},
+    {id: 'kimi', name: 'Kimi', url: 'https://api.moonshot.cn/v1'}
+  ]) {
+    const presetPage = await browser.newPage();
+    await presetPage.route('**/favicon.ico', route => route.fulfill({status: 204, body: ''}));
+    await presetPage.goto(origin);
+    await presetPage.getByText('尚未設定討論用 API 連線。').waitFor();
+    await presetPage.getByRole('button', {name: '新增 API 連線', exact: true}).click();
+    const form = presetPage.locator('.discussion-api-form'),
+      providerField = form.locator('select'),
+      nameField = form.locator('input').nth(0),
+      urlField = form.locator('input').nth(1),
+      keyField = form.locator('input[type="password"]'),
+      modelField = form.locator('textarea');
+    await providerField.selectOption('deepseek');
+    await keyField.fill('FAKE-OTHER-PROVIDER-KEY');
+    await modelField.fill('old-provider-model');
+    await providerField.selectOption(preset.id);
+    assert.equal(await nameField.inputValue(), preset.name);
+    assert.equal(await urlField.inputValue(), preset.url);
+    assert.equal(await keyField.inputValue(), '', 'provider switch does not carry a typed key to another service');
+    assert.equal(await modelField.inputValue(), '', 'provider switch does not carry the old model IDs');
+    assert.deepEqual(
+      (await presetPage.evaluate(() => window.testRequestLog)).map(call => call.route),
+      ['discussion/connections'],
+      'selecting a preset neither saves nor queries a real provider'
+    );
+    await keyField.fill('FAKE-PRESET-KEY');
+    await urlField.fill(`${preset.url}/`);
+    await presetPage.getByRole('button', {name: '保存連線', exact: true}).click();
+    await presetPage.getByText('討論用 API 連線已保存。', {exact: true}).waitFor();
+    const presetSave = (await presetPage.evaluate(() => window.testRequestLog)).find(
+      call => call.route === 'discussion/connections/save'
+    );
+    assert.deepEqual(presetSave.data, {
+      name: preset.name,
+      baseUrl: `${preset.url}/`,
+      apiKey: 'FAKE-PRESET-KEY',
+      models: []
+    });
+    await presetPage.getByRole('button', {name: '編輯', exact: true}).click();
+    assert.equal(
+      await providerField.inputValue(),
+      preset.id,
+      'editing recognizes the preset, including a trailing slash'
+    );
+    assert.equal(await keyField.inputValue(), '', 'editing never reads a saved key into the form');
+    await presetPage.getByRole('button', {name: '查詢模型', exact: true}).click();
+    await presetPage.locator('.discussion-api-card').getByText('模型：Catalog model', {exact: true}).waitFor();
+    await nameField.fill('我的討論連線');
+    await providerField.selectOption('deepseek');
+    assert.equal(await nameField.inputValue(), '我的討論連線', 'preset selection preserves a custom connection name');
+    assert.equal(await modelField.inputValue(), '');
+    await providerField.selectOption('custom');
+    assert.equal(
+      await urlField.inputValue(),
+      '',
+      'custom choice clears a preset URL rather than keeping the wrong service'
+    );
+    await presetPage.close();
+  }
+
   const remote = await browser.newPage();
   await remote.route('**/favicon.ico', route => route.fulfill({status: 204, body: ''}));
   await remote.goto(`${origin}?remote=1`);
@@ -159,6 +229,8 @@ try {
       checks: [
         'blank model save and later catalog query',
         'DeepSeek preset overrides custom URL',
+        'GLM and Kimi presets, save, edit and explicit model query',
+        'provider switch clears typed keys and model IDs but preserves custom names',
         'password input and no browser storage',
         'save clears key',
         'remote disabled makes no GET',

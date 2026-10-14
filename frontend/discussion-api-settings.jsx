@@ -1,8 +1,12 @@
 import React, {useEffect, useState} from 'react';
 import './discussion-api-settings.css';
 
-const DEEPSEEK_URL = 'https://api.deepseek.com';
-const EMPTY_FORM = {id: '', provider: 'deepseek', name: '', baseUrl: DEEPSEEK_URL, apiKey: '', models: ''};
+const API_PRESETS = [
+  {id: 'deepseek', name: 'DeepSeek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com'},
+  {id: 'glm', name: 'GLM', label: 'GLM（Z.ai）', baseUrl: 'https://api.z.ai/api/paas/v4'},
+  {id: 'kimi', name: 'Kimi', label: 'Kimi', baseUrl: 'https://api.moonshot.cn/v1'}
+];
+const EMPTY_FORM = {id: '', provider: 'deepseek', name: '', baseUrl: API_PRESETS[0].baseUrl, apiKey: '', models: ''};
 
 export function DiscussionApiSettings({request, disabled = false}) {
   const [connections, setConnections] = useState([]),
@@ -46,7 +50,7 @@ export function DiscussionApiSettings({request, disabled = false}) {
     setNotice('');
     setForm({
       id: connection.id,
-      provider: connection.baseUrl === DEEPSEEK_URL ? 'deepseek' : 'custom',
+      provider: API_PRESETS.find(preset => preset.baseUrl === connection.baseUrl?.replace(/\/+$/u, ''))?.id ?? 'custom',
       name: connection.name ?? '',
       baseUrl: connection.baseUrl ?? '',
       apiKey: '',
@@ -129,7 +133,7 @@ export function DiscussionApiSettings({request, disabled = false}) {
         討論可唯讀搜尋及讀取本次工作區，不寫入檔案、不派工。
       </p>
       <p className="discussion-api-intro">
-        目前支援 DeepSeek 或自訂 OpenAI 相容 API；此處不設定 Anthropic 或 Gemini API。
+        可直接選擇 DeepSeek、GLM（Z.ai）或 Kimi，也可自訂 OpenAI 相容 API；此處不設定 Anthropic 或 Gemini API。
       </p>
       <p className="discussion-api-intro">網頁搜尋查詢與讀取網址會送至 Exa；免搜尋 Key，但有流量限制。</p>
       <div className="discussion-api-actions">
@@ -191,16 +195,30 @@ export function DiscussionApiSettings({request, disabled = false}) {
               disabled={locked}
               onChange={event => {
                 const provider = event.target.value;
-                setForm(current => ({
-                  ...current,
-                  provider,
-                  baseUrl:
-                    provider === 'deepseek' ? DEEPSEEK_URL : current.baseUrl === DEEPSEEK_URL ? '' : current.baseUrl,
-                  name: provider === 'deepseek' && !current.name.trim() ? 'DeepSeek' : current.name
-                }));
+                const preset = API_PRESETS.find(item => item.id === provider);
+                setForm(current => {
+                  const currentUrl = current.baseUrl.replace(/\/+$/u, ''),
+                    baseUrl =
+                      preset?.baseUrl ?? (API_PRESETS.some(item => item.baseUrl === currentUrl) ? '' : current.baseUrl),
+                    changedService = baseUrl.replace(/\/+$/u, '') !== currentUrl;
+                  return {
+                    ...current,
+                    provider,
+                    baseUrl,
+                    name:
+                      preset && (!current.name.trim() || API_PRESETS.some(item => item.name === current.name.trim()))
+                        ? preset.name
+                        : current.name,
+                    ...(changedService ? {apiKey: '', models: ''} : {})
+                  };
+                });
               }}
             >
-              <option value="deepseek">DeepSeek</option>
+              {API_PRESETS.map(preset => (
+                <option key={preset.id} value={preset.id}>
+                  {preset.label}
+                </option>
+              ))}
               <option value="custom">自訂 OpenAI 相容</option>
             </select>
           </label>
