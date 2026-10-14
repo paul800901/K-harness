@@ -5,6 +5,7 @@ import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {scratchBase} from './scratch.mjs';
+import {settleAfterRelease} from './fixtures/gemini-accounts-settle.mjs';
 
 const base = scratchBase;
 const A = 'a'.repeat(32),
@@ -76,7 +77,7 @@ async function fixture({
     set idle(v) {
       idle = v;
     },
-    accounts: createGeminiAccounts({root, login, vault, enabled, clock, setTimer, clearTimer})
+    accounts: settleAfterRelease(createGeminiAccounts({root, login, vault, enabled, clock, setTimer, clearTimer}))
   };
 }
 function authStatus(
@@ -2222,15 +2223,9 @@ async function handoffFixture(statusFor, {clock, setTimer, clearTimer} = {}) {
       return statusFor(account ?? f.current);
     };
   if (clock || setTimer || clearTimer)
-    f.accounts = createGeminiAccounts({
-      root: f.root,
-      vault: f.vault,
-      login: f.login,
-      enabled: true,
-      clock,
-      setTimer,
-      clearTimer
-    });
+    f.accounts = settleAfterRelease(
+      createGeminiAccounts({root: f.root, vault: f.vault, login: f.login, enabled: true, clock, setTimer, clearTimer})
+    );
   return f;
 }
 const officialBalance = (remainingPercent, resetsAt = future) =>
@@ -3320,6 +3315,7 @@ test(
     phase = 'query-resolved';
     resolveQuery(officialBalance(80));
     await release;
+    await accounts.idle();
     trace.push('outer-returned');
     await lateRun;
     const observed = await Promise.race([terminal, new Promise(resolve => setTimeout(() => resolve(null), 200))]);
@@ -3367,4 +3363,32 @@ test('cancelled drain with no new waiter finishes once without another query or 
   assert.equal(events.filter(event => event.status !== 'waiting').length, 0);
   assert.equal((await f.accounts.list()).busy, false);
   assert.deepEqual(f.calls.activate, []);
+});
+
+test('a worker result does not wait for the account queries its release starts', async () => {
+  const f = await handoffFixture();
+  const accounts = createGeminiAccounts({root: f.root, vault: f.vault, login: f.login, enabled: true});
+  let block = false,
+    resolveQuery,
+    started;
+  const began = new Promise(resolve => (started = resolve));
+  const query = f.vault.queryQuota;
+  f.vault.queryQuota = async id => {
+    if (!block) return query(id);
+    started();
+    await new Promise(resolve => (resolveQuery = resolve));
+    return {accountId: id, ...officialBalance(80)};
+  };
+  const events = [];
+  const run = accounts.run(handoffOptions('room', 'failed', events), async () => {
+    block = true;
+    return limitFailure;
+  });
+  await began;
+  const outcome = await Promise.race([run, new Promise(resolve => setTimeout(() => resolve('still waiting'), 200))]);
+  assert.equal(outcome.status, 'failed', 'the worker result is reported while the official query is pending');
+  resolveQuery();
+  await accounts.idle();
+  // Official quota remains, so the failure is treated as a rate limit: no switch, no replay.
+  assert.equal(events.at(-1).status, 'blocked');
 });

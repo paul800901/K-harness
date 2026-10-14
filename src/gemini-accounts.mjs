@@ -31,6 +31,8 @@ export function createGeminiAccounts({
     retryDelay = 60000;
   const quotaWait = message => Object.assign(Error(message), {code: 'GEMINI_QUOTA_WAIT'});
   const handoffWaiters = new Map();
+  // Account work a release started without waiting for it; see idle().
+  let background = Promise.resolve();
   let handoffPending = null,
     resetTimer = null;
   const clearReset = () => {
@@ -553,6 +555,10 @@ export function createGeminiAccounts({
       await load();
       return snapshot();
     },
+    // Resolves when the account queries started by the latest release have finished.
+    idle() {
+      return background;
+    },
     async observe(options = {}) {
       await load();
       const value = () => ({
@@ -631,7 +637,7 @@ export function createGeminiAccounts({
       } finally {
         running--;
         onChange();
-        if (!running && handoffWaiters.size) await drainHandoff();
+        if (!running && handoffWaiters.size) background = drainHandoff();
       }
     },
     async capture() {
@@ -957,13 +963,12 @@ export function createGeminiAccounts({
               });
             }
             onChange();
-            if (!running && handoffWaiters.size) await drainHandoff();
+            // Account queries can take tens of seconds; the worker's own result must not wait for them.
+            if (!running && handoffWaiters.size) background = drainHandoff();
             else if (refresh && !running && !data.uncertain && chosen)
-              try {
-                await api.refresh({force: false});
-              } catch {
+              background = api.refresh({force: false}).catch(() => {
                 /* no replay; next status read shows cached quota */
-              }
+              });
             if (saveError) throw saveError;
           }
         };
