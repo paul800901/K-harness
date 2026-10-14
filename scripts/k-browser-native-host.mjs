@@ -6,6 +6,7 @@ import {lstat, readFile, rename, stat, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {WebSocketServer} from 'ws';
+import {replaceFile} from '../src/atomic-write.mjs';
 
 const execFile = promisify(execFileCallback);
 export const K_EXTENSION_ID = 'jhbfglfjhiebacbkjnohgmpgcppadblm';
@@ -275,7 +276,7 @@ export async function writeDescriptor(config, descriptor, {isClosing = () => fal
   const temporary = `${config.descriptorPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   await writeFile(temporary, JSON.stringify(descriptor), {flag: 'wx', mode: 0o600});
   if (isClosing()) return false;
-  await rename(temporary, config.descriptorPath);
+  await replaceFile(temporary, config.descriptorPath);
   return true;
 }
 

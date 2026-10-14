@@ -15,6 +15,11 @@ export async function atomicWrite(target, data, {lockWaitMs = 10000} = {}) {
   } finally {
     await file.close();
   }
+  return replaceFile(temporary, target, {lockWaitMs});
+}
+
+// Windows briefly locks files (antivirus, indexer); wait out the lock instead of failing the save.
+export async function replaceFile(temporary, target, {lockWaitMs = 10000} = {}) {
   const deadline = Date.now() + lockWaitMs;
   for (let attempt = 0; ; attempt++) {
     try {

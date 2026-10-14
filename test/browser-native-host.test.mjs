@@ -1,11 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, readFile, stat} from 'node:fs/promises';
+import fs, {mkdtemp, mkdir, readFile, stat} from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import {PassThrough, Writable} from 'node:stream';
 import {once} from 'node:events';
 import {WebSocket} from 'ws';
+import {scratchBase} from './scratch.mjs';
 import {
   K_EXTENSION_ID,
   NativeMessageDecoder,
@@ -16,7 +18,8 @@ import {
   isAllowedChromeParent,
   startNativeHost,
   validateConnectUrl,
-  validateHostConfig
+  validateHostConfig,
+  writeDescriptor
 } from '../scripts/k-browser-native-host.mjs';
 
 const extensionOrigin = `chrome-extension://${K_EXTENSION_ID}/`;
@@ -108,7 +111,7 @@ test('Chrome parent diagnostics distinguish a profile mismatch from a timeout wh
 });
 
 test('host records a bounded parent failure diagnostic without config secrets', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'k-browser-native-diagnostic-'));
+  const root = await mkdtemp(path.join(scratchBase, 'k-browser-native-diagnostic-'));
   const profileDirectory = path.join(root, 'profile'),
     descriptorPath = path.join(root, 'private', 'descriptor.json');
   const diagnosticPath = path.join(root, 'host', 'diagnostic.json');
@@ -130,7 +133,7 @@ test('host records a bounded parent failure diagnostic without config secrets', 
 });
 
 test('host records parent-check timeout separately from a profile mismatch', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'k-browser-native-diagnostic-'));
+  const root = await mkdtemp(path.join(scratchBase, 'k-browser-native-diagnostic-'));
   const profileDirectory = path.join(root, 'profile'),
     descriptorPath = path.join(root, 'private', 'descriptor.json');
   const diagnosticPath = path.join(root, 'host', 'diagnostic.json');
@@ -149,7 +152,7 @@ test('host records parent-check timeout separately from a profile mismatch', asy
 });
 
 test('host records descriptor-write failure separately from parent failures', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'k-browser-native-diagnostic-'));
+  const root = await mkdtemp(path.join(scratchBase, 'k-browser-native-diagnostic-'));
   const profileDirectory = path.join(root, 'profile'),
     descriptorPath = path.join(root, 'missing', 'descriptor.json');
   const diagnosticPath = path.join(root, 'host', 'diagnostic.json');
@@ -229,7 +232,7 @@ test('WebSocket authorization requires loopback, exact Host, no Origin and const
 });
 
 test('host exposes only the authenticated openConnectPage relay and stops without rewriting its profile slot on stdin EOF', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'k-browser-native-host-'));
+  const root = await mkdtemp(path.join(scratchBase, 'k-browser-native-host-'));
   const profileDirectory = path.join(root, 'chrome-profile'),
     descriptorPath = path.join(root, 'private', 'descriptor.json');
   await mkdir(profileDirectory, {recursive: true});
@@ -300,4 +303,24 @@ test('host exposes only the authenticated openConnectPage relay and stops withou
   await host.done;
   const after = JSON.parse(await readFile(profileDescriptor, 'utf8'));
   assert.deepEqual(after, descriptor, 'shutdown never overwrites a newer profile instance');
+});
+
+test('descriptor write waits out a brief Windows file lock instead of failing', async () => {
+  const directory = await mkdtemp(path.join(scratchBase, 'k-browser-descriptor-'));
+  const descriptorPath = path.join(directory, 'descriptor.json');
+  const originalRename = fs.rename;
+  let locked = 2;
+  fs.rename = async (from, to) => {
+    if (to === descriptorPath && locked-- > 0) throw Object.assign(new Error('locked'), {code: 'EPERM'});
+    return originalRename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await writeDescriptor({descriptorPath}, {port: 1}), true);
+  } finally {
+    fs.rename = originalRename;
+    syncBuiltinESMExports();
+  }
+  assert.equal(locked, -1);
+  assert.deepEqual(JSON.parse(await readFile(descriptorPath, 'utf8')), {port: 1});
 });
