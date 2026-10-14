@@ -1,43 +1,52 @@
-# 討論 API HTTP 400：診斷與接續欄位保真（2026-10-14）
+# 討論 API HTTP 400：小型診斷與錯誤可辨識（2026-10-14）
 
-## 使用者可見問題與證據邊界
+## 結論與證據邊界
 
-本人回報同一場交叉審查出現兩條相同的「API 討論失敗（HTTP 400）；未重送或換模型」。正式版本為 `65c4fc0ba0bd4bf6d148194ee1cfbeda6e31487f`，原始碼 main（含部署文件）為 `c9510c87f8537d64be8bac15683dcf8a1a90d16d`。
+**原場景的 HTTP 400 尚未重現、根因仍未知；不能宣稱已修復。** 本人允許的小型真 API 診斷已完成：DeepSeek、GLM 各 2 次、合計 4 次請求全部 HTTP 200，兩者都完成讀人工測試檔再回答。沒有超出授權增加請求，也沒有重送原討論。
 
-僅核對該場討論的狀態與參與者摘要：GLM-5.3 與 DeepSeek-V4-Pro 都未完成，GLM 保存 36 字可見輸出，DeepSeek 為 0 字；GPT 與 Opus 的獨立答案保留。僅輸出必要狀態摘要，未檢視或外送原討論材料內容，未讀取憑證、其他專案資料或重送原討論。
+本次診斷直接使用正式舊版 `65c4fc0ba0bd4bf6d148194ee1cfbeda6e31487f` 的 K 討論接頭與既有連線，不是修改 payload 後才成功。兩家都接受原本工具接續的 `content: null`；所以撤回先前候選將空內容改成字串的修改及其人工拒絕測試，不把推測當根因。
 
-**本次兩家 400 的實際原因尚未確定。** 舊版 `src/discussion-api.mjs` 在非成功狀態直接丟棄 HTTP body，故舊紀錄無法找回供應商具體拒絕原因；不能由狀態碼猜成 Key 錯誤、沒錢、同一原因或已修復。
+## 原問題
 
-## 已確認缺口與最小修正
+本人回報同一場交叉審查出現兩條相同的「API 討論失敗（HTTP 400）；未重送或換模型」。只核對該場狀態摘要：GLM-5.3 保存 36 字可見輸出，DeepSeek-V4-Pro 為 0 字，兩者未完成；GPT 與 Opus 的獨立答案保留。未檢視或外送原討論材料，未重播。
 
-程式提交：`82069b90636a9bae0aea8527ef1ab678f624c29f`，分支 `codex/discussion-api-400-20261014`。
+舊版 `src/discussion-api.mjs` 在非成功狀態直接丟棄 HTTP body，紀錄因此無法找回供應商具體拒絕原因；不能由狀態碼猜成 Key 錯誤、沒錢、上下文過長或兩家同一原因。此次診斷只確認當時基本認證、模型存取與一次唯讀工具接續正常，不涵蓋原場景的長材料、多次工具或跨模型討論。
 
-- `src/discussion-api.mjs`：工具接續將空的 `content` 改成 null，並丟掉明確回傳的空 `reasoning_content`。現在保留字串原值；供應商從未送 reasoning 欄位時仍不編造。
-- 依 [DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/) 與 [Z.ai 思考模式](https://docs.z.ai/guides/capabilities/thinking-mode) 的官方接續範例核對：其空字串保持字串，思考內容依原樣帶回。**此欄位保真缺口可在本機重現，但尚不能證明就是本次真服務 400 的根因。** 不為推測改 schema、模型、effort、工具串流協定或自動補內容。
-- HTTP 拒絕只取 JSON 的 `error.message`／`message`，遮掉目前 Key、去控制字元並限制顯示長度 300 字；不顯示 raw HTML/text、headers，也不新增持久化原始請求／回應。
-- `src/discussion-controller.mjs`：沿既有錯誤字串加失敗參與者名稱，不新增狀態、通知或重試。成功同伴的答案與失敗參與者的部分內容照常保存。
-- `test/discussion-api.test.mjs`、`test/discussion-controller.test.mjs`：新增欄位保真、供應商錯誤資訊／Key 遮罩／不重送，以及同時失敗的歸屬測試。
+## 已授權的小型真服務診斷
 
-## 驗證
+2026-10-14 本人明確回覆「允許小型診斷」。11:49（Asia/Taipei）沿 K 已保存的設定，沒有顯示、搬移或另存 Key；由 K 自身憑證接頭供該次請求使用。
 
-- 三項新增回歸先在舊碼執行，各自失敗；嚴格假 API 在欄位被改成 null／遺失時拒絕接續，修正後成功。此為人工契約測試，不是真服務失敗重現。
-- 修改後 focused **32／32**，UI 建置成功，完整測試 **1649／1649**（0 fail/cancelled/skipped）。
-- 複查後再補「原本未回傳 reasoning 欄位就不得編造」斷言，focused 再次 **32／32**；只加測試，產品程式未變。
-- 沒有呼叫真實 DeepSeek／GLM／Kimi API，沒有測試付費服務、讀取 Key、操作本人原討論或停止正式 K。
+| 參與者 | 設定 | 第一次請求 | 第二次請求 | 結果 |
+|---|---|---|---|---|
+| DeepSeek | deepseek-v4-pro / high | HTTP 200，要求讀人工 probe.txt | HTTP 200，讀回後回答 | 回答包含人工指定標記 |
+| GLM | glm-5.3 / 沿用未指定 effort | HTTP 200，要求讀人工 probe.txt | HTTP 200，讀回後回答 | 回答包含人工指定標記 |
 
-## Opus 5.5 複查與取捨
+- 只傳 K 的既有通用討論 system 指令及人工提問／測試檔文字，不傳原討論背景、真工作區材料或其他資料。
+- 使用既有 `test/scratch.mjs` 建立只有人工測試檔的暫存工作區；網頁呼叫明確拒絕，每家硬性最多 2 次 HTTP 請求，每次輸出上限 2048 tokens。沒有查模型目錄、額度或餘額，沒有重試或換模型。
+- 第一個回應均帶思考欄位與 read_file 工具呼叫，第二個請求沿正式舊版保留思考欄位並送 content:null，兩家都正常完成；不能用這筆結果解釋先前真 400。
+- 診斷證據只保存狀態、欄位型別／長度與是否吻合人工標記，不保存 Key、原始 headers、思考原文或真討論內容。
 
-真正 Claude Opus 5.5 經 K 專用 Claude Code 2.1.296／Pro 訂閱完成獨立唯讀複查，實際模型 `claude-opus-5-5`，session `b831ef18-10d7-474f-80e4-92309df0cf12`，exit 0、success、is_error=false；10 個 Read／Glob／Grep 呼叫皆在非敏感原始碼封包內，主代理逐項核對。結論無 blocker、可合併，且明示真 400 原因仍未知。
+## 最後保留的最小修正
 
-- 採納：補未送 reasoning 欄位不編造的測試。
-- 未擴張：更多 Unicode 控制字元、surrogate 顯示截斷、錯誤 body 大小界限、部分／變形 Key、同名參與者辨識皆非本次已有失敗證據，保留最小修正。完整目前 Key 已先於截斷遮掉，純文字錯誤 body 仍不顯示。
-- Opus 對歷史思考內容的供應商要求保留疑問；主代理以當日官方文件核對，目前 DeepSeek 帶 tools 時要求帶回、Z.ai 工具接續也要求保留，沒有為舊版模型行為更改現在路由。
-- 不把複查結論、完整測試或狀態碼當成真 API 已接通的證明。
+基底 `c9510c87f8537d64be8bac15683dcf8a1a90d16d`；最終程式提交 `ecf6155a41e56c9a7d23c570020bce4e871ff1e2`。
 
-## 狀態與下一步
+- `src/discussion-api.mjs`：HTTP 拒絕只取 JSON 的 `error.message`／`message`，遮掉目前 Key、去控制字元並限制顯示 300 字；不顯示 raw HTML/text、headers，不新增持久化原始請求／回應。仍不重送或換模型。
+- `src/discussion-controller.mjs`：沿既有錯誤字串標出失敗參與者名稱，不新增狀態或通知。成功同伴答案與失敗參與者的部分內容照常保存。
+- `test/discussion-api.test.mjs`、`test/discussion-controller.test.mjs`：兩項新增回歸涵蓋錯誤資訊／Key 遮罩／不重送，以及同時失敗的歸屬；另確認原本沒送 reasoning 欄位時不編造。
+- 模型、網址、effort、請求 payload、串流拆片、工具能力、權限、已保存連線與 Key 均維持原狀。
 
-**僅本地候選驗證完成；未合回 main、未部署、未 push。** 修正保存在上述獨立分支，正式 K 持續使用原版本。
+## 驗證與 Opus 5.5 複查
 
-已詢問本人是否允許經 K 既有連線各做一次小型診斷（DeepSeek／GLM 各最多 2 次請求，只傳人工測試文字，不重送原討論、不顯示或搬移 Key，可能少量 API 費用）；尚未收到回覆前不執行。此診斷用來確認實際拒絕原因，不以本機測試冒充解決。
+- 保留的兩項新增回歸在舊碼皆失敗，修正後通過；最終完整測試 **1648／1648**，0 fail/cancelled/skipped。UI 建置成功。
+- 歷史候選 `82069b9` 曾含欄位保真修改及人工接續測試，當時 1649／1649；真診斷後撤回未證實必要的部分，最後只保留錯誤可辨識修正。
+- 真正 Opus 5.5 經 K 專用 Claude Code 2.1.296／Pro 訂閱唯讀複查，實際模型 `claude-opus-5-5`，session `b831ef18-10d7-474f-80e4-92309df0cf12`，exit 0、success、is_error=false。10 個 Read／Glob／Grep 呼叫皆在非敏感原始碼封包內，主代理核對；結論無 blocker，且明示原 400 原因仍未知。
+- 最後保留的錯誤揭露／歸屬邏輯與已審版本相同；後續只撤回未證實的 payload 修改，沒有新增產品行為。採納「未送 reasoning 不編造」的測試；其他 Unicode／顯示截斷／body 大小等低風險建議未擴張處理。
+- 先前依 [DeepSeek 思考模式](https://api-docs.deepseek.com/guides/thinking_mode/) 與 [Z.ai 思考模式](https://docs.z.ai/guides/capabilities/thinking-mode) 範例懷疑空字串處理，但**範例寫法不等於服務拒絕 null**，此次真 API 結果優先；不再以該推論宣稱相容性缺陷。
 
-本機證據在本工作樹 `.runtime/archive/discussion-api-400-20261014/`（修正前失敗、focused、完整測試、UI 建置、Opus 封包與回覆）；私人執行紀錄不提交。東區未更新。
+## 部署與未完成
+
+**錯誤可辨識修正已完成本地驗證；尚未部署、尚未 push。** 正式 K 仍在執行，未強制停止。須完全關閉 K 後，依第二節部署已核定版本；不自動重送原討論。
+
+原場景根因仍待供應商實際拒絕原因。新版本只在本人之後主動發起的討論再次遇到拒絕時，顯示可遮罩辨識的錯誤；不自行再發測試、不替本人重播。東區未更新。
+
+本機證據位於本工作樹 `.runtime/archive/discussion-api-400-20261014/`：`live-start.json`、`live-result.json`、最終完整測試與 Opus 複查等；私人執行紀錄不提交。

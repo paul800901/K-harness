@@ -251,7 +251,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 討論功能
 
-- 10-14 [討論 API HTTP 400：診斷與接續欄位保真，本地候選](discussion-api-400-20261014.md)
+- 10-14 [討論 API HTTP 400：小型診斷正常、錯誤可辨識修正待部署](discussion-api-400-20261014.md)
 
 - 10-14 [討論 API：GLM（Z.ai）、Kimi 預設選項，南區已部署](discussion-api-presets-20261014.md)
 - 10-10 [極長任務、舊指令誤生效與原生壓縮：Astra／Opus 5.5 討論](long-context-discussion-20261010.md)
