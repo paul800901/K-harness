@@ -253,6 +253,7 @@ const reads = new Set([
 const writes = new Set([
   '/api/discussion/start',
   '/api/discussion/message',
+  '/api/discussion/confirm',
   '/api/gemini/accounts/refresh-all',
   '/api/dictation/transcribe',
   '/api/open',

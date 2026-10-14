@@ -22,7 +22,17 @@ export function useDiscussionConfig(threadId) {
   return [config, update];
 }
 
-export function DiscussionControls({state, models = [], config, onChange, loadModels, onCatalog, disabled}) {
+export function DiscussionControls({
+  state,
+  models = [],
+  config,
+  onChange,
+  loadModels,
+  onCatalog,
+  disabled,
+  onConfirm,
+  onCancel
+}) {
   const [expanded, setExpanded] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const [apiModels, setApiModels] = useState([]),
@@ -139,6 +149,16 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
           <small role="status">
             {discussionModes[d.mode]} · {discussionStatus[d.status] ?? d.status}
           </small>
+        )}
+        {d?.status === 'awaiting-confirmation' && (
+          <span className="discussion-confirm">
+            <button type="button" className="primary" onClick={onConfirm}>
+              確認送出
+            </button>
+            <button type="button" onClick={onCancel}>
+              取消
+            </button>
+          </span>
         )}
       </div>
       {!running && config.mode !== 'normal' && expanded && (

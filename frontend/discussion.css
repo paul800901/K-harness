@@ -1,5 +1,5 @@
 .discussion-controls{padding:5px 0;color:var(--k-ink-3);font-size:var(--k-text-xs)}
-.discussion-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.discussion-toolbar label{display:flex;align-items:center;gap:5px}
+.discussion-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.discussion-confirm{display:flex;gap:6px;margin-left:auto}.discussion-confirm .primary{padding:5px 12px}.discussion-toolbar label{display:flex;align-items:center;gap:5px}
 .discussion-controls select,.discussion-controls button{font:inherit;border:1px solid var(--k-line);border-radius:8px;padding:5px 8px;background:var(--k-raised);color:var(--k-ink);min-width:0}
 .discussion-settings{padding:10px 12px;margin-top:5px;background:var(--k-raised);border:1px solid var(--k-line);border-radius:12px;display:grid;gap:8px;max-height:40dvh;overflow-y:auto}
 .discussion-settings p{margin:0;line-height:1.6}.discussion-settings small{line-height:1.6}.discussion-participant{display:flex;gap:6px;flex-wrap:wrap}.discussion-participant select:first-child{flex:1;min-width:130px}

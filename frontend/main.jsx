@@ -507,6 +507,8 @@ const ChatView = React.memo(function ChatView({
               loadModels={() => api('models')}
               onCatalog={discussionCatalog}
               disabled={blocked || !state.threadId || (state.busy && !state.discussion?.busy)}
+              onConfirm={() => roomAction(threadId, () => threadApi('discussion/confirm'))}
+              onCancel={() => roomAction(threadId, () => threadApi('stop'))}
             />
             <WorkProgress plan={state.progress?.plan} />
             {!!state.questions?.length && (

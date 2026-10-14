@@ -7,6 +7,11 @@ import {createDiscussionController} from '../src/discussion-controller.mjs';
 import {discussionDecision} from '../shared/discussion.mjs';
 import {scratchBase} from './scratch.mjs';
 
+// These tests exercise the discussion after the brief; confirm it as soon as it is shown.
+const confirmBrief = d => {
+  if (d?.state?.status === 'awaiting-confirmation') queueMicrotask(() => d.confirm().catch(() => {}));
+};
+
 const base = scratchBase;
 const deferred = () => {
   let resolve, reject;
@@ -23,7 +28,8 @@ const participants = [
 async function fixture({
   decisions = [{action: 'finish', summary: '共識：目標清楚。分歧：保留 Sol 與 Opus 不同主張。未知：待查證。'}],
   answer,
-  closeFailure = false
+  closeFailure = false,
+  autoConfirm = true
 } = {}) {
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'discussion-'));
@@ -41,8 +47,8 @@ async function fixture({
         signal.throwIfAborted();
         const response =
           id === 'host'
-            ? prompt.startsWith('你是多模型討論背景整理者')
-              ? JSON.stringify({background: '使用者修正後的背景與需求，未把舊模型結論當真值。'})
+            ? prompt.startsWith('你是本次多模型')
+              ? JSON.stringify({brief: '使用者修正後的背景與需求，未把舊模型結論當真值。'})
               : JSON.stringify(decisions.shift())
             : `${selection.displayName} 的獨立意見`;
         const raw = answer ? await answer({id, prompt, response}) : response;
@@ -55,7 +61,12 @@ async function fixture({
       }
     };
   };
-  const d = createDiscussionController({root, threadId: 'room', sessionFactory: factory});
+  const d = createDiscussionController({
+    root,
+    threadId: 'room',
+    sessionFactory: factory,
+    onChange: () => autoConfirm && confirmBrief(d)
+  });
   await d.load();
   const start = fields =>
     d.start({
@@ -376,11 +387,12 @@ test('interrupted persisted run reads back uncertain without opening sessions or
   const next = createDiscussionController({
     root: f.root,
     threadId: 'room',
+    onChange: () => confirmBrief(next),
     sessionFactory: async ({selection}) => ({
       async ask(prompt) {
         return selection.id === 'host'
-          ? prompt.startsWith('你是多模型討論背景整理者')
-            ? '{"background":"這是新的議題"}'
+          ? prompt.startsWith('你是本次多模型')
+            ? '{"brief":"這是新的議題"}'
             : '{"action":"finish","summary":"新討論已整理"}'
           : '新答案';
       },
@@ -430,9 +442,10 @@ test('stop waits for all already opened sessions and cancels unsent scheduling',
   const d = createDiscussionController({
     root: f.root,
     threadId: 'stop-room',
+    onChange: () => confirmBrief(d),
     sessionFactory: async ({selection, signal}) => ({
       async ask() {
-        if (selection.id === 'host') return '{"background":"假資料"}';
+        if (selection.id === 'host') return '{"brief":"假資料"}';
         started.resolve();
         return waiting.promise;
       },
@@ -472,4 +485,86 @@ test('a confirmed rejected handoff still displays the actual user text if native
     '只談取捨'
   );
   assert.match((await f.d.handoff('明確新指示')).text, /新增討論原文/);
+});
+
+test('the brief waits for confirmation: nothing reaches a participant until the person confirms', async () => {
+  const f = await fixture({autoConfirm: false});
+  await f.start({mode: 'review', reviewTarget: 'Gemini 對首頁的修改建議'});
+  while (f.d.state?.status !== 'awaiting-confirmation') await new Promise(r => setTimeout(r, 5));
+  const brief = f.d.messages.find(m => m.background);
+  assert.equal(brief.speaker, '討論任務書');
+  assert.match(f.calls[0].prompt, /^你是本次多模型交叉審查的主理人.*討論任務書.*材料.*範圍.*只回 JSON \{"brief"/su);
+  assert.deepEqual(f.opened, ['host'], 'no participant session is opened before confirmation');
+  await assert.rejects(f.d.interject({text: '補充'}), /任務書等待確認中/);
+  assert.deepEqual(await f.d.confirm(), {confirmed: true});
+  await f.d.settled();
+  assert.equal(f.d.state.status, 'completed');
+  const participantPrompt = f.calls.find(c => c.id === 'p1').prompt;
+  assert.match(participantPrompt, /主理人任務書（brief）是本次的主要材料與範圍/);
+  assert.match(participantPrompt, /"brief":"使用者修正後的背景與需求/);
+  await assert.rejects(f.d.confirm(), /沒有等待確認的討論任務書/);
+});
+
+test('cancelling a waiting brief sends nothing to any participant', async () => {
+  const f = await fixture({autoConfirm: false});
+  await f.start({mode: 'meeting'});
+  while (f.d.state?.status !== 'awaiting-confirmation') await new Promise(r => setTimeout(r, 5));
+  assert.deepEqual(await f.d.stop(), {stopped: true});
+  assert.equal(f.d.state.status, 'interrupted');
+  assert.deepEqual(f.opened, ['host']);
+  assert.equal(f.calls.filter(c => c.id !== 'host').length, 0);
+  assert.equal(f.d.held, false);
+});
+
+test('a brief still waiting when K restarts reads back as not sent, without reopening anything', async () => {
+  const f = await fixture({autoConfirm: false});
+  await f.start({mode: 'meeting'});
+  // A restart reads what was saved: wait until the waiting status is on disk.
+  const file = path.join(f.root, '.runtime/discussions/room.json');
+  while (JSON.parse(await readFile(file, 'utf8')).runs.at(-1).status !== 'awaiting-confirmation')
+    await new Promise(r => setTimeout(r, 5));
+  let opened = 0;
+  const reopened = createDiscussionController({
+    root: f.root,
+    threadId: 'room',
+    sessionFactory: () => {
+      opened++;
+    }
+  });
+  await reopened.load();
+  assert.equal(reopened.state.status, 'interrupted');
+  assert.match(reopened.state.error, /沒有送給任何參與者/);
+  assert.equal(opened, 0);
+  await f.d.stop();
+});
+
+test('a confirmation sent the moment the brief is shown is accepted', async () => {
+  const f = await fixture({autoConfirm: false});
+  const rejected = [];
+  const d = createDiscussionController({
+    root: f.root,
+    threadId: 'instant-room',
+    sessionFactory: async ({selection}) => ({
+      async ask(prompt) {
+        if (selection.id !== 'host') return '意見';
+        return prompt.startsWith('你是本次多模型') ? '{"brief":"任務書"}' : '{"action":"finish","summary":"整理"}';
+      },
+      async close() {}
+    }),
+    // Press confirm in the same instant the waiting status is announced.
+    onChange: () => {
+      if (d?.state?.status === 'awaiting-confirmation' && !rejected.length) d.confirm().catch(e => rejected.push(e));
+    }
+  });
+  await d.load();
+  await d.start({
+    mode: 'meeting',
+    text: '議題',
+    participants,
+    facilitator: {...participants[0], id: 'host'},
+    workspace: f.root
+  });
+  await d.settled();
+  assert.deepEqual(rejected, []);
+  assert.equal(d.state.status, 'completed');
 });

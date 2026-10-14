@@ -94,8 +94,8 @@ const discussionFactory = async ({selection}) => ({
   async ask(prompt) {
     calls.push({op: 'discussion', id: selection.id, prompt});
     if (selection.id === 'host')
-      return prompt.startsWith('你是多模型討論背景整理者')
-        ? '{"background":"原始需求與重要修正已帶入。"}'
+      return prompt.startsWith('你是本次多模型')
+        ? '{"brief":"原始需求與重要修正已帶入。"}'
         : prompt.includes('平行比較直接整理')
           ? '## 共識\n目標清楚。\n## 分歧\nSol 偏重速度，Opus 偏重資訊。\n## 未知\n仍需查證。'
           : JSON.stringify({
@@ -150,6 +150,11 @@ try {
   );
   await page.getByLabel('工作訊息', {exact: true}).fill('請比較速度與資訊的取捨');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  // The host's brief is shown and nothing reaches a participant until it is confirmed.
+  await page.getByRole('button', {name: '確認送出', exact: true}).waitFor();
+  await page.getByText('原始需求與重要修正已帶入。', {exact: true}).waitFor();
+  assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, 0);
+  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.getByText('Sol 的原始觀點：重視速度。', {exact: true}).waitFor();
   await page.getByText('Opus 的原始觀點：重視資訊。', {exact: true}).waitFor();
   await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();
@@ -163,6 +168,7 @@ try {
   await page.getByLabel('被審查內容', {exact: true}).fill('要審查的指定方案');
   await page.getByLabel('工作訊息', {exact: true}).fill('請審查指定方案');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.waitForFunction(
     () => document.querySelector('.discussion-toolbar small')?.textContent === '交叉審查 · 已整理'
   );
@@ -171,6 +177,7 @@ try {
   slow = true;
   await page.getByLabel('工作訊息', {exact: true}).fill('開始一場需要插話的討論');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.getByLabel('補充給', {exact: true}).waitFor();
   await page.getByLabel('補充給', {exact: true}).selectOption('p2');
   await page.getByLabel('工作訊息', {exact: true}).fill('請 Opus 注意新增限制');

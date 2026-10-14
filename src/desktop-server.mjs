@@ -623,6 +623,7 @@ export async function startDesktop({
       const routes = {
         '/api/discussion/start': 'discussionStart',
         '/api/discussion/message': 'discussionMessage',
+        '/api/discussion/confirm': 'discussionConfirm',
         '/api/fork': 'fork',
         '/api/queue': 'queue',
         '/api/open': 'open',

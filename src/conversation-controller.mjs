@@ -1170,6 +1170,11 @@ export function createConversationController({
       locked.delete(controller);
     }
   };
+  api.discussionConfirm = data => {
+    const c = target(data);
+    if (!discussion(c)) throw Error('這個聊天室沒有進行中的討論。');
+    return discussion(c).confirm();
+  };
   api.discussionMessage = data => {
     const c = target(data);
     if (!discussion(c)) throw Error('這個聊天室沒有進行中的討論。');

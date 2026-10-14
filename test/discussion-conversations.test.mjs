@@ -4,6 +4,7 @@ import {mkdir, mkdtemp} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
+import {createDiscussionController} from '../src/discussion-controller.mjs';
 import {saveMainSession, listMainSessions} from '../src/main-sessions.mjs';
 import {remoteRouteAllowed} from '../src/remote-access.mjs';
 import {saveAttachment} from '../src/desktop-files.mjs';
@@ -88,6 +89,17 @@ async function fixture({hold = false, discussionApi} = {}) {
   const c = createConversationController({
     root,
     sessionFactory: factory,
+    // These tests exercise the discussion after the brief; confirm it as soon as it is shown.
+    discussionFactory: options => {
+      const d = createDiscussionController({
+        ...options,
+        onChange() {
+          options.onChange();
+          if (d?.state?.status === 'awaiting-confirmation') queueMicrotask(() => d.confirm().catch(() => {}));
+        }
+      });
+      return d;
+    },
     discussionApi,
     discussionSessionFactory: async ({selection, onIdentity}) => {
       await onIdentity({nativeSessionId: `discussion-${selection.id}`});
@@ -95,8 +107,8 @@ async function fixture({hold = false, discussionApi} = {}) {
         async ask(prompt) {
           calls.push({id: selection.id, prompt});
           if (selection.id === 'host')
-            return prompt.startsWith('你是多模型討論背景整理者')
-              ? '{"background":"需求與修正"}'
+            return prompt.startsWith('你是本次多模型')
+              ? '{"brief":"需求與修正"}'
               : '{"action":"finish","summary":"共識、分歧與未知都有保留。"}';
           if (hold)
             await new Promise((resolve, reject) => {
