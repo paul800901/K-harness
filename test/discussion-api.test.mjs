@@ -474,7 +474,7 @@ test('desktop API settings use existing authenticated explicit commands and neve
 test('an oversized tool result is withheld with a narrowing hint instead of being sent to the provider', async () => {
   const f = await fixture();
   await mkdir(path.join(f.root, 'many'));
-  for (let i = 0; i < 1500; i++)
+  for (let i = 0; i < 3000; i++)
     await writeFile(path.join(f.root, 'many', `file-${String(i).padStart(4, '0')}.txt`), '');
   await writeFile(path.join(f.root, 'small.txt'), 'small file');
   const bodies = [];
@@ -514,6 +514,7 @@ test('an oversized tool result is withheld with a narrowing hint instead of bein
   assert.equal(withheld.tool_call_id, 'all');
   assert.ok(withheld.content.length < 1000, 'the listing itself is not sent');
   assert.match(JSON.parse(withheld.content).error, /工具結果過長.*未送出也未截斷.*縮小範圍/su);
+  assert.equal(JSON.parse(withheld.content).entries, 3002, 'the size helps the model narrow the next request');
   assert.equal(JSON.parse(bodies[2].messages.at(-1).content).text, 'small file', 'a normal result is sent in full');
   await s.close();
 });

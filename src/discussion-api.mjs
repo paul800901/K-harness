@@ -173,7 +173,11 @@ export async function openDiscussionApiSession({
           let content = JSON.stringify(result);
           if (content.length > MAX_TOOL_RESULT_CHARS)
             content = JSON.stringify({
-              error: `工具結果過長（約 ${content.length} 字），未送出也未截斷；請縮小範圍後再讀：指定子資料夾、不要遞迴列出整個工作區、用 startLine／endLine 分段讀檔、更精確的搜尋，或較少網址與較小 maxCharacters。`
+              error: `工具結果過長（約 ${content.length} 字），未送出也未截斷；請縮小範圍後再讀：指定子資料夾、不要遞迴列出整個工作區、用 startLine／endLine 分段讀檔、更精確的搜尋，或較少網址與較小 maxCharacters。`,
+              // Sizes the model can use to narrow the next request.
+              ...(Number.isInteger(result?.totalLines) ? {totalLines: result.totalLines} : {}),
+              ...(Array.isArray(result?.entries) ? {entries: result.entries.length} : {}),
+              ...(Array.isArray(result?.matches) ? {matches: result.matches.length} : {})
             });
           messages.push({role: 'tool', tool_call_id: call.id, content});
         }
