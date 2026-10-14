@@ -518,3 +518,32 @@ test('an oversized tool result is withheld with a narrowing hint instead of bein
   assert.equal(JSON.parse(bodies[2].messages.at(-1).content).text, 'small file', 'a normal result is sent in full');
   await s.close();
 });
+
+test('text written before a tool round and the final answer are separate paragraphs', async () => {
+  const f = await fixture();
+  await writeFile(path.join(f.root, 'a.txt'), 'source');
+  let n = 0;
+  const shown = [];
+  const s = await openDiscussionApiSession({
+    workspace: f.root,
+    selection: {route: 'api', connectionId: 'f', model: 'm'},
+    connections: {
+      async credentials() {
+        return {baseUrl: 'https://fake.test', key: 'FAKE'};
+      }
+    },
+    fetchImpl: async () =>
+      ++n === 1
+        ? stream(
+            [
+              {content: '我先讀檔。'},
+              {tool_calls: [{index: 0, id: 'c', function: {name: 'read_file', arguments: '{"path":"a.txt"}'}}]}
+            ],
+            'tool_calls'
+          )
+        : stream([{content: '結論。'}])
+  });
+  assert.equal(await s.ask('q', {onText: text => shown.push(text)}), '我先讀檔。\n\n結論。');
+  assert.equal(shown.at(-1), '我先讀檔。\n\n結論。', 'the live view uses the same paragraph break');
+  await s.close();
+});

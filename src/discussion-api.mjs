@@ -153,9 +153,10 @@ export async function openDiscussionApiSession({
       let output = '';
       while (true) {
         active.throwIfAborted();
-        const answer = await stream(onText, output);
+        // Text written before each tool round is its own paragraph, not run on into the next one.
+        const answer = await stream(onText, output ? `${output}\n\n` : '');
         messages.push(answer);
-        output += answer.content ?? '';
+        if (answer.content) output += (output ? '\n\n' : '') + answer.content;
         if (!answer.tool_calls) {
           if (!output.trim()) throw Error('API 沒有回傳可呈現的答案。');
           return output;
