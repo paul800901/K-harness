@@ -116,6 +116,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Gemini 帳號、額度與調度
 
+- 10-14 [Gemini 非目前帳號背景查詢：不再停在快照，失敗會自動重查（待部署）](gemini-background-quota-20261014.md)
 - 10-13 [帳號觀察／事件等待與聊天效能修正](scheduler-wait-ui-performance-20261013.md)
 - 10-13 [Gemini 跨聊天室調度生命週期修正](gemini-scheduler-lifecycle-20261013.md)
 - 10-13 [Gemini 獨立額度查詢與等待責任](gemini-independent-quota-20261013.md)

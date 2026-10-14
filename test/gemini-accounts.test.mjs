@@ -478,11 +478,13 @@ test('sequential zero observations that never overlap do not trigger an all-acco
   let now = Date.parse('2026-10-03T12:00:00Z'),
     usable = false;
   const start = now,
-    ids = [A, B, C, D, E];
+    ids = [A, B, C, D, E],
+    reads = [];
   const f = await fixture({
     identity: {accountId: A, email},
     clock: () => now,
     statusFor: current =>
+      reads.push(current.accountId) &&
       authStatus({
         status: 'ready',
         checkedAt: new Date(now).toISOString(),
@@ -501,14 +503,17 @@ test('sequential zero observations that never overlap do not trigger an all-acco
     await f.accounts.capture();
   }
   const before = f.calls.status;
+  reads.length = 0;
   await f.accounts.usage();
-  assert.equal(f.calls.status, before);
+  await f.accounts.idle();
+  assert.equal(f.calls.status, before + 1);
+  assert.deepEqual(reads, [A], 'only the account whose reset passed is read in the background');
   assert.deepEqual(f.calls.activate, []);
   usable = true;
   const lease = await f.accounts.acquire({worker: true});
   assert.equal(lease.accountId, A);
   await lease.release();
-  assert.equal(f.calls.status, before + 1, 'only the expired candidate is checked');
+  assert.equal(f.calls.status, before + 2, 'only the expired candidate is checked');
   assert.deepEqual(f.calls.activate, [A]);
 });
 
@@ -3414,4 +3419,142 @@ test('refreshing all accounts reports which account is being queried, then clear
   ]);
   assert.equal(accounts.cachedUsage.checking, undefined);
   assert.equal((await accounts.list()).progress, null);
+});
+
+test('other saved accounts are re-read in the background, one at a time; a failed read is retried later', async () => {
+  let now = Date.parse('2026-10-03T12:00:00Z');
+  const offline = new Set(),
+    reads = [];
+  const f = await fixture({
+    identity: {accountId: A, email},
+    clock: () => now,
+    statusFor: account => {
+      reads.push(account.accountId);
+      if (offline.has(account.accountId))
+        return {temporaryFailure: true, auth: {status: 'unknown'}, reason: 'network timeout'};
+      return authStatus({
+        status: 'ready',
+        checkedAt: new Date(now).toISOString(),
+        windows: [
+          {key: 'five_hour', remainingPercent: account.accountId === C ? 0 : 50, resetsAt: (now + 3600000) / 1000}
+        ]
+      });
+    }
+  });
+  for (const id of [B, C, A]) {
+    f.current = {accountId: id, email};
+    await f.accounts.capture();
+  }
+  const read = async () => {
+    reads.length = 0;
+    await f.accounts.usage();
+    await f.accounts.idle();
+    return [...reads];
+  };
+  offline.add(B);
+  now += 5 * 60000;
+  assert.deepEqual(await read(), [A, B], 'the active account and one due account; the known-zero account waits');
+  assert.match((await f.accounts.list()).accounts.find(row => row.id === B).quota.status, /stale|unavailable/);
+  now += 60000;
+  assert.deepEqual(await read(), [A], 'a failed account is not re-read every minute');
+  offline.delete(B);
+  now += 4 * 60000;
+  assert.deepEqual(await read(), [A, B], 'the failed account is retried on the background cadence');
+  assert.equal((await f.accounts.list()).accounts.find(row => row.id === B).quota.status, 'ready');
+  assert.deepEqual(f.calls.activate, [], 'background reads never switch the login');
+});
+
+test('a background read never overlaps a login that starts while usage() is reading the active account', async () => {
+  let now = Date.parse('2026-10-03T12:00:00Z'),
+    inflight = 0,
+    overlapped = false,
+    release;
+  const f = await fixture({
+    identity: {accountId: A, email},
+    clock: () => now,
+    statusFor: () =>
+      authStatus({
+        status: 'ready',
+        checkedAt: new Date(now).toISOString(),
+        windows: [{key: 'five_hour', remainingPercent: 50, resetsAt: (now + 3600000) / 1000}]
+      })
+  });
+  for (const id of [B, A]) {
+    f.current = {accountId: id, email};
+    await f.accounts.capture();
+  }
+  now += 5 * 60000;
+  const gate = new Promise(resolve => {
+    release = resolve;
+  });
+  const read = f.vault.queryQuota,
+    prepare = f.vault.prepareLogin;
+  f.vault.queryQuota = async id => {
+    inflight++;
+    try {
+      if (id === A) await gate;
+      else await new Promise(resolve => setTimeout(resolve, 20));
+      return await read(id);
+    } finally {
+      inflight--;
+    }
+  };
+  f.vault.prepareLogin = async () => {
+    if (inflight) overlapped = true;
+    return prepare();
+  };
+  const usage = f.accounts.usage();
+  await eventually(() => inflight === 1);
+  const login = f.accounts.startLogin();
+  release();
+  await Promise.all([usage, login]);
+  await f.accounts.idle();
+  assert.equal(f.calls.prepareLogin, 1);
+  assert.equal(overlapped, false, 'the login started during the active read; the background read must not start');
+});
+
+test('only one background read of another account runs at a time', async () => {
+  let now = Date.parse('2026-10-03T12:00:00Z'),
+    release;
+  const reads = [];
+  const f = await fixture({
+    identity: {accountId: A, email},
+    clock: () => now,
+    statusFor: account => {
+      reads.push(account.accountId);
+      return authStatus({
+        status: 'ready',
+        checkedAt: new Date(now).toISOString(),
+        windows: [{key: 'five_hour', remainingPercent: 50, resetsAt: (now + 3600000) / 1000}]
+      });
+    }
+  });
+  for (const id of [B, D, A]) {
+    f.current = {accountId: id, email};
+    await f.accounts.capture();
+  }
+  now += 5 * 60000;
+  await f.accounts.usage();
+  await f.accounts.idle();
+  const gate = new Promise(resolve => {
+    release = resolve;
+  });
+  const read = f.vault.queryQuota;
+  f.vault.queryQuota = async id => {
+    if (id === D) await gate;
+    return read(id);
+  };
+  reads.length = 0;
+  await f.accounts.usage();
+  assert.deepEqual(reads, [], 'D is being read in the background');
+  // B is due again while D's read is still running; it waits for the next call instead of starting alongside.
+  now += 5 * 60000;
+  await f.accounts.usage();
+  assert.deepEqual(reads, [A]);
+  release();
+  await f.accounts.idle();
+  assert.deepEqual(reads, [A, D]);
+  await f.accounts.usage();
+  await f.accounts.idle();
+  assert.deepEqual(reads, [A, D, B]);
 });
