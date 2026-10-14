@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const origin = 'http://127.0.0.1:5189';
 const server = await preview({preview: {host: '127.0.0.1', port: 5189, strictPort: true}});
-const output = path.resolve(root, '.runtime/compact-model-picker-20260930/connection-cancel');
+const output = probeEvidenceDir('compact-model-picker-20260930/connection-cancel');
 const models = [
   ['gpt-6.1-sol', 'GPT-6.1-Sol'],
   ['gpt-6-astra', 'GPT-6-Astra'],
@@ -48,10 +48,7 @@ const state = {
 const requests = [];
 let browser, openRoute;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    ...(process.env.K_UI_CHROMIUM ? {executablePath: process.env.K_UI_CHROMIUM} : {channel: 'msedge'})
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1400, height: 1050}});
   await page.addInitScript(state => {
     window.EventSource = class {
@@ -156,7 +153,8 @@ try {
   assert.equal(opened.data.workspace, path.join(root, 'different-project'));
   assert.equal(opened.data.effort, 'high');
   assert.equal(opened.data.accessMode, 'workspace-write');
-  assert.deepEqual(opened.data.workerPolicy, {model: 'gpt-6-luna', effort: 'high'});
+  // A new conversation defaults its worker to AI auto-selection (AGENTS.md section 5).
+  assert.deepEqual(opened.data.workerPolicy, {model: 'auto', effort: 'auto'});
   assert.deepEqual(
     requests.filter(r => r.path === '/api/stop').map(r => r.data),
     [{cancelOpening: true}]

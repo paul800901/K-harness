@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
-const out = path.resolve('.runtime/quota-speaker-evidence');
+const out = probeEvidenceDir('quota-speaker-evidence');
 await mkdir(out, {recursive: true});
 const root = await mkdtemp(path.join(out, 'ui-'));
 const models = [
@@ -137,7 +137,7 @@ try {
     localDictationFactory: () => ({state: {available: false}, close: async () => {}})
   });
   await app.controller.open({model: 'gpt-6.1-sol'});
-  browser = await chromium.launch({channel: 'msedge', headless: true});
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 980}}),
     errors = [],
     checks = [];
@@ -146,11 +146,12 @@ try {
   const mode = page.getByLabel('對話模式', {exact: true});
   await mode.waitFor();
   await mode.selectOption('parallel');
-  await page.getByLabel('參與模型 2', {exact: true}).selectOption('claude-opus-5-5');
+  // Native subscription models are listed as native:<model>, alongside api:<connection> choices.
+  await page.getByLabel('參與模型 2', {exact: true}).selectOption('native:claude-opus-5-5');
   await page.getByRole('button', {name: '加入參與者', exact: true}).click();
-  await page.getByLabel('參與模型 3', {exact: true}).selectOption('gemini-3.8-flash');
+  await page.getByLabel('參與模型 3', {exact: true}).selectOption('native:gemini-3.8-flash');
   await page.getByRole('button', {name: '加入參與者', exact: true}).click();
-  await page.getByLabel('參與模型 4', {exact: true}).selectOption('gpt-6-luna');
+  await page.getByLabel('參與模型 4', {exact: true}).selectOption('native:gpt-6-luna');
   await page.getByLabel('工作訊息', {exact: true}).fill('比較各模型的意見');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();

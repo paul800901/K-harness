@@ -6,13 +6,13 @@ import https from 'node:https';
 import path from 'node:path';
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir, probeTlsCertificate} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {saveAttachmentStream} from '../src/desktop-files.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
 import {decodePcm16Mono16kWav} from '../src/local-dictation.mjs';
 
-const out = path.resolve('.runtime/mobile-remote');
+const out = probeEvidenceDir('mobile-remote');
 await mkdir(out, {recursive: true});
 const root = await mkdtemp(path.join(out, 'ui-')),
   key = randomBytes(32).toString('hex'),
@@ -293,37 +293,34 @@ const app = await startDesktop({
 assert.equal(app.remoteOrigin, origin, 'test remote listener must start; never proxy to an existing service');
 let dropNextSendResponse = false;
 const sendTransports = [];
-const proxy = https.createServer(
-  {key: await readFile(path.join(out, 'test-key.pem')), cert: await readFile(path.join(out, 'test-cert.pem'))},
-  (req, res) => {
-    if (req.url === '/api/send') sendTransports.push({command: req.headers['x-k-command']});
-    const upstream = http.request(
-      {
-        host: '127.0.0.1',
-        port: remotePort,
-        path: req.url,
-        method: req.method,
-        headers: {...req.headers, 'tailscale-user-login': 'test-owner@example.invalid'}
-      },
-      response => {
-        if (dropNextSendResponse && req.url === '/api/send') {
-          dropNextSendResponse = false;
-          response.resume();
-          res.destroy();
-          return;
-        }
-        res.writeHead(response.statusCode, response.headers);
-        response.pipe(res);
+const proxy = https.createServer(await probeTlsCertificate(), (req, res) => {
+  if (req.url === '/api/send') sendTransports.push({command: req.headers['x-k-command']});
+  const upstream = http.request(
+    {
+      host: '127.0.0.1',
+      port: remotePort,
+      path: req.url,
+      method: req.method,
+      headers: {...req.headers, 'tailscale-user-login': 'test-owner@example.invalid'}
+    },
+    response => {
+      if (dropNextSendResponse && req.url === '/api/send') {
+        dropNextSendResponse = false;
+        response.resume();
+        res.destroy();
+        return;
       }
-    );
-    upstream.on('error', () => {
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-    });
-    res.on('close', () => upstream.destroy());
-    req.pipe(upstream);
-  }
-);
+      res.writeHead(response.statusCode, response.headers);
+      response.pipe(res);
+    }
+  );
+  upstream.on('error', () => {
+    if (!res.headersSent) res.writeHead(502);
+    res.end();
+  });
+  res.on('close', () => upstream.destroy());
+  req.pipe(upstream);
+});
 await new Promise(r => proxy.listen(httpsPort, '127.0.0.1', r));
 let browser, context, page, desktop;
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -331,9 +328,7 @@ const noOverflow = async page =>
   assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'horizontal page overflow');
 const screenshot = name => page.screenshot({path: path.join(out, name + '.png')});
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true,
+  browser = await launchProbeBrowser({
     args: [
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-stream',

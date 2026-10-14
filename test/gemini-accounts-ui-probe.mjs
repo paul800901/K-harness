@@ -2,11 +2,12 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
-const output =
-  process.env.K_GEMINI_ACCOUNTS_PROBE_OUTPUT ?? path.resolve('.runtime/gemini-login-flow-20261003/ui-probe');
+const output = process.env.K_GEMINI_ACCOUNTS_PROBE_OUTPUT
+  ? path.resolve(process.env.K_GEMINI_ACCOUNTS_PROBE_OUTPUT)
+  : probeEvidenceDir('gemini-login-flow-20261003/ui-probe');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5194, strictPort: true}});
 const state = {
@@ -120,10 +121,7 @@ const waitForReads = async target => {
   assert.ok(modelsReads >= target, `expected ${target} model catalog reads, received ${modelsReads}`);
 };
 try {
-  browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
   page.setDefaultTimeout(5000);
   page.on('pageerror', error => errors.push(error.message));
@@ -232,15 +230,13 @@ try {
       refreshUiState();
       return respond(route, snapshot());
     }
-    if (url.pathname === '/api/gemini/accounts/refresh') {
+    // The settings button queries every saved account; like K it first clears a confirmed-idle uncertain stop.
+    if (url.pathname === '/api/gemini/accounts/refresh-all') {
       if (uncertain) {
         uncertain = false;
         busy = false;
       }
-      const target = accounts.find(row => row.id === activeAccountId);
-      if (target) {
-        target.quota = quota(42, 37, 'ready', '2026-10-03T11:00:00Z');
-      }
+      for (const row of accounts) row.quota = quota(42, 37, 'ready', '2026-10-03T11:00:00Z');
       refreshUiState();
       return respond(route, snapshot());
     }
@@ -340,7 +336,7 @@ try {
   assert.match(await busySettings.innerText(), /正在查詢 Gemini 額度/u);
   assert.doesNotMatch(await busySettings.innerText(), /Gemini 正在工作/u);
   assert.equal(await busySettings.getByRole('button', {name: '新增 Gemini 帳號', exact: true}).isDisabled(), true);
-  assert.equal(await busySettings.getByRole('button', {name: '刷新目前帳號額度', exact: true}).isDisabled(), true);
+  assert.equal(await busySettings.getByRole('button', {name: '更新全部帳號額度', exact: true}).isDisabled(), true);
   busy = false;
   checking = false;
   await page.waitForFunction(() => {
@@ -368,14 +364,14 @@ try {
     uncertainCard = uncertainSettings.locator('[data-account-id="acct-a"]');
   assert.equal(await uncertainCard.getByRole('button', {name: '切換使用', exact: true}).isDisabled(), true);
   assert.equal(await uncertainSettings.getByRole('button', {name: '新增 Gemini 帳號', exact: true}).isDisabled(), true);
-  assert.equal(await uncertainSettings.getByRole('button', {name: '刷新目前帳號額度', exact: true}).isEnabled(), true);
-  await uncertainSettings.getByRole('button', {name: '刷新目前帳號額度', exact: true}).click();
+  assert.equal(await uncertainSettings.getByRole('button', {name: '更新全部帳號額度', exact: true}).isEnabled(), true);
+  await uncertainSettings.getByRole('button', {name: '更新全部帳號額度', exact: true}).click();
   await page.waitForFunction(() =>
     document.querySelector('.gemini-account-row')?.textContent.includes('目前使用：b@example.test')
   );
   assert.equal(uncertain, false);
   assert.equal(busy, false);
-  assert.ok(requests.some(item => item.path === '/api/gemini/accounts/refresh'));
+  assert.ok(requests.some(item => item.path === '/api/gemini/accounts/refresh-all'));
   await page.screenshot({path: path.join(output, 'gemini-login-flow-settings.png')});
   await uncertainSettings.getByRole('button', {name: '完成', exact: true}).click();
   await page.addInitScript(initial => {
@@ -397,7 +393,7 @@ try {
     await usage.locator('.gemini-usage-accounts').innerText(),
     /a@example\.test[\s\S]*每週[\s\S]*5 小時[\s\S]*b@example\.test/u
   );
-  assert.match(await usage.locator('.gemini-usage-accounts').innerText(), /上次查詢|尚未更新/u);
+  assert.match(await usage.locator('.gemini-usage-accounts').innerText(), /上次實查|待查詢/u);
   assert.doesNotMatch(await usage.locator('.gemini-usage-accounts').innerText(), /合計|總額/u);
   assert.match(
     await usage.innerText(),

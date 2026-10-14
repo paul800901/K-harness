@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 const {createConversationController} = await import(
   process.env.K_PROBE_CONTROLLER_MODULE ?? '../src/conversation-controller.mjs'
 );
 import {saveMainSession} from '../src/main-sessions.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 
-const out = fileURLToPath(new URL('../.runtime/independent-load-handoff-20261012/ui/', import.meta.url));
+const out = probeEvidenceDir('independent-load-handoff-20261012/ui');
 await mkdir(out, {recursive: true});
 const until = async predicate => {
   const end = Date.now() + 7000;
@@ -151,10 +151,7 @@ for (const viewport of [
       geminiLoginFactory: absent,
       localDictationFactory: absent
     });
-    browser = await chromium.launch({
-      headless: true,
-      executablePath: 'D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe'
-    });
+    browser = await launchProbeBrowser();
     page = await browser.newPage({viewport});
     const posts = [];
     page.on('pageerror', e => errors.push(e.message));

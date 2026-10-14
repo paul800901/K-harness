@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {formatResponseAnnotations} from '../frontend/response-annotations.mjs';
-const out = path.resolve('.runtime/user-message-copy-ui');
+const out = probeEvidenceDir('user-message-copy-ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5204, strictPort: true}}),
   results = [];
@@ -37,11 +37,7 @@ const fakeFiles = [{id: 'fake-file', name: '假附件.txt'}],
     {id: 'reply', role: 'assistant', text: '助理複製仍有效。', completedAt: '2026-10-09T01:00:00Z'}
   ];
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath:
-      process.env.K_TEST_CHROME ?? 'D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const provider of ['codex', 'claude', 'gemini'])
     for (const [theme, width] of [
       ['warm', 1920],

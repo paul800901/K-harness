@@ -2,21 +2,18 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 const baseline = process.argv.includes('--baseline'),
   root = process.cwd(),
-  out = path.resolve('.runtime/notice-research-20261005', baseline ? 'before-ui' : 'after-ui');
+  out = path.join(probeEvidenceDir('notice-research-20261005'), baseline ? 'before-ui' : 'after-ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5194, strictPort: true}}),
   results = [],
   errors = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],

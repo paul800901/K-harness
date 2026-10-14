@@ -3,12 +3,12 @@ import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {geminiModelsFrom} from '../src/gemini-controller.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url)),
-  out = path.resolve(root, '.runtime/worker-model-picker-ui-20261008');
+  out = probeEvidenceDir('worker-model-picker-ui-20261008');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5208, strictPort: true}});
 const efforts = names => names.map(reasoningEffort => ({reasoningEffort}));
@@ -132,10 +132,7 @@ const apiPosts = [],
   ];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    ...(process.env.K_UI_CHROMIUM ? {executablePath: process.env.K_UI_CHROMIUM} : {channel: 'msedge'})
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, label] of viewports) {
     let catalog = baseModels;
     const page = await browser.newPage({viewport: {width, height}});

@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
-const output = path.resolve('.runtime/core-catalog-audit-20261008/reconciliation-ui');
+const output = probeEvidenceDir('core-catalog-audit-20261008/reconciliation-ui');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5201, strictPort: true}});
 const workspace = process.cwd(),
@@ -97,10 +97,7 @@ const state = {
 };
 let browser;
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, label] of [
     [1440, 960, 'desktop'],
     [390, 844, 'mobile']

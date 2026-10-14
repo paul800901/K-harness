@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
-const out = path.resolve('.runtime/steer-final-ui');
+const out = probeEvidenceDir('steer-final-ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 0}});
 const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
@@ -14,7 +14,7 @@ let browser;
 const checks = [],
   errors = [];
 try {
-  browser = await chromium.launch({headless: true, channel: 'msedge'});
+  browser = await launchProbeBrowser();
   for (const provider of ['claude', 'codex', 'gemini'])
     for (const width of [1440, 390]) {
       const page = await browser.newPage({viewport: {width, height: 900}}),
