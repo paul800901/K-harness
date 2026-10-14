@@ -135,7 +135,7 @@ export function createClaudeWorker({
         validateWorkerPolicy({model, effort}, host.models, {claudeGateway: true});
         signal?.addEventListener('abort', abort, {once: true});
         signal?.throwIfAborted();
-        onStart();
+        onStart(host.pid);
         activity.begin();
         onActivity(state.activity);
         await host.start(

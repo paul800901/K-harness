@@ -861,17 +861,17 @@ export async function createLunaBridge({
         await operations.get(requestId);
         await handle.completion;
       } else if (
-        record.provider === 'gemini' &&
         record.status === 'unresolved' &&
         !record.settled &&
         record.executionUnowned !== true &&
         !operations.has(requestId) &&
         processGone(record.pid)
       ) {
-        // An earlier stop was unconfirmed. Once the agy root process is gone, give up ownership as a K restart
-        // would: the outcome stays unresolved and is never replayed, but it no longer holds the room.
+        // An earlier stop was unconfirmed. Once the worker's root process (agy or Claude Code) is gone, give up
+        // ownership as a K restart would: the outcome stays unresolved and is never replayed, but it no longer
+        // holds the room.
         record.executionUnowned = true;
-        record.error = `${record.error ?? ''} agy 主程序已確認結束；子程序與成果仍未確認，未重播。`.trim();
+        record.error = `${record.error ?? ''} 子代理主程序已確認結束；子程序與成果仍未確認，未重播。`.trim();
         ownedRequests.delete(requestId);
         await persist(record);
         changed(record);

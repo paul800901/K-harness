@@ -891,6 +891,8 @@ export async function openClaudeHost({
     close,
     usage,
     goal,
+    // The spawned process, so a stop that could not be confirmed can be re-checked later.
+    pid: child.pid,
     get models() {
       return structuredClone(modelCatalog);
     },
