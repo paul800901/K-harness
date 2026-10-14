@@ -1,7 +1,7 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {mkdir, copyFile, readdir, stat} from 'node:fs/promises';
+import {mkdir, copyFile, readdir, stat, rm} from 'node:fs/promises';
 import {activateRuntime, rollbackRuntime, installationPaths, readSettings, assertStopped} from './install-runtime.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -63,6 +63,9 @@ async function provisionProviders(p) {
     } else await copyFile(path.resolve(input), target);
   }
 }
+// The build folder of this run, and whether activation has begun; see the catch below.
+let prepared = null,
+  activating = false;
 try {
   const root = path.resolve(options['--root'] ?? source),
     p = installationPaths(root);
@@ -75,7 +78,7 @@ try {
   if (options['--fetch']) run('git', ['fetch', 'origin', '--tags']);
   const version = run('git', ['rev-parse', '--verify', '--end-of-options', `${ref}^{commit}`]);
   const repository = run('git', ['rev-parse', '--show-toplevel']);
-  const prepared = path.join(p.candidate, `prepare-${Date.now()}`);
+  prepared = path.join(p.candidate, `prepare-${Date.now()}`);
   await mkdir(prepared, {recursive: true});
   const archive = `${prepared}.zip`;
   run('git', ['archive', '--format=zip', `--output=${archive}`, version], repository);
@@ -85,6 +88,11 @@ try {
     '-Command',
     `$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(prepared)}`
   ]);
+  // The archive is this run's own temporary copy of the Git version; it is not kept.
+  // Only a temporary file: a scanner briefly holding it must not stop the update.
+  await rm(archive, {force: true}).catch(error =>
+    console.warn(`暫存壓縮檔未能刪除，可稍後移到資源回收筒：${archive}（${error.code ?? error.message}）`)
+  );
   // New candidate only: npm never replaces the running runtime's dependencies.
   run('cmd.exe', ['/d', '/s', '/c', 'npm ci --no-audit --no-fund'], prepared);
   run(process.execPath, ['node_modules/electron/install.js'], prepared);
@@ -114,11 +122,14 @@ try {
       await stat(path.resolve(options[option]));
       settings[key] = path.resolve(options[option]);
     }
+  activating = true;
   console.log(JSON.stringify(await activateRuntime({root, prepared, version, settings}), null, 2));
   console.log(
     '程式已套用；請執行 Start-K-Desktop.ps1。瀏覽器首次設定請另執行 scripts/Setup-K-Browser.ps1；語音環境未設定時不會自動下載。'
   );
 } catch (error) {
   console.error(error.message);
+  if (prepared && !activating)
+    console.error(`未套用的建置暫存留在 ${prepared}（可從 Git 版本重建）；確認不需查看失敗內容後可移到資源回收筒。`);
   process.exitCode = 1;
 }

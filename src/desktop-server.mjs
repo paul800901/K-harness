@@ -40,7 +40,8 @@ export async function startDesktop({
   browserRequest,
   validateProjectWorkspace = validateWorkspace,
   uiRoot = new URL('../dist-ui/', import.meta.url),
-  maxPendingEventBytes = 16 * 1024 * 1024
+  maxPendingEventBytes = 16 * 1024 * 1024,
+  maxBehindMs = 15000
 }) {
   const remoteFile = path.join(root, '.local', 'remote-access.json');
   let remoteConfig = null,
@@ -87,14 +88,22 @@ export async function startDesktop({
       ? {...state, usage: {...state.usage, gemini: geminiAccounts.cachedUsage}}
       : state;
   };
+  // When each screen's unsent backlog first went over the limit; see broadcast().
+  const behindSince = new WeakMap();
   const broadcast = event => {
     if (!event) return;
     let localFrame, remoteFrame;
     for (const client of clients) {
       if (client.destroyed) continue;
       // Events are differences, so none can be skipped. A screen that cannot keep up (e.g. a phone on a weak
-      // network) is disconnected instead of buffering without bound; it reconnects to a fresh snapshot.
-      if (client.writableLength > maxPendingEventBytes) {
+      // network) is disconnected instead of buffering without bound; it reconnects to a fresh snapshot. Only a
+      // backlog that stays over the limit counts: a single large event or snapshot is still being read by a
+      // working screen, and cutting it then would make it reconnect to the same large snapshot again. During that
+      // grace period events keep queueing (at most a few hundred at the 60 ms publish throttle). This lessens the
+      // reconnect loop but cannot end it for a screen too slow to read one huge event within the grace period.
+      if (client.writableLength <= maxPendingEventBytes) behindSince.delete(client);
+      else if (!behindSince.has(client)) behindSince.set(client, Date.now());
+      else if (Date.now() - behindSince.get(client) > maxBehindMs) {
         client.destroy();
         continue;
       }

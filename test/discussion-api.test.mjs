@@ -519,6 +519,45 @@ test('an oversized tool result is withheld with a narrowing hint instead of bein
   await s.close();
 });
 
+test('reads that add up past the conversation limit are withheld, so no request grows without bound', async () => {
+  const f = await fixture();
+  await writeFile(path.join(f.root, 'part.txt'), 'x'.repeat(32000));
+  await writeFile(path.join(f.root, 'small.txt'), 'small file');
+  const bodies = [];
+  const s = await openDiscussionApiSession({
+    workspace: f.root,
+    selection: {route: 'api', connectionId: 'f', model: 'm'},
+    connections: {
+      async credentials() {
+        return {baseUrl: 'https://fake.test', key: 'FAKE'};
+      }
+    },
+    fetchImpl: async (url, o) => {
+      bodies.push(JSON.parse(o.body));
+      const n = bodies.length;
+      // Five reads of a 32,000-character file, then a small one, then the answer.
+      if (n <= 6) {
+        const file = n <= 5 ? 'part.txt' : 'small.txt';
+        return stream(
+          [{tool_calls: [{index: 0, id: `r${n}`, function: {name: 'read_file', arguments: `{"path":"${file}"}`}}]}],
+          'tool_calls'
+        );
+      }
+      return stream([{content: 'answer'}]);
+    }
+  });
+  assert.equal(await s.ask('q'), 'answer');
+  const results = bodies.at(-1).messages.filter(m => m.role === 'tool');
+  assert.equal(results.length, 6);
+  const withheld = results.filter(m => JSON.parse(m.content).error).map(m => m.tool_call_id);
+  assert.deepEqual(withheld, ['r4', 'r5'], 'the large reads that would pass the limit are withheld');
+  for (const m of results.slice(3, 5))
+    assert.match(JSON.parse(m.content).error, /累積讀取已達上限.*未送出.*依已讀內容作答/su);
+  assert.equal(JSON.parse(results[5].content).text, 'small file', 'a read that still fits is sent in full');
+  for (const body of bodies) assert.ok(JSON.stringify(body.messages).length < 130000, 'every request stays bounded');
+  await s.close();
+});
+
 test('text written before a tool round and the final answer are separate paragraphs', async () => {
   const f = await fixture();
   await writeFile(path.join(f.root, 'a.txt'), 'source');
