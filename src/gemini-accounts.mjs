@@ -33,6 +33,8 @@ export function createGeminiAccounts({
   const handoffWaiters = new Map();
   // Account work a release started without waiting for it; see idle().
   let background = Promise.resolve();
+  // Which saved account a refresh-all is querying now, so the person sees it advance.
+  let queryProgress = null;
   let handoffPending = null,
     resetTimer = null;
   const clearReset = () => {
@@ -115,6 +117,7 @@ export function createGeminiAccounts({
       activeAccountId: data.activeAccountId,
       busy: changing || running > 0 || data.uncertain,
       checking: !!refreshPending,
+      progress: queryProgress,
       uncertain: !!data.uncertain,
       loginPending: !!data.loginPending,
       accounts: data.accounts.map(publicRow),
@@ -547,7 +550,8 @@ export function createGeminiAccounts({
             ...(active?.quota ?? unknown()),
             accountId: active?.id ?? null,
             accountEmail: active?.email ?? null,
-            accounts: rows
+            accounts: rows,
+            ...(queryProgress ? {checking: queryProgress} : {})
           }
         : null;
     },
@@ -773,12 +777,16 @@ export function createGeminiAccounts({
             quotaCheck: {allExhausted: true, nextQueryAt: recheckAt},
             note: '全部帳號已有官方歸零紀錄，等待重設；未重新查詢。'
           };
-        for (const row of rows)
+        for (const [index, row] of rows.entries()) {
+          queryProgress = {current: index + 1, total: rows.length};
+          onChange();
           try {
             await query(row);
           } catch {
             /* retain this account as unknown; continue other independent reads */
           }
+        }
+        queryProgress = null;
         const failed = rows.filter(
           row =>
             !['ready', 'available'].includes(row.quota?.status) ||
@@ -805,6 +813,10 @@ export function createGeminiAccounts({
         return await pending;
       } finally {
         if (refreshPending === pending) refreshPending = null;
+        if (queryProgress) {
+          queryProgress = null;
+          onChange();
+        }
         if (handoffWaiters.size) {
           clearReset();
           queueMicrotask(() => void drainHandoff());

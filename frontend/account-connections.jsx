@@ -687,7 +687,9 @@ export function AccountConnections({
               {geminiBusy && !geminiUncertain && (
                 <small role="status">
                   {geminiAccounts?.checking
-                    ? '正在查詢 Gemini 額度，查詢結束後即可切換帳號。'
+                    ? geminiAccounts.progress
+                      ? `正在查詢 Gemini 額度（${geminiAccounts.progress.current}／${geminiAccounts.progress.total}），查詢結束後即可切換帳號。`
+                      : '正在查詢 Gemini 額度，查詢結束後即可切換帳號。'
                     : 'Gemini 正在工作或確認帳號，請等目前操作結束後再切換或登入其他帳號。'}
                 </small>
               )}
