@@ -129,8 +129,11 @@ export function createDiscussionController({
     if (results.some(r => r.status === 'rejected'))
       throw Error(
         results
-          .filter(r => r.status === 'rejected')
-          .map(r => r.reason.message)
+          .flatMap((r, index) => {
+            if (r.status !== 'rejected') return [];
+            const selected = current.participants.find(p => p.id === speakers[index]);
+            return [`${selected.displayName ?? selected.model}：${r.reason.message}`];
+          })
           .join('\n')
       );
   };

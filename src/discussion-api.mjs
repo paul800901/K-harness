@@ -56,11 +56,25 @@ export async function openDiscussionApiSession({
       active.throwIfAborted();
       throw Error('API 連線失敗；沒有自動重送或換模型。');
     }
-    if (!response.ok) throw Error(`API 討論失敗（HTTP ${response.status}）；未重送或換模型。`);
+    if (!response.ok) {
+      let detail = '';
+      try {
+        const body = await response.json(),
+          message = body?.error?.message ?? body?.message;
+        // Do not expose raw HTML/text, headers or a provider-echoed credential.
+        if (typeof message === 'string')
+          detail = message
+            .replaceAll(key, '[已隱藏金鑰]')
+            .replace(/[\x00-\x1f\x7f]/gu, ' ')
+            .slice(0, 300);
+      } catch {}
+      active.throwIfAborted();
+      throw Error(`API 討論失敗（HTTP ${response.status}）${detail ? `：${detail}` : ''}；未重送或換模型。`);
+    }
     if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream'))
       throw Error('API 未回傳支援的串流格式。');
     let content = '',
-      reasoning = '',
+      reasoning = null,
       finish = null,
       pending = '',
       done = false;
@@ -90,7 +104,7 @@ export async function openDiscussionApiSession({
         content += delta.content;
         onText(prior + content);
       }
-      if (typeof delta.reasoning_content === 'string') reasoning += delta.reasoning_content;
+      if (typeof delta.reasoning_content === 'string') reasoning = (reasoning ?? '') + delta.reasoning_content;
       for (const t of delta.tool_calls ?? []) {
         if (!Number.isInteger(t.index)) throw Error('API 工具呼叫格式無效。');
         const c = calls.get(t.index) ?? {id: '', type: 'function', function: {name: '', arguments: ''}};
@@ -122,8 +136,8 @@ export async function openDiscussionApiSession({
       throw Error('API 工具呼叫未完整。');
     return {
       role: 'assistant',
-      content: content || null,
-      ...(reasoning ? {reasoning_content: reasoning} : {}),
+      content,
+      ...(reasoning !== null ? {reasoning_content: reasoning} : {}),
       ...(tool_calls.length ? {tool_calls} : {})
     };
   };

@@ -257,6 +257,54 @@ test('real local fake API receives tool evidence, no host-only summary dependenc
     await new Promise(r => server.close(r));
   }
 });
+test('tool continuation preserves empty content and an explicitly empty reasoning field instead of sending null or dropping it', async () => {
+  const f = await fixture(),
+    requests = [];
+  await writeFile(path.join(f.root, 'probe.txt'), 'synthetic evidence');
+  const s = await openDiscussionApiSession({
+    workspace: f.root,
+    selection: {route: 'api', connectionId: 'fake', model: 'exact-id'},
+    connections: {
+      async credentials() {
+        return {baseUrl: 'https://provider.example/v1', key: 'FAKE'};
+      }
+    },
+    fetchImpl: async (url, options) => {
+      const body = JSON.parse(options.body);
+      requests.push(body);
+      if (requests.length === 1)
+        return stream(
+          [
+            {
+              content: '',
+              reasoning_content: '',
+              tool_calls: [
+                {
+                  index: 0,
+                  id: 'read-1',
+                  type: 'function',
+                  function: {name: 'read_file', arguments: '{"path":"probe.txt"}'}
+                }
+              ]
+            }
+          ],
+          'tool_calls'
+        );
+      const answer = body.messages.at(-2);
+      if (answer.content !== '' || answer.reasoning_content !== '')
+        return Response.json({error: {message: 'Tool-call history lost an empty string field'}}, {status: 400});
+      return stream([{content: 'synthetic evidence'}]);
+    }
+  });
+  try {
+    assert.equal(await s.ask('Read probe.txt'), 'synthetic evidence');
+    assert.equal(requests.length, 2);
+    assert.equal(JSON.parse(requests[1].messages.at(-1).content).text, 'synthetic evidence');
+  } finally {
+    await s.close();
+  }
+});
+
 test('API participant independently searches and reads public sources without sending model key to search service', async () => {
   const f = await fixture(),
     requests = [],
@@ -343,6 +391,7 @@ test('stream fragments, multiple read calls and deny unknown tool without execut
     }
   });
   assert.equal(await s.ask('q'), 'answer');
+  assert.equal(Object.hasOwn(bodies[1].messages.at(-3), 'reasoning_content'), false);
   assert.equal(bodies[1].messages.at(-2).tool_call_id, 'c');
   assert.equal(JSON.parse(bodies[1].messages.at(-2).content).text, 'unchanged');
   assert.match(JSON.parse(bodies[1].messages.at(-1).content).error, /只提供/);
@@ -395,6 +444,43 @@ test('truncated stream and HTTP errors do not replay, and stopping aborts active
   await ready;
   await c.close();
   assert.equal(await pending, true);
+});
+
+test('HTTP rejection exposes the provider message but redacts the configured key and never retries', async () => {
+  const f = await fixture(),
+    key = 'FAKE-sensitive-key';
+  for (const wrap of [message => ({error: {message}}), message => ({message})]) {
+    let calls = 0;
+    const s = await openDiscussionApiSession({
+      workspace: f.root,
+      selection: {route: 'api', connectionId: 'fake', model: 'exact-id'},
+      connections: {
+        async credentials() {
+          return {baseUrl: 'https://provider.example/v1', key};
+        }
+      },
+      fetchImpl: async () => {
+        calls++;
+        return Response.json(wrap(`messages[2].content must be a string; echoed key: ${key}\n${'x'.repeat(600)}`), {
+          status: 400
+        });
+      }
+    });
+    try {
+      await assert.rejects(s.ask('synthetic input'), error => {
+        assert.match(error.message, /HTTP 400/);
+        assert.match(error.message, /messages\[2\]\.content must be a string/);
+        assert(!error.message.includes(key));
+        assert(!error.message.includes('\n'));
+        assert(error.message.length < 450);
+        return true;
+      });
+      await assert.rejects(s.ask('not allowed to replay'), /已停止/);
+      assert.equal(calls, 1);
+    } finally {
+      await s.close();
+    }
+  }
 });
 
 test('desktop API settings use existing authenticated explicit commands and never return key plaintext', async () => {

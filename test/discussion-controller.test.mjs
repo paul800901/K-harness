@@ -232,6 +232,23 @@ test('malformed host output ends visibly without retrying or silently switching 
   assert.equal(f.calls.filter(c => c.id === 'host').length, 2);
 });
 
+test('simultaneous participant errors identify each failing speaker without replaying either request', async () => {
+  const f = await fixture({
+    answer: async ({id, response}) => {
+      if (id !== 'host') throw Error('API 討論失敗（HTTP 400）；未重送或換模型。');
+      return response;
+    }
+  });
+  await f.start();
+  await f.d.settled();
+  assert.equal(f.d.state.status, 'failed');
+  assert.match(f.d.state.error, /Sol：API 討論失敗/);
+  assert.match(f.d.state.error, /Opus：API 討論失敗/);
+  assert.equal(f.calls.filter(c => c.id === 'p1').length, 1);
+  assert.equal(f.calls.filter(c => c.id === 'p2').length, 1);
+  assert(f.d.messages.filter(m => m.model).every(m => m.partial));
+});
+
 test('failed session teardown is uncertain, never completed or silently restarted', async () => {
   const f = await fixture({closeFailure: true});
   await f.start();
