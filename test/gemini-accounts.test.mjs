@@ -3392,3 +3392,26 @@ test('a worker result does not wait for the account queries its release starts',
   // Official quota remains, so the failure is treated as a rate limit: no switch, no replay.
   assert.equal(events.at(-1).status, 'blocked');
 });
+
+test('refreshing all accounts reports which account is being queried, then clears the progress', async () => {
+  const f = await handoffFixture();
+  const seen = [];
+  let accounts;
+  accounts = createGeminiAccounts({
+    root: f.root,
+    login: f.login,
+    vault: f.vault,
+    enabled: true,
+    onChange: () => {
+      const checking = accounts?.cachedUsage?.checking;
+      if (checking && JSON.stringify(seen.at(-1)) !== JSON.stringify(checking)) seen.push(checking);
+    }
+  });
+  await accounts.refreshAll({force: true});
+  assert.deepEqual(seen, [
+    {current: 1, total: 2},
+    {current: 2, total: 2}
+  ]);
+  assert.equal(accounts.cachedUsage.checking, undefined);
+  assert.equal((await accounts.list()).progress, null);
+});

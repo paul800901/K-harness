@@ -39,12 +39,7 @@ async function fixture({
       async ask(prompt, {onText = () => {}} = {}) {
         calls.push({id, prompt});
         signal.throwIfAborted();
-        const response =
-          id === 'host'
-            ? prompt.startsWith('你是多模型討論背景整理者')
-              ? JSON.stringify({background: '使用者修正後的背景與需求，未把舊模型結論當真值。'})
-              : JSON.stringify(decisions.shift())
-            : `${selection.displayName} 的獨立意見`;
+        const response = id === 'host' ? JSON.stringify(decisions.shift()) : `${selection.displayName} 的獨立意見`;
         const raw = answer ? await answer({id, prompt, response}) : response;
         const output = id === 'host' && prompt.includes('平行比較直接整理') ? JSON.parse(raw).summary : raw;
         onText(output);
@@ -55,7 +50,11 @@ async function fixture({
       }
     };
   };
-  const d = createDiscussionController({root, threadId: 'room', sessionFactory: factory});
+  const d = createDiscussionController({
+    root,
+    threadId: 'room',
+    sessionFactory: factory
+  });
   await d.load();
   const start = fields =>
     d.start({
@@ -64,10 +63,7 @@ async function fixture({
       participants,
       facilitator: {...participants[0], id: 'host'},
       workspace: root,
-      source: [
-        {role: 'user', text: '請保留修正與限制。'},
-        {role: 'assistant', text: '舊模型答案'}
-      ],
+      brief: '任務書：使用者修正後的需求，未把舊模型結論當真值。',
       afterMessageId: 'old',
       ...fields
     });
@@ -98,7 +94,7 @@ test("parallel participants receive identical materials but never each other's c
   const material = c => JSON.parse(c.prompt.split('討論資料：')[1]);
   assert.deepEqual(material(answers[0]), material(answers[1]));
   assert.equal(Object.hasOwn(material(answers[0]), 'discussion'), false);
-  assert.match(f.calls[0].prompt, /不得加入原模型的候選答案/);
+  assert.equal(material(answers[0]).brief, '任務書：使用者修正後的需求，未把舊模型結論當真值。');
   assert.match(f.d.messages.at(-1).text, /分歧/);
   assert.deepEqual(f.opened.sort(), ['host', 'p1', 'p2']);
 });
@@ -124,11 +120,11 @@ test('meeting AI can schedule selected speakers repeatedly without a fixed-round
   assert.match(cross.prompt, /Opus 的獨立意見/);
 });
 
-test('review requires a concrete target and forwards it to independent reviewers', async () => {
+test('review forwards the brief to independent reviewers', async () => {
   const f = await fixture();
-  await assert.rejects(f.start({mode: 'review'}), /被審查內容/);
+  await assert.rejects(f.start({mode: 'review', brief: ' '}), /任務書/);
   assert.equal(f.opened.length, 0);
-  await f.start({mode: 'review', reviewTarget: '需要审查的方案原文'});
+  await f.start({mode: 'review', brief: '需要审查的方案原文'});
   await f.d.settled();
   for (const c of f.calls.filter(c => c.id !== 'host')) {
     assert.match(c.prompt, /需要审查的方案原文/);
@@ -136,12 +132,18 @@ test('review requires a concrete target and forwards it to independent reviewers
   }
 });
 
-test('fresh context excludes earlier answers; prepared background remains human-readable', async () => {
+test('the brief is shown as a human-readable message and is what participants and the host receive', async () => {
   const f = await fixture();
-  await f.start({includeContext: false});
+  await f.start();
   await f.d.settled();
-  assert.equal(f.calls[0].prompt.includes('舊模型答案'), false);
-  assert.ok(f.d.messages.some(m => m.background && m.text.includes('使用者修正')));
+  const brief = f.d.messages.find(m => m.background);
+  assert.equal(brief.speaker, '討論任務書');
+  assert.match(brief.text, /使用者修正後的需求/);
+  assert.match(f.calls.find(c => c.id === 'p1').prompt, /主理人任務書（brief）是本次的主要材料與範圍/);
+  assert.match(
+    f.calls.find(c => c.id === 'host').prompt,
+    /討論任務書（主模型依本人指示整理）：任務書：使用者修正後的需求/
+  );
 });
 
 test('an interjection during host completion invalidates its stale finish and reaches the named participant', async () => {
@@ -229,7 +231,7 @@ test('malformed host output ends visibly without retrying or silently switching 
   await f.d.settled();
   assert.equal(f.d.state.status, 'failed');
   assert.match(f.d.state.error, /調度指令/);
-  assert.equal(f.calls.filter(c => c.id === 'host').length, 2);
+  assert.equal(f.calls.filter(c => c.id === 'host').length, 1);
 });
 
 test('simultaneous participant errors identify each failing speaker without replaying either request', async () => {
@@ -379,8 +381,8 @@ test('interrupted persisted run reads back uncertain without opening sessions or
     sessionFactory: async ({selection}) => ({
       async ask(prompt) {
         return selection.id === 'host'
-          ? prompt.startsWith('你是多模型討論背景整理者')
-            ? '{"background":"這是新的議題"}'
+          ? prompt.startsWith('你是本次多模型')
+            ? '{"brief":"這是新的議題"}'
             : '{"action":"finish","summary":"新討論已整理"}'
           : '新答案';
       },
@@ -389,6 +391,7 @@ test('interrupted persisted run reads back uncertain without opening sessions or
   });
   await next.load();
   await next.start({
+    brief: '任務書',
     mode: 'meeting',
     text: '明確新的議題，不續跑舊工作',
     participants,
@@ -417,8 +420,8 @@ test('continued native sessions get new messages only, never repeatedly copied l
     assert(turns[1].prompt.includes('新增原文'));
   }
   const host = f.calls.filter(c => c.id === 'host');
-  assert(host[0].prompt.includes('LONG_UNIQUE_ATTACHMENT'));
-  assert(host.slice(1).every(c => !c.prompt.includes('LONG_UNIQUE_ATTACHMENT')));
+  // The host only schedules; attachment text goes to participants, not to every host prompt.
+  assert(host.every(c => !c.prompt.includes('LONG_UNIQUE_ATTACHMENT')));
   assert.equal(f.d.state.status, 'completed');
 });
 
@@ -432,7 +435,7 @@ test('stop waits for all already opened sessions and cancels unsent scheduling',
     threadId: 'stop-room',
     sessionFactory: async ({selection, signal}) => ({
       async ask() {
-        if (selection.id === 'host') return '{"background":"假資料"}';
+        if (selection.id === 'host') return '{"brief":"假資料"}';
         started.resolve();
         return waiting.promise;
       },
@@ -444,6 +447,7 @@ test('stop waits for all already opened sessions and cancels unsent scheduling',
   });
   await d.load();
   await d.start({
+    brief: '任務書',
     mode: 'meeting',
     text: '測試停止',
     participants,

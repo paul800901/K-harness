@@ -270,13 +270,19 @@ const ChatView = React.memo(function ChatView({
       if (discussing && payload.attachmentIds.length) throw Error('討論中的補充先用文字；附件留在輸入框，未送出。');
       const result = discussing
         ? await threadApi('discussion/message', {text, target: discussionConfig.target || undefined})
-        : discussionConfig.mode !== 'normal'
-          ? await threadApi('discussion/start', {
-              ...payload,
-              ...discussionConfig,
-              reviewTarget: discussionConfig.reviewTarget?.trim() || undefined
-            })
-          : await threadApi('send', payload);
+        : await threadApi('send', {
+            ...payload,
+            // Armed discussion settings ride with the message; the main model starts the discussion when asked.
+            ...(discussionConfig.mode !== 'normal'
+              ? {
+                  discussion: {
+                    mode: discussionConfig.mode,
+                    participants: discussionConfig.participants,
+                    includeContext: discussionConfig.includeContext
+                  }
+                }
+              : {})
+          });
       if (!result.sent && !result.queued) throw Error('送出前已停止，訊息留在輸入框。');
       clearDraft(raw);
       const remaining = removeUnchangedResponseQuotes(loadResponseQuotes(sessionStorage, threadId), quotes);

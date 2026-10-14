@@ -123,7 +123,13 @@ export function Usage({state, online, onDetails}) {
             {gemini?.accounts?.length > 0 && (
               <small className="usage-account-count">{gemini.accounts.length} 個帳號</small>
             )}
-            <small className="usage-account-count">{geminiHistorical ? '目前額度待查詢' : '上次查詢結果'}</small>
+            <small className="usage-account-count">
+              {gemini?.checking
+                ? `正在查詢 ${gemini.checking.current}／${gemini.checking.total}`
+                : geminiHistorical
+                  ? '目前額度待查詢'
+                  : '上次查詢結果'}
+            </small>
           </span>
         </span>
       </button>
@@ -278,7 +284,13 @@ export function UsageDetails({state, online}) {
       <section className="usage-provider-section" aria-label="Gemini / Antigravity 訂閱剩餘額度">
         <div className="usage-heading">
           <strong>Gemini / Antigravity 訂閱剩餘額度</strong>
-          {geminiAccounts.length > 0 && <span>{geminiAccounts.length} 個帳號</span>}
+          {geminiAccounts.length > 0 && (
+            <span role="status">
+              {gemini?.checking
+                ? `正在查詢 ${gemini.checking.current}／${gemini.checking.total}`
+                : `${geminiAccounts.length} 個帳號`}
+            </span>
+          )}
         </div>
         {geminiAccounts.length ? (
           <>

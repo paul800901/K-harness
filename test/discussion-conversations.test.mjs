@@ -63,8 +63,26 @@ async function fixture({hold = false, discussionApi} = {}) {
       },
       async send(data) {
         c.sent.push(data);
+        // During a held turn a further message waits in the queue, as in the real cores.
+        if (c.holdTurns && state.busy) {
+          state.queuedMessages.push({text: data.text});
+          return {queued: true};
+        }
         state.messages.push({id: `native-${c.sent.length}`, role: 'user', text: data.text});
+        // instantReply models a turn that ends before send() returns.
+        if (c.instantReply) {
+          state.messages.push({id: `reply-${state.messages.length}`, role: 'assistant', text: c.instantReply});
+          state.status = 'completed';
+          return {sent: true};
+        }
+        // holdTurns models a real turn: busy until finish() writes the reply.
+        if (c.holdTurns) Object.assign(state, {busy: true, status: 'working'});
         return {sent: true};
+      },
+      finish(text) {
+        state.messages.push({id: `reply-${state.messages.length}`, role: 'assistant', text});
+        Object.assign(state, {busy: false, status: 'completed'});
+        onChange();
       },
       async stop() {
         state.busy = false;
@@ -94,10 +112,7 @@ async function fixture({hold = false, discussionApi} = {}) {
       return {
         async ask(prompt) {
           calls.push({id: selection.id, prompt});
-          if (selection.id === 'host')
-            return prompt.startsWith('你是多模型討論背景整理者')
-              ? '{"background":"需求與修正"}'
-              : '{"action":"finish","summary":"共識、分歧與未知都有保留。"}';
+          if (selection.id === 'host') return '{"action":"finish","summary":"共識、分歧與未知都有保留。"}';
           if (hold)
             await new Promise((resolve, reject) => {
               answerPending.add(reject);
@@ -113,13 +128,18 @@ async function fixture({hold = false, discussionApi} = {}) {
   });
   const a = await c.open({model: 'gpt-6.1-sol'}),
     owner = owners.find(o => o.state.threadId === a.threadId);
-  const start = data =>
+  // Starts a discussion directly, as the armed turn does once the main model has written the brief.
+  const start = settings =>
     c.discussionStart({
-      ...a,
-      mode: 'meeting',
+      threadId: a.threadId,
       text: '議題',
-      participants: [{model: 'gpt-6.1-sol'}, {model: 'claude-opus-5-5', effort: 'high'}],
-      ...data
+      brief: '任務書：需求與修正。',
+      settings: {
+        mode: 'meeting',
+        participants: [{model: 'gpt-6.1-sol'}, {model: 'claude-opus-5-5', effort: 'high'}],
+        includeContext: true,
+        ...settings
+      }
     });
   return {root, c, a, owner, owners, calls, start};
 }
@@ -128,7 +148,7 @@ const settled = async f => {
 };
 
 for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'])
-  test(`discussion context uses verified inherited ${model} attachment cards while explicit foreign IDs remain rejected`, async () => {
+  test(`discussion context uses verified inherited ${model} attachment cards`, async () => {
     const f = await fixture();
     try {
       f.owner.state.model = model;
@@ -145,17 +165,15 @@ for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'])
       await f.start();
       await settled(f);
       assert(f.calls.some(row => row.prompt.includes('INHERITED_DISCUSSION_FAKE_BODY')));
-      const foreign = await saveAttachment(f.root, 'unrelated', {name: 'foreign.txt', base64: 'eA=='});
-      await assert.rejects(f.start({attachmentIds: [foreign.id]}), /其他對話/);
-      await assert.rejects(f.start({attachmentIds: [a.id]}), /其他對話/);
       assert.equal(f.owner.sent.length, 0);
     } finally {
       await f.c.close();
     }
   });
 
-test('discussion entry and interjection are available to the paired phone; the existing stop route is reused', () => {
-  for (const op of ['start', 'message']) assert.equal(remoteRouteAllowed('POST', `/api/discussion/${op}`), true);
+test('interjection is available to the paired phone; discussions start only through the main model; stop is reused', () => {
+  assert.equal(remoteRouteAllowed('POST', '/api/discussion/message'), true);
+  for (const op of ['start', 'confirm']) assert.equal(remoteRouteAllowed('POST', `/api/discussion/${op}`), false);
   assert.equal(remoteRouteAllowed('POST', '/api/stop'), true);
   assert.equal(remoteRouteAllowed('POST', '/api/discussion/stop'), false);
   assert.equal(remoteRouteAllowed('POST', '/api/discussion/login'), false);
@@ -216,7 +234,7 @@ test('new empty room can begin with comparison, then cross-review without a forc
     await settled(f);
     assert.equal(f.owner.sent.length, 0);
     assert.equal(f.c.state.discussion.mode, 'parallel');
-    await f.start({mode: 'review', reviewTarget: '清楚的審查目標'});
+    await f.start({mode: 'review'});
     await settled(f);
     assert.equal(f.c.state.discussion.mode, 'review');
     assert.equal(f.c.state.messages.filter(m => m.summary).length, 2);
@@ -380,6 +398,143 @@ test('starting discussion in a hidden room cancels its pending idle probe withou
     assert.equal(f.owners.find(o => o.state.threadId === other.threadId).sent.length, 0);
   } finally {
     read.resolve([]);
+    await f.c.close();
+  }
+});
+
+const armedSettings = {
+  mode: 'review',
+  participants: [{model: 'gpt-6.1-sol'}, {model: 'claude-opus-5-5', effort: 'high'}],
+  includeContext: true
+};
+const mark = '\n\n```k-discussion\nstart\n```';
+
+test('discussion settings ride with the message like a skill; a reply ending in the start mark begins the discussion with its brief', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '請各模型審查 Gemini 的首頁建議', discussion: armedSettings});
+    const sent = f.owner.sent.at(-1).text;
+    assert.match(sent, /^請各模型審查 Gemini 的首頁建議/);
+    assert.match(sent, /K 討論設定，不是本人原文.*交叉審查」，參與者：Sol、Opus.*可讀本機檔案與網頁.*k-discussion/su);
+    assert.equal(
+      f.c.state.messages.find(m => m.role === 'user').displayText,
+      '請各模型審查 Gemini 的首頁建議',
+      'the person sees only their own words'
+    );
+    assert.equal(f.calls.length, 0, 'nothing starts while the main model is answering');
+    f.owner.finish(`# 任務書\n目的：審查首頁建議。材料：index.html 第 1–20 行原文。${mark}`);
+    while (!f.c.state.discussion) await new Promise(r => setTimeout(r, 5));
+    await settled(f);
+    assert.equal(f.c.state.discussion.status, 'completed');
+    assert.equal(f.c.state.discussion.mode, 'review');
+    const participantPrompt = f.calls.find(c => c.id === 'p1').prompt;
+    assert.match(participantPrompt, /"brief":"# 任務書\\n目的：審查首頁建議。材料：index\.html 第 1–20 行原文。"/);
+    assert.doesNotMatch(participantPrompt, /k-discussion/);
+    assert.match(f.calls.find(c => c.id === 'host').prompt, /討論任務書（主模型依本人指示整理）：# 任務書/);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a reply without the start mark only answers; armed settings never start a discussion on their own', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '先聊聊首頁', discussion: armedSettings});
+    f.owner.finish('好的，我們先看首頁的問題。');
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(f.c.state.discussion, null);
+    assert.equal(f.calls.length, 0);
+    // The mark in a later, unarmed turn is ignored: only a turn sent with settings may start one.
+    await f.c.send({...f.a, text: '一般訊息'});
+    f.owner.finish(`任務書${mark}`);
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('invalid discussion settings reject the message before it reaches the main model', async () => {
+  const f = await fixture();
+  try {
+    await assert.rejects(
+      f.c.send({
+        ...f.a,
+        text: '開始討論',
+        discussion: {...armedSettings, participants: [{model: 'missing'}, {model: 'claude-opus-5-5'}]}
+      }),
+      /原生清單/
+    );
+    assert.equal(f.owner.sent.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a start the room cannot take is reported in the room instead of silently dropped', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '開始討論', discussion: armedSettings});
+    f.owner.state.queuedMessages = [{text: '還在排隊'}];
+    f.owner.finish(`任務書${mark}`);
+    while (!f.c.state.error) await new Promise(r => setTimeout(r, 5));
+    assert.match(f.c.state.error, /討論未開始：.*原工作/);
+    assert.equal(f.calls.length, 0);
+    f.owner.state.queuedMessages = [];
+    f.owner.holdTurns = false;
+    await f.c.send({...f.a, text: '新訊息'});
+    assert.equal(f.c.state.error, undefined, 'a new message clears the notice');
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a follow-up queued during the armed turn keeps it armed; the start it blocks is reported', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '開始討論', discussion: armedSettings});
+    assert.deepEqual(await f.c.send({...f.a, text: '順便注意 X'}), {queued: true});
+    f.owner.finish(`任務書${mark}`);
+    while (!f.c.state.error) await new Promise(r => setTimeout(r, 5));
+    assert.match(f.c.state.error, /討論未開始：.*待送訊息/);
+    assert.equal(f.calls.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('a message with discussion settings is not queued behind a running turn', async () => {
+  const f = await fixture();
+  try {
+    f.owner.holdTurns = true;
+    await f.c.send({...f.a, text: '先做這件事'});
+    const sent = f.owner.sent.length;
+    await assert.rejects(f.c.send({...f.a, text: '開始討論', discussion: armedSettings}), error => {
+      assert.equal(error.notSent, true);
+      assert.match(error.message, /不能排隊/);
+      return true;
+    });
+    assert.equal(f.owner.sent.length, sent);
+    assert.equal(f.owner.state.queuedMessages.length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('an armed turn that ends before send returns still starts the discussion', async () => {
+  const f = await fixture();
+  try {
+    f.owner.instantReply = `任務書：立即完成。${mark}`;
+    await f.c.send({...f.a, text: '開始討論', discussion: armedSettings});
+    while (!f.c.state.discussion) await new Promise(r => setTimeout(r, 5));
+    await settled(f);
+    assert.equal(f.c.state.discussion.status, 'completed');
+    assert.equal(f.c.state.error, undefined);
+  } finally {
     await f.c.close();
   }
 });
