@@ -308,7 +308,7 @@ const ChatView = React.memo(function ChatView({
     }
     if ((!text.trim() && !responseQuotesRef.current.length && !uploads.some(a => a.id)) || uploads.some(a => a.loading))
       return;
-    action(() => submitText(text));
+    roomAction(threadId, () => submitText(text));
   };
   // The native UI library rebuilds its message store on adapter identity change.
   // Keep history inputs stable across background events and composer keystrokes;
@@ -548,7 +548,7 @@ const ChatView = React.memo(function ChatView({
               </section>
             )}
             <>
-              <QueuedMessages state={state} action={action} request={threadApi} />
+              <QueuedMessages state={state} action={fn => roomAction(threadId, fn)} request={threadApi} />
               <ComposerPrimitive.Root className="composer-card">
                 <div className="attachment-row">
                   {uploads.map((a, i) => (
@@ -706,7 +706,7 @@ const ChatView = React.memo(function ChatView({
                           effectiveServiceTier={state.effectiveServiceTier}
                           busy={state.busy}
                           onTierChange={serviceTier =>
-                            action(() => threadApi('model', {model: state.model, serviceTier}))
+                            roomAction(threadId, () => threadApi('model', {model: state.model, serviceTier}))
                           }
                           disabled={
                             blocked ||
@@ -1075,13 +1075,14 @@ function App() {
       setBusy(false);
     }
   };
-  // Stop and approval answers belong to one room. They must not be dropped while another room's action
-  // (e.g. a permission switch reopening the native thread) holds the global lock; only repeats in the same
-  // room are suppressed.
-  const roomLocks = useRef(new Set());
+  // Actions inside a room (send, stop, approval, queue, Fast) lock only that room, so work in one room never
+  // disables another; only repeats in the same room are suppressed. Sidebar and dialog actions stay global.
+  const roomLocks = useRef(new Set()),
+    [busyRooms, setBusyRooms] = useState(() => new Set());
   const roomAction = async (threadId, fn) => {
     if (!threadId || roomLocks.current.has(threadId)) return;
     roomLocks.current.add(threadId);
+    setBusyRooms(new Set(roomLocks.current));
     setError('');
     try {
       return await fn();
@@ -1089,6 +1090,7 @@ function App() {
       setError(e.message);
     } finally {
       roomLocks.current.delete(threadId);
+      setBusyRooms(new Set(roomLocks.current));
     }
   };
   useEffect(() => {
@@ -1798,7 +1800,7 @@ function App() {
               connecting={connecting}
               loginRequired={loginRequired}
               key={state.threadId || 'empty'}
-              blocked={busy || !online}
+              blocked={busy || busyRooms.has(state.threadId) || !online}
               onChooseModel={() => setModal({type: 'model', threadId: state.threadId})}
               modelLabel={modelName(state.model)}
               modelButtonLabel={modelButtonLabel(state.model)}
