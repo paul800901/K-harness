@@ -45,5 +45,5 @@ for (const name of probes) {
   console.log(`FAIL ${name} (${seconds}s)${detail ? ` — ${detail}` : ''}`);
 }
 console.log(`\n${probes.length - failed.length}/${probes.length} UI probes passed.`);
-if (known.length) console.log(`已知退化（待本人決定，不算失敗）：\n${known.map(line => `  ${line}`).join('\n')}`);
+if (known.length) console.log(`已知退化（本人已決定暫不修，不算失敗）：\n${known.map(line => `  ${line}`).join('\n')}`);
 process.exit(failed.length ? 1 : 0);
