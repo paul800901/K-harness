@@ -5,6 +5,8 @@ import {quotaZeroUntil, quotaZeroRecheckDue} from './quota-zero.mjs';
 
 const unknown = () => ({status: 'unavailable', windows: [], note: '尚未查詢此帳號的官方額度。'});
 const clone = value => structuredClone(value);
+// How often a saved account that is not the active one is re-read while K's screen is open.
+const OTHER_ACCOUNT_QUERY_MS = 5 * 60000;
 const validId = id => typeof id === 'string' && /^[a-f0-9]{32}$/u.test(id);
 
 // One native login is shared by all Gemini processes. Settings and project data
@@ -33,6 +35,8 @@ export function createGeminiAccounts({
   const handoffWaiters = new Map();
   // Account work a release started without waiting for it; see idle().
   let background = Promise.resolve();
+  // The background read of a non-active account that usage() started; see usage().
+  let otherQuery = null;
   // Which saved account a refresh-all is querying now, so the person sees it advance.
   let queryProgress = null;
   let handoffPending = null,
@@ -559,9 +563,9 @@ export function createGeminiAccounts({
       await load();
       return snapshot();
     },
-    // Resolves when the account queries started by the latest release have finished.
+    // Resolves when the account queries started by the latest release, and usage()'s background read, have finished.
     idle() {
-      return background;
+      return Promise.all([background, otherQuery]);
     },
     async observe(options = {}) {
       await load();
@@ -845,6 +849,29 @@ export function createGeminiAccounts({
         } catch {
           /* retain the last result, never claim a new successful query */
         }
+        // The other saved accounts are read in the background too, one at a time, so the list is not a
+        // snapshot of the last manual refresh. A failed read is simply retried on the same cadence. Checked again
+        // after the await above, synchronously with the start, so an account change that began meanwhile either
+        // skips this read or waits for it (exclusive() settles the queries it finds).
+        const due =
+          !otherQuery &&
+          !refreshPending &&
+          !changing &&
+          !data.loginPending &&
+          !data.uncertain &&
+          data.accounts.find(
+            row =>
+              row.id !== data.activeAccountId &&
+              row.auth?.status !== 'signed-out' &&
+              !cachedExhausted(row) &&
+              queryAge(row) >= OTHER_ACCOUNT_QUERY_MS
+          );
+        if (due)
+          otherQuery = query(due)
+            .catch(() => {})
+            .finally(() => {
+              otherQuery = null;
+            });
       }
       const rows = data.accounts.map(publicRow),
         active = rows.find(row => row.id === data.activeAccountId);
