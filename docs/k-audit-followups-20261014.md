@@ -32,7 +32,7 @@
 
 ## 未完成與另案
 
-- **介面實測老化**：上述 16 個原本就失敗的介面實測（attachment-label、discussion-speaker、gemini-accounts、gpt-flash、menu-viewport、mobile-remote、model-picker-compact、model-picker、native-diffs、native-notices、process-details、queue-edit、remote-reopen、usage-layout、voice-composer、voice-room-switch）需逐一判斷是介面已改而腳本未跟上，還是真的退化。它們不在 `npm test` 內，平常不會被發現。
+- ~~**介面實測老化**~~（已處理：16 個全數修好、46 個介面實測可跑，並新增 `npm run test:ui`，見[介面實測整修](ui-probes-20261014.md)）：上述 16 個原本就失敗的介面實測（attachment-label、discussion-speaker、gemini-accounts、gpt-flash、menu-viewport、mobile-remote、model-picker-compact、model-picker、native-diffs、native-notices、process-details、queue-edit、remote-reopen、usage-layout、voice-composer、voice-room-switch）需逐一判斷是介面已改而腳本未跟上，還是真的退化。它們不在 `npm test` 內，平常不會被發現。
 - ~~Claude 子代理停止未確認時沒有程序編號可重新確認~~：已於後續處理，見文末。
 
 ## Fable 5.1 第二審
