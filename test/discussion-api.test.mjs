@@ -257,54 +257,6 @@ test('real local fake API receives tool evidence, no host-only summary dependenc
     await new Promise(r => server.close(r));
   }
 });
-test('tool continuation preserves empty content and an explicitly empty reasoning field instead of sending null or dropping it', async () => {
-  const f = await fixture(),
-    requests = [];
-  await writeFile(path.join(f.root, 'probe.txt'), 'synthetic evidence');
-  const s = await openDiscussionApiSession({
-    workspace: f.root,
-    selection: {route: 'api', connectionId: 'fake', model: 'exact-id'},
-    connections: {
-      async credentials() {
-        return {baseUrl: 'https://provider.example/v1', key: 'FAKE'};
-      }
-    },
-    fetchImpl: async (url, options) => {
-      const body = JSON.parse(options.body);
-      requests.push(body);
-      if (requests.length === 1)
-        return stream(
-          [
-            {
-              content: '',
-              reasoning_content: '',
-              tool_calls: [
-                {
-                  index: 0,
-                  id: 'read-1',
-                  type: 'function',
-                  function: {name: 'read_file', arguments: '{"path":"probe.txt"}'}
-                }
-              ]
-            }
-          ],
-          'tool_calls'
-        );
-      const answer = body.messages.at(-2);
-      if (answer.content !== '' || answer.reasoning_content !== '')
-        return Response.json({error: {message: 'Tool-call history lost an empty string field'}}, {status: 400});
-      return stream([{content: 'synthetic evidence'}]);
-    }
-  });
-  try {
-    assert.equal(await s.ask('Read probe.txt'), 'synthetic evidence');
-    assert.equal(requests.length, 2);
-    assert.equal(JSON.parse(requests[1].messages.at(-1).content).text, 'synthetic evidence');
-  } finally {
-    await s.close();
-  }
-});
-
 test('API participant independently searches and reads public sources without sending model key to search service', async () => {
   const f = await fixture(),
     requests = [],

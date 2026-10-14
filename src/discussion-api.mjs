@@ -74,7 +74,7 @@ export async function openDiscussionApiSession({
     if (!response.body || !response.headers.get('content-type')?.includes('text/event-stream'))
       throw Error('API 未回傳支援的串流格式。');
     let content = '',
-      reasoning = null,
+      reasoning = '',
       finish = null,
       pending = '',
       done = false;
@@ -104,7 +104,7 @@ export async function openDiscussionApiSession({
         content += delta.content;
         onText(prior + content);
       }
-      if (typeof delta.reasoning_content === 'string') reasoning = (reasoning ?? '') + delta.reasoning_content;
+      if (typeof delta.reasoning_content === 'string') reasoning += delta.reasoning_content;
       for (const t of delta.tool_calls ?? []) {
         if (!Number.isInteger(t.index)) throw Error('API 工具呼叫格式無效。');
         const c = calls.get(t.index) ?? {id: '', type: 'function', function: {name: '', arguments: ''}};
@@ -136,8 +136,8 @@ export async function openDiscussionApiSession({
       throw Error('API 工具呼叫未完整。');
     return {
       role: 'assistant',
-      content,
-      ...(reasoning !== null ? {reasoning_content: reasoning} : {}),
+      content: content || null,
+      ...(reasoning ? {reasoning_content: reasoning} : {}),
       ...(tool_calls.length ? {tool_calls} : {})
     };
   };
