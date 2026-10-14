@@ -26,6 +26,8 @@ const models = [
 let seq = 0,
   long = false;
 const calls = [];
+const noMark = false,
+  nextBrief = '這是帶日期的背景摘要，不是系統通知。';
 const nativeFactory = ({onChange}) => {
   const state = {
     status: 'idle',
@@ -76,6 +78,20 @@ const nativeFactory = ({onChange}) => {
         createdAt: new Date().toISOString()
       });
       onChange();
+      // With discussion settings armed, the fake main model answers with a brief and the start mark.
+      if (data.text.includes('K 討論設定')) {
+        Object.assign(state, {busy: true, status: 'working'});
+        setTimeout(() => {
+          state.messages.push({
+            id: `reply-${calls.length}`,
+            role: 'assistant',
+            text: noMark ? '好的，先不開始討論。' : `${nextBrief}\n\n\`\`\`k-discussion\nstart\n\`\`\``,
+            createdAt: new Date().toISOString()
+          });
+          Object.assign(state, {busy: false, status: 'completed'});
+          onChange();
+        }, 20);
+      }
       return {sent: true};
     },
     async stop() {
@@ -91,10 +107,7 @@ const nativeFactory = ({onChange}) => {
 const discussionFactory = async ({selection}) => ({
   async ask(prompt) {
     calls.push({op: 'discussion', model: selection.model});
-    if (selection.id === 'host')
-      return prompt.startsWith('你是本次多模型')
-        ? '{"brief":"這是帶日期的背景摘要，不是系統通知。"}'
-        : '## 共識\n保留正文可讀性。\n## 分歧\n不同意見仍保留。\n## 未知\n待查證。';
+    if (selection.id === 'host') return '## 共識\n保留正文可讀性。\n## 分歧\n不同意見仍保留。\n## 未知\n待查證。';
     const name = selection.displayName ?? selection.model;
     return `這是 ${name} 的意見。\n\n${long ? Array.from({length: 40}, (_, i) => `第 ${i + 1} 段：這是長文測試，內容與樣式不冒充真實模型結論。正文保持原有深色字，發言者由全名與細線識別。`).join('\n\n') : '保留自己的理由與不同意見，不硬湊共識。'}`;
   },
@@ -154,7 +167,6 @@ try {
   await page.getByLabel('參與模型 4', {exact: true}).selectOption('native:gpt-6-luna');
   await page.getByLabel('工作訊息', {exact: true}).fill('比較各模型的意見');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();
   await page.getByRole('button', {name: '參與者與背景', exact: true}).click();
   for (const [size, width, height] of [
@@ -227,7 +239,6 @@ try {
   long = true;
   await page.getByLabel('工作訊息', {exact: true}).fill('請提供長文以驗證持續辨識');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.waitForFunction(
     () =>
       document.querySelectorAll('.discussion-message').length === 12 &&

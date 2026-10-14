@@ -7,11 +7,30 @@ import {createDiscussionController} from './discussion-controller.mjs';
 import {sessionAttachment, messageAttachment} from './session-workspace.mjs';
 import {readPresentedFile} from './desktop-files.mjs';
 import {readNativeMessageFile} from './native-message-file.mjs';
-import {discussionTranscript} from '../shared/discussion.mjs';
+import {discussionModes, discussionTranscript} from '../shared/discussion.mjs';
 import {abortable} from './abortable.mjs';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
+
+const FENCE = '```';
+// The main model ends a reply with this block when the person asked it to start the armed discussion.
+const DISCUSSION_MARK = /\n?```k-discussion[ \t]*\r?\n\s*start\s*\r?\n```\s*$/u;
+// Discussion settings ride with the person's message like a skill: they tell the main model what is set up
+// and how to start it. The person sees only their own words.
+const discussionNote = settings =>
+  `（K 討論設定，不是本人原文）本人已設定「${discussionModes[settings.mode]}」，參與者：${settings.participants.map(p => p.displayName ?? p.model).join('、')}。` +
+  '若本人在這則訊息要求開始討論，請在回覆中寫出討論任務書：一、目的：本人真正想得到什麼；二、本次要做的事' +
+  (settings.mode === 'review'
+    ? '：要審查的對象與審查重點'
+    : settings.mode === 'parallel'
+      ? '：每位參與者各自要獨立產出什麼'
+      : '：要討論、要回應彼此的問題') +
+  '；三、材料：把參與者需要看的內容直接放進來，你可讀本機檔案與網頁，引用原文並標明出處，太長就節錄並註明；四、範圍：以任務書為主，需要核對時可讀哪些具體檔案或網址、哪些不必查；五、未知或待確認。' +
+  (settings.mode === 'parallel'
+    ? '平行比較的任務書不得放入任何模型（包括你自己）的候選答案、結論或立場，只放需求、本人給的事實與已驗證證據。'
+    : '') +
+  `任務書寫完後，在回覆最後單獨放一個標記區塊：${FENCE}k-discussion 換行 start 換行 ${FENCE}。K 會在本回合結束後用這份任務書開始討論，你不用再做別的事。若本人沒有要求開始討論，照常回答，不要加標記。`;
 
 // A native controller owns ONE conversation and its queue. Selecting a different
 // conversation changes the projection, not the lifetime of that native work.
@@ -29,6 +48,9 @@ export function createConversationController({
   const rooms = new Map(),
     controllers = new Set(),
     locked = new Set();
+  // A turn whose reply may start the armed discussion, and why a requested start did not happen.
+  const armedDiscussions = new Map(),
+    discussionNotices = new Map();
   const continuations = new Map(),
     continuationTasks = new Set(),
     continuationStates = new Map();
@@ -65,6 +87,7 @@ export function createConversationController({
         : {}),
       messages: d ? d.project(s.messages ?? []) : s.messages,
       discussion: ds,
+      ...(discussionNotices.has(controller) ? {error: s.error ?? discussionNotices.get(controller)} : {}),
       ...(d?.busy ? {busy: true, status: ds.status === 'stopping' ? 'stopping' : 'working'} : {})
     };
   };
@@ -121,6 +144,7 @@ export function createConversationController({
           if (controller) {
             historyVersions.set(controller, {});
             attention.observe(projected(controller));
+            if (armedDiscussions.has(controller)) void checkArmedDiscussion(controller);
           }
           onChange();
         }
@@ -138,8 +162,7 @@ export function createConversationController({
       workspace: s.workspace,
       busy: !!s.busy,
       status: s.status,
-      // A discussion brief waiting for the person counts as something to confirm in this room.
-      pendingQuestions: (s.questions?.length ?? 0) + (s.discussion?.status === 'awaiting-confirmation' ? 1 : 0)
+      pendingQuestions: s.questions?.length ?? 0
     };
   };
   // Project the existing live owners, never saved history or only the selected room.
@@ -1101,80 +1124,97 @@ export function createConversationController({
       controllers.clear();
     }
   };
-  api.discussionStart = async data => {
-    const controller = target(data),
+  // Resolve the person's discussion settings before anything is sent, so a bad setting fails their message.
+  const discussionSettings = async (controller, settings) => {
+    const s = controller.state;
+    if (!discussionModes[settings?.mode]) throw Error('討論模式無效。');
+    const catalog = (await api.models()).models;
+    const choose = choice => {
+      const model = catalog.find(m => m.model === choice.model && m.available !== false);
+      if (!model) throw Error('參與模型目前不在可用原生清單，未換模。');
+      const effort = choice.effort || model.defaultReasoningEffort || null,
+        efforts = (model.supportedReasoningEfforts ?? []).map(x => (typeof x === 'string' ? x : x.reasoningEffort));
+      if (effort && !efforts.includes(effort)) throw Error('參與模型不支援所選推理程度。');
+      return {
+        model: model.model,
+        displayName: model.displayName,
+        effort,
+        ...(model.nativeModels ? {nativeModels: model.nativeModels} : {})
+      };
+    };
+    if (!Array.isArray(settings.participants) || settings.participants.length < 2)
+      throw Error('請選擇至少兩個參與者。');
+    const participants = await Promise.all(
+      settings.participants.map(async (p, i) => {
+        if (p.route && p.route !== 'api') throw Error('討論參與者路線無效。');
+        if (p.route === 'api' && !discussionApi) throw Error('此版本未接通討論 API。');
+        return {...(p.route === 'api' ? await discussionApi.resolve(p) : choose(p)), id: `p${i + 1}`};
+      })
+    );
+    return {
+      mode: settings.mode,
+      includeContext: settings.includeContext !== false,
+      participants,
+      facilitator: {...choose({model: s.model, effort: s.effort}), id: 'host'}
+    };
+  };
+  // Starts a discussion from a brief the main model wrote; `settings` may be raw or already resolved.
+  api.discussionStart = async ({threadId, text, brief, settings}) => {
+    const controller = target({threadId}),
       s = controller.state;
     noDiscussion(controller);
     locked.add(controller);
     try {
+      if (!settings?.facilitator) settings = await discussionSettings(controller, settings);
       if (!(await safelyIdle(controller, true)))
         throw Error('請先結束或查明這個聊天室的原工作、核准與待送訊息，再開始討論。');
       await loadDiscussion(controller);
-      const catalog = (await api.models()).models;
-      const choose = choice => {
-        const model = catalog.find(m => m.model === choice.model && m.available !== false);
-        if (!model) throw Error('參與模型目前不在可用原生清單，未換模。');
-        const effort = choice.effort || model.defaultReasoningEffort || null,
-          efforts = (model.supportedReasoningEfforts ?? []).map(x => (typeof x === 'string' ? x : x.reasoningEffort));
-        if (effort && !efforts.includes(effort)) throw Error('參與模型不支援所選推理程度。');
-        return {
-          model: model.model,
-          displayName: model.displayName,
-          effort,
-          ...(model.nativeModels ? {nativeModels: model.nativeModels} : {})
-        };
-      };
-      if (!Array.isArray(data.participants) || data.participants.length < 2) throw Error('請選擇至少兩個參與者。');
-      const participants = await Promise.all(
-        data.participants.map(async (p, i) => {
-          if (p.route && p.route !== 'api') throw Error('討論參與者路線無效。');
-          if (p.route === 'api' && !discussionApi) throw Error('此版本未接通討論 API。');
-          return {...(p.route === 'api' ? await discussionApi.resolve(p) : choose(p)), id: `p${i + 1}`};
-        })
-      );
-      const facilitator = {...choose({model: s.model, effort: s.effort}), id: 'host'};
-      const source = discussion(controller).project(s.messages ?? []);
-      const attachments = [],
-        explicit = new Set(data.attachmentIds ?? []),
-        ids = new Set([
-          ...explicit,
-          ...(data.includeContext !== false ? source.flatMap(m => (m.attachments ?? []).map(a => a.id)) : [])
-        ]);
-      for (const id of ids) {
-        const a = await (explicit.has(id)
-          ? sessionAttachment(s.workspace, s.previousWorkspaces, s.threadId, id)
-          : messageAttachment(s, id));
-        if (!a.textPath) {
-          if (explicit.has(id))
-            throw Error('討論目前只帶入文字與已擷取文字的文件；圖片／影音請在一般原生對話處理，未假裝已閱讀。');
-          attachments.push({...a, text: null, warning: '本次未帶入原始圖片／影音內容，不能宣稱看過。'});
-          continue;
+      const source = discussion(controller).project(s.messages ?? []),
+        attachments = [];
+      if (settings.includeContext)
+        for (const id of new Set(source.flatMap(m => (m.attachments ?? []).map(a => a.id)))) {
+          const a = await messageAttachment(s, id);
+          if (!a.textPath) {
+            attachments.push({...a, text: null, warning: '本次未帶入原始圖片／影音內容，不能宣稱看過。'});
+            continue;
+          }
+          const content = await readPresentedFile(a.workspace, a.textPath);
+          attachments.push({...a, text: content.bytes.toString('utf8')});
         }
-        const content = await readPresentedFile(a.workspace, a.textPath);
-        attachments.push({...a, text: content.bytes.toString('utf8')});
-      }
       return discussion(controller).start({
-        mode: data.mode,
-        text: data.text,
-        participants,
-        facilitator,
+        mode: settings.mode,
+        text,
+        brief,
+        participants: settings.participants,
+        facilitator: settings.facilitator,
         workspace: s.workspace,
-        source: discussionTranscript(source),
         attachments,
-        reviewTarget:
-          data.reviewTarget ??
-          [...source].reverse().find(m => m.role === 'assistant' && !m.partial && !m.streaming)?.text,
-        includeContext: data.includeContext !== false,
         afterMessageId: s.messages?.at(-1)?.id ?? null
       });
     } finally {
       locked.delete(controller);
     }
   };
-  api.discussionConfirm = data => {
-    const c = target(data);
-    if (!discussion(c)) throw Error('這個聊天室沒有進行中的討論。');
-    return discussion(c).confirm();
+  // One look per armed turn: when it ends, a reply ending in the start mark begins the discussion with the brief.
+  const checkArmedDiscussion = async controller => {
+    const armed = armedDiscussions.get(controller),
+      s = controller.state;
+    if (!armed || s.busy || ['working', 'connecting'].includes(s.status)) return;
+    armedDiscussions.delete(controller);
+    const reply = (s.messages ?? [])
+      .slice(armed.after)
+      .reverse()
+      .find(m => m.role === 'assistant' && !m.partial && !m.streaming);
+    const text = typeof reply?.text === 'string' ? reply.text : '';
+    if (['failed', 'interrupted', 'uncertain'].includes(s.status) || !DISCUSSION_MARK.test(text)) return;
+    try {
+      const brief = text.replace(DISCUSSION_MARK, '').trim();
+      if (!brief) throw Error('主模型沒有寫出任務書。');
+      await api.discussionStart({threadId: s.threadId, text: armed.text, brief, settings: armed.settings});
+    } catch (error) {
+      discussionNotices.set(controller, `討論未開始：${error.message}`);
+      onChange();
+    }
   };
   api.discussionMessage = data => {
     const c = target(data);
@@ -1201,20 +1241,29 @@ export function createConversationController({
       return original(data);
     };
   }
-  api.send = async data => {
+  api.send = async ({discussion: armedSettings, ...data}) => {
     const source = rooms.get(data?.threadId);
     if (source) await cancelContinuation(source, '收到新的真人訊息，已取消先前換房要求。');
     const c = target(data);
     noDiscussion(c);
     continuationStates.delete(c);
+    discussionNotices.delete(c);
+    armedDiscussions.delete(c);
+    const settings = armedSettings?.mode ? await discussionSettings(c, armedSettings) : null;
+    if (settings) await loadDiscussion(c);
     const d = discussion(c);
     if (!d) return c.send(data);
     locked.add(c);
     let handoff;
     try {
-      handoff = await d.handoff(data.text);
+      handoff = await d.handoff(data.text, settings ? discussionNote(settings) : '');
+      const after = c.state.messages?.length ?? 0;
       const result = await c.send({...data, text: handoff.text});
       if (result.sent === false && !result.queued) await handoff.rejected?.();
+      else if (settings && !result.queued) {
+        armedDiscussions.set(c, {settings, text: data.text, after});
+        void checkArmedDiscussion(c);
+      }
       return result;
     } catch (error) {
       if (error.notSent === true) await handoff?.rejected?.();

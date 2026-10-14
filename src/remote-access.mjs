@@ -251,9 +251,7 @@ const reads = new Set([
   '/api/browser/download'
 ]);
 const writes = new Set([
-  '/api/discussion/start',
   '/api/discussion/message',
-  '/api/discussion/confirm',
   '/api/gemini/accounts/refresh-all',
   '/api/dictation/transcribe',
   '/api/open',

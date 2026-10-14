@@ -621,9 +621,7 @@ export async function startDesktop({
         return json(200, await updateProject(root, data, (await controller.sessions()).sessions));
       if (url.pathname === '/api/attention/read') return json(200, controller.markViewed(data));
       const routes = {
-        '/api/discussion/start': 'discussionStart',
         '/api/discussion/message': 'discussionMessage',
-        '/api/discussion/confirm': 'discussionConfirm',
         '/api/fork': 'fork',
         '/api/queue': 'queue',
         '/api/open': 'open',

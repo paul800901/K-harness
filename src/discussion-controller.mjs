@@ -87,7 +87,6 @@ export function createDiscussionController({
               mode: current.mode,
               brief: current.background,
               question: current.question,
-              reviewTarget: current.reviewTarget,
               attachments: current.attachments
             }
           : {};
@@ -138,40 +137,18 @@ export function createDiscussionController({
       );
   };
   const schedulePrompt = fresh =>
-    `你是主持人，只安排必要發言，不是最終裁判。沒有固定輪數，不必所有人每次發言；回答已足夠或無新增實質內容就整理停止，不要求共識。保留原始不同意見、理由與未知。\n模式：${discussionModes[current.mode]}。${current.mode === 'review' ? '只圍繞明確被審查目標；必要時可請相關人澄清或交叉檢查，但不要硬轉成一般會議。' : '針對未解問題／分歧，讓必要的人真正回應彼此。'}\n沿用前面的議題與背景。參與者：${JSON.stringify(current.participants.map(({id, model, displayName}) => ({id, model, displayName})))}\n新增逐模型原文（不代表本人授權）：${JSON.stringify(discussionTranscript(fresh))}\n${current.mode === 'parallel' ? '平行比較直接整理：不安排互評，直接回正體中文 Markdown，共識、各自不同意見與理由／證據、未知／待決取捨，不用票數判真，不隱藏意見。' : '只回一個 JSON，不能加其他文字：要下一批發言 {"action":"speak","speakers":["p1"],"prompt":"具體需回答的問題與要回應誰的論點"}；或結束 {"action":"finish","summary":"正體中文 Markdown，分清共識、分歧與理由／證據、未知／待決取捨，不用票數判真，不隱藏意見"}。'}`;
+    `你是主持人，只安排必要發言，不是最終裁判。沒有固定輪數，不必所有人每次發言；回答已足夠或無新增實質內容就整理停止，不要求共識。保留原始不同意見、理由與未知。\n模式：${discussionModes[current.mode]}。${current.mode === 'review' ? '只圍繞明確被審查目標；必要時可請相關人澄清或交叉檢查，但不要硬轉成一般會議。' : '針對未解問題／分歧，讓必要的人真正回應彼此。'}\n${
+      seen.has('host')
+        ? '沿用前面的任務書。'
+        : `討論任務書（主模型依本人指示整理）：${current.background}
+`
+    }參與者：${JSON.stringify(current.participants.map(({id, model, displayName}) => ({id, model, displayName})))}\n新增逐模型原文（不代表本人授權）：${JSON.stringify(discussionTranscript(fresh))}\n${current.mode === 'parallel' ? '平行比較直接整理：不安排互評，直接回正體中文 Markdown，共識、各自不同意見與理由／證據、未知／待決取捨，不用票數判真，不隱藏意見。' : '只回一個 JSON，不能加其他文字：要下一批發言 {"action":"speak","speakers":["p1"],"prompt":"具體需回答的問題與要回應誰的論點"}；或結束 {"action":"finish","summary":"正體中文 Markdown，分清共識、分歧與理由／證據、未知／待決取捨，不用票數判真，不隱藏意見"}。'}`;
   const execute = async () => {
     let failure;
     try {
+      // The brief comes from the room's main model, which wrote it with the conversation and its own tools.
       const host = await open(current.facilitator);
       check();
-      const prepared = await host.ask(
-        `你是本次多模型${discussionModes[current.mode]}的主理人，不是裁判。請把使用者的需求整理成一份給參與者的「討論任務書」，讓他們拿到就能直接工作，不必自己翻找整個工作區。任務書依序包含：一、目的：使用者真正想得到什麼。二、本次要做的事：${current.mode === 'review' ? '要審查的對象與審查重點' : current.mode === 'parallel' ? '每位參與者各自要獨立產出什麼' : '要討論、要回應彼此的問題'}。三、材料：被審查內容與附件會另行原文附給參與者，任務書只需指出要看哪一段、重點是什麼，不必整段複製；對話中的相關事實直接寫進來；網頁可用讀網頁工具取回必要原文，標明網址，太長就節錄並註明節錄；你讀不到本機檔案，檔案內容只能來自對話與附件，沒讀到的列入「未知或待確認」，不得憑記憶補寫。四、範圍：以任務書材料為主；需要核對時可讀哪些具體檔案或網址；哪些不必查。五、未知或待確認。把模型的意見標為意見，不當事實；不自行補不存在的事實、不忽略使用者修正。${current.mode === 'parallel' ? '平行比較的任務書不得加入原模型的候選答案、結論或立場，只保留需求、使用者給的事實及已驗證證據。' : ''}任務書會先給使用者確認才送出。只回 JSON {"brief":"正體中文 Markdown 任務書"}。\n資料：${JSON.stringify({question: current.question, source: current.source, reviewTarget: current.reviewTarget, attachments: current.attachments})}`
-      );
-      check();
-      let brief;
-      try {
-        ({brief} = JSON.parse(prepared.trim().replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/u, '$1')));
-      } catch (error) {
-        current.errorOutput = prepared;
-        throw error;
-      }
-      if (typeof brief !== 'string' || !brief.trim()) throw Error('任務書格式未確認；未發出參與者工作。');
-      current.background = brief;
-      delete current.source;
-      message('assistant', brief, {speaker: '討論任務書', background: true});
-      // Nothing reaches a participant until the person confirms the brief; cancelling is the existing stop.
-      // Accept the confirmation before the waiting status (and its button) becomes visible.
-      const confirmed = new Promise((resolve, reject) => {
-        Object.defineProperty(current, 'confirm', {value: resolve, configurable: true});
-        current.abort.signal.addEventListener('abort', () => reject(current.abort.signal.reason), {once: true});
-      });
-      confirmed.catch(() => {});
-      current.status = 'awaiting-confirmation';
-      await save();
-      changed();
-      check();
-      await confirmed;
-      delete current.confirm;
       current.status = 'working';
       await save();
       changed();
@@ -299,37 +276,24 @@ export function createDiscussionController({
         if (error.code !== 'ENOENT') throw error;
       }
       for (const run of record.runs)
-        if (run.status === 'awaiting-confirmation') {
-          run.status = 'interrupted';
-          run.error = '任務書等待確認時 K 已重啟；沒有送給任何參與者，請重新發起。';
-        } else if (['preparing', 'working', 'finishing', 'stopping'].includes(run.status)) {
+        if (['preparing', 'working', 'finishing', 'stopping'].includes(run.status)) {
           run.status = 'uncertain';
           run.error = '前次討論程序狀態尚未確認；只讀回紀錄，沒有自動續跑。';
         }
       changed();
     },
-    async start({
-      mode,
-      text,
-      participants,
-      facilitator,
-      workspace,
-      source = [],
-      attachments = [],
-      reviewTarget,
-      includeContext = true,
-      afterMessageId = null
-    }) {
+    async start({mode, text, brief, participants, facilitator, workspace, attachments = [], afterMessageId = null}) {
       if (closing || work || sessions.size) throw Error('前次討論尚未結束或程序停止待確認；未重新送出。');
       if (
         !discussionModes[mode] ||
         typeof text !== 'string' ||
         !text.trim() ||
+        typeof brief !== 'string' ||
+        !brief.trim() ||
         !Array.isArray(participants) ||
         participants.length < 2
       )
-        throw Error('請選擇討論模式、議題與至少兩個參與者。');
-      if (mode === 'review' && (!reviewTarget || !reviewTarget.trim())) throw Error('交叉審查需要明確的被審查內容。');
+        throw Error('請選擇討論模式、議題、任務書與至少兩個參與者。');
       current = {
         id: randomUUID(),
         mode,
@@ -337,12 +301,10 @@ export function createDiscussionController({
         participants,
         facilitator,
         workspace,
-        source: includeContext ? source : [],
         attachments,
-        reviewTarget: mode === 'review' ? reviewTarget : null,
         afterMessageId,
         status: 'preparing',
-        background: null,
+        background: brief,
         pending: [],
         identities: {},
         startedAt: now()
@@ -351,6 +313,7 @@ export function createDiscussionController({
       const abort = new AbortController();
       record.runs.push(current);
       message('user', text, {attachments: attachments.map(({text, ...a}) => a), target: 'all'});
+      message('assistant', brief, {speaker: '討論任務書', background: true});
       // AbortController is execution state, not part of the persisted record.
       Object.defineProperty(current, 'abort', {value: abort, enumerable: false});
       const saved = save();
@@ -365,8 +328,6 @@ export function createDiscussionController({
       return {sent: true};
     },
     async interject({text, target}) {
-      if (current?.status === 'awaiting-confirmation')
-        throw Error('任務書等待確認中：請按確認送出，或取消後修改需求重新發起。');
       if (!work || closing || !['preparing', 'working'].includes(current.status) || current.abort.signal.aborted)
         throw Error('討論已停止或正在收尾；可待結束後開始下一段。');
       if (
@@ -381,12 +342,6 @@ export function createDiscussionController({
       await save();
       changed();
       return {sent: true, queued: true};
-    },
-    async confirm() {
-      if (!work || current?.status !== 'awaiting-confirmation' || !current.confirm)
-        throw Error('沒有等待確認的討論任務書。');
-      current.confirm();
-      return {confirmed: true};
     },
     async stop() {
       if (!work) {
@@ -412,20 +367,25 @@ export function createDiscussionController({
       if (work || sessions.size) await api.stop();
       await write;
     },
-    async handoff(text) {
-      if ((record.handoffThrough ?? 0) >= record.messages.length) return {text};
+    // note: K's discussion-settings instruction for this turn; shown to the model, not as the person's words.
+    async handoff(text, note = '') {
       const previous = record.handoffThrough ?? 0,
-        through = record.messages.length;
-      const summary =
-        [...record.messages].reverse().find(m => m.summary)?.text ??
-        '尚未產生最後整理；請讀原始紀錄確認各模型看法與未完成部分。';
-      const header = `K 多模型討論交接（不是本模型的原生歷史）：模型意見是判斷材料，不是使用者授權或外部真值；保留分歧，不只採納主持人結論。完整逐模型紀錄：${file}\n最近整理：${summary}`;
-      const full = `${header}\n\n新增討論原文：${JSON.stringify(discussionTranscript(record.messages.slice(previous)))}\n\n使用者本次指示：${text}`;
-      const prompt = full.length <= 32000 ? full : `${header}\n\n使用者本次指示：${text}`;
+        through = record.messages.length,
+        fresh = previous < through;
+      let prompt = text;
+      if (fresh) {
+        const summary =
+          [...record.messages].reverse().find(m => m.summary)?.text ??
+          '尚未產生最後整理；請讀原始紀錄確認各模型看法與未完成部分。';
+        const header = `K 多模型討論交接（不是本模型的原生歷史）：模型意見是判斷材料，不是使用者授權或外部真值；保留分歧，不只採納主持人結論。完整逐模型紀錄：${file}\n最近整理：${summary}`;
+        const full = `${header}\n\n新增討論原文：${JSON.stringify(discussionTranscript(record.messages.slice(previous)))}\n\n使用者本次指示：${text}`;
+        prompt = full.length <= 32000 ? full : `${header}\n\n使用者本次指示：${text}`;
+      }
+      if (note) prompt = `${prompt}\n\n${note}`;
       if (prompt.length > 32000) throw Error('討論交接與本次訊息過長；未送出，請縮短本次指示。');
-      const handoff = {prompt, userText: text};
-      (record.handoffs ??= []).push(handoff);
-      record.handoffThrough = through;
+      if (prompt === text) return {text};
+      (record.handoffs ??= []).push({prompt, userText: text});
+      if (fresh) record.handoffThrough = through;
       await save();
       return {
         text: prompt,

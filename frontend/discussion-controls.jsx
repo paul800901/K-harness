@@ -22,17 +22,7 @@ export function useDiscussionConfig(threadId) {
   return [config, update];
 }
 
-export function DiscussionControls({
-  state,
-  models = [],
-  config,
-  onChange,
-  loadModels,
-  onCatalog,
-  disabled,
-  onConfirm,
-  onCancel
-}) {
+export function DiscussionControls({state, models = [], config, onChange, loadModels, onCatalog, disabled}) {
   const [expanded, setExpanded] = useState(false);
   const [catalogError, setCatalogError] = useState('');
   const [apiModels, setApiModels] = useState([]),
@@ -150,20 +140,13 @@ export function DiscussionControls({
             {discussionModes[d.mode]} · {discussionStatus[d.status] ?? d.status}
           </small>
         )}
-        {d?.status === 'awaiting-confirmation' && (
-          <span className="discussion-confirm">
-            <button type="button" className="primary" onClick={onConfirm}>
-              確認送出
-            </button>
-            <button type="button" onClick={onCancel}>
-              取消
-            </button>
-          </span>
-        )}
       </div>
       {!running && config.mode !== 'normal' && expanded && (
         <div className="discussion-settings">
-          <p>由目前主模型主持，AI 自動安排與整理，保留不同意見。只討論，不自動執行工作。</p>
+          <p>
+            設定好後照常跟主模型對話；要開始時告訴它「開始討論」，它會整理任務書（含它讀到的檔案與網頁）並用這組設定發起。AI
+            自動安排與整理，保留不同意見；只討論，不自動執行工作。
+          </p>
           {participants.map((p, index) => {
             const selected =
                 p.route === 'api'
@@ -272,22 +255,9 @@ export function DiscussionControls({
               checked={config.includeContext !== false}
               onChange={e => change({includeContext: e.target.checked})}
             />
-            帶入前面對話，由 AI 整理背景
+            把前面對話的文字附件交給參與者
           </label>
-          {config.mode === 'parallel' && (
-            <small>首答互不可見。不帶入前面對話時，只依新問題與本次文字附件獨立回答。</small>
-          )}
-          {config.mode === 'review' && (
-            <label className="discussion-review">
-              <span>被審查內容（留白時用最近完整回覆）</span>
-              <textarea
-                aria-label="被審查內容"
-                value={config.reviewTarget ?? ''}
-                onChange={e => change({reviewTarget: e.target.value})}
-                maxLength={16000}
-              />
-            </label>
-          )}
+          {config.mode === 'parallel' && <small>首答互不可見，各自依任務書獨立回答。</small>}
           <small>
             原生討論依各核心已接通能力處理，不代表都能任意讀取檔案。API
             討論可在本次工作區唯讀搜尋及讀取，不會寫入檔案或派工；API 呼叫依供應商計費。

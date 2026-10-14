@@ -25,7 +25,9 @@ const models = [
   supportedReasoningEfforts: [{reasoningEffort: 'medium'}, {reasoningEffort: 'high'}]
 }));
 let seq = 0,
-  slow = false;
+  slow = false,
+  noMark = false,
+  nextBrief = '原始需求與重要修正已帶入。';
 const calls = [],
   pending = new Set();
 const nativeFactory = ({onChange}) => {
@@ -78,6 +80,20 @@ const nativeFactory = ({onChange}) => {
         createdAt: new Date().toISOString()
       });
       onChange();
+      // With discussion settings armed, the fake main model answers with a brief and the start mark.
+      if (data.text.includes('K 討論設定')) {
+        Object.assign(state, {busy: true, status: 'working'});
+        setTimeout(() => {
+          state.messages.push({
+            id: `reply-${calls.length}`,
+            role: 'assistant',
+            text: noMark ? '好的，先不開始討論。' : `${nextBrief}\n\n\`\`\`k-discussion\nstart\n\`\`\``,
+            createdAt: new Date().toISOString()
+          });
+          Object.assign(state, {busy: false, status: 'completed'});
+          onChange();
+        }, 20);
+      }
       return {sent: true};
     },
     async stop() {
@@ -94,14 +110,12 @@ const discussionFactory = async ({selection}) => ({
   async ask(prompt) {
     calls.push({op: 'discussion', id: selection.id, prompt});
     if (selection.id === 'host')
-      return prompt.startsWith('你是本次多模型')
-        ? '{"brief":"原始需求與重要修正已帶入。"}'
-        : prompt.includes('平行比較直接整理')
-          ? '## 共識\n目標清楚。\n## 分歧\nSol 偏重速度，Opus 偏重資訊。\n## 未知\n仍需查證。'
-          : JSON.stringify({
-              action: 'finish',
-              summary: '## 共識\n目標清楚。\n## 分歧\nSol 偏重速度，Opus 偏重資訊。\n## 未知\n仍需查證。'
-            });
+      return prompt.includes('平行比較直接整理')
+        ? '## 共識\n目標清楚。\n## 分歧\nSol 偏重速度，Opus 偏重資訊。\n## 未知\n仍需查證。'
+        : JSON.stringify({
+            action: 'finish',
+            summary: '## 共識\n目標清楚。\n## 分歧\nSol 偏重速度，Opus 偏重資訊。\n## 未知\n仍需查證。'
+          });
     if (slow) await new Promise((resolve, reject) => pending.add(reject));
     return selection.id === 'p1' ? 'Sol 的原始觀點：重視速度。' : 'Opus 的原始觀點：重視資訊。';
   },
@@ -150,25 +164,20 @@ try {
   );
   await page.getByLabel('工作訊息', {exact: true}).fill('請比較速度與資訊的取捨');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  // The host's brief is shown and nothing reaches a participant until it is confirmed.
-  await page.getByRole('button', {name: '確認送出', exact: true}).waitFor();
-  await page.getByText('原始需求與重要修正已帶入。', {exact: true}).waitFor();
-  assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, 0);
-  await page.getByRole('button', {name: '確認送出', exact: true}).click();
+  // The settings ride with the message to the main model; its brief starts the discussion.
+  assert.match(calls.filter(c => c.op === 'native-send').at(-1).text, /K 討論設定.*平行比較/su);
+  assert.equal(await page.getByText('K 討論設定', {exact: false}).count(), 0, 'the person sees only their own words');
+  await page.getByText('↳ 依此任務書開始討論', {exact: true}).first().waitFor();
+  assert.equal(await page.getByText('k-discussion', {exact: false}).count(), 0, 'the start mark reads as a note');
   await page.getByText('Sol 的原始觀點：重視速度。', {exact: true}).waitFor();
   await page.getByText('Opus 的原始觀點：重視資訊。', {exact: true}).waitFor();
   await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();
   assert.equal((await app.controller.sessions()).sessions.length, 1);
-  assert.equal(
-    calls.some(c => c.op === 'native-send'),
-    false
-  );
   await page.screenshot({path: path.join(out, 'discussion-desktop.png')});
   await mode.selectOption('review');
-  await page.getByLabel('被審查內容', {exact: true}).fill('要審查的指定方案');
+  nextBrief = '要審查的指定方案：首頁建議全文。';
   await page.getByLabel('工作訊息', {exact: true}).fill('請審查指定方案');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.waitForFunction(
     () => document.querySelector('.discussion-toolbar small')?.textContent === '交叉審查 · 已整理'
   );
@@ -177,7 +186,6 @@ try {
   slow = true;
   await page.getByLabel('工作訊息', {exact: true}).fill('開始一場需要插話的討論');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByRole('button', {name: '確認送出', exact: true}).click();
   await page.getByLabel('補充給', {exact: true}).waitFor();
   await page.getByLabel('補充給', {exact: true}).selectOption('p2');
   await page.getByLabel('工作訊息', {exact: true}).fill('請 Opus 注意新增限制');
@@ -188,15 +196,15 @@ try {
     () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
   );
   slow = false;
-  // Cancelling a waiting brief sends nothing to any participant.
-  const askedBeforeCancel = calls.filter(c => ['p1', 'p2'].includes(c.id)).length;
-  await page.getByLabel('工作訊息', {exact: true}).fill('這次先不要討論');
+  // A reply without the start mark only answers; no discussion starts.
+  const askedBefore = calls.filter(c => ['p1', 'p2'].includes(c.id)).length;
+  noMark = true;
+  await page.getByLabel('工作訊息', {exact: true}).fill('先聊聊，不用討論');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByRole('button', {name: '取消', exact: true}).click();
-  await page.waitForFunction(
-    () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
-  );
-  assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, askedBeforeCancel);
+  await page.getByText('好的，先不開始討論。', {exact: true}).waitFor();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, askedBefore);
+  noMark = false;
   await mode.selectOption('normal');
   await page.getByLabel('工作訊息', {exact: true}).fill('回到單模型，先不要實作');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
@@ -228,7 +236,8 @@ try {
           'existing room',
           'all modes',
           'all original model messages visible',
-          'explicit review target',
+          'settings ride with the message; brief from the main model starts the discussion',
+          'no start mark, no discussion',
           'targeted interjection',
           'whole discussion stop',
           'ordinary handoff',

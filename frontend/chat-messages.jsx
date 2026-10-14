@@ -76,6 +76,11 @@ export function NativeImage({src, alt, title}) {
     </span>
   );
 }
+// The main model's start mark for an armed discussion reads as a short note, not a code block.
+const discussionStartMark = {
+  CodeHeader: () => null,
+  SyntaxHighlighter: () => <p className="discussion-start-mark">↳ 依此任務書開始討論</p>
+};
 export function Markdown() {
   return (
     <MarkdownTextPrimitive
@@ -84,6 +89,7 @@ export function Markdown() {
       urlTransform={preserveNativeUrl}
       smooth={false}
       components={{CodeHeader, a: NativeLink, img: NativeImage}}
+      componentsByLanguage={{'k-discussion': discussionStartMark}}
     />
   );
 }
