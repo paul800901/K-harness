@@ -275,7 +275,8 @@ test('a new event-stream client does not swallow a change other screens have not
   }
 });
 
-test('a screen that stops reading is disconnected instead of buffering events without bound', async () => {
+// A desktop server with a stub controller whose state the test changes directly.
+async function streamApp(options) {
   const root = await mkdtemp(path.join(scratchBase, 'audit-sse-slow-'));
   const stubLogin = () => ({
     status: async () => ({}),
@@ -291,7 +292,7 @@ test('a screen that stops reading is disconnected instead of buffering events wi
     root,
     executable: 'x',
     port: 0,
-    maxPendingEventBytes: 256 * 1024,
+    ...options,
     controllerFactory: options => {
       onChange = options.onChange;
       return {
@@ -309,7 +310,17 @@ test('a screen that stops reading is disconnected instead of buffering events wi
   });
   const boot = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
   const cookie = boot.headers.get('set-cookie').split(';')[0];
-  const url = new URL('/api/events', app.origin);
+  return {app, state, cookie, url: new URL('/api/events', app.origin), change: () => onChange()};
+}
+
+test('a screen that stops reading is disconnected instead of buffering events without bound', async () => {
+  const {
+    app,
+    state,
+    cookie,
+    url,
+    change: onChange
+  } = await streamApp({maxPendingEventBytes: 256 * 1024, maxBehindMs: 500});
   // A raw socket that never reads models a stalled phone: the TCP window fills and the server's buffer grows.
   const stalled = net.connect(Number(url.port), url.hostname);
   stalled.on('error', () => {});
@@ -344,6 +355,41 @@ test('a screen that stops reading is disconnected instead of buffering events wi
   } finally {
     stalled.destroy();
     healthy.destroy();
+    await app.close();
+  }
+});
+
+test('a screen briefly behind by more than the limit is not cut off once it catches up', async () => {
+  const {app, state, cookie, url, change} = await streamApp({maxPendingEventBytes: 256 * 1024, maxBehindMs: 3000});
+  // A raw socket so that pausing really stops reading, as a browser busy parsing a big update does.
+  const screen = net.connect(Number(url.port), url.hostname);
+  screen.on('error', () => {});
+  await new Promise(resolve => screen.once('connect', resolve));
+  let received = '',
+    closed = false;
+  screen.on('data', chunk => (received = (received + chunk.toString('latin1')).slice(-4096)));
+  screen.once('close', () => (closed = true));
+  screen.write(`GET /api/events HTTP/1.1\r\nHost: ${url.host}\r\nCookie: ${cookie}\r\n\r\n`);
+  try {
+    await sleep(100);
+    screen.pause();
+    // A big update is still on its way while later ones queue behind it, past the limit for a moment.
+    state.note = 'big'.padEnd(32 * 1024 * 1024, 'x');
+    change();
+    await sleep(100);
+    for (let i = 0; i < 8; i++) {
+      state.note = `mid-${i}`.padEnd(200 * 1024, 'x');
+      change();
+      await sleep(100);
+    }
+    state.note = 'small-4';
+    change();
+    await sleep(100);
+    screen.resume();
+    while (!received.includes('small-4') && !closed) await sleep(20);
+    assert.equal(closed, false, 'the screen kept its connection');
+  } finally {
+    screen.destroy();
     await app.close();
   }
 });

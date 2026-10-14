@@ -6,6 +6,11 @@ import {createDiscussionWebReader, discussionWebTools} from './discussion-web-to
 // make the provider reject the whole request with HTTP 400. It is withheld, not truncated, so the model knows
 // it saw nothing and narrows the request instead.
 const MAX_TOOL_RESULT_CHARS = 60000;
+// Every request resends the participant's whole conversation, so reads add up across tool rounds and discussion
+// rounds. Past this total a further result is withheld the same way instead of the provider rejecting the
+// request. Counted in characters: Chinese text is about one token per character, so this stays inside a
+// 128k-token context (e.g. DeepSeek), not only the 200k+ of GLM and Kimi.
+const MAX_CONVERSATION_CHARS = 120000;
 
 // Each participant owns its conversation. This is a tool-call transport, not a
 // worker dispatcher: there is no shell, write tool, retry or provider fallback.
@@ -179,6 +184,11 @@ export async function openDiscussionApiSession({
               ...(Number.isInteger(result?.totalLines) ? {totalLines: result.totalLines} : {}),
               ...(Array.isArray(result?.entries) ? {entries: result.entries.length} : {}),
               ...(Array.isArray(result?.matches) ? {matches: result.matches.length} : {})
+            });
+          const used = messages.reduce((sum, m) => sum + JSON.stringify(m).length, 0);
+          if (used + content.length > MAX_CONVERSATION_CHARS)
+            content = JSON.stringify({
+              error: `本次討論累積讀取已達上限（已用約 ${used} 字，這次結果約 ${content.length} 字），這次結果未送出；請依已讀內容作答，並在答案中說明還需要讀什麼。`
             });
           messages.push({role: 'tool', tool_call_id: call.id, content});
         }
