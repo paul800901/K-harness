@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
@@ -883,6 +884,38 @@ test('a current Gemini run whose stop is unconfirmed is not reclassified as hist
   assert.notEqual(result.executionUnowned, true);
   await assert.rejects(bridge.close(), /尚未確認停止/);
   assert.notEqual((await bridge.list(false))[0].executionUnowned, true);
+});
+test('cancel releases an unconfirmed Gemini stop only after its root process is gone, never replaying it', async () => {
+  for (const rootAlive of [true, false]) {
+    // A finished child gives a PID with no live process; this process is certainly alive.
+    const pid = rootAlive ? process.pid : spawnSync(process.execPath, ['-e', '']).pid;
+    let runs = 0;
+    const bridge = await geminiBridge({
+      factory: () => ({
+        run: async o => {
+          runs++;
+          o.onStart(pid);
+          return {status: 'unresolved', settled: false, error: 'agy stop not confirmed'};
+        }
+      })
+    });
+    await bridge.start(args);
+    // A later, separate cancel: wait until the run has fully ended and no longer owns the process.
+    while ((await bridge.inspect({requestId: 'flash'})).observation?.execution !== 'unconfirmed')
+      await new Promise(resolve => setTimeout(resolve, 10));
+    const result = await bridge.cancel({requestId: 'flash'});
+    assert.equal(result.status, 'unresolved');
+    assert.equal(result.settled, false);
+    assert.equal(runs, 1);
+    if (rootAlive) {
+      assert.notEqual(result.executionUnowned, true);
+      await assert.rejects(bridge.close(), /尚未確認停止/);
+    } else {
+      assert.equal(result.executionUnowned, true);
+      assert.match(result.error, /主程序已確認結束/);
+      await bridge.close();
+    }
+  }
 });
 test('Gemini init failure does not disable Codex; no fallback call', async () => {
   let turns = 0;
