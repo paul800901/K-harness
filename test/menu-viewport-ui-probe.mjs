@@ -287,7 +287,7 @@ try {
         await record('sidebar-session-menu-bottom', last.locator('.row-menu-popup'), {
           open: () => safeOpen(last.locator('.row-menu-trigger'))
         });
-      // On a phone the menu is a bottom sheet that covers the next trigger; close it as a person would.
+      // On a phone the menu is a bottom sheet that covers the next trigger; close it before the next check.
       await page.keyboard.press('Escape');
     }
     const projectMenu = page.locator('.project-menu').last();

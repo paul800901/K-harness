@@ -132,7 +132,7 @@ try {
     'four-account desktop summary should not need scrolling'
   );
   receipt.checks.push(
-    'Claude/GPT/Gemini order, four compact rows, one active badge, four accounts and Done visible without scroll'
+    'Claude/GPT/Gemini order, four compact rows, one active badge, four accounts; Done reachable after scrolling the dialog body'
   );
   await page.screenshot({path: path.join(output, 'usage-desktop.png')});
   const b = usage.locator('[data-account-id="b"]');

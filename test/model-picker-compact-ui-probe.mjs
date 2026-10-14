@@ -195,6 +195,9 @@ try {
               ? '尚未登入 Gemini，請完成官方登入。'
               : '無法確認登入狀態，請稍後刷新。'
       };
+    // Like K, multi-account management is on with no saved account yet.
+    else if (url.pathname === '/api/gemini/accounts')
+      body = {enabled: true, activeAccountId: null, busy: false, loginPending: false, accounts: []};
     else if (url.pathname === '/api/gemini/login')
       body = {login: {status: 'opened'}, reason: '已開啟官方 Antigravity；請由本人完成登入。'};
     else if (url.pathname === '/api/claude/login') body = {...auth('claude'), login: claudeLogin};
@@ -569,7 +572,7 @@ try {
       `Gemini ${label}`
     );
     // Gemini sign-in is direct account enrollment; another account can be added while one is signed in.
-    assert.equal(await geminiRow.getByRole('button', {name: '新增 Gemini 帳號', exact: true}).count(), 1);
+    assert.equal(await geminiRow.getByRole('button', {name: '新增 Gemini 帳號', exact: true}).isEnabled(), true);
   }
   await accountSummary.click();
   assert.equal(await signedOutAccount.evaluate(el => el.open), false);

@@ -4,8 +4,8 @@ import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-import {_electron} from 'playwright';
 import {probeEvidenceDir} from './ui-probe.mjs';
+import {_electron} from 'playwright';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const output = probeEvidenceDir('voice-notices-20261001');
 await mkdir(output, {recursive: true});
@@ -20,9 +20,9 @@ execFileSync(
     'Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; ' +
       "$s.SelectVoiceByHints('NotSet', 'NotSet', 0, [Globalization.CultureInfo]'zh-TW'); " +
       "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, 'Sixteen', 'Mono'); " +
-      `$s.SetOutputToWaveFile('${wav}', $f); $s.Speak('這是本機語音聽寫測試，請把這句話寫進草稿。'); $s.Dispose()`
+      `$s.SetOutputToWaveFile('${wav.replaceAll("'", "''")}', $f); $s.Speak('這是本機語音聽寫測試，請把這句話寫進草稿。'); $s.Dispose()`
   ],
-  {stdio: 'ignore'}
+  {stdio: ['ignore', 'ignore', 'pipe']}
 );
 const env = {
   ...process.env,
