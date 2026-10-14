@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
-const output = path.join(root, '.runtime/engineering-notices-20261001/ui');
+const output = probeEvidenceDir('engineering-notices-20261001/ui');
 const server = await preview({preview: {host: '127.0.0.1', port: 5188, strictPort: true}});
 const native = "You've hit your session limit · resets 5:30pm (Asia/Taipei)";
 const state = {
@@ -31,7 +31,7 @@ const state = {
 const requests = [];
 let browser;
 try {
-  browser = await chromium.launch({headless: true, executablePath: process.env.K_UI_CHROMIUM});
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1920, height: 1080}});
   await page.addInitScript(state => {
     window.EventSource = class {

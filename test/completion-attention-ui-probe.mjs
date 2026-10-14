@@ -2,9 +2,11 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
-const output = path.resolve(process.env.K_ATTENTION_PROBE_OUTPUT ?? '.runtime/taskbar-attention-20261004/ui');
+const output = process.env.K_ATTENTION_PROBE_OUTPUT
+  ? path.resolve(process.env.K_ATTENTION_PROBE_OUTPUT)
+  : probeEvidenceDir('taskbar-attention-20261004/ui');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5197, strictPort: true}});
 const workspace = process.cwd(),
@@ -12,10 +14,7 @@ const workspace = process.cwd(),
   results = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],

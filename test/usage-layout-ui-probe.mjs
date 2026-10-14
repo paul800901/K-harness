@@ -2,12 +2,15 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
-const output = path.resolve(process.env.K_USAGE_PROBE_OUTPUT ?? '.runtime/usage-layout-20261003/ui-probe');
+const output = process.env.K_USAGE_PROBE_OUTPUT
+  ? path.resolve(process.env.K_USAGE_PROBE_OUTPUT)
+  : probeEvidenceDir('usage-layout-20261003/ui-probe');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5197, strictPort: true}});
+const fixtureNow = Date.parse('2026-10-03T12:30:00Z');
 const quota = (weekly, hourly, status = 'ready') => ({
   status,
   checkedAt: '2026-10-03T12:00:00Z',
@@ -57,11 +60,10 @@ const errors = [],
   requests = [],
   receipt = {passed: false, checks: []};
 try {
-  browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 920}});
+  // The fixture quotas are dated 2026-10-03; run the page clock from then so the result does not depend on the run date.
+  await page.clock.install({time: fixtureNow});
   page.setDefaultTimeout(5000);
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(initial => {
@@ -118,9 +120,12 @@ try {
   assert.equal(await rows.count(), 4);
   assert.equal(await rows.locator('.usage-current').count(), 1);
   assert.equal(await rows.locator('.usage-timestamps:visible').count(), 0);
-  const last = await rows.last().boundingBox(),
-    done = await dialog.getByRole('button', {name: '完成', exact: true}).boundingBox();
+  // Every account row shows its last official query time (AGENTS.md section 6), so the body may scroll;
+  // the rows stay on screen and Done is reachable within the dialog.
+  const last = await rows.last().boundingBox();
   assert.ok(last.y + last.height < 920);
+  await dialog.getByRole('button', {name: '完成', exact: true}).scrollIntoViewIfNeeded();
+  const done = await dialog.getByRole('button', {name: '完成', exact: true}).boundingBox();
   assert.ok(done.y + done.height < 920);
   assert.ok(
     await dialog.evaluate(e => e.scrollHeight <= e.clientHeight + 1),
@@ -171,11 +176,11 @@ try {
   assert.match(await c.innerText(), /未登入.*尚無可用額度資料/su);
   assert.match(await d.innerText(), /尚未確認/u);
   assert.match(await a.locator('summary').innerText(), /上次實查/u);
-  state.usage.gemini.accounts[0].quota.windows[1].resetsAt = Math.floor(Date.now() / 1000) - 1;
+  state.usage.gemini.accounts[0].quota.windows[1].resetsAt = Math.floor(fixtureNow / 1000) - 1;
   await send();
   await a.getByText(/目前額度待查詢/u).waitFor();
   assert.deepEqual(await a.locator('.gemini-usage-value b').allTextContents(), ['—', '—']);
-  state.usage.gemini.accounts[0].quota.checkedAt = new Date().toISOString();
+  state.usage.gemini.accounts[0].quota.checkedAt = new Date(fixtureNow + 1000).toISOString();
   await send();
   await a.getByText('0%', {exact: true}).waitFor();
   assert.deepEqual(await a.locator('.gemini-usage-value b').allTextContents(), ['0%', '—']);
@@ -199,6 +204,7 @@ try {
   await page.setViewportSize({width: 1440, height: 920});
   await send();
   const legacy = usage.getByRole('region', {name: 'Gemini / Antigravity 訂閱剩餘額度', exact: true});
+  await page.waitForFunction(() => !document.querySelector('.gemini-usage-account'));
   assert.equal(await rows.count(), 0);
   assert.match(await legacy.innerText(), /每週\s*97%/u);
   assert.match(await legacy.innerText(), /5 小時\s*0%/u);

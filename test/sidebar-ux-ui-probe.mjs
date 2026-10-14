@@ -3,10 +3,10 @@ import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {resolve} from 'node:path';
 import {mkdir, writeFile} from 'node:fs/promises';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
 const origin = 'http://127.0.0.1:5188',
-  out = resolve('.runtime/sidebar-ux-20261009/ui');
+  out = probeEvidenceDir('sidebar-ux-20261009/ui');
 await mkdir(out, {recursive: true});
 const server = spawn(
   process.execPath,
@@ -36,13 +36,7 @@ try {
     } catch {}
     await delay(100);
   }
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: resolve(
-      process.env.PLAYWRIGHT_BROWSERS_PATH ?? 'D:/K-harness/.runtime/playwright-browsers',
-      'chromium-1246/chrome-win64/chrome.exe'
-    )
-  });
+  browser = await launchProbeBrowser();
   for (const [theme, provider, model] of [
     ['light', 'codex', 'gpt-6-astra'],
     ['warm', 'claude', 'claude-opus-5-5'],

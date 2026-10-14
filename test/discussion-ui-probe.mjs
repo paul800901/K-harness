@@ -3,12 +3,12 @@
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 
-const out = path.resolve('.runtime/discussion-evidence');
+const out = probeEvidenceDir('discussion-evidence');
 await mkdir(out, {recursive: true});
 const root = await mkdtemp(path.join(out, 'ui-'));
 const models = [
@@ -136,7 +136,7 @@ try {
     localDictationFactory: () => ({state: {available: false}, close: async () => {}})
   });
   const a = await app.controller.open({model: 'gpt-6.1-sol'});
-  browser = await chromium.launch({channel: 'msedge', headless: true});
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 980}}),
     errors = [];
   page.on('pageerror', e => errors.push(e.message));

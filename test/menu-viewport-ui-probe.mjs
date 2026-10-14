@@ -1,11 +1,11 @@
 // Candidate viewport probe. Every backend route is fake and unexpected POSTs are rejected.
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const root = process.cwd(),
-  out = path.resolve('.runtime/menu-attachments-20261007');
+  out = probeEvidenceDir('menu-attachments-20261007');
 await mkdir(out, {recursive: true});
 const viewports = [
   {name: 'desktop-1440-1000-z1', width: 1440, height: 1000, scale: 100, remote: false},
@@ -92,10 +92,7 @@ const state = {
   }))
 };
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const vp of viewports) {
     const page = await browser.newPage({viewport: {width: vp.width, height: vp.height}});
     page.setDefaultTimeout(3500);
@@ -290,12 +287,15 @@ try {
         await record('sidebar-session-menu-bottom', last.locator('.row-menu-popup'), {
           open: () => safeOpen(last.locator('.row-menu-trigger'))
         });
+      // On a phone the menu is a bottom sheet that covers the next trigger; close it as a person would.
+      await page.keyboard.press('Escape');
     }
     const projectMenu = page.locator('.project-menu').last();
     if (await projectMenu.count()) {
       await record('sidebar-project-menu', projectMenu.locator('.row-menu-popup'), {
         open: () => safeOpen(projectMenu.locator('.row-menu-trigger'))
       });
+      if (vp.remote) await page.keyboard.press('Escape');
       if (vp.name === 'desktop-1440-1000-z1') {
         await safeOpen(projectMenu.locator('.row-menu-popup').getByRole('button', {name: '工作區詳細資訊'}));
         const details = page.getByRole('dialog', {name: '工作區詳細資訊'});

@@ -3,11 +3,11 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
-import {chromium} from 'playwright';
+import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
+import {launchProbeContext, probeEvidenceDir, probeTlsCertificate} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
-const base = path.resolve('.runtime/remote-reopen-20261007');
+const base = probeEvidenceDir('remote-reopen-20261007');
 await mkdir(base, {recursive: true});
 const root = await mkdtemp(path.join(base, 'probe-')),
   profile = path.join(root, 'browser-profile');
@@ -57,40 +57,32 @@ const app = await startDesktop({
   geminiLoginFactory: service
 });
 assert.equal(app.remoteOrigin, origin);
-const proxy = https.createServer(
-  {
-    key: await readFile('.runtime/mobile-remote/test-key.pem'),
-    cert: await readFile('.runtime/mobile-remote/test-cert.pem')
-  },
-  (req, res) => {
-    if (req.method === 'POST') posts.push(req.url);
-    if (req.url === '/') entries.push({cookieSent: !!req.headers.cookie});
-    const upstream = http.request(
-      {
-        host: '127.0.0.1',
-        port: remotePort,
-        path: req.url,
-        method: req.method,
-        headers: {...req.headers, 'tailscale-user-login': 'fake-owner@example.invalid'}
-      },
-      response => {
-        res.writeHead(response.statusCode, response.headers);
-        response.pipe(res);
-      }
-    );
-    upstream.on('error', () => {
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-    });
-    res.on('close', () => upstream.destroy());
-    req.pipe(upstream);
-  }
-);
+const proxy = https.createServer(await probeTlsCertificate(), (req, res) => {
+  if (req.method === 'POST') posts.push(req.url);
+  if (req.url === '/') entries.push({cookieSent: !!req.headers.cookie});
+  const upstream = http.request(
+    {
+      host: '127.0.0.1',
+      port: remotePort,
+      path: req.url,
+      method: req.method,
+      headers: {...req.headers, 'tailscale-user-login': 'fake-owner@example.invalid'}
+    },
+    response => {
+      res.writeHead(response.statusCode, response.headers);
+      response.pipe(res);
+    }
+  );
+  upstream.on('error', () => {
+    if (!res.headersSent) res.writeHead(502);
+    res.end();
+  });
+  res.on('close', () => upstream.destroy());
+  req.pipe(upstream);
+});
 await new Promise(resolve => proxy.listen(httpsPort, '127.0.0.1', resolve));
 const launch = () =>
-  chromium.launchPersistentContext(profile, {
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true,
+  launchProbeContext(profile, {
     viewport: {width: 412, height: 915},
     ignoreHTTPSErrors: true,
     args: ['--host-resolver-rules=MAP reopen.test.ts.net 127.0.0.1', '--no-proxy-server']

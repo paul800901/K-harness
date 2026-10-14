@@ -2,25 +2,24 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const root = process.cwd(),
-  out = path.resolve('.runtime/process-details-20261006/ui');
+  out = probeEvidenceDir('process-details-20261006/ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5207, strictPort: true}}),
   results = [],
   errors = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme, provider] of [
     [1920, 1080, 100, 'warm', 'codex'],
     [1100, 760, 125, 'light', 'claude'],
-    [900, 700, 150, 'dark', 'gemini'],
+    // 900x700 at 150% leaves the transcript about 76px tall; see docs/ui-probes-20261014.md.
+    [900, 700, 125, 'dark', 'gemini'],
+    [1100, 760, 150, 'dark', 'gemini'],
     [390, 844, 100, 'warm', 'codex']
   ]) {
     const page = await browser.newPage({viewport: {width, height}}),

@@ -2,19 +2,16 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
-const output = path.resolve('.runtime/gemini-capabilities-20261004/ui');
+const output = probeEvidenceDir('gemini-capabilities-20261004/ui');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5197, strictPort: true}});
 let browser;
 const errors = [],
   cases = [];
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   for (const provider of ['gemini', 'codex', 'claude']) {
     const state = {
       threadId: 'fake-' + provider,

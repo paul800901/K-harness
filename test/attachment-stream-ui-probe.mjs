@@ -2,19 +2,16 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
-const out = path.resolve('.runtime/menu-attachments-20261007/upload-ui');
+const out = probeEvidenceDir('menu-attachments-20261007/upload-ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5206, strictPort: true}}),
   results = [],
   errors = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, remote] of [
     [1280, 800, false],
     [360, 740, true]

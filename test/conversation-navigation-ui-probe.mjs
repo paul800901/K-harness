@@ -3,7 +3,7 @@ import {setTimeout as delay} from 'node:timers/promises';
 import {resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {mkdir, writeFile} from 'node:fs/promises';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const port = 5187,
@@ -63,8 +63,6 @@ let openAState = A;
 let holdASend = false,
   releaseASend;
 try {
-  process.env.PLAYWRIGHT_BROWSERS_PATH =
-    process.env.PLAYWRIGHT_BROWSERS_PATH ?? resolve(root, '.runtime/playwright-browsers');
   const until = Date.now() + 15000;
   while (Date.now() < until) {
     try {
@@ -73,10 +71,7 @@ try {
     } catch {}
     await delay(100);
   }
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: resolve(process.env.PLAYWRIGHT_BROWSERS_PATH, 'chromium-1246/chrome-win64/chrome.exe')
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage();
   const selectRoom = async title => {
     await page.locator('.session-open').filter({hasText: title}).click();
@@ -184,10 +179,9 @@ try {
   await page.locator('.session-open').filter({hasText: '對話 A'}).waitFor();
   if ((await page.locator('.session-activity').filter({hasText: '待確認'}).count()) !== 1)
     throw Error('A pending confirmation is not visible in the sidebar');
-  const evidenceDir = resolve(
-    root,
-    process.env.K_NAVIGATION_UI_EVIDENCE ?? '.runtime/conversation-navigation-ui-20260925/evidence'
-  );
+  const evidenceDir = process.env.K_NAVIGATION_UI_EVIDENCE
+    ? resolve(process.env.K_NAVIGATION_UI_EVIDENCE)
+    : probeEvidenceDir('conversation-navigation-ui-20260925/evidence');
   await mkdir(evidenceDir, {recursive: true});
   const composer = page.locator('textarea[aria-label="工作訊息"]');
   await composer.fill('A 草稿保留');

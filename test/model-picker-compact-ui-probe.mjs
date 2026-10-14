@@ -2,7 +2,8 @@
 // Uses a headless Edge instance and intercepted fake APIs only; /api/open is
 // captured by this page and never reaches a provider or sends a model turn.
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import path from 'node:path';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {modelProvider} from '../shared/model-provider.mjs';
 
@@ -156,7 +157,7 @@ const auth = provider =>
         login: {status: 'idle'}
       };
 try {
-  browser = await chromium.launch({channel: 'msedge', headless: true});
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}}),
     pageErrors = [];
   page.on('pageerror', error => pageErrors.push(error.message));
@@ -511,7 +512,7 @@ try {
   assert.equal(await permissionMenu.getByRole('menuitemradio', {name: /代我核准|要求核准/}).count(), 0);
   await permissionMenu.getByRole('menuitemradio', {name: /完整存取權/}).click();
   await page.getByRole('button', {name: '確認選用', exact: true}).click();
-  await page.screenshot({path: '.runtime/three-core-picker.png'});
+  await page.screenshot({path: path.join(probeEvidenceDir('model-picker-compact'), 'three-core-picker.png')});
   await page.getByRole('button', {name: '建立對話', exact: true}).click();
   await page.waitForFunction(() => document.querySelector('[aria-label="主代理模型"]') === null);
   const geminiCreate = requests.filter(r => r.path === '/api/open').at(-1);
@@ -567,10 +568,8 @@ try {
       expected => document.querySelector('summary[aria-label="帳號連線"]').textContent.includes(expected),
       `Gemini ${label}`
     );
-    assert.equal(
-      await geminiRow.getByRole('button', {name: '登入 Gemini 訂閱', exact: true}).isDisabled(),
-      auth.loggedIn === true
-    );
+    // Gemini sign-in is direct account enrollment; another account can be added while one is signed in.
+    assert.equal(await geminiRow.getByRole('button', {name: '新增 Gemini 帳號', exact: true}).count(), 1);
   }
   await accountSummary.click();
   assert.equal(await signedOutAccount.evaluate(el => el.open), false);
@@ -594,11 +593,12 @@ try {
   assert.match(await usage.textContent(), /5 小時\s*0%/);
   assert.match(await usage.textContent(), /上次取得/);
   assert.doesNotMatch(await usage.textContent(), /尚未提供可接入/);
-  await page.screenshot({path: '.runtime/gemini-account-quota-ui.png'});
+  await page.screenshot({path: path.join(probeEvidenceDir('model-picker-compact'), 'gemini-account-quota-ui.png')});
   await page.getByRole('button', {name: '完成', exact: true}).click();
   state.usage.gemini.status = 'stale';
   await page.evaluate(s => window.__fakeState(s), state);
-  assert.equal(await page.locator('.usage-row').filter({hasText: 'Gemini'}).locator('em').textContent(), '舊');
+  // Stale Gemini quota is labelled as awaiting a query rather than shown as usable old numbers.
+  assert.match(await page.locator('.usage-row').filter({hasText: 'Gemini'}).textContent(), /目前額度待查詢/);
   assert.deepEqual(pageErrors, []);
   console.log(
     JSON.stringify({

@@ -2,9 +2,9 @@
 import assert from 'node:assert/strict';
 import {writeFile, mkdir} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
-const output = path.resolve('.runtime/console-flash-20261004/ui');
+const output = probeEvidenceDir('console-flash-20261004/ui');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5198, strictPort: true}});
 const state = {
@@ -25,10 +25,7 @@ const requests = [],
   errors = [];
 let browser, release;
 try {
-  browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
   page.setDefaultTimeout(6000);
   page.on('pageerror', error => errors.push(error.message));

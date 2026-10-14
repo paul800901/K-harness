@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const before = process.env.K_DIFFS_BEFORE === '1';
-const output = path.resolve('.runtime/dsh-lessons-20261005', before ? 'ui-before' : 'ui-after');
+const output = path.join(probeEvidenceDir('dsh-lessons-20261005'), before ? 'ui-before' : 'ui-after');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5207, strictPort: true}});
 const workspace = process.cwd(),
@@ -39,7 +39,7 @@ const state = {
 };
 let browser, page;
 try {
-  browser = await chromium.launch({headless: true, executablePath: process.env.K_TEST_CHROME});
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],

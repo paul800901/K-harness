@@ -1,6 +1,6 @@
 // Playwright coverage for the discussion API settings UI using only fake request/fetch responses.
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {launchProbeBrowser} from './ui-probe.mjs';
 import {build, preview} from 'vite';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
@@ -28,12 +28,7 @@ let browser;
 try {
   const address = server.httpServer.address();
   const origin = `http://127.0.0.1:${address.port}/discussion-api-settings-ui.html`;
-  browser = await chromium.launch({
-    headless: true,
-    executablePath:
-      process.env.K_UI_CHROMIUM ??
-      path.resolve('D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe')
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1200, height: 900}}),
     errors = [];
   await page.route('**/favicon.ico', route => route.fulfill({status: 204, body: ''}));

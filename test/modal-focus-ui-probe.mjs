@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 const baseline = process.env.K_EXPECT_CLIPPED === '1';
-const output = path.resolve('.runtime/modal-focus-20261004', baseline ? 'before' : 'after');
+const output = path.join(probeEvidenceDir('modal-focus-20261004'), baseline ? 'before' : 'after');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5198, strictPort: true}});
 const workspace = process.cwd(),
@@ -29,10 +29,7 @@ const state = {
 };
 let browser;
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],

@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {readNativeMessageFile} from '../src/native-message-file.mjs';
-const out = path.resolve('.runtime/native-content-ui');
+const out = probeEvidenceDir('native-content-ui');
 await mkdir(out, {recursive: true});
 const root = await mkdtemp(path.join(out, 'fake-')),
   workspace = path.join(root, 'workspace');
@@ -21,10 +21,7 @@ const text = `[含括號檔名](${bracketFile})\n\n[括號標題](${bracketFile}
 const results = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: 'D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const provider of ['codex', 'claude', 'gemini']) {
     const state = {
       provider,

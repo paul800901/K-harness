@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test test/*.test.mjs",
-    "build:ui": "vite build"
+    "build:ui": "vite build",
+    "test:ui": "node scripts/run-ui-probes.mjs"
   },
   "engines": {
     "node": ">=22.19.0"

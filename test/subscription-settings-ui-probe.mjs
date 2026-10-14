@@ -2,10 +2,12 @@
 import assert from 'node:assert/strict';
 import {mkdir} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
-const output = process.env.K_LOGIN_PROBE_OUTPUT ?? path.resolve('.runtime/subscription-settings-probe');
+const output = process.env.K_LOGIN_PROBE_OUTPUT
+  ? path.resolve(process.env.K_LOGIN_PROBE_OUTPUT)
+  : probeEvidenceDir('subscription-settings-probe');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5193, strictPort: true}});
 const state = {
@@ -52,10 +54,7 @@ const auth = provider =>
         login: claudeLogin
       };
 try {
-  browser = await chromium.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
   page.on('pageerror', error => errors.push(error.message));
   await page.addInitScript(initial => {

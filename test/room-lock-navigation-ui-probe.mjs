@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 
-const base = fileURLToPath(new URL('../.runtime/room-lock-ui/', import.meta.url));
+const base = probeEvidenceDir('room-lock-ui');
 await mkdir(base, {recursive: true});
 const results = [];
 for (const viewport of [
@@ -103,10 +103,7 @@ for (const viewport of [
         return controller;
       }
     });
-    browser = await chromium.launch({
-      headless: true,
-      executablePath: 'D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe'
-    });
+    browser = await launchProbeBrowser();
     const page = await browser.newPage({viewport}),
       errors = [],
       posts = [];

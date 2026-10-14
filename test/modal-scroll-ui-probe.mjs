@@ -2,10 +2,12 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
-const output = path.resolve(process.env.K_MODAL_PROBE_OUTPUT ?? '.runtime/modal-scroll-ui-probe');
+const output = process.env.K_MODAL_PROBE_OUTPUT
+  ? path.resolve(process.env.K_MODAL_PROBE_OUTPUT)
+  : probeEvidenceDir('modal-scroll-ui-probe');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5198, strictPort: true}});
 const quota = {
@@ -39,10 +41,7 @@ let browser;
 const errors = [],
   receipt = {passed: false, cases: []};
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage();
   page.setDefaultTimeout(6000);
   page.on('pageerror', e => errors.push(e.message));

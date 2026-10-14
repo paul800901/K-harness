@@ -2,11 +2,13 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {formatResponseAnnotations} from '../frontend/response-annotations.mjs';
 
-const out = path.resolve(process.env.K_UI_PROBE_OUT ?? '.runtime/long-user-text-20261013/ui');
+const out = process.env.K_UI_PROBE_OUT
+  ? path.resolve(process.env.K_UI_PROBE_OUT)
+  : probeEvidenceDir('long-user-text-20261013/ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5218, strictPort: true}}),
   results = [];
@@ -54,11 +56,7 @@ const messages = [
   }
 ];
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath:
-      process.env.K_TEST_CHROME ?? 'D:/K-harness/.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, theme, provider, scale] of [
     [1440, 960, 'warm', 'codex', 100],
     [390, 844, 'light', 'claude', 100],
