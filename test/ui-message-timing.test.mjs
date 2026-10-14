@@ -205,8 +205,15 @@ test('interrupted live answer persists partial without marking an earlier comple
     await f.controller.stop();
     assert.equal(partial.partial, true);
     assert.equal(f.controller.state.messages.find(m => m.id === 'old-final').partial, undefined);
-    await new Promise(resolve => setTimeout(resolve, 40));
-    assert.equal((await loadUiMessageTiming(root, 'timing-thread')).messages['assistant-partial'].partial, true);
+    // The timing record is written in the background; wait for it (bounded) instead of a fixed 40 ms.
+    let saved;
+    for (
+      let i = 0;
+      i < 100 && !(saved = (await loadUiMessageTiming(root, 'timing-thread')).messages['assistant-partial']);
+      i++
+    )
+      await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(saved?.partial, true);
   } finally {
     await f.controller.close().catch(() => {});
   }
