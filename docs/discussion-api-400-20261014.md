@@ -51,7 +51,7 @@
 
 原場景根因仍待供應商實際拒絕原因。新版本只在本人之後主動發起的討論再次遇到拒絕時，顯示可遮罩辨識的錯誤；不自行再發測試、不替本人重播。東區未更新。
 
-本機證據位於本工作樹 `.runtime/archive/discussion-api-400-20261014/`：`live-start.json`、`live-result.json`、最終完整測試與 Opus 複查等；私人執行紀錄不提交。
+本機證據位於主工作樹 `.runtime/archive/discussion-api-400-20261014/`（原在 Codex 工作樹，該工作樹收掉前搬入）：`live-start.json`、`live-result.json`、最終完整測試與 Opus 複查等；私人執行紀錄不提交。
 
 ## 原因推定與修正（Claude Opus 5.5 接手，2026-10-14）
 

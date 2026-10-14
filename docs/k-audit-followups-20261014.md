@@ -19,7 +19,7 @@
 
 - **B5**（`src/gemini-accounts.mjs`）：`release()` 與 `inspect()` 只等必要的狀態存檔，帳號交接（drain）與額度刷新改在背景進行。工人結果與 Gemini 主聊天室的「忙碌」狀態不再被官方查詢拖住；但下一則訊息的派工仍會等那次額度查詢完成（避免兩個 agy 查詢同時跑），所以可以按送出、送出後可能稍等。工人橋接本來就會把「可換帳號」通知暫存到舊工單結果存好才送出，順序不受影響。新增 `idle()` 供測試等待背景工作；測試以共用的 `test/fixtures/gemini-accounts-settle.mjs` 在放手後等待，原有斷言不變。
 - **B6**（`src/luna-bridge.mjs` cancel）：取消時先等進行中的開始流程結束。開始流程本身會看到取消要求並中斷剛開始的回合，之後取消才讀原生狀態，因此「已取消」不會出現在原生回合開始之前。
-- **B7**（`src/luna-bridge.mjs` cancel、`src/luna-gateway.mjs` 工具說明）：對本次執行中停止未確認的 Gemini 工單再次取消時，K 重新檢查 agy 主程序；確認已不存在（`ESRCH`）才放棄執行歸屬（`executionUnowned`，與 K 重啟後相同），聊天室不再被佔住。主聊天室按「停止」或切換聊天室時也走同一路徑（取消後檢查到已放棄歸屬即略過，不再回報停止未確認）。結果仍是未解決、絕不重播；主程序仍在、程序編號被重用或無權限查詢都視為未結束，K 不會去結束不明程序。錯誤說明會註明「子程序與成果仍未確認」。Claude 子代理的工單沒有記錄程序編號，無法用同樣方式確認，維持原狀（重啟 K 解除）。
+- **B7**（`src/luna-bridge.mjs` cancel、`src/luna-gateway.mjs` 工具說明）：對本次執行中停止未確認的 Gemini 工單再次取消時，K 重新檢查 agy 主程序；確認已不存在（`ESRCH`）才放棄執行歸屬（`executionUnowned`，與 K 重啟後相同），聊天室不再被佔住。主聊天室按「停止」或切換聊天室時也走同一路徑（取消後檢查到已放棄歸屬即略過，不再回報停止未確認）。結果仍是未解決、絕不重播；主程序仍在、程序編號被重用或無權限查詢都視為未結束，K 不會去結束不明程序。錯誤說明會註明「子程序與成果仍未確認」。Claude 子代理當時沒有記錄程序編號，後續已補上並套用同一重新確認（見文末「後續」）。
 - **C3**（`frontend/main.jsx`）：聊天室內的送出、停止、核准、排隊訊息與 Fast 切換改用每房鎖，忙碌狀態也只停用該房；側欄與對話框動作（分支、改名、搬工作區等）維持全域鎖。
 - **C5**（`src/desktop-server.mjs`）：推播事件是差異，不能跳過；某條連線未送出的資料超過 16 MB 時直接斷開，瀏覽器內建的 EventSource 會自動重連並先收到完整狀態。
 - **關閉 K**（`src/desktop-server.mjs`）：B5 背景化後，關閉流程在對話控制器關閉後最多等 15 秒讓背景帳號工作結束，避免在切換共用登入途中結束程序。
@@ -33,7 +33,7 @@
 ## 未完成與另案
 
 - **介面實測老化**：上述 16 個原本就失敗的介面實測（attachment-label、discussion-speaker、gemini-accounts、gpt-flash、menu-viewport、mobile-remote、model-picker-compact、model-picker、native-diffs、native-notices、process-details、queue-edit、remote-reopen、usage-layout、voice-composer、voice-room-switch）需逐一判斷是介面已改而腳本未跟上，還是真的退化。它們不在 `npm test` 內，平常不會被發現。
-- Claude 子代理停止未確認時沒有程序編號可重新確認，仍需重啟 K 解除。
+- ~~Claude 子代理停止未確認時沒有程序編號可重新確認~~：已於後續處理，見文末。
 
 ## Fable 5.1 第二審
 
@@ -57,3 +57,13 @@
 - **南區已部署。** 2026-10-14 10:04（Asia/Taipei），本人關閉 K 並明確授權更新後，Codex 在 K 外單次部署主線合併版本 `65c4fc0ba0bd4bf6d148194ee1cfbeda6e31487f`；此版本包含本批修正與 GLM／Kimi 討論 API 預設，更新器重跑完整測試 **1646／1646 通過**、建置成功。
 - 10:06:20 正式 K 啟動後 `/health` 回 200；`.local/runtime.json` 版本與部署 SHA 相符、修改的正式來源檔逐一相符，`previous` 保留 `e4d4b7ef82aabe48a6ce26f8f38a91326fb5d0b9`（`releases/before-1791943539979`）。未強制停止、重播、切帳號或更換三家核心。
 - 10:08:00 秘密檢查後 push，遠端 `main` 與本機皆為上述合併 SHA。部署紀錄另以純文件提交同步，不再重啟。詳見 [同批部署讀回](discussion-api-presets-20261014.md)；上述另案／未完成事項不因部署而視為解決，東區未更新。
+
+## 後續：Claude 子代理也可重新確認停止（2026-10-14）
+
+本人同意處理上表 B7 留下的 Claude 部分。
+
+- `src/claude-host.mjs` 回傳啟動的 Claude Code 程序編號（直接 spawn claude.exe 或 node＋cli.js，沒有包裝層，Fable 以實際程序樹確認）；`src/claude-worker.mjs` 在程序建立後立即以 `onStart(host.pid)` 回報，K 與 Gemini 一樣記在工單上（原本 Claude 傳空值）。
+- 差異：Claude 被強制停止時只終止 claude.exe 本身（`child.kill()`），不像 agy 以 `taskkill /T` 終止整棵程序樹，因此工具啟動的子程序留下的機率較高。這是既有行為，放手後錯誤文字「子程序與成果仍未確認，未重播」已涵蓋，K 也不會去終止不明程序。
+- `src/luna-bridge.mjs` 的重新確認不再限定 Gemini：本次執行中停止未確認的 Gemini 或 Claude 工單，再次取消時確認主程序已不存在才放棄執行歸屬；錯誤文字改為「子代理主程序已確認結束；子程序與成果仍未確認，未重播」。`src/luna-gateway.mjs` 的 AI 工具說明同步。
+- 測試：`test/claude-worker.test.mjs`（啟動時回報程序編號）、`test/claude-worker-bridge.test.mjs`（主程序已結束才解除、仍在則維持）；兩項在修改前的程式上皆失敗、修改後通過。完整測試 1651 項通過（2 項需先建置介面的測試建置後通過）。
+- Fable 5.1 第二審：無必修；確認程序編號即主程序、主聊天室停止與關房同樣適用、沒有其他程式依賴「Claude 工單沒有程序編號」、測試在修改前失敗。採納兩項建議：程序建立後立即記錄編號（縮小沒有編號可確認的空窗）、文件補上 Claude 只終止主程序的差異。
