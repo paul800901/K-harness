@@ -251,6 +251,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 討論功能
 
+- 10-14 [討論 API：GLM（Z.ai）、Kimi 預設選項](discussion-api-presets-20261014.md)
 - 10-10 [極長任務、舊指令誤生效與原生壓縮：Astra／Opus 5.5 討論](long-context-discussion-20261010.md)
 - 10-09 [討論專用 API 參與者](discussion-api-implementation-20261009.md)
 - 10-09 [API 模型只作討論參與者：設計討論](discussion-api-design-20261009.md)
