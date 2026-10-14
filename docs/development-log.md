@@ -251,7 +251,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 討論功能
 
-- 10-14 [討論 API：GLM（Z.ai）、Kimi 預設選項](discussion-api-presets-20261014.md)
+- 10-14 [討論 API：GLM（Z.ai）、Kimi 預設選項，南區已部署](discussion-api-presets-20261014.md)
 - 10-10 [極長任務、舊指令誤生效與原生壓縮：Astra／Opus 5.5 討論](long-context-discussion-20261010.md)
 - 10-09 [討論專用 API 參與者](discussion-api-implementation-20261009.md)
 - 10-09 [API 模型只作討論參與者：設計討論](discussion-api-design-20261009.md)
@@ -339,7 +339,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 ### 複查、稽核與整理
 
 - 10-14 [K 全面檢查：時序修正 20 項、南區已部署並完成正式讀回](k-audit-20261014.md)
-- 10-14 [K 全面檢查後續：剩餘七項處理、待部署](k-audit-followups-20261014.md)
+- 10-14 [K 全面檢查後續：剩餘七項處理、南區已部署](k-audit-followups-20261014.md)
 - 10-14 [程式碼排版：拆開擠成一行的寫法](code-format-20261014.md)
 - 10-14 [大檔拆分：前端與 desktop-controller](code-split-20261014.md)
 - 10-14 [存檔遇防毒占用時誤判失敗](atomic-write-lock-20261014.md)

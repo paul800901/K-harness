@@ -53,4 +53,7 @@
 
 ## 部署狀態
 
-- 程式版本 `804cbdef3d034b2896cae727fa4a91e138fb58c2`：完整測試 1646／1646。待本人關閉 K 後由 Codex 在 K 外執行 `Update-K.ps1 -Ref 804cbdef3d034b2896cae727fa4a91e138fb58c2`，讀回後 push。
+- 本批程式版本 `804cbdef3d034b2896cae727fa4a91e138fb58c2`：完整測試 1646／1646。
+- **南區已部署。** 2026-10-14 10:04（Asia/Taipei），本人關閉 K 並明確授權更新後，Codex 在 K 外單次部署主線合併版本 `65c4fc0ba0bd4bf6d148194ee1cfbeda6e31487f`；此版本包含本批修正與 GLM／Kimi 討論 API 預設，更新器重跑完整測試 **1646／1646 通過**、建置成功。
+- 10:06:20 正式 K 啟動後 `/health` 回 200；`.local/runtime.json` 版本與部署 SHA 相符、修改的正式來源檔逐一相符，`previous` 保留 `e4d4b7ef82aabe48a6ce26f8f38a91326fb5d0b9`（`releases/before-1791943539979`）。未強制停止、重播、切帳號或更換三家核心。
+- 10:08:00 秘密檢查後 push，遠端 `main` 與本機皆為上述合併 SHA。部署紀錄另以純文件提交同步，不再重啟。詳見 [同批部署讀回](discussion-api-presets-20261014.md)；上述另案／未完成事項不因部署而視為解決，東區未更新。
