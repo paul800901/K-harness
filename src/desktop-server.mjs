@@ -39,7 +39,8 @@ export async function startDesktop({
   coreUpdates,
   browserRequest,
   validateProjectWorkspace = validateWorkspace,
-  uiRoot = new URL('../dist-ui/', import.meta.url)
+  uiRoot = new URL('../dist-ui/', import.meta.url),
+  maxPendingEventBytes = 16 * 1024 * 1024
 }) {
   const remoteFile = path.join(root, '.local', 'remote-access.json');
   let remoteConfig = null,
@@ -91,6 +92,12 @@ export async function startDesktop({
     let localFrame, remoteFrame;
     for (const client of clients) {
       if (client.destroyed) continue;
+      // Events are differences, so none can be skipped. A screen that cannot keep up (e.g. a phone on a weak
+      // network) is disconnected instead of buffering without bound; it reconnects to a fresh snapshot.
+      if (client.writableLength > maxPendingEventBytes) {
+        client.destroy();
+        continue;
+      }
       client.write(
         remoteClients.has(client)
           ? (remoteFrame ??= `data: ${JSON.stringify(remoteStateEvent(event))}\n\n`)
