@@ -188,6 +188,15 @@ try {
     () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
   );
   slow = false;
+  // Cancelling a waiting brief sends nothing to any participant.
+  const askedBeforeCancel = calls.filter(c => ['p1', 'p2'].includes(c.id)).length;
+  await page.getByLabel('工作訊息', {exact: true}).fill('這次先不要討論');
+  await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  await page.getByRole('button', {name: '取消', exact: true}).click();
+  await page.waitForFunction(
+    () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
+  );
+  assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, askedBeforeCancel);
   await mode.selectOption('normal');
   await page.getByLabel('工作訊息', {exact: true}).fill('回到單模型，先不要實作');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();

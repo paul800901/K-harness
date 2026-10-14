@@ -138,7 +138,8 @@ export function createConversationController({
       workspace: s.workspace,
       busy: !!s.busy,
       status: s.status,
-      pendingQuestions: s.questions?.length ?? 0
+      // A discussion brief waiting for the person counts as something to confirm in this room.
+      pendingQuestions: (s.questions?.length ?? 0) + (s.discussion?.status === 'awaiting-confirmation' ? 1 : 0)
     };
   };
   // Project the existing live owners, never saved history or only the selected room.

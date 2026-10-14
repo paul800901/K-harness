@@ -145,7 +145,7 @@ export function createDiscussionController({
       const host = await open(current.facilitator);
       check();
       const prepared = await host.ask(
-        `你是本次多模型${discussionModes[current.mode]}的主理人，不是裁判。請把使用者的需求整理成一份給參與者的「討論任務書」，讓他們拿到就能直接工作，不必自己翻找整個工作區。任務書依序包含：一、目的：使用者真正想得到什麼。二、本次要做的事：${current.mode === 'review' ? '要審查的對象與審查重點' : current.mode === 'parallel' ? '每位參與者各自要獨立產出什麼' : '要討論、要回應彼此的問題'}。三、材料：參與者需要看的內容直接放進來——使用者提供的被審查內容、對話中的相關事實，以及你用工具讀到的必要原文（例如相關網頁或檔案的段落），標明出處；太長就節錄相關部分並註明節錄。四、範圍：以任務書材料為主；需要核對時可讀哪些具體檔案或網址；哪些不必查。五、未知或待確認。把模型的意見標為意見，不當事實；不自行補不存在的事實、不忽略使用者修正。${current.mode === 'parallel' ? '平行比較的任務書不得加入原模型的候選答案、結論或立場，只保留需求、使用者給的事實及已驗證證據。' : ''}任務書會先給使用者確認才送出。只回 JSON {"brief":"正體中文 Markdown 任務書"}。\n資料：${JSON.stringify({question: current.question, source: current.source, reviewTarget: current.reviewTarget, attachments: current.attachments})}`
+        `你是本次多模型${discussionModes[current.mode]}的主理人，不是裁判。請把使用者的需求整理成一份給參與者的「討論任務書」，讓他們拿到就能直接工作，不必自己翻找整個工作區。任務書依序包含：一、目的：使用者真正想得到什麼。二、本次要做的事：${current.mode === 'review' ? '要審查的對象與審查重點' : current.mode === 'parallel' ? '每位參與者各自要獨立產出什麼' : '要討論、要回應彼此的問題'}。三、材料：被審查內容與附件會另行原文附給參與者，任務書只需指出要看哪一段、重點是什麼，不必整段複製；對話中的相關事實直接寫進來；網頁可用讀網頁工具取回必要原文，標明網址，太長就節錄並註明節錄；你讀不到本機檔案，檔案內容只能來自對話與附件，沒讀到的列入「未知或待確認」，不得憑記憶補寫。四、範圍：以任務書材料為主；需要核對時可讀哪些具體檔案或網址；哪些不必查。五、未知或待確認。把模型的意見標為意見，不當事實；不自行補不存在的事實、不忽略使用者修正。${current.mode === 'parallel' ? '平行比較的任務書不得加入原模型的候選答案、結論或立場，只保留需求、使用者給的事實及已驗證證據。' : ''}任務書會先給使用者確認才送出。只回 JSON {"brief":"正體中文 Markdown 任務書"}。\n資料：${JSON.stringify({question: current.question, source: current.source, reviewTarget: current.reviewTarget, attachments: current.attachments})}`
       );
       check();
       let brief;

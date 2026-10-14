@@ -20,7 +20,7 @@ const models = [
   defaultReasoningEffort: 'medium',
   supportedReasoningEfforts: [{reasoningEffort: 'medium'}, {reasoningEffort: 'high'}]
 }));
-async function fixture({hold = false, discussionApi} = {}) {
+async function fixture({hold = false, discussionApi, autoConfirm = true} = {}) {
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'discussion-rooms-'));
   let seq = 0;
@@ -95,7 +95,8 @@ async function fixture({hold = false, discussionApi} = {}) {
         ...options,
         onChange() {
           options.onChange();
-          if (d?.state?.status === 'awaiting-confirmation') queueMicrotask(() => d.confirm().catch(() => {}));
+          if (autoConfirm && d?.state?.status === 'awaiting-confirmation')
+            queueMicrotask(() => d.confirm().catch(() => {}));
         }
       });
       return d;
@@ -167,7 +168,8 @@ for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'])
   });
 
 test('discussion entry and interjection are available to the paired phone; the existing stop route is reused', () => {
-  for (const op of ['start', 'message']) assert.equal(remoteRouteAllowed('POST', `/api/discussion/${op}`), true);
+  for (const op of ['start', 'message', 'confirm'])
+    assert.equal(remoteRouteAllowed('POST', `/api/discussion/${op}`), true);
   assert.equal(remoteRouteAllowed('POST', '/api/stop'), true);
   assert.equal(remoteRouteAllowed('POST', '/api/discussion/stop'), false);
   assert.equal(remoteRouteAllowed('POST', '/api/discussion/login'), false);
@@ -393,5 +395,28 @@ test('starting discussion in a hidden room cancels its pending idle probe withou
   } finally {
     read.resolve([]);
     await f.c.close();
+  }
+});
+
+test('a room waiting on its brief is flagged for the person, refuses other input, and confirm or cancel releases it', async () => {
+  for (const finish of ['confirm', 'cancel']) {
+    const f = await fixture({autoConfirm: false});
+    try {
+      await f.start();
+      while (f.c.state.discussion?.status !== 'awaiting-confirmation') await new Promise(r => setTimeout(r, 5));
+      const activity = f.c.state.conversationActivity.find(row => row.threadId === f.a.threadId);
+      assert.equal(activity.pendingQuestions, 1, 'the sidebar shows the room is waiting for the person');
+      await assert.rejects(f.c.discussionMessage({...f.a, text: '補充'}), /任務書等待確認中/);
+      await assert.rejects(f.c.steer({...f.a, text: '一般插話'}));
+      assert.equal(f.calls.filter(call => call.id !== 'host').length, 0);
+      if (finish === 'confirm') await f.c.discussionConfirm(f.a);
+      else await f.c.stop(f.a);
+      await settled(f);
+      assert.equal(f.c.state.discussion.status, finish === 'confirm' ? 'completed' : 'interrupted');
+      assert.equal(f.calls.filter(call => call.id !== 'host').length, finish === 'confirm' ? 2 : 0);
+      assert.equal(f.c.state.busy, false);
+    } finally {
+      await f.c.close();
+    }
   }
 });
