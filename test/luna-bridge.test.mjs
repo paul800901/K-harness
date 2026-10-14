@@ -13,6 +13,7 @@ import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createGeminiWorker} from '../src/gemini-worker.mjs';
 import {mergeGeminiHandoff, geminiAccountWait} from '../src/gemini-handoff.mjs';
 import {scratchBase} from './scratch.mjs';
+import {settleAfterRelease} from './fixtures/gemini-accounts-settle.mjs';
 
 const root = path.join(scratchBase, 'luna-bridge-tests', randomUUID());
 const workspace = path.join(root, 'workspace');
@@ -398,6 +399,41 @@ test('start/cancel race does not start a turn after cancellation is requested', 
     fixture.calls.some(c => c.method === 'turn/start'),
     false
   );
+  await bridge.close();
+});
+
+test('cancel while turn/start is in flight waits for it and interrupts the turn before reporting cancelled', async () => {
+  let turnBegun = false,
+    releaseTurn,
+    enteredTurn;
+  const turnGate = new Promise(resolve => (releaseTurn = resolve)),
+    turnEntered = new Promise(resolve => (enteredTurn = resolve));
+  const {bridge, fixture} = await make({
+    // Before the turn starts the native thread is idle with no turns.
+    threadRead: p =>
+      turnBegun ? undefined : {thread: {id: p.threadId, cwd: workspace, status: {type: 'idle'}, turns: []}}
+  });
+  const request = fixture.host.request;
+  fixture.host.request = async (method, p) => {
+    if (method === 'turn/start') {
+      enteredTurn();
+      await turnGate;
+      turnBegun = true;
+    }
+    return request.call(fixture.host, method, p);
+  };
+  const starting = bridge.start({requestId: 'turn-race', task: '工作'});
+  await turnEntered;
+  let reported = false;
+  const cancellation = bridge.cancel({requestId: 'turn-race'}).finally(() => (reported = true));
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(reported, false, 'cancel must not report while the native turn may still start');
+  releaseTurn();
+  await starting;
+  const result = await cancellation;
+  assert.equal(result.status, 'cancelled');
+  assert.equal(result.settled, true);
+  assert.ok(fixture.calls.some(call => call.method === 'turn/interrupt' && call.p.turnId === 'turn-1'));
   await bridge.close();
 });
 
@@ -1175,7 +1211,9 @@ test(
         }
       };
     };
-    const accounts = createGeminiAccounts({root: testRoot, enabled: true, clock: () => now, vault, login: {}});
+    const accounts = settleAfterRelease(
+      createGeminiAccounts({root: testRoot, enabled: true, clock: () => now, vault, login: {}})
+    );
     await accounts.capture();
     identity = {accountId: B, email: 'b@example.test'};
     await accounts.capture();

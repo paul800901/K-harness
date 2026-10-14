@@ -2,10 +2,11 @@ import {createServer} from 'node:http';
 import {randomBytes, timingSafeEqual} from 'node:crypto';
 import {execFile as execFileCallback} from 'node:child_process';
 import {promisify} from 'node:util';
-import {lstat, readFile, rename, stat, writeFile} from 'node:fs/promises';
+import {lstat, readFile, rename, stat, unlink, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {WebSocketServer} from 'ws';
+import {replaceFile} from '../src/atomic-write.mjs';
 
 const execFile = promisify(execFileCallback);
 export const K_EXTENSION_ID = 'jhbfglfjhiebacbkjnohgmpgcppadblm';
@@ -274,9 +275,10 @@ export async function writeDescriptor(config, descriptor, {isClosing = () => fal
   }
   const temporary = `${config.descriptorPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   await writeFile(temporary, JSON.stringify(descriptor), {flag: 'wx', mode: 0o600});
-  if (isClosing()) return false;
-  await rename(temporary, config.descriptorPath);
-  return true;
+  // A closing host must not replace the slot: a newer host may already have written its own descriptor.
+  if (!isClosing() && (await replaceFile(temporary, config.descriptorPath, {shouldStop: isClosing}))) return true;
+  await unlink(temporary).catch(() => {});
+  return false;
 }
 
 export async function startNativeHost({

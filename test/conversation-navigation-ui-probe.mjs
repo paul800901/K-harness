@@ -243,6 +243,15 @@ try {
   if (!releaseASend) throw Error('A send request did not reach the isolated fake API');
   await selectRoom('對話 B');
   await page.locator('textarea[aria-label="工作訊息"]').waitFor();
+  // A's send is still in flight; its lock belongs to A only, so B stays fully usable.
+  const bSends = () => requests.filter(request => request.path === '/api/send' && request.data.threadId === B.threadId);
+  const bSendsBefore = bSends().length;
+  await page.locator('textarea[aria-label="工作訊息"]').fill('B 在 A 傳送中送出');
+  if (await page.getByRole('button', {name: '送出訊息'}).isDisabled())
+    throw Error('B send is disabled while A send is in flight');
+  await page.getByRole('button', {name: '送出訊息'}).click();
+  for (let i = 0; i < 60 && bSends().length === bSendsBefore; i++) await delay(50);
+  if (bSends().length === bSendsBefore) throw Error('B send did not go out while A send was in flight');
   releaseASend();
   holdASend = false;
   await delay(100);
@@ -292,6 +301,7 @@ try {
       'A draft restored',
       'A attachment restored',
       'A pending confirmation stayed in sidebar and never appeared in B',
+      'B could send while A send was in flight',
       'successful in-flight A send did not restore stale draft',
       'failed in-flight A send restored original draft',
       'late acknowledgement preserved newer A draft'

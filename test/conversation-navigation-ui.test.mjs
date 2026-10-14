@@ -36,7 +36,7 @@ test('chat actions are scoped to the rendered thread', () => {
   );
   for (const route of ['send', 'stop'])
     assert.ok(main.includes(`threadApi('${route}'`), `${route} should use the captured thread API`);
-  assert.match(main, /<QueuedMessages state=\{state\} action=\{action\} request=\{threadApi\}/);
+  assert.match(main, /<QueuedMessages state=\{state\} action=\{fn=>roomAction\(threadId,fn\)\} request=\{threadApi\}/);
   assert.match(queued, /request\('queue',\{id:item.id,action:operation/);
   assert.match(main, /request\('answer',\{id:q\.id/);
   assert.match(main, /request=\{threadApi\}/);

@@ -328,7 +328,7 @@ function createMcpServer(bridge, {geminiOnly = false, editGoal, resumeGoal, cont
     );
   register(
     `${prefix}_cancel`,
-    'Request cancellation of an existing worker task and read back its native state.',
+    'Request cancellation of an existing worker task and read back its native state. For a Gemini job of this session left unresolved because its stop was unconfirmed, calling cancel again rechecks: if the agy root process is gone, K gives up ownership (executionUnowned) so the room is no longer held; the outcome stays unresolved and must never be replayed.',
     idSchema,
     args => bridge.cancel(args),
     {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false}

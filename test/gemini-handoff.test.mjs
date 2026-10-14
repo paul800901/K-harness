@@ -8,6 +8,7 @@ import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createGeminiWorker} from '../src/gemini-worker.mjs';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
 import {scratchBase} from './scratch.mjs';
+import {settleAfterRelease} from './fixtures/gemini-accounts-settle.mjs';
 
 const A = 'a'.repeat(32),
   B = 'b'.repeat(32),
@@ -40,7 +41,7 @@ async function fixture() {
       windows: [{key: 'five_hour', remainingPercent: id === A && exhausted ? 0 : 80, resetsAt: (now + 3600000) / 1000}]
     }
   });
-  const accounts = createGeminiAccounts({root, vault, enabled: true, clock: () => now, login: {}});
+  const accounts = settleAfterRelease(createGeminiAccounts({root, vault, enabled: true, clock: () => now, login: {}}));
   await accounts.capture();
   identity = {accountId: B, email: 'b@example.test'};
   await accounts.capture();

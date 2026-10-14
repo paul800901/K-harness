@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
+import net from 'node:net';
 import path from 'node:path';
 import {mkdtemp, mkdir, rm} from 'node:fs/promises';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
@@ -270,6 +271,79 @@ test('a new event-stream client does not swallow a change other screens have not
   } finally {
     first.req.destroy();
     second.req.destroy();
+    await app.close();
+  }
+});
+
+test('a screen that stops reading is disconnected instead of buffering events without bound', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'audit-sse-slow-'));
+  const stubLogin = () => ({
+    status: async () => ({}),
+    progress: () => ({}),
+    start: async () => ({}),
+    cancel: async () => ({}),
+    submitCode: async () => ({}),
+    close: async () => {}
+  });
+  let onChange;
+  const state = {threadId: 't1', status: 'ready', busy: false, messages: [], tools: []};
+  const app = await startDesktop({
+    root,
+    executable: 'x',
+    port: 0,
+    maxPendingEventBytes: 256 * 1024,
+    controllerFactory: options => {
+      onChange = options.onChange;
+      return {
+        concurrentConversations: true,
+        historyVersion: 1,
+        state,
+        sessions: async () => ({sessions: []}),
+        close: async () => {}
+      };
+    },
+    claudeLoginFactory: stubLogin,
+    codexLoginFactory: stubLogin,
+    geminiLoginFactory: stubLogin,
+    localDictationFactory: () => ({transcribe: async () => ({}), close: async () => {}})
+  });
+  const boot = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
+  const cookie = boot.headers.get('set-cookie').split(';')[0];
+  const url = new URL('/api/events', app.origin);
+  // A raw socket that never reads models a stalled phone: the TCP window fills and the server's buffer grows.
+  const stalled = net.connect(Number(url.port), url.hostname);
+  stalled.on('error', () => {});
+  await new Promise(resolve => stalled.once('connect', resolve));
+  stalled.write(`GET /api/events HTTP/1.1\r\nHost: ${url.host}\r\nCookie: ${cookie}\r\n\r\n`);
+  stalled.pause();
+  let frames = 0;
+  const healthy = await new Promise(resolve => {
+    const req = http.get({host: url.hostname, port: url.port, path: url.pathname, headers: {cookie}}, res => {
+      res.on('data', () => frames++);
+      resolve(req);
+    });
+  });
+  try {
+    await sleep(100);
+    for (let i = 0; i < 40; i++) {
+      state.note = `${i}`.padEnd(1024 * 1024, 'x');
+      onChange();
+      await sleep(80);
+    }
+    // Reading now drains what was sent before the server gave up on this screen, then reaches the close.
+    let head = '';
+    stalled.on('data', chunk => {
+      if (head.length < 64) head += chunk.toString('latin1');
+    });
+    const closed = new Promise(resolve => stalled.once('close', () => resolve(true)));
+    stalled.resume();
+    assert.equal(await Promise.race([closed, sleep(3000).then(() => false)]), true, 'the stalled screen was cut off');
+    assert.match(head, /^HTTP\/1\.1 200/, 'the stalled screen had a live event stream');
+    assert.equal(healthy.destroyed, false, 'a screen that keeps reading stays connected');
+    assert.ok(frames > 1);
+  } finally {
+    stalled.destroy();
+    healthy.destroy();
     await app.close();
   }
 });

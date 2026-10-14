@@ -794,6 +794,16 @@ export async function createLunaBridge({
       return operation;
     }
   }
+  // A live process, a reused PID or a permission error all count as not gone.
+  const processGone = pid => {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return false;
+    } catch (error) {
+      return error.code === 'ESRCH';
+    }
+  };
   async function reconcile({requestId, summary, evidence}) {
     if (!safeId(requestId)) throw new Error('requestId 格式無效。');
     if (
@@ -850,20 +860,35 @@ export async function createLunaBridge({
         handle.controller.abort();
         await operations.get(requestId);
         await handle.completion;
+      } else if (
+        record.provider === 'gemini' &&
+        record.status === 'unresolved' &&
+        !record.settled &&
+        record.executionUnowned !== true &&
+        !operations.has(requestId) &&
+        processGone(record.pid)
+      ) {
+        // An earlier stop was unconfirmed. Once the agy root process is gone, give up ownership as a K restart
+        // would: the outcome stays unresolved and is never replayed, but it no longer holds the room.
+        record.executionUnowned = true;
+        record.error = `${record.error ?? ''} agy 主程序已確認結束；子程序與成果仍未確認，未重播。`.trim();
+        ownedRequests.delete(requestId);
+        await persist(record);
+        changed(record);
       }
       return inspect({requestId});
     }
     if (!record.settled) record.cancelRequested = true;
-    if (!record.threadId) {
-      if (!record.settled) {
-        record.status = 'cancelled';
-        record.settled = true;
-        await persist(record);
-        changed(record);
-      }
-      await operations.get(requestId)?.catch(() => {});
-      if (!record.threadId) return clone(record);
+    if (!record.threadId && !record.settled) {
+      record.status = 'cancelled';
+      record.settled = true;
+      await persist(record);
+      changed(record);
     }
+    // An in-flight start sees cancelRequested and interrupts any turn it has just begun; let it finish
+    // before reading native state, so a turn starting after this read cannot follow a "cancelled" report.
+    // Bounded by the host request timeouts of thread/start and turn/start.
+    await operations.get(requestId)?.catch(() => {});
     if (!record.threadId) return clone(record);
     const native = await host.request('thread/read', {threadId: record.threadId, includeTurns: true});
     if (
