@@ -1,6 +1,6 @@
 // Built-UI regression for Codex Flash worker defaults; all catalogs and APIs are fake.
 import assert from 'node:assert/strict';
-import {chromium} from 'playwright';
+import {launchProbeBrowser} from './ui-probe.mjs';
 import {createServer} from 'vite';
 
 const server = await createServer({
@@ -15,10 +15,7 @@ server.middlewares.use('/probe', (_request, response) => {
 let browser;
 try {
   await server.listen();
-  browser = await chromium.launch({
-    headless: true,
-    ...(process.env.K_UI_CHROMIUM ? {executablePath: process.env.K_UI_CHROMIUM} : {channel: 'msedge'})
-  });
+  browser = await launchProbeBrowser();
   const page = await browser.newPage();
   await page.route('**/api/**', route =>
     route.fulfill({json: {available: false, accounts: [], models: [], warnings: []}})
@@ -43,7 +40,14 @@ try {
       defaultReasoningEffort: 'high',
       supportedReasoningEfforts: ['low', 'medium', 'high'].map(reasoningEffort => ({reasoningEffort}))
     }));
-    models.push({model: 'gemini-3.8-flash', displayName: 'Gemini 3.8 Flash', provider: 'gemini', available: true});
+    // Like the real agy catalog, Flash lists its reasoning efforts; the worker effort menu follows the catalog.
+    models.push({
+      model: 'gemini-3.8-flash',
+      displayName: 'Gemini 3.8 Flash',
+      provider: 'gemini',
+      available: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high'].map(reasoningEffort => ({reasoningEffort}))
+    });
     models.push({model: 'claude-opus-5-5', displayName: 'Opus 5.5', provider: 'claude', available: true});
     window.renderPicker = (geminiGateway, props = {}) => {
       window.pickerResult = null;
@@ -68,13 +72,14 @@ try {
   await worker.waitFor();
   await worker.locator('summary').click();
   const workerModel = page.getByLabel('子代理模型', {exact: true});
-  const order = ['auto', 'gemini-3.8-flash', 'gpt-6.1-sol', 'gpt-6-luna'];
+  // Manual choices follow the native catalog grouped GPT / Claude / Gemini (docs/worker-native-models-engineering-20261008.md).
+  const order = ['auto', 'gpt-6-luna', 'gpt-6.1-sol', 'gemini-3.8-flash'];
   assert.deepEqual(await workerModel.locator('option').evaluateAll(items => items.map(item => item.value)), order);
   assert.deepEqual(await workerModel.locator('option').allTextContents(), [
     'AI 自動選擇',
-    'Gemini 3.8 Flash',
+    'GPT-6 Luna',
     'GPT-6.1 Sol',
-    'GPT-6 Luna'
+    'Gemini 3.8 Flash'
   ]);
   assert.equal(await workerModel.inputValue(), 'auto');
   assert.equal(await worker.locator('.step-hint').count(), 0);
@@ -98,7 +103,7 @@ try {
     .getByLabel('子代理模型', {exact: true})
     .locator('option')
     .evaluateAll(items => items.map(item => item.value));
-  assert.deepEqual(falseOptions, ['auto', 'gpt-6.1-sol', 'gpt-6-luna']);
+  assert.deepEqual(falseOptions, ['auto', 'gpt-6-luna', 'gpt-6.1-sol']);
   assert.doesNotMatch(await worker.innerText(), /Gemini 3\.8 Flash/u);
   await page.evaluate(() =>
     window.renderPicker(true, {

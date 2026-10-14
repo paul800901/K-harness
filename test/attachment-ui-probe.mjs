@@ -2,21 +2,18 @@
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {createInputQueue} from '../src/input-queue.mjs';
-const output = path.resolve('.runtime/attachment-20261005/ui');
+const output = probeEvidenceDir('attachment-20261005/ui');
 await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5202, strictPort: true}}),
   results = [],
   errors = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],

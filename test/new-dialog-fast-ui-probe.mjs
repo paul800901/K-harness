@@ -2,11 +2,11 @@
 import assert from 'node:assert/strict';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 
 const root = process.cwd(),
-  out = path.resolve('.runtime/new-dialog-fast-20261007/ui');
+  out = probeEvidenceDir('new-dialog-fast-20261007/ui');
 await mkdir(out, {recursive: true});
 const models = [
   {
@@ -35,10 +35,7 @@ const server = await preview({preview: {host: '127.0.0.1', port: 5202, strictPor
   errors = [];
 let browser;
 try {
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe'
-  });
+  browser = await launchProbeBrowser();
   for (const [width, height, scale, remote] of [
     [1440, 1000, 100, false],
     [1100, 760, 125, false],

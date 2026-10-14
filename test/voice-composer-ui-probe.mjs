@@ -2,16 +2,32 @@
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {probeEvidenceDir} from './ui-probe.mjs';
 import {_electron} from 'playwright';
 const root = fileURLToPath(new URL('..', import.meta.url));
-const output = path.join(root, '.runtime/voice-notices-20261001');
+const output = probeEvidenceDir('voice-notices-20261001');
 await mkdir(output, {recursive: true});
 const run = await mkdtemp(path.join(output, 'native-ui-'));
+// Synthesize the spoken sentence each run with the Windows zh-TW voice (16 kHz mono, as Whisper expects).
+const wav = path.join(run, 'synthetic-voice.wav');
+execFileSync(
+  'powershell',
+  [
+    '-NoProfile',
+    '-Command',
+    'Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; ' +
+      "$s.SelectVoiceByHints('NotSet', 'NotSet', 0, [Globalization.CultureInfo]'zh-TW'); " +
+      "$f = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(16000, 'Sixteen', 'Mono'); " +
+      `$s.SetOutputToWaveFile('${wav.replaceAll("'", "''")}', $f); $s.Speak('這是本機語音聽寫測試，請把這句話寫進草稿。'); $s.Dispose()`
+  ],
+  {stdio: ['ignore', 'ignore', 'pipe']}
+);
 const env = {
   ...process.env,
   K_VOICE_TEST_ROOT: run,
-  K_VOICE_TEST_WAV: 'D:\\K-harness\\.runtime\\voice-repair-20260926\\synthetic-voice.wav'
+  K_VOICE_TEST_WAV: wav
 };
 delete env.ELECTRON_RUN_AS_NODE;
 let app;

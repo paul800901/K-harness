@@ -3,15 +3,15 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import path from 'node:path';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
 import {randomBytes} from 'node:crypto';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir, probeTlsCertificate} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {remoteKeyHash} from '../src/remote-access.mjs';
 import {decodePcm16Mono16kWav} from '../src/local-dictation.mjs';
 
 const repo = process.cwd(),
-  out = path.resolve('.runtime/voice-room-switch-ui-probe');
+  out = probeEvidenceDir('voice-room-switch-ui-probe');
 await mkdir(out, {recursive: true});
 const root = await mkdtemp(path.join(out, 'fake-root-')),
   key = randomBytes(32).toString('hex');
@@ -151,33 +151,27 @@ const app = await startDesktop({
   })
 });
 assert.equal(app.remoteOrigin, origin, 'the fixture must use its own synthetic remote origin');
-const proxy = https.createServer(
-  {
-    key: await readFile(path.resolve('.runtime/mobile-remote/test-key.pem')),
-    cert: await readFile(path.resolve('.runtime/mobile-remote/test-cert.pem'))
-  },
-  (req, res) => {
-    const upstream = http.request(
-      {
-        host: '127.0.0.1',
-        port: remotePort,
-        path: req.url,
-        method: req.method,
-        headers: {...req.headers, 'tailscale-user-login': 'voice-test@example.invalid'}
-      },
-      response => {
-        res.writeHead(response.statusCode, response.headers);
-        response.pipe(res);
-      }
-    );
-    upstream.on('error', () => {
-      if (!res.headersSent) res.writeHead(502);
-      res.end();
-    });
-    res.on('close', () => upstream.destroy());
-    req.pipe(upstream);
-  }
-);
+const proxy = https.createServer(await probeTlsCertificate(), (req, res) => {
+  const upstream = http.request(
+    {
+      host: '127.0.0.1',
+      port: remotePort,
+      path: req.url,
+      method: req.method,
+      headers: {...req.headers, 'tailscale-user-login': 'voice-test@example.invalid'}
+    },
+    response => {
+      res.writeHead(response.statusCode, response.headers);
+      response.pipe(res);
+    }
+  );
+  upstream.on('error', () => {
+    if (!res.headersSent) res.writeHead(502);
+    res.end();
+  });
+  res.on('close', () => upstream.destroy());
+  req.pipe(upstream);
+});
 await new Promise(resolve => proxy.listen(httpsPort, '127.0.0.1', resolve));
 let browser;
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -243,9 +237,7 @@ async function assertNoSend() {
   assert.equal(calls.filter(call => call.op === 'send').length, 0, 'dictation never sends a message');
 }
 try {
-  browser = await chromium.launch({
-    executablePath: process.env.K_TEST_CHROME ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: true,
+  browser = await launchProbeBrowser({
     args: [
       '--use-fake-device-for-media-stream',
       '--use-fake-ui-for-media-stream',

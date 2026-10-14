@@ -2,13 +2,13 @@ import {spawn} from 'node:child_process';
 import {setTimeout as delay} from 'node:timers/promises';
 import {resolve} from 'node:path';
 import {mkdir, writeFile} from 'node:fs/promises';
-import {chromium} from 'playwright';
+import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import assert from 'node:assert/strict';
 
 // Isolated UI fixture only: no real backend, native model or user browser profile.
 const root = resolve('.'),
-  build = resolve(process.argv[2] ?? '.runtime/attachment-label-20260925/build');
-const output = resolve(process.argv[3] ?? '.runtime/attachment-label-20260925/ui');
+  build = resolve(process.argv[2] ?? 'dist-ui');
+const output = process.argv[3] ? resolve(process.argv[3]) : probeEvidenceDir('attachment-label-20260925/ui');
 await mkdir(output, {recursive: true});
 const origin = 'http://127.0.0.1:5186';
 const server = spawn(
@@ -38,10 +38,7 @@ try {
     } catch {}
     await delay(100);
   }
-  browser = await chromium.launch({
-    headless: true,
-    executablePath: resolve(root, '.runtime/playwright-browsers/chromium-1246/chrome-win64/chrome.exe')
-  });
+  browser = await launchProbeBrowser();
   for (const provider of ['claude', 'codex']) {
     const context = await browser.newContext({viewport: {width: 1920, height: 1000}, reducedMotion: 'reduce'}),
       page = await context.newPage();
@@ -77,22 +74,31 @@ try {
       localStorage.setItem('k-color-theme', 'warm');
       localStorage.setItem('k-appearance', JSON.stringify({interfaceScale: 110, dialogueFontSize: 17}));
       window.__fixture = state;
+      // The state stream starts each connection with a snapshot event.
+      const snapshot = s => ({data: JSON.stringify({type: 'snapshot', revision: 0, state: s})});
       window.__emit = s => {
         window.__fixture = s;
-        window.__es?.onmessage?.({data: JSON.stringify(s)});
+        window.__es?.onmessage?.(snapshot(s));
       };
       window.EventSource = class {
         constructor() {
           window.__es = this;
-          setTimeout(() => this.onmessage?.({data: JSON.stringify(window.__fixture)}), 0);
+          setTimeout(() => this.onmessage?.(snapshot(window.__fixture)), 0);
         }
         close() {}
       };
     }, state);
     await page.route('**/api/**', async route => {
       const path = new URL(route.request().url()).pathname;
+      // Uploads stream the raw file; the room and name travel in headers.
       if (path === '/api/upload') {
-        uploads.push(route.request().postDataJSON());
+        const request = route.request(),
+          headers = request.headers();
+        uploads.push({
+          threadId: headers['x-k-thread-id'],
+          name: decodeURIComponent(headers['x-k-file-name']),
+          base64: request.postDataBuffer().toString('base64')
+        });
         return route.fulfill({json: record});
       }
       if (path === '/api/send') {
