@@ -15,7 +15,7 @@ try {
   for (const [width, height, scale, theme] of [
     [1920, 1080, 100, 'warm'],
     [1100, 760, 125, 'light'],
-    [900, 700, 150, 'dark'],
+    [900, 700, 125, 'dark'],
     [390, 844, 100, 'warm']
   ]) {
     const page = await browser.newPage({viewport: {width, height}}),

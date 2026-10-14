@@ -23,10 +23,14 @@ function memoryStorage() {
 
 test('appearance settings use bounded options and persist only to K localStorage', () => {
   const storage = memoryStorage();
-  assert.deepEqual(normalizeAppearance({interfaceScale: 149, dialogueFontSize: 19}), {
-    interfaceScale: 150,
+  assert.deepEqual(normalizeAppearance({interfaceScale: 120, dialogueFontSize: 19}), {
+    interfaceScale: 125,
     dialogueFontSize: 19
   });
+  // 150% is no longer offered; a value saved before its removal reads as 125%.
+  storage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify({interfaceScale: 150, dialogueFontSize: 18}));
+  assert.equal(readAppearance(storage).interfaceScale, 125);
+  storage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(DEFAULT_APPEARANCE));
   assert.deepEqual(readAppearance(storage), DEFAULT_APPEARANCE);
   const saved = saveAppearance({interfaceScale: 125, dialogueFontSize: 22}, storage);
   assert.deepEqual(saved, {interfaceScale: 125, dialogueFontSize: 22});

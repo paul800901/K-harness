@@ -14,8 +14,7 @@ const only = process.argv.slice(2);
 const probes = readdirSync(path.join(root, 'test'))
   .filter(name => name.endsWith('-ui-probe.mjs') && (!only.length || only.some(part => name.includes(part))))
   .sort();
-const failed = [],
-  known = [];
+const failed = [];
 for (const name of probes) {
   const started = Date.now();
   const result = spawnSync(process.execPath, [path.join('test', name)], {
@@ -26,7 +25,6 @@ for (const name of probes) {
   });
   const seconds = ((Date.now() - started) / 1000).toFixed(1),
     output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`;
-  known.push(...output.split('\n').filter(line => line.startsWith('KNOWN REGRESSION ')));
   if (result.status === 0) {
     console.log(`ok   ${name} (${seconds}s)`);
     continue;
@@ -45,5 +43,4 @@ for (const name of probes) {
   console.log(`FAIL ${name} (${seconds}s)${detail ? ` — ${detail}` : ''}`);
 }
 console.log(`\n${probes.length - failed.length}/${probes.length} UI probes passed.`);
-if (known.length) console.log(`已知退化（本人已決定暫不修，不算失敗）：\n${known.map(line => `  ${line}`).join('\n')}`);
 process.exit(failed.length ? 1 : 0);

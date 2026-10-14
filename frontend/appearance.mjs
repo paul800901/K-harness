@@ -2,7 +2,8 @@ export const APPEARANCE_STORAGE_KEY = 'k-appearance';
 export const THEME_STORAGE_KEY = 'k-color-theme';
 export const THEME_OPTIONS = Object.freeze(['light', 'warm', 'dark']);
 
-export const INTERFACE_SCALE_OPTIONS = Object.freeze([90, 100, 110, 125, 150]);
+// 150% was removed on 2026-10-14 (docs/remove-scale-150-20261014.md); a saved 150 reads as the nearest option, 125.
+export const INTERFACE_SCALE_OPTIONS = Object.freeze([90, 100, 110, 125]);
 export const DIALOGUE_FONT_SIZE_OPTIONS = Object.freeze([14, 15, 16, 17, 18, 19, 20, 21, 22]);
 
 export const DEFAULT_APPEARANCE = Object.freeze({

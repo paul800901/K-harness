@@ -10,7 +10,7 @@ await mkdir(out, {recursive: true});
 const viewports = [
   {name: 'desktop-1440-1000-z1', width: 1440, height: 1000, scale: 100, remote: false},
   {name: 'desktop-1100-760-z1.25', width: 1100, height: 760, scale: 125, remote: false},
-  {name: 'desktop-900-600-z1.5', width: 900, height: 600, scale: 150, remote: false},
+  {name: 'desktop-900-600-z1.25', width: 900, height: 600, scale: 125, remote: false},
   {name: 'remote-360-740', width: 360, height: 740, scale: 100, remote: true},
   {name: 'remote-320-480', width: 320, height: 480, scale: 100, remote: true},
   {name: 'remote-700-360-landscape', width: 700, height: 360, scale: 100, remote: true}
@@ -216,7 +216,7 @@ try {
             clipAncestors: chain
           };
         });
-        if (vp.width <= 320 || vp.scale >= 150)
+        if (vp.width <= 320 || vp.scale >= 125)
           await page
             .screenshot({path: path.join(out, vp.name + '-' + name.replaceAll(/[^a-z0-9-]/gi, '-') + '.png')})
             .catch(() => {});
