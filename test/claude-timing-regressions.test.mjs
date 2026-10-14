@@ -210,3 +210,26 @@ test('cancelling a K worker clears its pending approval card and denies the requ
   await f.controller.close();
   assert.equal((await other).behavior, 'deny');
 });
+
+test('a worker released on a re-checked stop no longer holds the room when it closes', async () => {
+  const released = {settled: false, status: 'unresolved', executionUnowned: true};
+  const f = await fixture({
+    bridgeOverrides: {
+      async cancel() {
+        return released;
+      },
+      async wait() {
+        return released;
+      },
+      async inspect() {
+        return released;
+      }
+    }
+  });
+  await f.controller.open({});
+  await f.gatewayOptions.bridge.start({requestId: 'w1', model: 'gemini-3.8-flash', effort: 'low', task: 't'});
+  // Listed before the cancel as an owned, unconfirmed stop; the cancel's re-check releases it.
+  f.bridge.records = [{requestId: 'w1', settled: false, status: 'unresolved', parentId: f.controller.state.threadId}];
+  await f.controller.close();
+  assert.equal(f.bridge.closed, true);
+});

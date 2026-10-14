@@ -324,3 +324,32 @@ test('descriptor write waits out a brief Windows file lock instead of failing', 
   assert.equal(locked, -1);
   assert.deepEqual(JSON.parse(await readFile(descriptorPath, 'utf8')), {port: 1});
 });
+
+test('a host that closes while waiting out a lock does not overwrite a newer descriptor', async () => {
+  const directory = await mkdtemp(path.join(scratchBase, 'k-browser-descriptor-'));
+  const descriptorPath = path.join(directory, 'descriptor.json');
+  const originalRename = fs.rename;
+  let closing = false;
+  fs.rename = async (from, to) => {
+    if (to === descriptorPath && from.includes(`.${process.pid}.`)) {
+      // Chrome closes this host and a newer host writes the slot while the target is still locked.
+      closing = true;
+      await fs.writeFile(descriptorPath, JSON.stringify({port: 2}));
+      throw Object.assign(new Error('locked'), {code: 'EPERM'});
+    }
+    return originalRename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    assert.equal(await writeDescriptor({descriptorPath}, {port: 1}, {isClosing: () => closing}), false);
+  } finally {
+    fs.rename = originalRename;
+    syncBuiltinESMExports();
+  }
+  assert.deepEqual(JSON.parse(await readFile(descriptorPath, 'utf8')), {port: 2});
+  assert.deepEqual(
+    (await fs.readdir(directory)).filter(name => name.endsWith('.tmp')),
+    [],
+    'the abandoned temporary file is removed'
+  );
+});

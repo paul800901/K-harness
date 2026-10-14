@@ -887,6 +887,7 @@ export async function createLunaBridge({
     }
     // An in-flight start sees cancelRequested and interrupts any turn it has just begun; let it finish
     // before reading native state, so a turn starting after this read cannot follow a "cancelled" report.
+    // Bounded by the host request timeouts of thread/start and turn/start.
     await operations.get(requestId)?.catch(() => {});
     if (!record.threadId) return clone(record);
     const native = await host.request('thread/read', {threadId: record.threadId, includeTurns: true});

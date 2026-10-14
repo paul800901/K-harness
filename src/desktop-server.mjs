@@ -147,6 +147,9 @@ export async function startDesktop({
           failures.push({name, error});
         }
       }
+      // Releases above may have started Gemini account work in the background (hand-off, quota refresh) that
+      // can be switching the shared login; give it a bounded chance to finish before the process exits.
+      await Promise.race([geminiAccounts?.idle?.(), new Promise(resolve => setTimeout(resolve, 15000).unref())]);
       if (failures.length) {
         const error = new Error(`K 尚未完全關閉：${failures.map(item => item.name).join('、')}。程序停止後請重試。`, {
           cause: failures[0].error

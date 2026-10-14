@@ -1276,6 +1276,8 @@ export function createClaudeController({
         await active.cancel({requestId: record.requestId});
         const waited = await active.wait({requestId: record.requestId, timeoutMs: 10000});
         const verified = await active.inspect({requestId: record.requestId});
+        // A re-checked unconfirmed stop whose process is gone is released; it no longer holds the room.
+        if (verified?.executionUnowned === true) continue;
         if (!waited?.settled || !verified?.settled) throw new Error(`子代理 ${record.requestId} 的停止狀態未確認。`);
       }
     }

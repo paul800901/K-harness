@@ -1738,6 +1738,8 @@ export function createDesktopController({
         await flashBridge.cancel({requestId: record.requestId});
         const waited = await flashBridge.wait({requestId: record.requestId, timeoutMs: 10000});
         const verified = await flashBridge.inspect({requestId: record.requestId});
+        // A re-checked unconfirmed stop whose process is gone is released; it no longer holds the room.
+        if (verified?.executionUnowned === true) continue;
         if (!waited?.settled || !verified?.settled)
           throw new Error(`子代理 ${record.requestId} 的停止狀態未確認；Codex 主控保持開啟。`);
       }
