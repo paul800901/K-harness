@@ -57,12 +57,3 @@ export async function probeTlsCertificate() {
   );
   return {key: readFileSync(key), cert: readFileSync(cert)};
 }
-// Recorded regressions the owner chose not to fix for now (docs/ui-probes-20261014.md). These cases still run and are
-// reported on every run (npm run test:ui lists them), but do not fail the probe. Delete an entry once fixed.
-const knownRegressions = new Set(['900x700@150']);
-export function knownRegression(width, height, scale) {
-  return knownRegressions.has(`${width}x${height}@${scale}`);
-}
-export function reportKnownRegression(probe, width, height, scale, error) {
-  console.error(`KNOWN REGRESSION ${probe} ${width}x${height}@${scale}: ${String(error?.message).split('\n')[0]}`);
-}

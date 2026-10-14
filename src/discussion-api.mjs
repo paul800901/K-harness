@@ -2,6 +2,11 @@ import {createDiscussionReader, discussionReadTools} from './discussion-read-too
 import {discussionSearchInstructions} from '../shared/discussion.mjs';
 import {createDiscussionWebReader, discussionWebTools} from './discussion-web-tools.mjs';
 
+// A tool result larger than this (e.g. listing a 30,000-file workspace, about 3 million characters) would
+// make the provider reject the whole request with HTTP 400. It is withheld, not truncated, so the model knows
+// it saw nothing and narrows the request instead.
+const MAX_TOOL_RESULT_CHARS = 60000;
+
 // Each participant owns its conversation. This is a tool-call transport, not a
 // worker dispatcher: there is no shell, write tool, retry or provider fallback.
 export async function openDiscussionApiSession({
@@ -165,7 +170,16 @@ export async function openDiscussionApiSession({
             active.throwIfAborted();
             result = {error: e.code ? '資料讀取失敗；未取得內容。' : e.message};
           }
-          messages.push({role: 'tool', tool_call_id: call.id, content: JSON.stringify(result)});
+          let content = JSON.stringify(result);
+          if (content.length > MAX_TOOL_RESULT_CHARS)
+            content = JSON.stringify({
+              error: `工具結果過長（約 ${content.length} 字），未送出也未截斷；請縮小範圍後再讀：指定子資料夾、不要遞迴列出整個工作區、用 startLine／endLine 分段讀檔、更精確的搜尋，或較少網址與較小 maxCharacters。`,
+              // Sizes the model can use to narrow the next request.
+              ...(Number.isInteger(result?.totalLines) ? {totalLines: result.totalLines} : {}),
+              ...(Array.isArray(result?.entries) ? {entries: result.entries.length} : {}),
+              ...(Array.isArray(result?.matches) ? {matches: result.matches.length} : {})
+            });
+          messages.push({role: 'tool', tool_call_id: call.id, content});
         }
       }
     };

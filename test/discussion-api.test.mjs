@@ -470,3 +470,51 @@ test('desktop API settings use existing authenticated explicit commands and neve
     await app.close();
   }
 });
+
+test('an oversized tool result is withheld with a narrowing hint instead of being sent to the provider', async () => {
+  const f = await fixture();
+  await mkdir(path.join(f.root, 'many'));
+  for (let i = 0; i < 3000; i++)
+    await writeFile(path.join(f.root, 'many', `file-${String(i).padStart(4, '0')}.txt`), '');
+  await writeFile(path.join(f.root, 'small.txt'), 'small file');
+  const bodies = [];
+  let n = 0;
+  const s = await openDiscussionApiSession({
+    workspace: f.root,
+    selection: {route: 'api', connectionId: 'f', model: 'm'},
+    connections: {
+      async credentials() {
+        return {baseUrl: 'https://fake.test', key: 'FAKE'};
+      }
+    },
+    fetchImpl: async (url, o) => {
+      bodies.push(JSON.parse(o.body));
+      n++;
+      if (n === 1)
+        return stream(
+          [
+            {
+              tool_calls: [
+                {index: 0, id: 'all', function: {name: 'list_files', arguments: '{"path":".","recursive":true}'}}
+              ]
+            }
+          ],
+          'tool_calls'
+        );
+      if (n === 2)
+        return stream(
+          [{tool_calls: [{index: 0, id: 'one', function: {name: 'read_file', arguments: '{"path":"small.txt"}'}}]}],
+          'tool_calls'
+        );
+      return stream([{content: 'answer'}]);
+    }
+  });
+  assert.equal(await s.ask('q'), 'answer');
+  const withheld = bodies[1].messages.at(-1);
+  assert.equal(withheld.tool_call_id, 'all');
+  assert.ok(withheld.content.length < 1000, 'the listing itself is not sent');
+  assert.match(JSON.parse(withheld.content).error, /工具結果過長.*未送出也未截斷.*縮小範圍/su);
+  assert.equal(JSON.parse(withheld.content).entries, 3002, 'the size helps the model narrow the next request');
+  assert.equal(JSON.parse(bodies[2].messages.at(-1).content).text, 'small file', 'a normal result is sent in full');
+  await s.close();
+});
