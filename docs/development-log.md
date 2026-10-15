@@ -5,8 +5,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 ## 目前狀態
 
 - **Gemini 核心已準備、待完整重開**：Antigravity 1.3.4 通過 8/8 權限驗證與隔離主代理實測，已設為下次啟動版本；原生目錄尚無 Gemini 4。見 [Gemini 4 可用性與核心更新](gemini4-core-20261014.md)。
-- **正式 K（南區）已部署**：2026-10-14 套用 `72f04c22d6fc41d4bfcde35d2bc0ffbd69faac0e`，更新器完整測試 1621/1621；`.local/runtime.json` 的 `version` 與 `previous` 已讀回，退版保留三份。見[部署紀錄與清理限制](code-split-20261014.md#部署)。
-- **已提交、待部署**：程式排版批（[程式碼排版](code-format-20261014.md)），Fable 5.1 第二審無阻擋項；部署版本見該紀錄。
+- **正式 K（南區）已部署**：2026-10-15 套用 `06de7fe1247a8d33c182fa935367fad3a88f9fdb`（含討論圓桌），更新器完整測試 1689/1689；`.local/runtime.json` 的 `version` 與 `previous` 已讀回，退版保留三份。見[討論圓桌部署與原生實測](discussion-roundtable-permissions-20261015.md#本次部署與原生實測狀態)。程式排版批與 10-14 全面檢查已包含在內。
 - **已驗收並發布**：本人確認 Claude 的 350 檔／前端產物一致性與啟動驗證通過，正式 health 再查 **200／native**；首次 push 後本機 `main`、`origin/main` 與 GitHub 遠端均為 `16b40ac`，其後僅補本文件與[部署收尾](code-split-20261014.md#claude-驗證與-github-發布收尾2026-10-14)，不再部署。本批含[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)、[大檔拆分](code-split-20261014.md)；桌面工具與最舊退版回收的驗證限制保留於紀錄。
 - **東區**：等本人到當地再更新；南區部署或 push 不代表東區完成。步驟見 [Git 安裝更新](git-install-update.md)。
 - **規則**：根目錄 `AGENTS.md`（現行）；各日決定原文見 [AGENTS 歷史全文](agents-history-20261013.md)。
@@ -343,6 +342,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 複查、稽核與整理
 
+- 10-15 [GPT 遺留程式整理：跨專案排查順序、與 Astra 共同盤點、取消臨床排除](gpt-legacy-cleanup-20261015.md)
 - 10-15 [10-14 檢查剩餘事項收尾：畫面積壓寬限、討論 API 累積上限、更新暫存清理、Gemini 核心讀回，南區已部署](remaining-fixes-20261015.md)
 - 10-14 [K 全面檢查：時序修正 20 項、南區已部署並完成正式讀回](k-audit-20261014.md)
 - 10-14 [K 全面檢查後續：剩餘七項處理、南區已部署；後續 Claude 子代理停止可重新確認，南區已部署](k-audit-followups-20261014.md)
