@@ -535,11 +535,10 @@ export async function openClaudeHost({
   ];
   if (discussionOnly)
     args.push(
-      '--restricted',
       '--safe-mode',
       '--strict-mcp-config',
       '--tools',
-      'WebSearch,WebFetch',
+      'Read,Glob,Grep,WebSearch,WebFetch',
       '--disable-slash-commands',
       '--no-chrome'
     );

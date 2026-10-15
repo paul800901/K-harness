@@ -1,3 +1,4 @@
+import {DiscussionEntry} from './discussion-roundtable.jsx';
 import {ActionBarPrimitive, MessagePrimitive, SelectionToolbarPrimitive, useAuiState} from '@assistant-ui/react';
 import {Check, Copy, FileText} from 'lucide-react';
 import {CopyFeedback, NativeReasoning} from './native-ui.jsx';
@@ -206,8 +207,10 @@ export function userCopyText(record) {
 }
 export function UserMessage() {
   const id = useAuiState(s => s.message.id);
-  const {state, modelName, models, messageIndex, userTurnIndex} = useContext(TranscriptContext);
+  const {state, modelName, models, messageIndex, userTurnIndex, openRoundtable} = useContext(TranscriptContext);
   const record = messageIndex.get(id);
+  if (record?.kind === 'discussion' && !record.summary)
+    return <DiscussionEntry record={record} state={state} onOpen={openRoundtable} />;
   const worker =
     record?.kind === 'worker-completion' || record?.source === 'worker-completion' || id.startsWith('luna-completion-');
   if (worker)
@@ -420,7 +423,7 @@ export function TurnProcess({group, state}) {
 }
 export function AssistantMessage() {
   const id = useAuiState(s => s.message.id),
-    {state, branch, groups, messageIndex} = useContext(TranscriptContext);
+    {state, branch, groups, messageIndex, openRoundtable} = useContext(TranscriptContext);
   const record = messageIndex.get(id),
     messageGroup = groups.get(id),
     groupLatestAssistant = messageGroup?.latestAssistant,
@@ -435,6 +438,8 @@ export function AssistantMessage() {
         : null;
   const quoteable = record?.role === 'assistant' && !record?.partial && !record?.streaming,
     completedReply = quoteable && !!record?.completedAt;
+  if (record?.kind === 'discussion' && !record.summary)
+    return <DiscussionEntry record={record} state={state} onOpen={openRoundtable} />;
   if (record?.kind !== 'discussion' && groups.has(id) && !group && !isConclusion && !completedReply) return null;
   const discussion = record?.kind === 'discussion',
     speaker = record?.summary ? '討論整理（AI 產生）' : record?.speaker;

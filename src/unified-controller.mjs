@@ -31,8 +31,10 @@ export function createUnifiedController(options) {
   } = options;
   let active,
     changing = false,
-    queue;
+    queue,
+    hostRequest = null;
   const changed = () => {
+    hostRequest?.check();
     onChange();
     if (!changing) queue?.schedule();
   };
@@ -53,7 +55,14 @@ export function createUnifiedController(options) {
       }
     }));
   active = codex;
-  queue = createInputQueue({root, getController: () => active, onChange});
+  queue = createInputQueue({
+    root,
+    getController: () => active,
+    onChange() {
+      hostRequest?.check();
+      onChange();
+    }
+  });
   const api = {
     get state() {
       return {
@@ -420,6 +429,102 @@ export function createUnifiedController(options) {
         throw new Error('正在切換對話，請稍候。');
       return active[name](...args);
     };
+  // Event-driven host turns use the same native send lock as human input and worker notices.
+  // No host session is opened, and an attempted/uncertain turn is never resubmitted.
+  api.askHost = (text, {id, signal, bind, onWaiting = () => {}}) => {
+    if (hostRequest) return Promise.reject(Error('已有主持回合等待或執行。'));
+    const owner = active,
+      threadId = owner.state.threadId;
+    return new Promise((resolve, reject) => {
+      let attempted = false,
+        submitted = false,
+        terminal = null,
+        interrupting = false,
+        done = false;
+      const finish = (error, output) => {
+        if (done) return;
+        done = true;
+        signal?.removeEventListener('abort', abort);
+        hostRequest = null;
+        error ? reject(error) : resolve(output);
+        queue.schedule();
+      };
+      const interrupt = async () => {
+        if (!submitted || interrupting || done) return;
+        interrupting = true;
+        try {
+          await owner.interruptDiscussion(id);
+          check(); // Only a native terminal event confirms completion.
+        } catch (error) {
+          finish(Object.assign(error, {settled: false}));
+        }
+      };
+      const abort = () => {
+        if (!attempted) finish(signal.reason ?? Error('討論已停止。'));
+        else void interrupt();
+      };
+      const check = () => {
+        if (done) return;
+        const state = owner.state;
+        if (
+          owner !== active ||
+          threadId !== state.threadId ||
+          changing ||
+          ['offline', 'error', 'uncertain', 'idle'].includes(state.status)
+        ) {
+          finish(
+            Object.assign(Error('主 session 不可用或主持送出狀態未確認；未另開主持或重送。'), {settled: !attempted})
+          );
+          return;
+        }
+        if (!attempted) {
+          if (signal?.aborted) return abort();
+          if (
+            state.busy ||
+            state.goalPending ||
+            state.completionPending ||
+            state.questions?.length ||
+            queue.sending ||
+            queue.state.queuedMessages.length
+          ) {
+            onWaiting(true);
+            return;
+          }
+          attempted = true;
+          onWaiting(false);
+          // Native send reserves busy synchronously before its first await.
+          void owner
+            .send({text, discussionTurn: {id, bind}})
+            .then(result => {
+              if (result?.sent !== true || result?.queued)
+                throw Object.assign(Error('主持回合未送出；未重送。'), {notSent: true});
+              submitted = true;
+              check();
+              if (signal?.aborted) void interrupt();
+            })
+            .catch(error => finish(Object.assign(error, {settled: error.notSent === true})));
+          return;
+        }
+        if (!terminal && !state.busy && ['completed', 'failed', 'interrupted'].includes(state.status)) {
+          const messages = state.messages.filter(m => m.groupId === id);
+          if (messages.some(m => m.role === 'user'))
+            terminal = {
+              status: state.status,
+              error: state.error,
+              text: messages.findLast(m => m.role === 'assistant')?.text ?? ''
+            };
+        }
+        if (terminal && submitted) {
+          if (signal?.aborted) finish(signal.reason ?? Error('討論已停止。'));
+          else if (terminal.status !== 'completed') finish(Error(terminal.error ?? '主持回合未完成。'));
+          else finish(null, terminal.text);
+        }
+      };
+      hostRequest = {check};
+      signal?.addEventListener('abort', abort, {once: true});
+      check();
+    });
+  };
   api.send = async data => {
     if (changing) throw Object.assign(Error('正在切換對話。'), {notSent: true});
     if (active.state.busy || queue.state.queuedMessages.length) return queue.enqueue(data);

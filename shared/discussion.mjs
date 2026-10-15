@@ -2,6 +2,7 @@ export const discussionModes = {parallel: '平行比較', review: '交叉審查'
 export const discussionStatus = {
   preparing: '準備開始',
   working: '討論中',
+  'waiting-host': '等待主代理',
   finishing: '整理完成中',
   stopping: '停止中',
   completed: '已整理',

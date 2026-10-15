@@ -2021,6 +2021,7 @@ export function createDesktopController({
         activity.begin();
       }
       attempted = true;
+      if (activeGroupId?.startsWith('discussion-host-')) activeGroupId = null;
       const delivery = startNativeTurn(active, {
         threadId: parent,
         model: state.model,
@@ -3521,7 +3522,15 @@ export function createDesktopController({
         changed();
       }
     },
-    async send({text = '', attachmentIds = [], effort, accessMode, permissionConfirmed, source = 'local'}) {
+    async send({
+      text = '',
+      attachmentIds = [],
+      effort,
+      accessMode,
+      permissionConfirmed,
+      source = 'local',
+      discussionTurn
+    }) {
       let attempted = false;
       try {
         if (
@@ -3616,7 +3625,7 @@ export function createDesktopController({
             state.status = 'interrupted';
             return {sent: false};
           }
-          activeGroupId = randomUUID();
+          activeGroupId = discussionTurn?.id ?? randomUUID();
           state.status = 'working';
           state.error = null;
           state.turnError = null;
@@ -3634,6 +3643,10 @@ export function createDesktopController({
           let wasPrepared = false,
             sendOwnership;
           try {
+            if (discussionTurn) {
+              await uiTimingWrite;
+              await discussionTurn.bind({groupId: activeGroupId, messageId: sentMessage.id});
+            }
             wasPrepared = await markSubmitted();
             attempted = true;
             // Bind this live human submission before either response/event order; never borrow history.
@@ -3659,6 +3672,7 @@ export function createDesktopController({
               ...turnPermissions(access, state.workspace)
             });
             const sentTurnId = result.turn.id;
+            if (discussionTurn) await discussionTurn.bind({turnId: sentTurnId});
             message(sentMessage.id, 'user', text, attachments, sentTurnId);
             if (sendOwnership && goalTurn === sendOwnership) {
               if (sendOwnership.turnId === null) sendOwnership.turnId = sentTurnId;
@@ -3723,6 +3737,13 @@ export function createDesktopController({
         if (!attempted) error.notSent = true;
         throw error;
       }
+    },
+    async interruptDiscussion(id) {
+      if (activeGroupId !== id || !host) throw Error('主持回合歸屬已改變；未中止其他工作。');
+      if (submission) await submission;
+      if (!state.busy) return;
+      if (!turnId) throw Error('主持回合識別碼未確認；未假稱停止。');
+      await host.request('turn/interrupt', {threadId: state.threadId, turnId});
     },
     async steer({text = '', attachmentIds = []}) {
       if (

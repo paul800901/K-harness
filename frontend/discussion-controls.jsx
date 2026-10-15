@@ -259,8 +259,7 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
           </label>
           {config.mode === 'parallel' && <small>首答互不可見，各自依任務書獨立回答。</small>}
           <small>
-            原生討論依各核心已接通能力處理，不代表都能任意讀取檔案。API
-            討論可在本次工作區唯讀搜尋及讀取，不會寫入檔案或派工；API 呼叫依供應商計費。
+            討論參與者可廣泛唯讀相關檔案，不會寫入檔案或派工；Codex 須確認唯讀沙盒就緒。API 呼叫依供應商計費。
           </small>
         </div>
       )}

@@ -1,3 +1,4 @@
+import {DiscussionRoundtable} from './discussion-roundtable.jsx';
 import {DiscussionControls, useDiscussionConfig} from './discussion-controls.jsx';
 import {DiscussionApiSettings} from './discussion-api-settings.jsx';
 import {uploadAttachment} from './attachment-upload.mjs';
@@ -155,6 +156,16 @@ const ChatView = React.memo(function ChatView({
   const threadApi = (route, data = {}) => api(route, {...data, threadId});
   const [discussionConfig, setDiscussionConfig] = useDiscussionConfig(threadId);
   const {models: discussionModels, setModels: discussionCatalog} = useContext(TranscriptContext);
+  useEffect(() => {
+    const target = event => {
+      const data = event.detail;
+      if (data.threadId !== threadId || data.runId !== state.discussion?.id || !state.discussion?.busy) return;
+      setDiscussionConfig({...discussionConfig, target: data.target});
+      setTimeout(() => document.querySelector('.composer-input')?.focus(), 0);
+    };
+    window.addEventListener('k-discussion-target', target);
+    return () => window.removeEventListener('k-discussion-target', target);
+  }, [threadId, state.discussion, discussionConfig]);
   const [draftText, setDraftText] = useState('');
   const [responseQuotes, setResponseQuotes] = useState(() => loadResponseQuotes(sessionStorage, threadId)),
     [quoteSending, setQuoteSending] = useState(false),
@@ -269,7 +280,11 @@ const ChatView = React.memo(function ChatView({
       const discussing = state.discussion?.busy;
       if (discussing && payload.attachmentIds.length) throw Error('討論中的補充先用文字；附件留在輸入框，未送出。');
       const result = discussing
-        ? await threadApi('discussion/message', {text, target: discussionConfig.target || undefined})
+        ? await threadApi('discussion/message', {
+            text,
+            runId: state.discussion.id,
+            target: discussionConfig.target || undefined
+          })
         : await threadApi('send', {
             ...payload,
             // Armed discussion settings ride with the message; the main model starts the discussion when asked.
@@ -320,7 +335,11 @@ const ChatView = React.memo(function ChatView({
   // Keep history inputs stable across background events and composer keystrokes;
   // callbacks still read this room's latest draft, attachments and permissions.
   const callbacks = useRef();
-  callbacks.current = {submitText, cancel: () => roomAction(threadId, () => threadApi('stop'))};
+  callbacks.current = {
+    submitText,
+    cancel: () =>
+      roomAction(threadId, () => threadApi('stop', state.discussion?.busy ? {runId: state.discussion.id} : {}))
+  };
   const isDisabled = !online || !state.threadId || ['connecting', 'offline', 'error'].includes(state.status),
     isSendDisabled = blocked || uploads.some(a => a.loading) || state.status === 'uncertain';
   const adapter = useMemo(
@@ -881,6 +900,8 @@ function App() {
     [sidebar, setSidebar] = useState(() => !narrowScreen()),
     [inspector, setInspector] = useState(false),
     [panel, setPanel] = useState('artifacts'),
+    [roundtableRun, setRoundtableRun] = useState(null),
+    [roundtableReader, setRoundtableReader] = useState(null),
     [panelTabsByThread, setPanelTabsByThread] = useState(() => ({['']: ['artifacts']})),
     [browserInfo, setBrowserInfo] = useState(null),
     [modal, setModal] = useState(null),
@@ -897,6 +918,9 @@ function App() {
     ),
     [manualOrder, setManualOrder] = useState(() => readSidebarOrder()),
     [panelWidth, setPanelWidth] = useState(null);
+  const roundtableReaderRef = useRef(null),
+    seenRuns = useRef(new Map());
+  roundtableReaderRef.current = roundtableReader;
   const [navigationTarget, setNavigationTarget] = useState(null);
   const state =
     navigationTarget && (!receivedState.connectionOpening || receivedState.threadId !== navigationTarget.threadId)
@@ -1008,11 +1032,40 @@ function App() {
   }, [state.threadId, state.status, state.artifacts, hasBrowserPanel, mobile]);
   const chooseInspector = open => {
     if (mobile && open) setSidebar(false);
+    if (!open) setRoundtableReader(null);
     const key = state.threadId ?? '',
       previous = panelByThread.current.get(key);
     panelByThread.current.set(key, {open, seenArtifacts: previous?.seenArtifacts ?? new Set(state.artifacts ?? [])});
     setInspector(open);
   };
+  const openRoundtable = useCallback(
+    runId => window.dispatchEvent(new CustomEvent('k-open-roundtable', {detail: {threadId: state.threadId, runId}})),
+    [state.threadId]
+  );
+  const readRoundtable = cell => {
+    if (mobile && cell && !roundtableReaderRef.current)
+      history.pushState({kMobilePanel: true, kRoundtableReader: true}, '');
+    if (mobile && !cell && history.state?.kRoundtableReader) {
+      history.back();
+      return;
+    }
+    setRoundtableReader(cell);
+  };
+  useEffect(() => {
+    if (panel !== 'roundtable' && roundtableReaderRef.current) readRoundtable(null);
+  }, [panel]);
+  useEffect(() => {
+    const open = event => {
+      if (event.detail.threadId !== state.threadId) return;
+      setRoundtableRun(event.detail.runId);
+      setRoundtableReader(null);
+      setPanelTabs(tabs => (tabs.includes('roundtable') ? tabs : [...tabs, 'roundtable']));
+      setPanel('roundtable');
+      chooseInspector(true);
+    };
+    window.addEventListener('k-open-roundtable', open);
+    return () => window.removeEventListener('k-open-roundtable', open);
+  }, [state.threadId, mobile]);
   const uploads = uploadsByThread[state.threadId ?? ''] ?? emptyUploads;
   const setUploads = update => {
     const threadId = state.threadId ?? '';
@@ -1160,6 +1213,11 @@ function App() {
     history.pushState({kMobilePanel: true}, '');
     let popped = false;
     const back = () => {
+      if (roundtableReaderRef.current) {
+        roundtableReaderRef.current = null;
+        setRoundtableReader(null);
+        return;
+      }
       popped = true;
       setModal(null);
       setSidebar(false);
@@ -1168,7 +1226,10 @@ function App() {
     window.addEventListener('popstate', back);
     return () => {
       window.removeEventListener('popstate', back);
-      if (!popped && history.state?.kMobilePanel) history.back();
+      if (!popped && history.state?.kMobilePanel) {
+        if (history.state.kRoundtableReader) history.go(-2);
+        else history.back();
+      }
     };
   }, [mobileOverlay]);
   useEffect(() => {
@@ -1182,6 +1243,8 @@ function App() {
     setAccessMode(state.accessMode ?? 'workspace-write');
     setPermissionConfirmed(false);
     setPanel('artifacts');
+    setRoundtableRun(null);
+    setRoundtableReader(null);
     setBrowserInfo(null);
   }, [state.threadId]);
   useEffect(() => {
@@ -1471,6 +1534,28 @@ function App() {
   );
   const disabled = busy || state.status === 'connecting' || !online;
 
+  useEffect(() => {
+    const d = state.discussion,
+      threadId = state.threadId;
+    if (!threadId || state.connectionOpening || state.status === 'connecting') return;
+    let seen = seenRuns.current.get(threadId);
+    if (!seen) {
+      seen = new Set((d?.runs ?? []).map(run => run.id));
+      if (d?.busy) seen.delete(d.id);
+      seenRuns.current.set(threadId, seen);
+    }
+    if (!d?.id || seen.has(d.id)) return;
+    seen.add(d.id);
+    if (!mobile) openRoundtable(d.id);
+  }, [
+    state.threadId,
+    state.connectionOpening,
+    state.status,
+    state.discussion?.id,
+    state.discussion?.busy,
+    mobile,
+    openRoundtable
+  ]);
   const messageIndex = useMemo(
     () => new Map((state.messages ?? []).map(message => [message.id, message])),
     [state.messages]
@@ -1494,7 +1579,8 @@ function App() {
       model: state.model,
       modelDisplayName: state.modelDisplayName,
       reasoning: state.reasoning,
-      capabilities: state.capabilities
+      capabilities: state.capabilities,
+      discussion: state.discussion
     }),
     [
       state.messages,
@@ -1506,7 +1592,8 @@ function App() {
       state.model,
       state.modelDisplayName,
       state.reasoning,
-      state.capabilities
+      state.capabilities,
+      state.discussion
     ]
   );
   const transcript = useMemo(
@@ -1519,9 +1606,10 @@ function App() {
       branch: startBranch,
       groups,
       messageIndex,
-      userTurnIndex
+      userTurnIndex,
+      openRoundtable
     }),
-    [transcriptState, preview, modelName, models, startBranch, groups, messageIndex, userTurnIndex]
+    [transcriptState, preview, modelName, models, startBranch, groups, messageIndex, userTurnIndex, openRoundtable]
   );
   return (
     <TranscriptContext.Provider value={transcript}>
@@ -1878,9 +1966,11 @@ function App() {
                     : null;
                   const label = id.startsWith('browser:')
                       ? page?.title || page?.url || '瀏覽器'
-                      : id === 'workers'
-                        ? '子代理'
-                        : '成果',
+                      : id === 'roundtable'
+                        ? '圓桌'
+                        : id === 'workers'
+                          ? '子代理'
+                          : '成果',
                     closeTitle = id.startsWith('browser:') ? '關閉瀏覽器分頁檢視；網頁仍會保留' : `關閉${label}分頁`;
                   return (
                     <div className={`panel-tab ${panel === id ? 'active' : ''}`} key={id}>
@@ -1931,6 +2021,11 @@ function App() {
                     className="panel-add-menu anchored-popover"
                     role="menu"
                   >
+                    {!panelTabs.includes('roundtable') && (
+                      <button role="menuitem" onClick={() => openPanel('roundtable')}>
+                        圓桌
+                      </button>
+                    )}
                     {!panelTabs.includes('workers') && (
                       <button role="menuitem" onClick={() => openPanel('workers')}>
                         子代理
@@ -1941,9 +2036,9 @@ function App() {
                         瀏覽器
                       </button>
                     )}
-                    {panelTabs.includes('workers') && panelTabs.some(id => id.startsWith('browser:')) && (
-                      <span className="muted">所有分頁已開啟</span>
-                    )}
+                    {panelTabs.includes('roundtable') &&
+                      panelTabs.includes('workers') &&
+                      panelTabs.some(id => id.startsWith('browser:')) && <span className="muted">所有分頁已開啟</span>}
                   </div>
                 </div>
                 <IconButton title="收合工作面板" onClick={() => chooseInspector(false)}>
@@ -1952,6 +2047,24 @@ function App() {
               </div>
             </div>
             <div className="panel-body">
+              {panel === 'roundtable' && (
+                <DiscussionRoundtable
+                  key={state.threadId}
+                  state={state}
+                  mobile={mobile}
+                  runId={roundtableRun}
+                  onRun={setRoundtableRun}
+                  reader={roundtableReader}
+                  onReader={readRoundtable}
+                  onStop={runId => action(() => api('stop', {threadId: state.threadId, runId}))}
+                  onTarget={(runId, target) => {
+                    if (mobile) chooseInspector(false);
+                    window.dispatchEvent(
+                      new CustomEvent('k-discussion-target', {detail: {threadId: state.threadId, runId, target}})
+                    );
+                  }}
+                />
+              )}
               {panel === 'artifacts' && (
                 <>
                   {state.artifacts?.map(name => (

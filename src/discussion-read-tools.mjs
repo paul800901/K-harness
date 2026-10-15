@@ -2,18 +2,15 @@ import path from 'node:path';
 import {realpath, lstat, readdir, readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 
-const protectedPart = p =>
-  /^(?:\.git|\.local|\.runtime|\.codex|\.claude|\.gemini|agent-home|\.ssh|\.env(?:\..*)?|auth\.json|credentials(?:\..*)?|.*\.(?:pem|key|pfx|p12))$/iu.test(
-    p
-  );
+export const MAX_DISCUSSION_FILE_BYTES = 16 * 1024 * 1024;
 const parameters = properties => ({type: 'object', properties, additionalProperties: false});
-const relative = {type: 'string', description: '相對於本次工作區的路徑；不接受絕對路徑或上層路徑。'};
+const relative = {type: 'string', description: '絕對路徑，或以工作區為基準的相對路徑；不接受上層路徑或連結。'};
 export const discussionReadTools = [
   {
     type: 'function',
     function: {
       name: 'list_files',
-      description: '列出本次工作區檔案，可遞迴；不含憑證與內部執行資料。',
+      description: '唯讀列出指定目錄檔案，可遞迴。',
       parameters: parameters({path: relative, recursive: {type: 'boolean'}})
     }
   },
@@ -21,7 +18,7 @@ export const discussionReadTools = [
     type: 'function',
     function: {
       name: 'search_files',
-      description: '在本次工作區的 UTF-8 文字檔中搜尋字面文字，回傳檔案、行號、原文。',
+      description: '在指定路徑的 UTF-8 文字檔中搜尋字面文字，回傳檔案、行號、原文。',
       parameters: {...parameters({path: relative, query: {type: 'string'}}), required: ['query']}
     }
   },
@@ -44,67 +41,78 @@ export const discussionReadTools = [
 export async function createDiscussionReader(workspace, {signal} = {}) {
   const root = await realpath(workspace),
     check = () => signal?.throwIfAborted();
+  const displayPath = target => {
+    const rel = path.relative(root, target);
+    return (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) ? rel || '.' : target).replaceAll(
+      '\\',
+      '/'
+    );
+  };
   const locate = async (value = '.') => {
     check();
-    if (
-      typeof value !== 'string' ||
-      !value ||
-      /[\x00-\x1f:]/u.test(value) ||
-      path.win32.isAbsolute(value) ||
-      path.posix.isAbsolute(value)
-    )
-      throw Error('只可讀本次工作區的相對路徑。');
-    const parts = value === '.' ? [] : value.split(/[\\/]/u);
+    if (typeof value !== 'string' || !value || /[\x00-\x1f]/u.test(value) || /^[\\/]{2}[?.]/u.test(value))
+      throw Error('讀取路徑無效。');
+    const absolute = path.isAbsolute(value);
+    const anchor = absolute ? path.parse(value).root : root;
+    const suffix = absolute ? value.slice(anchor.length) : value === '.' ? '' : value;
+    const parts = suffix ? suffix.split(/[\\/]/u) : [];
     if (
       parts.some(
         p =>
           !p ||
           p === '.' ||
           p === '..' ||
-          /[. ]$/u.test(p) ||
-          /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu.test(p) ||
-          protectedPart(p)
+          /[:. ]$/u.test(p) ||
+          p.includes(':') ||
+          /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)/iu.test(p)
       )
     )
-      throw Error('路徑超出本次討論唯讀範圍。');
-    let target = root;
+      throw Error('讀取路徑包含不允許的路徑片段。');
+    let target = anchor;
     for (const part of parts) {
       target = path.join(target, part);
       if ((await lstat(target)).isSymbolicLink()) throw Error('討論不讀取連結或接合點。');
     }
-    const canonical = await realpath(target),
-      rel = path.relative(root, canonical);
-    if (rel.startsWith('..') || path.isAbsolute(rel) || rel.split(path.sep).some(protectedPart))
-      throw Error('路徑超出本次工作區或含受保護資料。');
+    const canonical = await realpath(target);
+    if (path.relative(path.resolve(target), canonical)) throw Error('讀取路徑解析不一致。');
     return canonical;
+  };
+  const bytes = async target => {
+    check();
+    const info = await lstat(target);
+    if (!info.isFile()) throw Error('請指定一般檔案。');
+    if (info.size > MAX_DISCUSSION_FILE_BYTES) throw Error('檔案超過 16 MiB 讀取上限；未讀入內容。');
+    return readFile(target);
   };
   const walk = async (target, recursive) => {
     check();
     const entries = [];
     for (const e of await readdir(target, {withFileTypes: true})) {
       check();
-      if (protectedPart(e.name) || e.isSymbolicLink()) continue;
-      const full = await locate(path.relative(root, path.join(target, e.name)));
+      if (e.isSymbolicLink()) continue;
+      const full = await locate(path.join(target, e.name));
       if (e.isDirectory()) {
-        entries.push({path: path.relative(root, full).replaceAll('\\', '/'), type: 'directory'});
+        entries.push({path: displayPath(full), type: 'directory'});
         if (recursive) entries.push(...(await walk(full, true)));
-      } else if (e.isFile()) entries.push({path: path.relative(root, full).replaceAll('\\', '/'), type: 'file'});
+      } else if (e.isFile()) entries.push({path: displayPath(full), type: 'file'});
     }
     return entries;
   };
   const text = async target => {
     check();
-    if (!(await lstat(target)).isFile()) throw Error('請指定一般檔案。');
-    const bytes = await readFile(target);
+    const contentBytes = await bytes(target);
     check();
     if (path.extname(target).toLowerCase() === '.docx') {
       const {default: mammoth} = await import('mammoth');
-      return {text: (await mammoth.extractRawText({buffer: bytes})).value, note: '僅 DOCX 文字，不含圖片或版面。'};
+      return {
+        text: (await mammoth.extractRawText({buffer: contentBytes})).value,
+        note: '僅 DOCX 文字，不含圖片或版面。'
+      };
     }
     if (path.extname(target).toLowerCase() === '.pdf') {
       const {getDocument} = await import('pdfjs-dist/legacy/build/pdf.mjs');
       const task = getDocument({
-        data: new Uint8Array(bytes),
+        data: new Uint8Array(contentBytes),
         standardFontDataUrl: fileURLToPath(
           new URL('../node_modules/pdfjs-dist/standard_fonts/', import.meta.url)
         ).replaceAll('\\', '/'),
@@ -125,9 +133,9 @@ export async function createDiscussionReader(workspace, {signal} = {}) {
         await task.destroy();
       }
     }
-    if (bytes.includes(0)) throw Error('非 UTF-8 文字檔；未宣稱已讀取。');
+    if (contentBytes.includes(0)) throw Error('非 UTF-8 文字檔；未宣稱已讀取。');
     try {
-      return {text: new TextDecoder('utf-8', {fatal: true}).decode(bytes)};
+      return {text: new TextDecoder('utf-8', {fatal: true}).decode(contentBytes)};
     } catch {
       throw Error('非 UTF-8 文字檔；未宣稱已讀取。');
     }
@@ -139,16 +147,14 @@ export async function createDiscussionReader(workspace, {signal} = {}) {
     if (name === 'search_files') {
       if (typeof args.query !== 'string' || !args.query) throw Error('請指定搜尋文字。');
       const target = await locate(args.path),
-        files = (await lstat(target)).isFile()
-          ? [{path: path.relative(root, target), type: 'file'}]
-          : await walk(target, true),
+        files = (await lstat(target)).isFile() ? [{path: displayPath(target), type: 'file'}] : await walk(target, true),
         matches = [],
         skipped = [];
       for (const f of files.filter(f => f.type === 'file')) {
         check();
         let content;
         try {
-          content = new TextDecoder('utf-8', {fatal: true}).decode(await readFile(await locate(f.path)));
+          content = new TextDecoder('utf-8', {fatal: true}).decode(await bytes(await locate(f.path)));
           if (content.includes('\0')) throw Error();
         } catch {
           skipped.push(f.path);

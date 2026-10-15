@@ -3,7 +3,7 @@ import {spawnSync} from 'node:child_process';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, readFile, writeFile, stat, utimes} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {
@@ -15,6 +15,8 @@ import {
   geminiOutcome,
   geminiProcess,
   geminiOutputFiles,
+  collectGeminiOutputFiles,
+  geminiWriteTarget,
   killGeminiTree,
   geminiInstruction,
   GEMINI_BROWSER_GUIDANCE
@@ -1377,4 +1379,220 @@ test('native quota or rate text only requests official checking; DNS, login, can
   ]) {
     assert.equal(geminiOutcome({result: {status: 'ERROR', error}}, process).quotaCheckNeeded, undefined);
   }
+});
+
+// Synthetic protocol events, not a capture from a real agy run.
+const writeEvent = (target, name = 'write_to_file', extra = {}) => ({
+  event: 'step_update',
+  step_update: {
+    state: 'DONE',
+    tool_info: {name, parameters: {TargetFile: target}},
+    ...extra
+  }
+});
+const jsonLines = events => events.map(event => JSON.stringify(event) + '\n').join('');
+test('stream collects every full successful write target, sharing the main-controller criterion', () => {
+  const long = 'a'.repeat(1400),
+    events = [
+      writeEvent('a'),
+      writeEvent('b', 'replace_file_content'),
+      writeEvent(long, 'multi_replace_file_content'),
+      writeEvent('a'),
+      writeEvent('error', 'write_to_file', {error: 'failed'}),
+      writeEvent('pending', 'write_to_file', {state: 'RUNNING'}),
+      writeEvent('tool-error', 'write_to_file', {
+        tool_info: {name: 'write_to_file', error: 'failed', parameters: {TargetFile: 'tool-error'}}
+      })
+    ];
+  const parser = geminiStream();
+  parser.write(Buffer.from(jsonLines(events)));
+  assert.deepEqual(parser.end().writeTargets, ['a', 'b', long]);
+  assert.equal(geminiWriteTarget(events[2].step_update), long);
+});
+test('non-git outputs stat DONE targets inside and outside workspace, including old mtime; git sources union', async () => {
+  const inside = path.join(workspace, `written-${randomUUID()}.txt`),
+    outside = path.join(root, `outside-${randomUUID()}.txt`);
+  await writeFile(inside, '中文');
+  await writeFile(outside, 'outside');
+  await utimes(inside, new Date(0), new Date(0));
+  const name = path.basename(inside),
+    events = [
+      writeEvent(inside),
+      writeEvent(outside, 'replace_file_content'),
+      writeEvent('missing'),
+      writeEvent('not-output', 'write_to_file', {state: 'ERROR'})
+    ];
+  const result = await make(fakeSpawn(jsonLines(events) + success('done'))).run({
+    task: 'synthetic writes',
+    effort: 'low'
+  });
+  assert.deepEqual(result.outputFiles, [name, outside.replaceAll('\\', '/')]);
+  assert.equal(result.outputFileDetails[0].size, (await stat(inside)).size);
+  assert.equal(result.outputFileDetails[0].mtime, new Date(0).toISOString());
+  assert(result.outputFileDetails.every(file => file.source === 'stream'));
+  const union = await collectGeminiOutputFiles(
+    new Map(),
+    new Map([
+      [name, '??'],
+      ['missing', '??']
+    ]),
+    workspace,
+    [inside, outside]
+  );
+  assert.deepEqual(
+    union.outputFileDetails.map(file => file.source),
+    ['both', 'stream']
+  );
+  const gitOnly = await collectGeminiOutputFiles(new Map(), new Map([[name, '??']]), workspace);
+  assert.equal(gitOnly.outputFileDetails[0].source, 'git');
+});
+test('cancellation retains landed outputs and cleanup error carries them through bridge persistence', async () => {
+  const file = path.join(workspace, `cancel-output-${randomUUID()}.txt`);
+  await writeFile(file, 'landed');
+  const fake = fakeSpawn(null),
+    ready = Promise.withResolvers(),
+    abort = new AbortController();
+  const running = make(fake, {killTree: async () => fake.children.at(-1).emit('close', 1)}).run({
+    task: 'cancel synthetic',
+    effort: 'low',
+    signal: abort.signal,
+    onStart: ready.resolve
+  });
+  await ready.promise;
+  fake.children.at(-1).stdout.write(jsonLines([writeEvent(file)]));
+  abort.abort();
+  const cancelled = await running;
+  assert.equal(cancelled.failureKind, 'cancelled');
+  assert.deepEqual(cancelled.outputFiles, [path.basename(file)]);
+  const browser = browserFixture({closeError: true});
+  const worker = make(fakeSpawn(jsonLines([writeEvent(file)]) + success('full report')), {
+    accessMode: 'workspace-write',
+    browserSession: browser.browserSession
+  });
+  const persisted = Promise.withResolvers();
+  const bridge = await createLunaBridge({
+    root,
+    workspace,
+    parentId: randomUUID(),
+    geminiOnly: true,
+    geminiFactory: () => worker,
+    onChange: record => {
+      if (record.endedAt) persisted.resolve();
+    }
+  });
+  await bridge.start({requestId: 'cleanup', task: 'cleanup fixture', model: 'gemini-3.8-flash', effort: 'low'});
+  const result = await bridge.wait({requestId: 'cleanup', timeoutMs: 2000});
+  assert.equal(result.failureKind, 'cleanup-unconfirmed');
+  assert.equal(result.settled, false);
+  assert.deepEqual(result.outputFiles, [path.basename(file)]);
+  assert.equal(result.output, 'full report');
+  assert.match(result.nativeError, /fixture close failed/);
+  assert.equal(result.acceptance, 'not-reviewed');
+  const compact = await lunaResult(result);
+  assert.deepEqual(compact.outputFileDetails, result.outputFileDetails);
+  await persisted.promise;
+  await assert.rejects(bridge.close(), /尚未確認停止/);
+  const saved = JSON.parse(
+    await readFile(path.join(root, '.runtime/luna-bridge', result.parentId, 'cleanup.json'), 'utf8')
+  );
+  assert.deepEqual(saved.outputFiles, result.outputFiles);
+  // close awaited completion persistence but correctly refused to declare the fake browser stopped.
+});
+test('factory, spawn, models and account wrapper throws always carry unknown-output notes and raw errors', async () => {
+  const factories = [
+    () => {
+      throw Error('factory failure');
+    },
+    () =>
+      make({
+        spawnImpl: () => {
+          throw Error('synthetic spawn');
+        }
+      }),
+    () => make(fakeSpawn(success('unused'), '')),
+    () =>
+      make(fakeSpawn(), {
+        accounts: {
+          run: async () => {
+            throw Error('synthetic account wrapper');
+          }
+        }
+      })
+  ];
+  for (const [i, geminiFactory] of factories.entries()) {
+    const bridge = await createLunaBridge({root, workspace, parentId: randomUUID(), geminiOnly: true, geminiFactory});
+    await bridge.start({requestId: `throw-${i}`, task: 'synthetic failure', model: 'gemini-3.8-flash', effort: 'low'});
+    const record = await bridge.wait({requestId: `throw-${i}`, timeoutMs: 2000});
+    assert.equal(record.status, 'failed');
+    assert.match(record.outputFilesNote, /清單未知，不代表沒有輸出/);
+    assert.equal(record.failureKind, i === 1 ? 'spawn-failed' : 'unknown');
+    assert(record.nativeError);
+    assert.equal((await lunaResult(record)).outputFilesNote, record.outputFilesNote);
+    await bridge.close();
+  }
+});
+test('failure kinds use process facts and retain raw native error without keyword classification', () => {
+  for (const [process, kind] of [
+    [{reason: 'timeout'}, 'k-timeout'],
+    [{reason: 'cancelled'}, 'cancelled'],
+    [{reason: 'stderr limit exceeded'}, 'stderr-limit'],
+    [{cleanupError: 'not confirmed'}, 'cleanup-unconfirmed'],
+    [{code: 503}, 'nonzero-exit']
+  ]) {
+    const result = geminiOutcome({result: {error: {message: 'native 503', details: 'original'}}}, process);
+    assert.equal(result.failureKind, kind);
+    assert.match(result.nativeError, /original/);
+  }
+  assert.equal(geminiOutcome({result: {status: 'SUCCESS', response: ''}}, {code: 0}).failureKind, 'no-output');
+  const native = geminiOutcome({result: {status: 'ERROR', error: 'output limit ' + 'x'.repeat(5000)}}, {code: 0});
+  assert.equal(native.failureKind, 'native-result-error');
+  assert.equal(native.nativeError.length, 4000);
+});
+
+test('account release wrapper cannot discard a previously computed cleanup receipt', async () => {
+  const file = path.join(workspace, `release-${randomUUID()}.txt`);
+  await writeFile(file, 'saved');
+  const browser = browserFixture({closeError: true});
+  const worker = make(fakeSpawn(jsonLines([writeEvent(file)]) + success('saved report')), {
+    accessMode: 'workspace-write',
+    browserSession: browser.browserSession,
+    accounts: {
+      run: async (options, execute) => {
+        try {
+          await execute({accountId: 'synthetic', accountEmail: 'fake@example.invalid'});
+        } finally {
+          throw Object.assign(Error('synthetic account release failure'), {settled: false});
+        }
+      }
+    }
+  });
+  await assert.rejects(worker.run({task: 'synthetic account release', effort: 'low'}), error => {
+    assert.deepEqual(error.workerResult.outputFiles, [path.basename(file)]);
+    assert.equal(error.workerResult.output, 'saved report');
+    assert.equal(error.failureKind, 'cleanup-unconfirmed');
+    assert.match(error.nativeError, /fixture close failed/);
+    assert.match(error.nativeError, /release failure/);
+    assert(error.outputFilesNote);
+    return true;
+  });
+});
+
+test('long reports remain complete in the worker record and compact-result output file', async () => {
+  const text = 'BEGIN\n' + '報告'.repeat(20000) + '\nEND';
+  const worker = make(fakeSpawn(success(text)));
+  const bridge = await createLunaBridge({
+    root,
+    workspace,
+    parentId: randomUUID(),
+    geminiOnly: true,
+    geminiFactory: () => worker
+  });
+  await bridge.start({requestId: 'long-report', task: 'synthetic report', model: 'gemini-3.8-flash', effort: 'low'});
+  const record = await bridge.wait({requestId: 'long-report', timeoutMs: 2000});
+  assert.equal(record.output, text);
+  const compact = await lunaResult(record);
+  assert.equal(compact.outputLength, text.length);
+  assert.equal(await readFile(compact.outputPath, 'utf8'), text);
+  assert.equal((await bridge.list()).find(r => r.requestId === 'long-report').output, text);
+  await bridge.close();
 });

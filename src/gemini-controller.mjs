@@ -13,6 +13,7 @@ import {
   geminiSettings,
   geminiMcpConfig,
   geminiStream,
+  geminiWriteTarget,
   geminiProcess,
   geminiOutcome,
   killGeminiTree,
@@ -468,7 +469,7 @@ export function createGeminiController({
       return sessionArtifact(state.workspace, state.previousWorkspaces, name);
     },
     async send(
-      {text = '', attachmentIds = [], accessMode, effort, permissionConfirmed = false} = {},
+      {text = '', attachmentIds = [], accessMode, effort, permissionConfirmed = false, discussionTurn} = {},
       goalObjective = null
     ) {
       let attempted = false;
@@ -531,9 +532,13 @@ export function createGeminiController({
           state.accessMode = mode;
           state.effort = level;
           await prepare();
-          const groupId = randomUUID(),
+          const groupId = discussionTurn?.id ?? randomUUID(),
             user = {id: randomUUID(), role: 'user', text, attachments, createdAt: now(), groupId};
           state.messages.push(user);
+          if (discussionTurn) {
+            current.discussionId = discussionTurn.id;
+            await discussionTurn.bind({groupId, messageId: user.id});
+          }
           state.title ||= (text.trim() || attachments[0]?.name || '').slice(0, 40);
           if (state.lastUsedModel && state.lastUsedModel !== state.model)
             state.modelChanges.push({turnId: user.id, fromModel: state.lastUsedModel, toModel: state.model, at: now()});
@@ -607,12 +612,8 @@ export function createGeminiController({
               const index = state.tools.findIndex(t => t.id === key);
               if (index < 0) state.tools.push(entry);
               else state.tools[index] = {...state.tools[index], ...entry};
-              if (
-                step.state === 'DONE' &&
-                !info.error &&
-                ['write_to_file', 'replace_file_content', 'multi_replace_file_content'].includes(info.name)
-              ) {
-                const target = info.parameters?.TargetFile ?? info.parameters?.AbsolutePath;
+              const target = geminiWriteTarget(step);
+              if (target) {
                 if (typeof target === 'string') {
                   const relative = path.relative(state.workspace, path.resolve(state.workspace, target));
                   if (
@@ -740,6 +741,14 @@ export function createGeminiController({
         if (!attempted) error.notSent = true;
         throw error;
       }
+    },
+    async interruptDiscussion(id) {
+      const current = turn;
+      if (!current) return;
+      if (current.discussionId !== id) throw Error('主持回合歸屬已改變；未中止其他工作。');
+      current.abort.abort();
+      await current.settled;
+      if (unresolvedPid) throw Error('主持回合程序停止未確認。');
     },
     async stop() {
       const current = turn;

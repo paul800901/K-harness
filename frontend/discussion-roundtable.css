@@ -1,0 +1,45 @@
+.discussion-roundtable{display:flex;flex-direction:column;min-width:0;height:100%;flex:1;min-height:0;overflow:hidden;gap:10px;color:var(--k-ink);font-size:var(--k-text-md)}
+.discussion-roundtable button,.discussion-roundtable select,.discussion-roundtable-entry button{font:inherit;min-height:36px;padding:6px 10px;cursor:pointer}
+.discussion-roundtable-entry{padding:16px;border:1px solid var(--k-line);border-radius:10px;overflow-wrap:anywhere}
+.discussion-roundtable-entry>strong{display:block;white-space:pre-wrap}
+.discussion-roundtable-entry>p{font-size:var(--k-text-sm);color:var(--k-ink-3)}
+.discussion-roundtable-title{height:auto;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex-shrink:0}
+.discussion-roundtable-title select{width:100%;min-width:0;text-overflow:ellipsis}
+.discussion-roundtable-title span{flex:1}
+.discussion-roundtable-summary{flex-shrink:0;border:1px solid var(--k-line);padding:8px;border-radius:6px}
+.discussion-roundtable-summary summary{cursor:pointer;min-height:36px}
+.discussion-roundtable-summary p,.discussion-roundtable-cell p{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;line-height:1.6;overflow-wrap:anywhere;margin:6px 0;text-align:left}
+.discussion-roundtable-grid{overflow:auto;min-height:0;flex:1;isolation:isolate;scrollbar-gutter:stable}
+.discussion-roundtable-grid table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content;min-width:100%}
+.discussion-roundtable-grid th,.discussion-roundtable-grid td{width:230px;min-width:230px;max-width:230px;border-right:1px solid var(--k-line);border-bottom:1px solid var(--k-line);padding:8px;vertical-align:top;background:var(--k-raised);text-align:left}
+.discussion-roundtable-grid th{position:sticky;top:0;z-index:3}
+.discussion-roundtable-grid th:first-child,.discussion-roundtable-grid td:first-child:not([colspan]){position:sticky;left:0;z-index:2;width:190px;min-width:190px;max-width:190px}
+.discussion-roundtable-grid th:first-child{z-index:4}
+.discussion-roundtable-grid th button{display:block;margin-top:6px}
+.discussion-roundtable-grid i,.discussion-roundtable-map i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
+.discussion-roundtable-cell{display:block;width:100%;border:0;background:transparent;color:inherit;text-align:left}
+.discussion-roundtable-cell small,.discussion-roundtable-full small{display:block;color:var(--k-ink-3);margin-top:4px}
+.discussion-roundtable-interjection{font-size:var(--k-text-sm);white-space:pre-wrap;overflow-wrap:anywhere}
+.discussion-roundtable-interjection small{display:block}
+.discussion-roundtable-reader{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}
+.discussion-roundtable-reader nav{display:flex;flex-wrap:wrap;gap:4px}
+.discussion-roundtable-full{min-height:0;overflow:auto;flex:1;overscroll-behavior:contain}
+.discussion-roundtable-full header{height:auto;display:block;position:sticky;top:0;z-index:1;background:var(--k-raised);padding:10px;border-bottom:1px solid var(--k-line)}
+.discussion-roundtable-markdown{padding:12px;overflow-wrap:anywhere;line-height:1.75;user-select:text}
+.discussion-roundtable-markdown pre{overflow:auto;white-space:pre;max-width:100%;padding:10px;background:var(--k-sunken)}
+.discussion-roundtable-markdown table{display:block;overflow:auto;max-width:100%}
+.discussion-roundtable-markdown img{max-width:100%}
+.discussion-roundtable-mobile{display:none}
+@media(max-width:700px){
+ .discussion-roundtable button,.discussion-roundtable select,.discussion-roundtable-entry button{min-height:44px;min-width:44px}
+ .discussion-roundtable{font-size:var(--k-dialogue-font-size)}
+ .discussion-roundtable-grid,.discussion-roundtable-summary{display:none}
+ .discussion-roundtable-mobile{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}
+ .discussion-roundtable-mobile nav{display:flex;flex-direction:column}
+ .discussion-roundtable-map{display:flex;overflow:auto;flex-shrink:0}
+ .discussion-roundtable-map button{flex-shrink:0;padding:8px}
+ .discussion-roundtable-pages{display:flex;flex:1;min-height:0;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain}
+ .discussion-roundtable-page{flex:0 0 100%;width:100%;min-width:0;display:flex;flex-direction:column;scroll-snap-align:start;scroll-snap-stop:always}
+ .discussion-roundtable-markdown{padding:10px;line-height:1.75}
+ .discussion-roundtable-mobile>.discussion-roundtable-interjection{max-height:80px;overflow:auto;margin:0}
+}

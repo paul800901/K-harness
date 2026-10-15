@@ -94,6 +94,14 @@ const nativeFactory = ({onChange}) => {
       }
       return {sent: true};
     },
+    async askHost(prompt, {id, bind}) {
+      await bind({groupId: id, messageId: id + '-user'});
+      state.messages.push({id: id + '-user', role: 'user', groupId: id, text: prompt});
+      const host = await discussionFactory({selection: {id: 'host', model: state.model}});
+      const output = await host.ask(prompt);
+      state.messages.push({id: id + '-reply', role: 'assistant', groupId: id, text: output});
+      return output;
+    },
     async stop() {
       return {stopped: true};
     },
@@ -122,17 +130,6 @@ const login = () => ({
   state: {status: 'idle'},
   close: async () => {}
 });
-const luminance = rgb => {
-  const v = rgb
-    .match(/[\d.]+/g)
-    .slice(0, 3)
-    .map(Number)
-    .map(x => {
-      x /= 255;
-      return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
-    });
-  return v[0] * 0.2126 + v[1] * 0.7152 + v[2] * 0.0722;
-};
 let browser, app;
 try {
   app = await startDesktop({
@@ -154,6 +151,7 @@ try {
   const page = await browser.newPage({viewport: {width: 1440, height: 980}}),
     errors = [],
     checks = [];
+  page.setDefaultTimeout(10000);
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(app.createLaunchUrl());
   const mode = page.getByLabel('對話模式', {exact: true});
@@ -168,91 +166,62 @@ try {
   await page.getByLabel('工作訊息', {exact: true}).fill('比較各模型的意見');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();
-  await page.getByRole('button', {name: '參與者與背景', exact: true}).click();
   for (const [size, width, height] of [
     ['desktop', 1440, 980],
     ['mobile', 390, 844]
   ]) {
+    if (size === 'mobile') {
+      const closeSidebar = page.getByRole('button', {name: '收合側欄', exact: true});
+      if (await closeSidebar.isVisible()) await closeSidebar.click();
+    }
     await page.setViewportSize({width, height});
-    if (size === 'mobile') await page.getByRole('button', {name: '收合側欄', exact: true}).click();
+    if (size === 'mobile') await page.getByLabel('批次', {exact: true}).selectOption('1');
     for (const theme of ['warm', 'light', 'dark']) {
       await page.evaluate(theme => {
         document.documentElement.dataset.theme = theme;
       }, theme);
-      const rows = await page.locator('.discussion-message').evaluateAll(nodes =>
-        nodes.map(n => {
-          const body = n.querySelector('.assistant-body'),
-            name = n.querySelector('.discussion-speaker strong'),
-            footer = n.querySelector('.discussion-speaker-end');
-          return {
-            provider: n.dataset.discussionProvider,
-            name: name.textContent,
-            footer: footer?.textContent,
-            color: getComputedStyle(name).color,
-            fontSize: parseFloat(getComputedStyle(name).fontSize),
-            border: getComputedStyle(body).borderLeftWidth,
-            borderStyle: getComputedStyle(body).borderLeftStyle,
-            textColor: getComputedStyle(n.querySelector('.assistant-response-content')).color,
-            position: getComputedStyle(n.querySelector('.discussion-speaker')).position
-          };
-        })
-      );
-      assert.equal(rows.length, 6);
-      for (const m of models) {
-        const r = rows.find(r => r.name === m.displayName);
-        assert(r);
-        assert.equal(r.footer, m.displayName);
-        assert.equal(r.border, '3px');
-        assert(r.fontSize >= 14);
-        assert.equal(r.position, 'static');
-      }
-      const colors = ['codex', 'claude', 'gemini'].map(provider => rows.find(r => r.provider === provider).color);
-      assert.equal(new Set(colors).size, 3);
-      assert.equal(rows.find(r => r.name === 'GPT-6.1 Sol').color, rows.find(r => r.name === 'GPT-6 Luna').color);
-      const summary = rows.find(r => r.name === '討論整理（AI 產生）');
-      assert.equal(summary.provider, 'neutral');
-      assert.equal(summary.borderStyle, 'dashed');
-      assert.equal(new Set(rows.map(r => r.textColor)).size, 1, 'long text color must not change with speaker');
-      const background = await page.evaluate(() => {
-        const el = document.createElement('span');
-        el.style.color = 'var(--k-sheet)';
-        document.body.append(el);
-        const color = getComputedStyle(el).color;
-        el.remove();
-        return color;
-      });
-      const contrasts = colors.map(color => {
-        const a = luminance(color),
-          b = luminance(background);
-        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
-      });
-      assert(
-        contrasts.every(c => c >= 4.5),
-        `speaker text contrast failed ${theme}: ${contrasts}`
-      );
+      assert.equal(await page.locator('.discussion-roundtable-entry').count(), 1);
+      assert.equal(await page.locator('.discussion-message').count(), 1);
+      for (const m of models)
+        assert((await page.locator('.discussion-roundtable').innerText()).includes(m.displayName));
+      const colors = await page
+        .locator(size === 'mobile' ? '.discussion-roundtable-markdown' : '.discussion-roundtable-cell p')
+        .evaluateAll(nodes => nodes.map(n => getComputedStyle(n).color));
+      assert.equal(new Set(colors).size, 1, 'speaker colors remain in small markers, not report text');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-      await page.locator('.discussion-message[data-discussion-provider="codex"]').first().scrollIntoViewIfNeeded();
-      await page.screenshot({path: path.join(out, `${size}-${theme}.png`)});
-      checks.push({size, theme, rows, contrasts});
+      await page.screenshot({path: path.join(out, size + '-' + theme + '.png')});
+      checks.push({size, theme, colors});
     }
   }
+  await page.getByRole('button', {name: '回到聊天室', exact: true}).click();
+  await page.waitForFunction(() => !history.state?.kMobilePanel);
   long = true;
   await page.getByLabel('工作訊息', {exact: true}).fill('請提供長文以驗證持續辨識');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.waitForFunction(
     () =>
-      document.querySelectorAll('.discussion-message').length === 12 &&
-      document.querySelectorAll('.discussion-speaker-end').length >= 10
+      document.querySelectorAll('.discussion-roundtable-entry').length === 2 &&
+      document.querySelectorAll('.discussion-message').length === 2
   );
-  const latest = page
-    .locator('.discussion-message')
-    .filter({has: page.getByText('這是 Claude Opus 5.5 的意見。', {exact: true})})
-    .last();
-  await latest.scrollIntoViewIfNeeded();
-  assert(await latest.locator('.assistant-body').evaluate(n => n.clientHeight > 1000));
-  assert.equal(await latest.locator('.discussion-speaker-end').textContent(), 'Claude Opus 5.5');
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.getByRole('button', {name: '開啟圓桌', exact: true}).last().click();
+  await page.getByLabel('批次', {exact: true}).selectOption('1');
+  await page.getByRole('button', {name: '翻到 Claude Opus 5.5', exact: true}).click();
+  await page
+    .locator('.discussion-roundtable-page')
+    .filter({hasText: '這是 Claude Opus 5.5 的意見。'})
+    .locator('header button')
+    .click();
+  assert(
+    await page
+      .locator('.discussion-roundtable-reader .discussion-roundtable-full')
+      .evaluate(n => n.scrollHeight > n.clientHeight)
+  );
+  assert((await page.locator('.discussion-roundtable-reader').innerText()).includes('第 40 段'));
   await page.screenshot({path: path.join(out, 'mobile-long-text.png')});
+  await page.getByRole('button', {name: '回到格子', exact: true}).click();
+  await page.locator('.discussion-roundtable-pages').waitFor();
+  await page.getByRole('button', {name: '回到聊天室', exact: true}).click();
+  await page.waitForFunction(() => !history.state?.kMobilePanel);
   await mode.selectOption('normal');
   await page.getByLabel('工作訊息', {exact: true}).fill('回到一般對話');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();

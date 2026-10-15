@@ -604,6 +604,7 @@ export function createClaudeController({
         geminiLiveGoal = clone(state.goal);
         currentGroupId = randomUUID();
       }
+      if (currentGroupId?.startsWith('discussion-host-')) currentGroupId = randomUUID();
       const event = appendMessage(
         'user',
         text,
@@ -1915,7 +1916,7 @@ export function createClaudeController({
         changed();
       }
     },
-    async send({text = '', attachmentIds = [], accessMode, effort} = {}) {
+    async send({text = '', attachmentIds = [], accessMode, effort, discussionTurn} = {}) {
       let attempted = false;
       try {
         if (
@@ -1927,6 +1928,7 @@ export function createClaudeController({
         // A confirmed stop closes the native process, not the conversation.
         // Only a new explicit send reconnects it; uncertain/offline sends are never replayed.
         if (
+          !discussionTurn &&
           !host &&
           state.status === 'interrupted' &&
           state.threadId &&
@@ -1960,7 +1962,7 @@ export function createClaudeController({
         activity.begin();
         state.status = 'working';
         state.error = null;
-        currentGroupId = randomUUID();
+        currentGroupId = discussionTurn?.id ?? randomUUID();
         const sentMessage = appendMessage('user', text);
         currentTurnId = sentMessage.id;
         sentMessage.delivery = 'queued';
@@ -2041,6 +2043,10 @@ export function createClaudeController({
               await saveRecord(root, record);
             }
           });
+          if (discussionTurn) {
+            await discussionTurn.bind({groupId: currentGroupId, messageId: sentMessage.id});
+            await saveCurrent();
+          }
           attempted = true;
           try {
             await hostAtSend.start(content, {uuid: sentMessage.id});
@@ -2082,6 +2088,10 @@ export function createClaudeController({
         if (!attempted) error.notSent = true;
         throw error;
       }
+    },
+    async interruptDiscussion(id) {
+      if (currentGroupId !== id || !host) throw Error('主持回合歸屬已改變；未中止其他工作。');
+      if (state.busy) await host.interrupt();
     },
     async answer({id, accept, answers}) {
       const item = pending.get(id);

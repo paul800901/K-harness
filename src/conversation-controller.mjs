@@ -101,6 +101,7 @@ export function createConversationController({
       threadId: id,
       executable: options.executable,
       ...discussionOptions,
+      askHost: (prompt, metadata) => controller.askHost(prompt, metadata),
       ...(discussionSessionFactory ? {sessionFactory: discussionSessionFactory} : {}),
       onChange() {
         const owner = rooms.get(id) ?? controller;
@@ -1294,6 +1295,11 @@ export function createConversationController({
     return compact(data);
   };
   api.stop = async data => {
+    if (data?.runId !== undefined) {
+      const c = target(data);
+      if (!discussion(c)) throw Error('討論場次已過期；未停止一般工作。');
+      return discussion(c).stop(data);
+    }
     if (data?.cancelOpening === true) {
       const operation = pendingView?.operation;
       ++navigationRequest;
@@ -1313,7 +1319,9 @@ export function createConversationController({
       if (locked.has(source) && !source.state.busy) return {cancelled: true, continuationCancelled: true};
     }
     const c = target(data);
-    if (discussion(c)?.busy || discussion(c)?.held) return discussion(c).stop();
+    const d = discussion(c);
+    if (d?.busy) throw Error('停止討論須指定目前場次。');
+    if (d?.held) return d.stop({threadId: c.state.threadId, runId: d.state.id});
     return c.stop();
   };
   for (const method of ['steer', 'queue']) {

@@ -7,7 +7,7 @@ import {scratchBase} from './scratch.mjs';
 const root = scratchBase;
 await mkdir(root, {recursive: true});
 
-test('Codex discussion disables inherited MCP and execution tools while retaining native turn identity', async () => {
+test('Codex discussion disables inherited MCP and permits sandboxed shell while retaining native turn identity', async () => {
   const calls = [];
   let event, resolveClosed;
   const closed = new Promise(r => {
@@ -24,6 +24,7 @@ test('Codex discussion disables inherited MCP and execution tools while retainin
         notify() {},
         async request(method, params) {
           calls.push({method, params});
+          if (method === 'windowsSandbox/readiness') return {status: 'ready'};
           if (method === 'config/read') return {config: {mcp_servers: {credentialTool: {}}}};
           if (method === 'thread/start') return {thread: {id: 'native-discussion'}};
           if (method === 'turn/start') {
@@ -50,7 +51,7 @@ test('Codex discussion disables inherited MCP and execution tools while retainin
   assert.match(start.developerInstructions, /先主動用本輪實際提供的網頁搜尋/);
   assert.match(start.developerInstructions, /快取／過期頁面不能冒充即時/);
   assert.equal(start.config.mcp_servers.credentialTool.enabled, false);
-  assert.equal(start.config.features.shell_tool, false);
+  assert.equal(start.config.features.shell_tool, undefined);
   assert.equal(start.config.features.multi_agent, false);
   assert(
     calls
@@ -80,6 +81,7 @@ test('an already aborted Codex host still closes and confirms exit without a sta
       closed,
       notify() {},
       async request(method) {
+        if (method === 'windowsSandbox/readiness') return {status: 'ready'};
         if (method === 'config/read') return {config: {}};
         if (method === 'thread/start') return {thread: {id: 'native'}};
         if (method === 'turn/start') {
@@ -169,9 +171,9 @@ test('Gemini uses stdin for long prompts, native conversation resume and one acc
   for (const permission of ['write_file(*)', 'command(*)', 'mcp(*)'])
     assert(settings.permissions.deny.includes(permission));
   assert.deepEqual(settings.permissions.ask, []);
-  for (const dir of ['C:/fake/temp']) assert(settings.permissions.deny.includes(`read_file(${path.resolve(dir)})`));
-  assert.equal(calls[0].cwd, path.join(s.identity.home, 'workspace'));
-  assert.notEqual(calls[0].cwd, workspace);
+  assert(!settings.permissions.deny.some(rule => rule.startsWith('read_file(')));
+  assert.equal(calls[0].cwd, workspace);
+  assert(settings.permissions.allow.includes(`read_file(${path.parse(workspace).root})`));
   assert(
     settings.permissions.allow.includes(`read_file(${path.join(s.identity.home, '.gemini/antigravity-cli/brain')})`)
   );
@@ -206,7 +208,7 @@ test('unconfirmed Gemini process-tree cleanup stays unknown and cannot be report
   assert.equal(released.settled, false);
 });
 
-test('Claude discussion allows only its two public web tools, not inherited local or MCP tools', async () => {
+test('Claude discussion allows only five read tools, not write, command or MCP tools', async () => {
   let options, resolveClosed;
   const closed = new Promise(r => {
     resolveClosed = r;
@@ -233,8 +235,38 @@ test('Claude discussion allows only its two public web tools, not inherited loca
     behavior: 'allow',
     updatedInput: {url: 'https://example.com'}
   });
-  assert.equal(options.onPermission({toolName: 'Read', input: {file_path: 'fake'}}).behavior, 'deny');
+  assert.equal(options.onPermission({toolName: 'Read', input: {file_path: 'fake'}}).behavior, 'allow');
   assert.equal(options.onPermission({toolName: 'mcp__write', input: {}}).behavior, 'deny');
   await s.ask('fake');
   await s.close();
 });
+
+test(
+  'Codex non-ready sandbox prevents thread creation and returns its reason',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const calls = [];
+    let closed = false;
+    await assert.rejects(
+      openDiscussionSession({
+        root,
+        workspace: root,
+        selection: {model: 'gpt-6.1-sol'},
+        codexHost: () => ({
+          closed: new Promise(() => {}),
+          notify() {},
+          async request(method) {
+            calls.push(method);
+            return method === 'windowsSandbox/readiness' ? {status: 'notReady', reason: 'probe unavailable'} : {};
+          },
+          async close() {
+            closed = true;
+          }
+        })
+      }),
+      /未就緒.*probe unavailable/
+    );
+    assert(!calls.includes('thread/start'));
+    assert(closed);
+  }
+);

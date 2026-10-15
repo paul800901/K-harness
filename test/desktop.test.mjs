@@ -1827,3 +1827,29 @@ test('Codex sends and steers attachment-only input without inventing user text',
     await f.c.close();
   }
 });
+
+test('discussion host turn uses existing Codex native ID and its isolated interrupt keeps the host usable', async () => {
+  const f = await fixture();
+  try {
+    await f.c.open({model: 'gpt-6-astra'});
+    const initial = f.hostFactoryCalls,
+      closedBefore = f.hostCloseCalls,
+      bindings = [];
+    await f.c.send({
+      text: 'internal host',
+      discussionTurn: {id: 'discussion-host-test', bind: async b => bindings.push(b)}
+    });
+    assert.equal(f.calls.findLast(c => c.method === 'turn/start').p.threadId, 'test-thread');
+    assert.equal(f.c.state.messages.at(-1).groupId, 'discussion-host-test');
+    assert.equal(bindings.at(-1).turnId, 'turn-1');
+    await f.c.interruptDiscussion('discussion-host-test');
+    assert.equal(f.hostCloseCalls, closedBefore);
+    assert.equal(f.c.state.busy, false);
+    await f.c.send({text: 'ordinary continuation'});
+    assert.equal(f.hostFactoryCalls, initial);
+    assert.notEqual(f.c.state.messages.at(-1).groupId, 'discussion-host-test');
+    await f.c.stop();
+  } finally {
+    await f.c.close();
+  }
+});

@@ -8,7 +8,7 @@ import {threadPermissions, turnPermissions} from './desktop-permissions.mjs';
 import {listMainModels} from './main-models.mjs';
 import {stopThreadTerminals} from './background-terminals.mjs';
 import {checkedPath} from './files.mjs';
-import {createGeminiWorker} from './gemini-worker.mjs';
+import {createGeminiWorker, UNKNOWN_OUTPUT_FILES_NOTE} from './gemini-worker.mjs';
 import {createClaudeWorker} from './claude-worker.mjs';
 import {randomUUID} from 'node:crypto';
 import {createWorkerWatch, workerObservation, workerNeedsAttention, workerNoticeKey} from './worker-watch.mjs';
@@ -43,6 +43,9 @@ export async function lunaResult(record) {
       'deniedTools',
       'toolErrors',
       'outputFilesNote',
+      'outputFileDetails',
+      'failureKind',
+      'nativeError',
       'activity',
       'lastActivityAt',
       'lastReadAt',
@@ -61,6 +64,7 @@ export async function lunaResult(record) {
   const text = typeof record.output === 'string' ? record.output : '';
   result.outputLength = text.length;
   result.outputFiles = record.outputFiles ?? [];
+  if (record.provider === 'gemini') result.outputFilesNote ??= UNKNOWN_OUTPUT_FILES_NOTE;
   if (!record.settled) {
     if (text) result.outputPreview = text.slice(-1000);
     result.outputFilesNote ??= '執行中已知檔案參考，不是完整成果清單或完成證據；請按需讀回原任務指定檔案。';
@@ -613,6 +617,16 @@ export async function createLunaBridge({
     operations.set(requestId, operation);
     return operation;
   }
+  const processFailure = (error, provider) => ({
+    ...(error.workerResult ?? {}),
+    outputFilesNote: error.outputFilesNote ?? error.workerResult?.outputFilesNote ?? UNKNOWN_OUTPUT_FILES_NOTE,
+    ...(provider === 'gemini'
+      ? {
+          failureKind: error.failureKind ?? 'unknown',
+          nativeError: String(error.nativeError ?? error.message).slice(0, 4000)
+        }
+      : {})
+  });
   async function startProcess({provider, requestId, task, model, effort, accountId, handoffFrom}) {
     if (model === 'auto' || effort === 'auto' || effort === undefined)
       throw Error('請依原生目錄明確指定模型與推理程度；沒有推理設定時傳 null。未開始工作。');
@@ -728,8 +742,8 @@ export async function createLunaBridge({
                   }
                 },
                 onDiagnostic: value => {
-                  record.toolErrors = value.toolErrors;
-                  record.deniedTools = value.deniedTools;
+                  if (value.toolErrors) record.toolErrors = value.toolErrors;
+                  if (value.deniedTools) record.deniedTools = value.deniedTools;
                   changed(record);
                 },
                 onActivity: value => {
@@ -753,7 +767,7 @@ export async function createLunaBridge({
             )
             .then(result => Object.assign(record, result))
             .catch(error => {
-              Object.assign(record, {
+              Object.assign(record, processFailure(error, provider), {
                 status: error.settled === false ? 'unresolved' : controller.signal.aborted ? 'cancelled' : 'failed',
                 settled: error.settled !== false,
                 error: error.message,
@@ -776,6 +790,7 @@ export async function createLunaBridge({
           record.status = 'failed';
           record.settled = true;
           record.error = error.message;
+          Object.assign(record, processFailure(error, provider));
           processRuns.delete(requestId);
           await persist(record);
           changed(record);
@@ -787,6 +802,7 @@ export async function createLunaBridge({
           record.status = 'failed';
           record.settled = true;
           record.error = error.message;
+          Object.assign(record, processFailure(error, provider));
           throw error;
         })
         .finally(() => operations.delete(requestId));

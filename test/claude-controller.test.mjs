@@ -3912,3 +3912,28 @@ test(
     }
   }
 );
+
+test('discussion interruption leaves the Claude host and existing worker bridge intact for ordinary continuation', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const host = f.host,
+      id = f.controller.state.threadId;
+    await f.controller.send({
+      text: 'internal host',
+      discussionTurn: {id: 'discussion-host-claude', bind: async () => {}}
+    });
+    await f.controller.interruptDiscussion('discussion-host-claude');
+    assert.equal(host.interrupted, true);
+    assert.equal(f.bridge.closed, false);
+    assert.equal(f.controller.state.busy, true, 'interrupt request is not terminal proof');
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await f.controller.send({text: 'ordinary continuation'});
+    assert.equal(f.host, host);
+    assert.equal(f.controller.state.threadId, id);
+    assert.notEqual(f.controller.state.messages.at(-1).groupId, 'discussion-host-claude');
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+  } finally {
+    await f.controller.close();
+  }
+});

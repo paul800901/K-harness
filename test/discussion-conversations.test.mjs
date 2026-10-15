@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir, mkdtemp} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
@@ -19,7 +19,7 @@ const models = [
   defaultReasoningEffort: 'medium',
   supportedReasoningEfforts: [{reasoningEffort: 'medium'}, {reasoningEffort: 'high'}]
 }));
-async function fixture({hold = false, discussionApi} = {}) {
+async function fixture({hold = false, discussionApi, closeParticipant = async () => {}} = {}) {
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'discussion-rooms-'));
   let seq = 0;
@@ -44,6 +44,7 @@ async function fixture({hold = false, discussionApi} = {}) {
       state,
       closed: 0,
       sent: [],
+      hosted: [],
       async models() {
         return {models};
       },
@@ -84,6 +85,17 @@ async function fixture({hold = false, discussionApi} = {}) {
         Object.assign(state, {busy: false, status: 'completed'});
         onChange();
       },
+      async askHost(prompt, {id, bind}) {
+        c.hosted.push(prompt);
+        calls.push({id: 'host', prompt});
+        await bind({groupId: id, messageId: id + '-user'});
+        state.messages.push({id: id + '-user', groupId: id, role: 'user', text: prompt});
+        const output = prompt.includes('平行比較直接整理')
+          ? '共識、分歧與未知都有保留。'
+          : '{"action":"finish","summary":"共識、分歧與未知都有保留。"}';
+        state.messages.push({id: id + '-reply', groupId: id, role: 'assistant', text: output});
+        return output;
+      },
       async stop() {
         state.busy = false;
         return {stopped: true};
@@ -120,6 +132,7 @@ async function fixture({hold = false, discussionApi} = {}) {
           return `${selection.model} 原始答案`;
         },
         async close() {
+          await closeParticipant(selection.id);
           for (const reject of answerPending) reject(Error('stopped'));
           answerPending.clear();
         }
@@ -209,7 +222,7 @@ test('API participants validate separately without entering native main/sub cata
   }
 });
 
-test('existing room directly starts a meeting, with no primary turn or extra sidebar/native registry rooms', async () => {
+test('existing room hosts a meeting internally, with no extra sidebar/native registry rooms', async () => {
   const f = await fixture();
   try {
     f.owner.state.messages.push({id: 'original', role: 'assistant', text: '原房意見'});
@@ -220,7 +233,9 @@ test('existing room directly starts a meeting, with no primary turn or extra sid
     assert.equal((await listMainSessions(f.root)).sessions.length, 1);
     assert.equal(f.c.state.messages[0].text, '原房意見');
     assert.equal(f.c.state.messages.filter(m => m.model).length, 2);
-    assert.equal(f.owner.state.messages.length, 1);
+    assert.equal(f.owner.state.messages.length, 3);
+    assert.equal(f.owner.hosted.length, 1);
+    assert(!f.c.state.messages.some(m => m.groupId?.startsWith('discussion-host-')));
     assert.equal(f.c.state.discussion.status, 'completed');
   } finally {
     await f.c.close();
@@ -347,6 +362,7 @@ test('a meeting in A survives navigation and idle reclamation; stopping A does n
   const f = await fixture({hold: true});
   try {
     await f.start();
+    const runId = f.c.state.discussion.id;
     while (f.calls.filter(c => c.id !== 'host').length < 2) await new Promise(r => setTimeout(r, 5));
     for (let i = 0; i < 5; i++) await f.c.open({model: 'gpt-6.1-sol'});
     const b = f.c.state.threadId;
@@ -355,8 +371,8 @@ test('a meeting in A survives navigation and idle reclamation; stopping A does n
     assert(f.c.state.conversationActivity.some(row => row.threadId === f.a.threadId && row.busy));
     assert.throws(() => f.c.compact(f.a), /討論/);
     await assert.rejects(f.c.metadata({...f.a, archived: true}), /討論/);
-    await f.c.discussionMessage({...f.a, text: '給 A 的補充', target: 'p2'});
-    await f.c.stop(f.a);
+    await f.c.discussionMessage({...f.a, runId, text: '給 A 的補充', target: 'p2'});
+    await f.c.stop({...f.a, runId});
     assert.equal(f.c.state.threadId, b);
     assert.equal(f.c.state.busy, false);
     assert.equal(f.owners.find(o => o.state.threadId === b).sent.length, 0);
@@ -364,6 +380,52 @@ test('a meeting in A survives navigation and idle reclamation; stopping A does n
     assert.equal(f.c.state.discussion.status, 'interrupted');
     assert(f.c.state.messages.some(m => m.text === '給 A 的補充'));
   } finally {
+    await f.c.close();
+  }
+});
+
+test('held-only stop without a run ID retries cleanup in its room and never stops ordinary work via a stale run', async () => {
+  let failCleanup = true;
+  const closes = [];
+  const f = await fixture({
+    closeParticipant: async id => {
+      closes.push(id);
+      if (id === 'p1' && failCleanup) throw Error('cleanup not confirmed');
+    }
+  });
+  let ordinaryStops = 0;
+  f.owner.stop = async () => {
+    ordinaryStops++;
+    return {stopped: true};
+  };
+  try {
+    await f.start();
+    await settled(f);
+    const runId = f.c.state.discussion.id;
+    assert.equal(f.c.state.discussion.busy, false);
+    assert.equal(f.c.state.discussion.status, 'uncertain');
+    assert.throws(() => f.c.compact(f.a), /討論/);
+    assert.deepEqual(closes.sort(), ['p1', 'p2']);
+    const other = await f.c.open({model: 'gpt-6.1-sol'});
+    await assert.rejects(f.c.stop({...f.a, runId: 'stale-run'}), /過期/);
+    assert.equal(closes.length, 2);
+    await assert.rejects(f.c.stop(f.a), /尚未確認停止/);
+    assert.equal(closes.length, 3);
+    failCleanup = false;
+    assert.deepEqual(await f.c.stop(f.a), {stopped: true});
+    assert.deepEqual(closes, ['p1', 'p2', 'p1', 'p1']);
+    assert.equal(f.c.state.threadId, other.threadId);
+    assert.equal(ordinaryStops, 0);
+    await f.c.open({...f.a, model: 'gpt-6.1-sol'});
+    assert.equal(f.c.state.discussion.status, 'interrupted');
+    await f.c.send({...f.a, text: '一般工作可以繼續'});
+    assert.equal(f.owner.sent.length, 1);
+    await assert.rejects(f.c.stop({...f.a, runId}), /已結束/);
+    assert.equal(ordinaryStops, 0);
+    assert.deepEqual(await f.c.stop(f.a), {stopped: true});
+    assert.equal(ordinaryStops, 1);
+  } finally {
+    failCleanup = false;
     await f.c.close();
   }
 });
@@ -390,8 +452,11 @@ test('starting discussion in a hidden room cancels its pending idle probe withou
     await new Promise(resolve => setTimeout(resolve, 40));
     assert.equal(f.owner.closed, 0);
     assert(f.c.state.conversationActivity.some(row => row.threadId === f.a.threadId && row.busy));
-    await f.c.discussionMessage({...f.a, text: '原聊天室補充', target: 'p2'});
-    await f.c.stop(f.a);
+    const runId = JSON.parse(
+      await readFile(path.join(f.root, '.runtime/discussions', f.a.threadId + '.json'), 'utf8')
+    ).runs.at(-1).id;
+    await f.c.discussionMessage({...f.a, runId, text: '原聊天室補充', target: 'p2'});
+    await f.c.stop({...f.a, runId});
     assert.equal(f.c.state.threadId, other.threadId);
     assert.equal(f.owner.closed, 0);
     assert.equal(f.owner.sent.length, 0);

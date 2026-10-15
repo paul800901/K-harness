@@ -136,7 +136,7 @@ test('vault confines target namespace and sends fake key only over helper stdin 
   assert(calls.every(p => /^K-Harness\.DiscussionApi\.[a-f0-9]{64}\.[a-f0-9]{32}$/u.test(p.target)));
   await assert.rejects(v.get('../foreign'));
 });
-test('independent read tools read original files, return exact line evidence and deny outside, secrets, junctions, writes', async () => {
+test('independent read tools read original files, return exact line evidence and allow absolute and formerly excluded names but deny junctions and writes', async () => {
   const f = await fixture();
   await mkdir(path.join(f.root, 'docs'));
   await writeFile(path.join(f.root, 'docs/source.txt'), 'fact\nblind spot\nthird');
@@ -145,14 +145,13 @@ test('independent read tools read original files, return exact line evidence and
   const r = await createDiscussionReader(f.root);
   const list = await r('list_files', {recursive: true});
   assert(list.entries.some(e => e.path === 'docs/source.txt'));
-  assert(!list.entries.some(e => e.path.startsWith('link') || e.path.startsWith('.env')));
+  assert(!list.entries.some(e => e.path.startsWith('link')));
+  assert(list.entries.some(e => e.path === '.env.local'));
+  assert.equal((await r('read_file', {path: path.join(f.root, '.env.local')})).text, 'DO NOT READ');
   assert.equal((await r('search_files', {query: 'blind'})).matches[0].line, 2);
   assert.equal((await r('read_file', {path: 'docs/source.txt', startLine: 2, endLine: 2})).text, 'blind spot');
   for (const p of [
     '../source.txt',
-    'C:\\source.txt',
-    '/etc/passwd',
-    '.env.local',
     '.env.local ',
     '.runtime/file',
     '.gemini/file',

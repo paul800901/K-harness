@@ -96,6 +96,14 @@ const nativeFactory = ({onChange}) => {
       }
       return {sent: true};
     },
+    async askHost(prompt, {id, bind}) {
+      await bind({groupId: id, messageId: id + '-user'});
+      state.messages.push({id: id + '-user', role: 'user', groupId: id, text: prompt});
+      const host = await discussionFactory({selection: {id: 'host', model: state.model}});
+      const output = await host.ask(prompt);
+      state.messages.push({id: id + '-reply', role: 'assistant', groupId: id, text: output});
+      return output;
+    },
     async stop() {
       return {stopped: true};
     },
@@ -153,6 +161,7 @@ try {
   browser = await launchProbeBrowser();
   const page = await browser.newPage({viewport: {width: 1440, height: 980}}),
     errors = [];
+  page.setDefaultTimeout(10000);
   page.on('pageerror', e => errors.push(e.message));
   await page.goto(app.createLaunchUrl());
   const mode = page.getByLabel('對話模式', {exact: true});
@@ -190,7 +199,7 @@ try {
   await page.getByLabel('補充給', {exact: true}).selectOption('p2');
   await page.getByLabel('工作訊息', {exact: true}).fill('請 Opus 注意新增限制');
   await page.getByRole('button', {name: '送出訊息（加入待送）', exact: true}).click();
-  await page.getByText('請 Opus 注意新增限制', {exact: true}).waitFor();
+  await page.locator('.discussion-roundtable-interjection').filter({hasText: '請 Opus 注意新增限制'}).waitFor();
   await page.getByRole('button', {name: '停止工作', exact: true}).click();
   await page.waitForFunction(
     () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
@@ -217,8 +226,14 @@ try {
       .at(-1)
       .text.includes('回到單模型，先不要實作')
   );
+  const closeSidebar = page.getByRole('button', {name: '收合側欄', exact: true});
+  if (await closeSidebar.isVisible()) await closeSidebar.click();
   await page.setViewportSize({width: 390, height: 844});
-  await page.getByRole('button', {name: '收合側欄', exact: true}).click();
+  const back = page.getByRole('button', {name: '回到聊天室', exact: true});
+  if (await back.isVisible()) {
+    await back.click();
+    await page.waitForFunction(() => !history.state?.kMobilePanel);
+  }
   await mode.selectOption('meeting');
   await page.screenshot({path: path.join(out, 'discussion-mobile.png')});
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

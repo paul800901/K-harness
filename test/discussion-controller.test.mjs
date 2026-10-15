@@ -53,7 +53,14 @@ async function fixture({
   const d = createDiscussionController({
     root,
     threadId: 'room',
-    sessionFactory: factory
+    sessionFactory: factory,
+    askHost: async (prompt, {signal}) => {
+      calls.push({id: 'host', prompt});
+      signal.throwIfAborted();
+      const response = JSON.stringify(decisions.shift());
+      const raw = answer ? await answer({id: 'host', prompt, response}) : response;
+      return prompt.includes('平行比較直接整理') ? JSON.parse(raw).summary : raw;
+    }
   });
   await d.load();
   const start = fields =>
@@ -96,7 +103,7 @@ test("parallel participants receive identical materials but never each other's c
   assert.equal(Object.hasOwn(material(answers[0]), 'discussion'), false);
   assert.equal(material(answers[0]).brief, '任務書：使用者修正後的需求，未把舊模型結論當真值。');
   assert.match(f.d.messages.at(-1).text, /分歧/);
-  assert.deepEqual(f.opened.sort(), ['host', 'p1', 'p2']);
+  assert.deepEqual(f.opened.sort(), ['p1', 'p2']);
 });
 
 test('meeting AI can schedule selected speakers repeatedly without a fixed-round template', async () => {
@@ -165,7 +172,7 @@ test('an interjection during host completion invalidates its stale finish and re
   });
   await f.start();
   await hostDeciding.promise;
-  await f.d.interject({text: '請 Opus 只釐清這點，不要重做 Sol', target: 'p2'});
+  await f.d.interject({threadId: 'room', runId: f.d.state.id, text: '請 Opus 只釐清這點，不要重做 Sol', target: 'p2'});
   gate.resolve();
   await f.d.settled();
   assert.equal(
@@ -202,7 +209,7 @@ test('a normal interjection is kept verbatim for AI arrangement, not forced into
   });
   await f.start();
   await ready.promise;
-  await f.d.interject({text: '新的重要限制原文'});
+  await f.d.interject({threadId: 'room', runId: f.d.state.id, text: '新的重要限制原文'});
   gate.resolve();
   await f.d.settled();
   assert.equal(f.calls.filter(c => c.id === 'host').filter(c => c.prompt.includes('新的重要限制原文')).length, 1);
@@ -265,7 +272,8 @@ test('same-room start is reserved before asynchronous persistence, preventing tw
   await assert.rejects(f.start(), /尚未結束/);
   await first;
   await f.d.settled();
-  assert.equal(f.opened.filter(id => id === 'host').length, 1);
+  assert.equal(f.opened.filter(id => id === 'host').length, 0);
+  assert.equal(f.calls.filter(c => c.id === 'host').length, 1);
 });
 
 test('history overlays stay in the original room and keep all model contributions visible across normal continuation', async () => {
@@ -342,7 +350,7 @@ test('new untargeted facts in parallel comparison reach everyone independently w
   });
   await f.start({mode: 'parallel'});
   await ready.promise;
-  await f.d.interject({text: '新增限制：優先可追溯性'});
+  await f.d.interject({threadId: 'room', runId: f.d.state.id, text: '新增限制：優先可追溯性'});
   gate.resolve();
   await f.d.settled();
   for (const id of ['p1', 'p2']) {
@@ -373,11 +381,12 @@ test('interrupted persisted run reads back uncertain without opening sessions or
   await reopened.load();
   assert.equal(reopened.state.status, 'uncertain');
   assert.equal(opened, 0);
-  await assert.rejects(reopened.stop(), /不能冒稱/);
+  await assert.rejects(reopened.stop({threadId: 'room', runId: reopened.state.id}), /不能冒稱/);
   assert.equal(reopened.held, false);
   const next = createDiscussionController({
     root: f.root,
     threadId: 'room',
+    askHost: async () => '{"action":"finish","summary":"新討論已整理"}',
     sessionFactory: async ({selection}) => ({
       async ask(prompt) {
         return selection.id === 'host'
@@ -429,14 +438,18 @@ test('stop waits for all already opened sessions and cancels unsent scheduling',
   const waiting = deferred(),
     started = deferred();
   const f = await fixture();
-  let closes = 0;
+  let closes = 0,
+    starts = 0;
   const d = createDiscussionController({
     root: f.root,
     threadId: 'stop-room',
+    askHost: async () => {
+      throw Error('must not host after stop');
+    },
     sessionFactory: async ({selection, signal}) => ({
       async ask() {
         if (selection.id === 'host') return '{"brief":"假資料"}';
-        started.resolve();
+        if (++starts === 2) started.resolve();
         return waiting.promise;
       },
       async close() {
@@ -455,10 +468,10 @@ test('stop waits for all already opened sessions and cancels unsent scheduling',
     workspace: f.root
   });
   await started.promise;
-  const stopped = await d.stop();
+  const stopped = await d.stop({threadId: 'stop-room', runId: d.state.id});
   assert.equal(stopped.stopped, true);
   assert.equal(d.state.status, 'interrupted');
-  assert.ok(closes >= 3);
+  assert.ok(closes >= 2);
   assert.equal(
     d.messages.some(m => m.summary),
     false
@@ -476,4 +489,55 @@ test('a confirmed rejected handoff still displays the actual user text if native
     '只談取捨'
   );
   assert.match((await f.d.handoff('明確新指示')).text, /新增討論原文/);
+});
+
+test('run-bound interjection and stop reject stale operations without affecting the current discussion', async () => {
+  const f = await fixture({
+    decisions: [
+      {action: 'finish', summary: 'first'},
+      {action: 'finish', summary: 'second'}
+    ]
+  });
+  await f.start();
+  await f.d.settled();
+  const old = f.d.state.id;
+  await assert.rejects(f.d.stop({threadId: 'room', runId: old}), /已結束/);
+  await f.start();
+  await assert.rejects(f.d.interject({threadId: 'room', runId: old, text: 'stale'}), /過期/);
+  await assert.rejects(f.d.stop({threadId: 'room', runId: old}), /過期/);
+  await assert.rejects(f.d.stop({threadId: 'another', runId: f.d.state.id}), /過期/);
+  await f.d.settled();
+  assert.equal(f.d.state.status, 'completed');
+  assert.equal(f.d.state.runs.length, 2);
+  assert(!f.d.messages.some(m => m.text === 'stale'));
+});
+
+test('interjections retain their original message ID and processed batch, outside the participant transcript metadata', async () => {
+  const ready = deferred(),
+    gate = deferred();
+  let calls = 0;
+  const f = await fixture({
+    decisions: [
+      {action: 'finish', summary: 'stale'},
+      {action: 'finish', reason: 'answered', summary: 'done'}
+    ],
+    answer: async ({id, response}) => {
+      if (id === 'host' && ++calls === 1) {
+        ready.resolve();
+        await gate.promise;
+      }
+      return response;
+    }
+  });
+  await f.start();
+  await ready.promise;
+  await f.d.interject({threadId: 'room', runId: f.d.state.id, text: 'interjection', target: 'p2'});
+  gate.resolve();
+  await f.d.settled();
+  const run = f.d.state.runs[0],
+    entry = run.interjections[0];
+  assert.equal(entry.messageId, f.d.messages.find(m => m.text === 'interjection').id);
+  assert.equal(entry.processedRound, 2);
+  assert.equal(run.decisions[0].superseded, true);
+  assert(!f.d.messages.some(m => m.speaker === '主持人'));
 });
