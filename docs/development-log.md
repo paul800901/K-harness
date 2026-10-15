@@ -132,7 +132,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 子代理、工人與模型分工
 
-- 10-15 [Gemini 工人成果收據：保留已審部分，未提交](discussion-skill-gemini-outputs-20261015.md)
+- 10-15 [Gemini 工人成果收據：已審核並合回 main，南區已部署](discussion-skill-gemini-outputs-20261015.md)
 - 常設 [K HARNESS Worker MCP：操作者派工與失敗處理指南](operator-guide.md)
 - 常設 [限定程式工人](coding-worker.md)
 - 10-13 [長交接訊息收合與模型切換提示去重](long-user-text-model-note-20261013.md)
@@ -253,7 +253,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 討論功能
 
-- 10-15 [討論 v2：廣泛唯讀、現有主代理主持與圓桌候選；held-only 停止補修與不穩定測試追查，待 Opus 5.5 審核](discussion-roundtable-permissions-20261015.md)
+- 10-15 [討論 v2：廣泛唯讀、現有主代理主持與圓桌；held-only 停止補修，南區已部署，三家原生權限實測](discussion-roundtable-permissions-20261015.md)
 - 10-14 [討論 API HTTP 400：錯誤可辨識；推定為工具結果過長（3 萬檔工作區列檔約 436 萬字），超長結果改為不送出並提示縮小範圍，南區已部署](discussion-api-400-20261014.md)
 
 - 10-14 [討論 API：GLM（Z.ai）、Kimi 預設選項，南區已部署](discussion-api-presets-20261014.md)

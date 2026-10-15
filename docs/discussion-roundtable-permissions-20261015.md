@@ -214,4 +214,27 @@ node --import ./logs/opus-followup/scratch-location.mjs --test --test-concurrenc
 
 ## 本次部署與原生實測狀態
 
-已完成發布前驗證；待固定版本、部署及 P1/P2/P3 真實讀回。
+**南區已部署並完成讀回。** 部署版本 `06de7fe1247a8d33c182fa935367fad3a88f9fdb`；程式提交 `8277245f0da5019068e54f3d5f7a6ecee51212ac`，其後為規則與驗證文件提交。
+
+- 原工作樹修改已提交並快轉合回 main；已合併分支刪除，工作樹保留為 detached HEAD，未清理其歷史測試證據或 node_modules junction。
+- 本人確認 K 沒有工作；實際核對更新前 K 自有程序與 47831 listener 均為零，不必操作小說房暫停或強制結束工作。指定更新只執行一次。
+- 更新程式本輪重新建置與完整測試 **1689/1689** 通過（預設並行，0 失敗／取消／略過），與前述 concurrency=4 的驗證分別保存。
+- `.local/runtime.json.version` 為部署版本；`previous` 指向 `releases/before-1792045413311`，其保存版本為 `ab601572428a9783284727bc4a0a08efdf0154b8`。退版三份，Node 與語音路徑設定未變。正式 runtime 中 21 個相對前版變更的程式／前端／套件宣告檔逐一與指定 Git blob 相符。
+- **2026-10-15 14:29:41 +08:00**：原生探測程序已關閉，K 以既有桌面入口啟動，`/health` 回 **200**；正式服務送出的前端主程式與安裝產物 SHA-256 一致。檢視 1440px 桌面六席位與 390px 手機 probe 圖片，圓桌可讀、手機卡片未超出畫面；此為人工 fixture 畫面，不冒稱已操作真人聊天室。
+- 本次 candidate 根層未留下新的 `prepare-*.zip`，正式確認上一批安裝的更新暫存清理已在這次正常更新執行。未另行手動清除暫存或使用者資料。
+
+### 一場真實訂閱討論與補充權限探測
+
+使用剛部署的 `createDiscussionController`／`openDiscussionSession` 與真實原生核心，建立獨立人工工作區、其外部 sibling 目錄及全新測試房。未讀原聊天室、小說內容或憑證。主代理為原生目錄提供的 GPT-6 Luna，主持使用該測試房同一 native ID；參與者各一席：GPT-6 Luna、Claude Fable 5.1、Gemini 3.8 Flash（皆 high）。平行討論一場完成，未重送；本段驗證不等於真實使用者 UI 發起流程已端到端操作。
+
+| 項目 | 實際證據 | 判定與界線 |
+| --- | --- | --- |
+| 三家跨工作區讀取 | 三家皆透過原生讀檔工具／唯讀命令讀出兩個未放入提示的隨機標記；工作區內外內容完全相符。Codex command 完成碼 0；Claude Read 結果直接含標記；Gemini 有 view_file 事件及正確隨機標記。 | 本次指定人工檔讀取通過，不外推為所有路徑或敏感資料都已測過。 |
+| Gemini 防寫 | 同一討論中 write_to_file 與 run_command 均有原生 deniedTools／拒絕事件，指定兩個測試檔不存在。 | 原生工具層的寫入與命令 deny 通過；不宣稱驗證 Windows ACL。 |
+| Claude 工具與 hook | 原生 initialize 回應未提供工具名（空陣列），不能當成沒有工具。另以相同 discussionOnly 設定送一個僅回覆 OK、不用工具的 metadata 補充回合，捕獲 system/init 清單精確為 Glob、Grep、Read、WebFetch、WebSearch；沒有 Write/Edit/Bash，人工 SessionStart hook 的檔案不存在。 | 工具白名單與 safe-mode hook 隔離通過；不是作業系統層拒寫測試，亦未重送原討論。 |
+| Codex 防寫 | 討論參與者 readiness=ready，但模型遵守唯讀指示而未嘗試寫入，所以那一場本身不足以證明沙盒阻寫。另透過同一已安裝核心、K 專用 home 的原生 command/exec 明確指定 sandboxPolicy={type:readOnly}；readiness 仍為 ready，對工作區內及外的兩個全新人工檔各做一次 wx 寫入，兩者皆 EPERM，檔案均不存在。 | 原生唯讀沙盒補充探測通過；明確區分模型討論與不經模型的沙盒命令探測。未放寬權限、未改成 API 或外部沙盒。 |
+| 主持與收尾 | 討論 status=completed，主持前後 native ID 相同；所有人工寫入 sentinel 均不存在，測試 controller／host 關閉後才開回正式 K。 | 本測試房真實主持通過，沒有操作／重播原小說房工作。 |
+
+Codex 補充命令依[官方 App Server 文件](https://learn.chatgpt.com/docs/app-server)及本台核心產生的 CommandExecParams schema 核對：該入口不建立模型回合，明確傳入 readOnly 政策。命令本身捕獲 EPERM 後正常結束，因此 command/exec 的 exitCode=0 不代表寫入成功，判準是逐目標 wrote=false、code=EPERM 與實體檔不存在。
+
+原始證據：`runtime-readback.json`、`update.log`、`health-readback.json`、`ui-readback.json`、`live-permission-result.json`、`native-enforcement-supplement.json`，均在本機發布證據目錄，不上傳原生回覆、測試路徑或本機設定。文件與索引另開提交，不重啟 K。東區未更新，未改帳號、登入或計費。
