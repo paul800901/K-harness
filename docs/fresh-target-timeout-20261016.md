@@ -26,7 +26,7 @@
 - 修改：`src/desktop-controller.mjs`、`test/codex-flash.test.mjs`、`test/fresh-target-model.test.mjs`；沒有畫面改動。
 - 新增 7 個測試：慢交接、關閉因果，以及通知時序的 completed／failed／transport-unknown／no-new-completion／gemini-ready 五種情境。
 - 原時序測試保留，補有界等待避免再次無聲掛住。傳輸結果不明的測試依原有停止讀回流程收尾，沒有繞過權限或未知結果保護。
-- 修正後連續兩輪完整 `npm test` 均 **1697/1697** 通過，0 失敗、取消、略過；部署候選結果待補。
+- 修正後連續兩輪完整 `npm test` 均 **1697/1697** 通過，0 失敗、取消、略過；更新器候選完整測試亦為 **1697/1697**，介面建置成功。
 - 掛住的那次僅中止經 PID、父程序與命令列核對的本次純 fake 測試子程序；沒有停止任何正式 K 程序或使用者工作。該次完整套記為失敗。
 - 證據保存在 `.runtime/archive/fresh-target-timeout-20261016/`，含負向重現、原失敗完整套、修正後測試與原生複查回覆；不提交執行資料。
 
@@ -39,4 +39,12 @@
 
 ## 部署狀態
 
-程式提交：`0c4a998b1ed0e4a46371fd5454fb9e70279fd25b`。完整測試與最終 Opus 5.5 複查已完成，接續連同 `b0559347f0fb81eece6a71f2a487f363121db086` 的 Gemini CLI 識別修正部署；目前未部署此批。部署版本、health、previous、五帳號正式額度、退版數與遠端 SHA 待補。
+**南區已部署並完成正式讀回。** 程式提交為 `0c4a998b1ed0e4a46371fd5454fb9e70279fd25b`，連同 `b0559347f0fb81eece6a71f2a487f363121db086` 的 Gemini CLI 識別修正，一次部署固定版本 `0d14cbd14c3f5c841dda32db254665685ac0d5e6`。
+
+- 2026-10-16 16:52 +08:00：`.local/runtime.json` 版本吻合；previous 的程式版本為 `be96457721bcade1249b6ad2b36c89a7e7f7377a`，退版目錄共三份。候選根層沒有留下 `prepare-*.zip`；原先失敗的候選資料夾仍保留，未清除。
+- 正式 `scripts/gemini-quota.ps1` 與 `src/desktop-controller.mjs` 的 SHA-256 均與驗收來源相同。更新器完整測試 1697/1697，沒有跳過測試。
+- 只啟動 K 一次，16:52:42 健康檢查 HTTP **200**，`app=k-harness-desktop`、`deployment=native`。啟動後的外層驗證命令曾因誤讀 PowerShell 殘留的 `$LASTEXITCODE` 回報失敗；沒有重啟或重送，讀回同一批啟動程序與 health 確認啟動成功。這是驗證命令誤報，不是 K 啟動失敗。
+- 正式 K 自行查詢並保存五帳號的最新結果，實查時間為 16:52:25 至 16:52:54；五個均 `authenticated`、`quota.ready`，當次 Google 回每週與 5 小時各 100%，不是預設補值，也不保證未來百分比。使用中的帳號仍為第二個保存位置，沒有切換登入。
+- 額度證據是正式後端保存結果的讀回，本批未另做畫面截圖驗收。Gemini 4 仍依官方模型目錄標記停用，不以額度恢復推論模型已開放。
+- 16:53:11 首次 push 後讀回 GitHub `main` 與本機皆為 `0d14cbd14c3f5c841dda32db254665685ac0d5e6`。推送前檢查待發布差異，未包含帳號 email、本機使用者路徑、權杖或執行資料。
+- 本段部署紀錄另作純文件提交，不再重啟 K；東區未更新，沒有重送本人工作或更動帳號與計費。讀回檔保存在上述本機證據目錄。
