@@ -4,6 +4,8 @@ import {mkdir, mkdtemp, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {EventEmitter, on} from 'node:events';
+import {readFileSync} from 'node:fs';
+import {createRequire, syncBuiltinESMExports} from 'node:module';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {scratchBase} from './scratch.mjs';
@@ -236,6 +238,44 @@ test('closing during target creation reproduces interrupted handoff evidence wit
     assert.equal(f.calls.filter(([method]) => method === 'thread/start').length, 2);
     assert.equal(f.calls.filter(([method]) => method === 'turn/start').length, 1);
   } finally {
+    release();
+    await f.c.close();
+  }
+});
+
+test('delayed cancellation save cannot overwrite the later interrupted handoff result', async () => {
+  // Windows can hold a replaced file briefly; an older snapshot's rename must still land first.
+  let enter, release;
+  const entered = new Promise(resolve => (enter = resolve)),
+    promise = new Promise(resolve => (release = resolve));
+  const f = await fixture({targetStartGate: {enter, promise}});
+  const fsPromises = createRequire(import.meta.url)('node:fs/promises'),
+    rename = fsPromises.rename;
+  let delayed = 0;
+  fsPromises.rename = async (from, to) => {
+    const saved = path.basename(to) === 'native-1.json' && JSON.parse(readFileSync(from, 'utf8'));
+    if (saved?.status === 'cancelled' && !saved.newThreadId) {
+      delayed++;
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+    return rename(from, to);
+  };
+  syncBuiltinESMExports();
+  try {
+    await f.request({model: targetModel});
+    const completed = f.finish();
+    await entered;
+    const closing = f.c.close();
+    release();
+    await Promise.all([completed, closing]);
+    assert.equal(delayed, 1);
+    const receipt = await f.receipt();
+    assert.equal(receipt.status, 'uncertain');
+    assert.equal(receipt.newThreadId, 'native-2');
+    assert.equal(f.calls.filter(([method]) => method === 'turn/start').length, 1);
+  } finally {
+    fsPromises.rename = rename;
+    syncBuiltinESMExports();
     release();
     await f.c.close();
   }

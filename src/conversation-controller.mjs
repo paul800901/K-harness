@@ -55,7 +55,8 @@ export function createConversationController({
     discussionNotices = new Map();
   const continuations = new Map(),
     continuationTasks = new Set(),
-    continuationStates = new Map();
+    continuationStates = new Map(),
+    continuationWrites = new Map();
   const continuationFile = id => {
     if (!/^[A-Za-z0-9_-]{1,128}$/u.test(id ?? '')) throw Error('Invalid continuation room.');
     return path.join(root, '.runtime/chat-continuations', `${id}.json`);
@@ -68,8 +69,18 @@ export function createConversationController({
       throw error;
     }
   };
-  const writeContinuation = receipt =>
-    atomicWrite(continuationFile(receipt.sourceThreadId), JSON.stringify(receipt, null, 2));
+  const writeContinuation = receipt => {
+    const file = continuationFile(receipt.sourceThreadId),
+      snapshot = JSON.stringify(receipt, null, 2);
+    // A delayed cancellation save must not overwrite a later native creation result.
+    const next = (continuationWrites.get(file) ?? Promise.resolve())
+      .catch(() => {})
+      .then(() => atomicWrite(file, snapshot));
+    continuationWrites.set(file, next);
+    return next.finally(() => {
+      if (continuationWrites.get(file) === next) continuationWrites.delete(file);
+    });
+  };
   const attention = createCompletionAttention();
   const discussions = new Map();
   const historyVersions = new WeakMap();
