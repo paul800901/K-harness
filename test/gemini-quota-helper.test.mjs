@@ -22,7 +22,12 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 public sealed class KQuotaFakeHttpHandler : HttpMessageHandler {
  public static int Status=400; public static string Body="{}";
- protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token){return Task.FromResult(new HttpResponseMessage((HttpStatusCode)Status){Content=new StringContent(Body)});}
+ public static string UserAgent="", Uri=""; public static bool MatchCli=false;
+ protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token){
+  IEnumerable<string> values;UserAgent=request.Headers.TryGetValues("User-Agent",out values)?string.Join(" ",values):"";Uri=request.RequestUri.ToString();
+  string body=MatchCli&&!UserAgent.StartsWith("antigravity/cli/")?"{\"groups\":[{\"buckets\":[{\"bucketId\":\"3p-weekly\",\"remainingFraction\":1}]}]}":Body;
+  return Task.FromResult(new HttpResponseMessage((HttpStatusCode)Status){Content=new StringContent(body)});
+ }
 }
 public static class KGeminiCredentialNative {
  public sealed class Record { public byte[] Blob; }
@@ -33,11 +38,13 @@ public static class KGeminiCredentialNative {
  public static void ClearRecord(Record record){}
 }
 '@ -ReferencedAssemblies @([Net.Http.HttpClient].Assembly.Location)
-foreach($pair in @(@('${quotaPath.replaceAll("'", "''")}',@('Get-GeminiQuotaBuckets','Get-ManagedGeminiQuota','Get-InstalledGeminiClient','Invoke-GeminiQuotaHttp')), @('${credentialsPath.replaceAll("'", "''")}',@('Write-SafeJson','Save-CurrentManaged')))){
+foreach($pair in @(@('${quotaPath.replaceAll("'", "''")}',@('Get-GeminiQuotaBuckets','Get-ManagedGeminiQuota','Get-InstalledGeminiClient','Get-InstalledGeminiUserAgent','Invoke-GeminiQuotaHttp')), @('${credentialsPath.replaceAll("'", "''")}',@('Write-SafeJson','Save-CurrentManaged')))){
  $tokens=$null;$parseErrors=$null;$ast=[System.Management.Automation.Language.Parser]::ParseFile($pair[0],[ref]$tokens,[ref]$parseErrors)
  if($parseErrors.Count){throw 'PowerShell source parse failed.'}
  foreach($name in $pair[1]){$node=$ast.Find({param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true);if($null -eq $node){throw "Expected function missing: $name"};$functionText=$node.Extent.Text;if($name -eq 'Invoke-GeminiQuotaHttp'){$functionText=$functionText.Replace('$handler=[Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false','$handler=[KQuotaFakeHttpHandler]::new()')};Invoke-Expression $functionText}
 }
+$script:installedUserAgent=(Get-Item Function:Get-InstalledGeminiUserAgent).ScriptBlock
+function Get-InstalledGeminiUserAgent([string]$Executable){if($Executable -eq 'fake.exe'){return 'antigravity/cli/1.4.0'};return & $script:installedUserAgent $Executable}
 ${source}
 `;
   const encoded = Buffer.from(command, 'utf16le').toString('base64');
@@ -90,6 +97,26 @@ Write-SafeJson @{fraction=$a;disabled=$b;missingRejected=$schemaRejected}
     assert.equal(result[0].missingRejected, true);
   }
 );
+
+test('independent quota identifies the selected CLI and rejects a third-party-only response',
+  {skip: process.platform !== 'win32'}, async () => {
+    const [result] = await runWindowsPowerShell(String.raw`
+[KQuotaFakeHttpHandler]::Status=200;[KQuotaFakeHttpHandler]::MatchCli=$true
+[KQuotaFakeHttpHandler]::Body='{"groups":[{"buckets":[{"bucketId":"gemini-weekly","remainingFraction":0.625},{"bucketId":"gemini-5h","remainingFraction":1}]},{"buckets":[{"bucketId":"3p-weekly","remainingFraction":0.8}]}]}'
+$record=[PSCustomObject]@{Blob=[Text.Encoding]::UTF8.GetBytes('{"token":{"access_token":"fake-access","expiry":"2099-01-01T00:00:00Z"}}')}
+$quota=Get-ManagedGeminiQuota $record 'fake.exe' $null $false
+$ua=[KQuotaFakeHttpHandler]::UserAgent;$uri=[KQuotaFakeHttpHandler]::Uri
+[KQuotaFakeHttpHandler]::Body='{"groups":[{"buckets":[{"bucketId":"3p-weekly","remainingFraction":1},{"bucketId":"3p-5h","remainingFraction":1}]}]}'
+$rejected=$false;try{Get-ManagedGeminiQuota $record 'fake.exe' $null $false|Out-Null}catch{$rejected=$_.Exception.Message -like 'QUOTA_SCHEMA:*'}
+$badVersion=$false;try{Get-InstalledGeminiUserAgent 'missing-quota-probe.exe'|Out-Null}catch{$badVersion=$_.Exception.Message -like 'QUOTA_CLIENT:*'}
+Write-SafeJson @{userAgent=$ua;uri=$uri;windows=$quota.windows;thirdPartyRejected=$rejected;missingVersionRejected=$badVersion}
+`);
+    assert.equal(result.userAgent, 'antigravity/cli/1.4.0');
+    assert.equal(result.uri, 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary');
+    assert.deepEqual(result.windows.map(w => [w.key, w.remainingPercent]), [['five_hour', 100], ['seven_day', 62.5]]);
+    assert.equal(result.thirdPartyRejected, true);
+    assert.equal(result.missingVersionRejected, true);
+  });
 
 test(
   'a quota 401 triggers exactly one refresh, and refreshed tokens are saved before later quota failure',
@@ -198,7 +225,7 @@ test(
     const result = await runWindowsPowerShell(String.raw`
 $out=@();foreach($status in @(400,403,404,410,429,500)){
  [KQuotaFakeHttpHandler]::Status=$status;[KQuotaFakeHttpHandler]::Body='{}'
- try{Invoke-GeminiQuotaHttp 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary' 'fake' $null|Out-Null}catch{$out+=@{status=$status;error=$_.Exception.Message}}
+ try{Invoke-GeminiQuotaHttp 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary' 'fake' $null 'antigravity/cli/1.4.0'|Out-Null}catch{$out+=@{status=$status;error=$_.Exception.Message}}
 };Write-SafeJson @{errors=$out}
 `);
     assert.deepEqual(

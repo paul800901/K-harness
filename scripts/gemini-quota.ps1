@@ -19,7 +19,23 @@ function Get-InstalledGeminiClient([string]$Executable) {
   throw 'QUOTA_CLIENT:Unrecognized official native OAuth client.'
  }finally{$stream.Dispose();$sha.Dispose();[Array]::Clear($buffer,0,$buffer.Length)}
 }
-function Invoke-GeminiQuotaHttp([string]$Uri,[string]$Token,$Form) {
+function Get-InstalledGeminiUserAgent([string]$Executable) {
+ # Match the selected native CLI family, not the IDE quota pool. Never invent a
+ # version or reuse a version cached before the user updated the native core.
+ $start=[Diagnostics.ProcessStartInfo]::new();$start.FileName=$Executable;$start.Arguments='--version'
+ $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+ foreach($key in @($start.EnvironmentVariables.Keys)){if($key -notmatch '^(SystemRoot|WINDIR|TEMP|TMP|PATH|PATHEXT)$'){$start.EnvironmentVariables.Remove($key)}}
+ $start.EnvironmentVariables['AGY_CLI_DISABLE_AUTO_UPDATE']='true'
+ $process=[Diagnostics.Process]::new();$process.StartInfo=$start
+ try {
+  [void]$process.Start();$stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
+  if(-not $process.WaitForExit(10000)){$process.Kill();throw 'QUOTA_CLIENT:Native version query timed out.'}
+  $version=$stdout.GetAwaiter().GetResult().Trim()
+  if($process.ExitCode -ne 0 -or $version -notmatch '^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$'){throw 'QUOTA_CLIENT:Native version unavailable.'}
+  return "antigravity/cli/$version"
+ }catch{throw 'QUOTA_CLIENT:Native version unavailable.'}finally{$process.Dispose()}
+}
+function Invoke-GeminiQuotaHttp([string]$Uri,[string]$Token,$Form,[string]$UserAgent) {
  Add-Type -AssemblyName System.Net.Http
  $handler=[Net.Http.HttpClientHandler]::new();$handler.AllowAutoRedirect=$false
  $http=[Net.Http.HttpClient]::new($handler);$http.Timeout=[TimeSpan]::FromSeconds(12);$http.MaxResponseContentBufferSize=1048576
@@ -31,7 +47,9 @@ function Invoke-GeminiQuotaHttp([string]$Uri,[string]$Token,$Form) {
    $content=[Net.Http.FormUrlEncodedContent]::new($fields)
   }else{
    $http.DefaultRequestHeaders.Authorization=[Net.Http.Headers.AuthenticationHeaderValue]::new('Bearer',$Token)
-   $http.DefaultRequestHeaders.UserAgent.ParseAdd('antigravity')
+   if($UserAgent -notmatch '^antigravity/cli/\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$'){throw 'QUOTA_CLIENT:Native CLI identity missing.'}
+   # Native Go uses two slashes; .NET's structured UserAgent parser rejects it.
+   [void]$http.DefaultRequestHeaders.TryAddWithoutValidation('User-Agent',$UserAgent)
    $content=[Net.Http.StringContent]::new('{}',[Text.Encoding]::UTF8,'application/json')
   }
   $response=$http.PostAsync($Uri,$content).GetAwaiter().GetResult()
@@ -76,6 +94,7 @@ function Get-GeminiQuotaBuckets($Value,[string]$Inherited='',[int]$Depth=0) {
  }
 }
 function Get-ManagedGeminiQuota($Record,[string]$Executable,[scriptblock]$SaveRefresh,[bool]$ForceRefresh=$false) {
+ $userAgent=Get-InstalledGeminiUserAgent $Executable
  $data=ConvertFrom-Json ([Text.UTF8Encoding]::new($false,$true).GetString($Record.Blob).TrimEnd([char]0))
  if($data.token -isnot [PSCustomObject]){throw 'QUOTA_SCHEMA:Native token schema missing.'}
  $expiry=[DateTimeOffset]::MinValue;[void][DateTimeOffset]::TryParse([string]$data.token.expiry,[ref]$expiry)
@@ -90,7 +109,7 @@ function Get-ManagedGeminiQuota($Record,[string]$Executable,[scriptblock]$SaveRe
   if($fresh.refresh_token){$data.token.refresh_token=$fresh.refresh_token};$refreshed=$true
   if($SaveRefresh){& $SaveRefresh $data}
  }
- try{$payload=Invoke-GeminiQuotaHttp 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary' $data.token.access_token $null;break}
+ try{$payload=Invoke-GeminiQuotaHttp 'https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary' $data.token.access_token $null $userAgent;break}
  catch{if($_.Exception.Message -like 'QUOTA_AUTH:*' -and -not $refreshed -and $attempt -eq 0){$ForceRefresh=$true;continue};throw}
  }
  $buckets=@(Get-GeminiQuotaBuckets $payload)
