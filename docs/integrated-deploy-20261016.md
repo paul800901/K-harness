@@ -64,6 +64,14 @@
 - 真正 Opus 5.5 複查 session `dbbd5f0e-ff08-42fd-8549-d34d063a9e20`，init／assistant 都是 `claude-opus-5-5`、apiKeySource `none`、success。確認根因、等待條件會真正生效、八項斷言未削弱、沒有產品問題被隱藏，無阻擋；只讀未代跑測試。
 - 新固定程式／測試版本 **`be7ffb321d61f2c8e2e4830c6a061dd65f948e84`**；正式更新結果待下節讀回。原失敗、延遲重現、修正後延遲驗證、完整回歸與 Opus 證據皆保留，沒有覆寫首次紀錄。
 
+### 第二次正式更新：另一項前置測試失敗
+
+- 在正式 K 仍停止、main 乾淨、三個 installed updater script 與 main 位元組相同的前提下，依新授權執行 `Update-K.ps1 -Ref be7ffb321d61f2c8e2e4830c6a061dd65f948e84` 一次。候選建置成功；完整測試 **1728/1729**、0 取消／略過，74.3 秒，仍在 activation 前停止。
+- 前次 `does not bypass clear` 已通過；本次失敗是 `Claude completed Gemini ready preflight native-takeover preserves original results`，`test/claude-controller.test.mjs:2974` 等待接手回合完成後的原結果交付，15 秒內未觀察到預期呼叫。原錯誤為 `Expected asynchronous controller result was not observed.`，完整紀錄 `update-authorized-2.log`；不把兩次失敗混為同一問題。
+- 唯讀追查：此測試在通知準備存檔期間插入原生接手；可能存在原生完成事件早於通知準備 finally 收尾，當時排程被 `notifying` 擋下而未再安排的競態。尚未確定性重現／修正，不宣稱只是測試時間不足，也不加長等待或跳過斷言。
+- 22:51 讀回正式版本仍為 `0d14cbd14c3f5c841dda32db254665685ac0d5e6`、previous 未變、47831 無監聽。新候選 `prepare-1792162188836` 和原候選皆保留；未套用、退版、再重試、重開或 push。
+- 已向本人詢問是否授權繼續逐項處理部署暴露的問題並完整驗證到部署完成；未以「測試偶發」為由跳過更新器檢查。
+
 本機證據：本任務工作樹 `.runtime/archive/integrated-deploy-20261016/`，包含整合測試、真正 Opus 的 packet／identity／events／result、更新與讀回紀錄，不提交公開 Git。
 
 ## 保留的驗證邊界
