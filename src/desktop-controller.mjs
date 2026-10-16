@@ -327,7 +327,8 @@ export function createDesktopController({
     transferTiming('messages', oldId, id);
     return metadata;
   };
-  let settlingWorkers = 0;
+  let settlingWorkers = 0,
+    nativeCompletionVersion = 0;
   const changed = () => {
     state.completionPending =
       settlingWorkers > 0 ||
@@ -894,6 +895,8 @@ export function createDesktopController({
       const completedAt = new Date().toISOString(),
         completedTurnId = p.turn?.id ?? turnId;
       if (turnId && completedTurnId !== turnId) return;
+      // Only a currently owned native turn can supply a new terminal event, not a duplicate or foreign ID.
+      if (turnId) nativeCompletionVersion++;
       if (turnId && geminiHandoff?.waitForNativeTurn) delete geminiHandoff.waitForNativeTurn;
       const ownership = goalTurn;
       goalTurn = null;
@@ -1842,7 +1845,8 @@ export function createDesktopController({
     }
     const active = host,
       parent = state.threadId,
-      epoch = requestEpoch;
+      epoch = requestEpoch,
+      completionVersion = nativeCompletionVersion;
     let batch = [],
       recoveryRead = null;
     const current = () =>
@@ -2150,10 +2154,13 @@ export function createDesktopController({
           )
             flashQueue.set(record.requestId, record);
         }
-        state.busy = !!turnId;
-        state.status = turnId ? 'working' : 'completed';
+        const nativeSettled = !turnId && nativeCompletionVersion !== completionVersion;
+        if (!nativeSettled) {
+          state.busy = !!turnId;
+          state.status = turnId ? 'working' : 'completed';
+        }
         requeued = true;
-        if (handoff) handoff.waitForNativeTurn = true;
+        if (handoff && !nativeSettled) handoff.waitForNativeTurn = true;
         await persistFlashNotifications();
         return;
       }
@@ -2216,7 +2223,14 @@ export function createDesktopController({
       // A different worker or account event may arrive after the notification turn
       // already completed but before its send/persistence promise unwound.
       if (
-        completed &&
+        (completed ||
+          (requeued &&
+            nativeCompletionVersion !== completionVersion &&
+            host === active &&
+            state.threadId === parent &&
+            requestEpoch === epoch &&
+            !stopRequested &&
+            state.goal?.status === 'active')) &&
         state.status === 'completed' &&
         (flashQueue.size || ['ready', 'blocked'].includes(geminiHandoff?.status)) &&
         !closing &&

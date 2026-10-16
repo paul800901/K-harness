@@ -18,7 +18,9 @@ async function fixture({
   workerPolicy = {model: 'gpt-6-luna', effort: 'high'},
   cancelSettles = true,
   delayToolOutput = false,
-  rejectToolOutput = false
+  rejectToolOutput = false,
+  onConversationSettled,
+  onChange
 } = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
@@ -139,6 +141,8 @@ async function fixture({
   const c = createDesktopController({
     root,
     executable: 'fixture-codex',
+    onConversationSettled,
+    onChange,
     hostFactory: newHost,
     workerPolicy,
     bridgeFactory: async options => {
@@ -711,6 +715,114 @@ test('failed completion submission during stop is read back before a second stop
   }
 });
 
+for (const outcome of ['completed', 'failed', 'transport-unknown', 'no-new-completion', 'gemini-ready'])
+  test(`native completion during rejected notification cleanup: ${outcome}`, {timeout: 15000}, async () => {
+    let enter,
+      release,
+      settle,
+      finishCleanup,
+      rejecting = false;
+    const entered = new Promise(resolve => (enter = resolve)),
+      gate = new Promise(resolve => (release = resolve)),
+      settled = new Promise(resolve => (settle = resolve)),
+      cleanup = new Promise(resolve => (finishCleanup = resolve));
+    const f = await fixture({
+      onConversationSettled: event => {
+        if (event.turnId === 'native-goal-turn') settle();
+      },
+      onChange: () => {
+        if (rejecting) finishCleanup();
+      }
+    });
+    try {
+      await f.c.open({model: 'gpt-6-astra'});
+      await f.c.send({text: 'native completion during notification cleanup'});
+      const emit = f.hostOptions.at(-1).onEvent;
+      f.c.state.goal = {status: 'active'};
+      const original = f.host.request;
+      let attempts = 0;
+      f.host.request = async (method, params, ...rest) => {
+        if (outcome === 'gemini-ready' && method === 'thread/loaded/list') return {data: ['codex-parent']};
+        if (method === 'turn/start' && params.toolOutput && ++attempts === 1) {
+          emit({method: 'turn/started', params: {threadId: 'codex-parent', turn: {id: 'native-goal-turn'}}});
+          enter();
+          await gate;
+          rejecting = true;
+          throw Object.assign(
+            Error('native notification rejected'),
+            outcome === 'transport-unknown' ? {} : {protocolMessage: {code: -32600}}
+          );
+        }
+        return original(method, params, ...rest);
+      };
+      await f.gatewayOptions[0].bridge.start({
+        requestId: 'goal-worker',
+        model: 'gemini-3.8-flash',
+        effort: 'low',
+        task: 'fake'
+      });
+      const record = f.workerRecords.get('goal-worker');
+      Object.assign(record, {status: 'completed', settled: true, output: 'done'});
+      f.bridgeOptions[0].onChange(record);
+      if (outcome === 'gemini-ready')
+        f.bridgeOptions[0].onGeminiHandoff({
+          parentId: 'codex-parent',
+          status: 'ready',
+          requestIds: [],
+          queryIds: ['quota-query']
+        });
+      emit({method: 'turn/completed', params: {threadId: 'codex-parent', turn: {id: 'turn-1', status: 'completed'}}});
+      await entered;
+      emit({
+        method: 'turn/completed',
+        params: {
+          threadId: 'codex-parent',
+          turn: {
+            id: outcome === 'no-new-completion' ? 'foreign-turn' : 'native-goal-turn',
+            status: outcome === 'failed' ? 'failed' : 'completed'
+          }
+        }
+      });
+      if (outcome !== 'no-new-completion') await settled;
+      assert.equal(attempts, 1);
+      release();
+      await cleanup;
+      if (outcome === 'transport-unknown' || outcome === 'failed') {
+        assert.equal(attempts, 1);
+        assert.equal(f.c.state.status, outcome === 'failed' ? 'failed' : 'uncertain');
+        if (outcome === 'transport-unknown') assert.match(f.c.state.error, /未重送/);
+      } else {
+        if (outcome === 'no-new-completion') {
+          assert.equal(attempts, 1);
+          assert.equal(f.c.state.status, 'working');
+          const saved = (await listMainSessions(f.root)).sessions.find(row => row.threadId === 'codex-parent');
+          assert.equal(saved.workerNotifications['goal-worker'], undefined);
+          emit({
+            method: 'turn/completed',
+            params: {threadId: 'codex-parent', turn: {id: 'native-goal-turn', status: 'completed'}}
+          });
+        }
+        let timer;
+        try {
+          await Promise.race([
+            f.toolOutputSent,
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(Error('native completion wakeup was lost')), 5000);
+            })
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        assert.equal(attempts, 2);
+        assert.equal(f.workerRecords.size, 1);
+      }
+    } finally {
+      release();
+      f.c.state.goal = null;
+      if (f.c.state.status === 'uncertain') await f.c.stop();
+      await f.c.close();
+    }
+  });
 test('native goal turn winning a Flash notification race preserves rejected results for the next completion', async () => {
   const f = await fixture();
   try {
@@ -745,7 +857,17 @@ test('native goal turn winning a Flash notification race preserves rejected resu
       method: 'turn/completed',
       params: {threadId: 'codex-parent', turn: {id: 'native-goal-turn', status: 'completed'}}
     });
-    await f.toolOutputSent;
+    let timer;
+    try {
+      await Promise.race([
+        f.toolOutputSent,
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(Error('native goal completion notification timed out')), 5000);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
     await new Promise(r => setTimeout(r, 30));
     assert.equal(attempts, 2);
     assert.equal(f.c.state.status, 'working');

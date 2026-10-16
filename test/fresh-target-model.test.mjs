@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {EventEmitter, on} from 'node:events';
 import {createConversationController} from '../src/conversation-controller.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {scratchBase} from './scratch.mjs';
@@ -15,9 +16,10 @@ const entry = (model, efforts, defaultReasoningEffort) => ({
   supportedReasoningEfforts: efforts.map(reasoningEffort => ({reasoningEffort})),
   defaultReasoningEffort
 });
-async function fixture() {
+async function fixture({targetStartDelayMs = 0, targetStartGate} = {}) {
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'fresh-target-'));
+  const changes = new EventEmitter();
   const rows = [],
     calls = [];
   let sequence = 0,
@@ -25,6 +27,7 @@ async function fixture() {
     catalogGate;
   const c = createConversationController({
     root,
+    onChange: () => changes.emit('change'),
     sessionFactory: options => {
       const row = {id: null, hooks: null, gateway: null, turns: [], continue: options.onContinueConversation};
       rows.push(row);
@@ -45,6 +48,11 @@ async function fixture() {
           if (method === 'account/read') return {account: {type: 'chatgpt'}};
           if (method === 'config/read') return {config: {}};
           if (method === 'thread/start') {
+            if (sequence && targetStartGate) {
+              targetStartGate.enter();
+              await targetStartGate.promise;
+            }
+            if (sequence && targetStartDelayMs) await new Promise(resolve => setTimeout(resolve, targetStartDelayMs));
             row.id = `native-${++sequence}`;
             return {thread: {id: row.id, turns: []}};
           }
@@ -101,8 +109,27 @@ async function fixture() {
         items: []
       }
     ];
-    source.hooks.onEvent({method: 'turn/completed', params: {threadId: source.id, turn: source.turns[0]}});
-    await wait(async () => ['sent', 'cancelled', 'uncertain'].includes((await receipt()).status));
+    // Subscribe before completion so even a fast handoff cannot lose its notification.
+    // Wait for actual changes, not repeated file reads that can contend with Windows replacement.
+    const updates = on(changes, 'change', {signal: AbortSignal.timeout(30000)});
+    const started = Date.now();
+    let lastStatus = 'pending';
+    try {
+      source.hooks.onEvent({method: 'turn/completed', params: {threadId: source.id, turn: source.turns[0]}});
+      for await (const _ of updates) {
+        const result = await receipt();
+        lastStatus = result.status;
+        if (['sent', 'cancelled', 'uncertain'].includes(lastStatus)) return result;
+      }
+    } catch (error) {
+      if (error.name === 'AbortError')
+        throw Error(`target handoff watchdog after ${Date.now() - started}ms; last status: ${lastStatus}`, {
+          cause: error
+        });
+      throw error;
+    } finally {
+      await updates.return();
+    }
   };
   return {
     root,
@@ -117,14 +144,6 @@ async function fixture() {
     blockCatalog: value => (catalogGate = value)
   };
 }
-async function wait(check) {
-  const until = Date.now() + 2500;
-  while (!(await check())) {
-    if (Date.now() > until) throw Error('target handoff timed out');
-    await new Promise(r => setTimeout(r, 10));
-  }
-}
-
 for (const scenario of [
   {name: 'explicit target high', args: {model: targetModel, effort: 'high'}, model: targetModel, effort: 'high'},
   {
@@ -176,6 +195,51 @@ for (const scenario of [
       await f.c.close();
     }
   });
+
+test('slow target opening waits for handoff settlement without cancelling or replaying', async () => {
+  const f = await fixture({targetStartDelayMs: 2800});
+  try {
+    await f.request({model: targetModel});
+    await f.finish();
+    const receipt = await f.receipt();
+    assert.equal(receipt.status, 'sent');
+    assert.equal(receipt.targetModel, targetModel);
+    assert.equal(receipt.targetEffort, 'low');
+    assert.equal(f.calls.filter(([method]) => method === 'thread/start').length, 2);
+    assert.equal(f.calls.filter(([method]) => method === 'turn/start').length, 2);
+    const child = f.rows.find(row => row.id === receipt.newThreadId);
+    assert.equal(
+      child.owner.state.messages.filter(message => message.role === 'user' && message.source === 'continuation').length,
+      1
+    );
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('closing during target creation reproduces interrupted handoff evidence without sending', async () => {
+  let enter, release;
+  const entered = new Promise(resolve => (enter = resolve)),
+    promise = new Promise(resolve => (release = resolve));
+  const f = await fixture({targetStartGate: {enter, promise}});
+  try {
+    await f.request({model: targetModel});
+    const completed = f.finish();
+    await entered;
+    const closing = f.c.close();
+    release();
+    await Promise.all([completed, closing]);
+    const receipt = await f.receipt();
+    assert.equal(receipt.status, 'uncertain');
+    assert.equal(receipt.newThreadId, 'native-2');
+    assert.match(receipt.error, /本人意圖、目標或原工作已變更；未送出交接/);
+    assert.equal(f.calls.filter(([method]) => method === 'thread/start').length, 2);
+    assert.equal(f.calls.filter(([method]) => method === 'turn/start').length, 1);
+  } finally {
+    release();
+    await f.c.close();
+  }
+});
 
 for (const args of [
   {model: 'missing'},
