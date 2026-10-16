@@ -1,7 +1,8 @@
 import path from 'node:path';
 import net from 'node:net';
-import {mkdir, readFile, writeFile, rename, copyFile, stat, readdir, rm} from 'node:fs/promises';
+import {mkdir, readFile, writeFile, rename, copyFile, stat, readdir} from 'node:fs/promises';
 import {atomicWrite} from '../src/atomic-write.mjs';
+import {recyclePath} from './recycle-path.mjs';
 
 export const candidateRelative = '.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee';
 export function installationPaths(root) {
@@ -116,7 +117,9 @@ export async function activateRuntime({
     throw error;
   }
   // Older program copies are reproducible from their Git version; failing to remove them never fails the update.
-  await pruneReleases(p.candidate).catch(() => {});
+  await pruneReleases(p.candidate).catch(error =>
+    console.warn(`舊版本清理未完成，更新已套用；項目保留或狀態待確認，未自動重試（${error.code ?? error.message}）`)
+  );
   return {version, runtime: p.runtime, previous: hadRuntime ? backup : null};
 }
 
@@ -128,8 +131,17 @@ export async function pruneReleases(candidate, keep = 3) {
     .map(e => e.name)
     .sort((x, y) => Number(x.slice(7)) - Number(y.slice(7)));
   const old = names.slice(0, Math.max(0, names.length - keep));
-  for (const name of old) await rm(path.join(releases, name), {recursive: true, force: true, maxRetries: 3});
-  return old;
+  const recycled = [];
+  for (const name of old) {
+    const target = path.join(releases, name);
+    try {
+      await recyclePath(target, releases);
+      recycled.push(name);
+    } catch (error) {
+      console.warn(`舊版本未能確認移入資源回收筒，項目保留或狀態待確認：${target}（${error.code ?? error.message}）`);
+    }
+  }
+  return recycled;
 }
 
 export async function rollbackRuntime(root, {checkStopped = assertStopped} = {}) {

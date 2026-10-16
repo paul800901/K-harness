@@ -12,6 +12,7 @@ import {
   pruneReleases
 } from '../scripts/install-runtime.mjs';
 import {scratchBase} from './scratch.mjs';
+import {recyclePath} from '../scripts/recycle-path.mjs';
 
 const checkStopped = async () => {};
 async function file(name, value) {
@@ -123,6 +124,28 @@ test('path outside this installation cannot be activated', async () => {
 });
 
 test(
+  'Windows recycle helper confirms an actual fixture entry in the Recycle Bin',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const {p} = await fixture(),
+      parent = path.join(p.candidate, 'recycle-fixture'),
+      target = path.join(parent, '保留確認目錄'),
+      archive = path.join(parent, 'fixture-archive.zip');
+    await file(path.join(target, 'fixture.txt'), 'recoverable fixture');
+    const result = await recyclePath(target, parent);
+    assert.deepEqual(result, {path: target, recycled: true, recycleBinReadback: true});
+    await assert.rejects(stat(target), {code: 'ENOENT'});
+    await file(archive, 'fixture archive');
+    assert.deepEqual(await recyclePath(archive, parent), {
+      path: archive,
+      recycled: true,
+      recycleBinReadback: true
+    });
+    await assert.rejects(stat(archive), {code: 'ENOENT'});
+  }
+);
+
+test(
   'installed updater archives the repository root rather than its ignored runtime subtree',
   {skip: process.platform !== 'win32'},
   async () => {
@@ -165,7 +188,12 @@ test(
       'fixture'
     ]);
     const version = git(['rev-parse', 'HEAD']);
-    for (const name of ['scripts/manage-install.mjs', 'scripts/install-runtime.mjs', 'src/atomic-write.mjs'])
+    for (const name of [
+      'scripts/manage-install.mjs',
+      'scripts/install-runtime.mjs',
+      'scripts/recycle-path.mjs',
+      'src/atomic-write.mjs'
+    ])
       await file(path.join(p.runtime, name), await readFile(new URL('../' + name, import.meta.url)));
     const result = spawnSync(
       process.execPath,

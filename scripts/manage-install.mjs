@@ -1,8 +1,9 @@
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {mkdir, copyFile, readdir, stat, rm} from 'node:fs/promises';
+import {mkdir, copyFile, readdir, stat} from 'node:fs/promises';
 import {activateRuntime, rollbackRuntime, installationPaths, readSettings, assertStopped} from './install-runtime.mjs';
+import {recyclePath} from './recycle-path.mjs';
 
 const source = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2),
@@ -90,9 +91,11 @@ try {
   ]);
   // The archive is this run's own temporary copy of the Git version; it is not kept.
   // Only a temporary file: a scanner briefly holding it must not stop the update.
-  await rm(archive, {force: true}).catch(error =>
-    console.warn(`暫存壓縮檔未能刪除，可稍後移到資源回收筒：${archive}（${error.code ?? error.message}）`)
-  );
+  try {
+    await recyclePath(archive, p.candidate);
+  } catch (error) {
+    console.warn(`暫存壓縮檔未能確認移入資源回收筒，已保留或狀態待確認：${archive}（${error.code ?? error.message}）`);
+  }
   // New candidate only: npm never replaces the running runtime's dependencies.
   run('cmd.exe', ['/d', '/s', '/c', 'npm ci --no-audit --no-fund'], prepared);
   run(process.execPath, ['node_modules/electron/install.js'], prepared);
