@@ -330,6 +330,8 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Google 營運
 
+- 10-16 [Gemini 工作區 Google 試算表唯讀接線](gemini-sheets-read-20261016.md)：沿用既有授權工具、限定試算表與唯讀 MCP；修正 no-output 原因判讀，原生查詢與部署狀態見紀錄。
+
 - 10-04 [Google 商家營運 API 接入](google-ops-connect-20261004.md)
 - 10-04 [K 內 Gemini 的 Google Ops 盤點核對](google-ops-audit-20261004.md)
 
