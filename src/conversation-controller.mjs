@@ -13,6 +13,7 @@ import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
 import {workerEnded, workerMayBeLive} from './worker-status.mjs';
+import {usesCodexCore, modelProvider} from '../shared/model-provider.mjs';
 
 const FENCE = '```';
 // The main model ends a reply with this block when the person asked it to start the armed discussion.
@@ -328,7 +329,7 @@ export function createConversationController({
       !controller ||
       locked.has(controller) ||
       rooms.get(threadId) !== controller ||
-      controller.state.provider !== 'codex'
+      !usesCodexCore(controller.state.provider)
     )
       throw Error('來源聊天室正在變更或尚未支援此工具。');
     if (typeof nextInstruction !== 'string' || !nextInstruction.trim() || nextInstruction.length > 16000)
@@ -801,7 +802,7 @@ export function createConversationController({
       reindex(candidate);
       await loadDiscussion(candidate);
       abort.signal.throwIfAborted();
-      const receipt = candidate.state.provider === 'codex' ? await readContinuation(candidate.state.threadId) : null;
+      const receipt = usesCodexCore(candidate.state.provider) ? await readContinuation(candidate.state.threadId) : null;
       if (receipt && receipt.kind !== 'origin') {
         if (['pending', 'creating', 'created'].includes(receipt.status)) {
           receipt.status = receipt.status === 'pending' ? 'cancelled' : 'uncertain';
@@ -1114,7 +1115,7 @@ export function createConversationController({
   const discussionSettings = async (controller, settings) => {
     const s = controller.state;
     if (!discussionModes[settings?.mode]) throw Error('討論模式無效。');
-    const catalog = (await api.models()).models;
+    const catalog = (await api.models()).models.filter(model => modelProvider(model.model) !== 'gemma');
     const choose = choice => {
       const model = catalog.find(m => m.model === choice.model && m.available !== false);
       if (!model) throw Error('參與模型目前不在可用原生清單，未換模。');

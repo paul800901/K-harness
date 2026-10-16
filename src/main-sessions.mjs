@@ -178,7 +178,9 @@ async function writeMainSession(
           ? 'claude.ai'
           : model.startsWith('gemini-')
             ? 'antigravity'
-            : 'chatgpt',
+            : modelProvider(model) === 'gemma'
+              ? 'self-hosted'
+              : 'chatgpt',
         workspace: selectedWorkspace,
         ...moved,
         workerPolicy: normalizeWorkerPolicy(workerPolicy),

@@ -11,7 +11,7 @@ export {effortName};
 const remoteClient = document.documentElement.dataset.kRemote === 'true';
 const displayModel = model => model?.displayName || model?.model || '選擇模型';
 const modelProvider = model => model?.provider ?? providerOf(model?.model);
-const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini'})[provider];
+const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: 'Gemma'})[provider];
 const providerDefaultPermission = provider => (provider === 'claude' ? 'claude-manual' : 'workspace-write');
 const billingNote = model =>
   /requires (?:extra )?usage credits|requires extra usage|extra usage required/i.test(model?.description ?? '')
@@ -28,7 +28,9 @@ function ModelMenu({models, selected, disabled, isAvailable, onChange}) {
       ? ['Opus', 'Sonnet', 'Haiku', 'Fable']
       : modelProvider(selected) === 'gemini'
         ? ['Flash', 'Pro']
-        : ['Sol', 'Astra', 'Luna', 'Terra'];
+        : modelProvider(selected) === 'gemma'
+          ? ['Gemma 4']
+          : ['Sol', 'Astra', 'Luna', 'Terra'];
   const grouped = new Map([...families, '其他'].map(name => [name, []]));
   for (const item of models) {
     const family =
@@ -158,7 +160,9 @@ function ModelMenu({models, selected, disabled, isAvailable, onChange}) {
                 >
                   <span>{displayModel(item)}</span>
                   {billingNote(item) && <small>{billingNote(item)}</small>}
-                  {!isAvailable(item) && <small>目前不可用</small>}
+                  {!isAvailable(item) && (
+                    <small>{item.available === false ? item.description || '目前不可用' : '目前不可用'}</small>
+                  )}
                   <Check size={15} className={item.model === selected?.model ? '' : 'model-check-hidden'} />
                 </button>
               ))}
@@ -391,7 +395,7 @@ export function ModelPicker({
       : accessMode;
   return (
     <div className="model-picker">
-      {!remoteClient && (
+      {!remoteClient && provider !== 'gemma' && (
         <AccountConnections
           disabled={disabled}
           provider={provider}
@@ -426,7 +430,7 @@ export function ModelPicker({
                   </span>
                 ) : (
                   <div className="model-provider-tabs" role="group" aria-label="選擇主代理提供者">
-                    {['codex', 'claude', 'gemini'].map(item => (
+                    {['codex', 'claude', 'gemini', 'gemma'].map(item => (
                       <button
                         type="button"
                         key={item}
@@ -475,7 +479,7 @@ export function ModelPicker({
                     disabled={disabled}
                   />
                 </div>
-              ) : (
+              ) : selectedProvider !== 'gemma' || hasReasoningOptions ? (
                 <label className="model-setting-row">
                   <span>推理程度</span>
                   <select
@@ -494,7 +498,7 @@ export function ModelPicker({
                     ))}
                   </select>
                 </label>
-              )}
+              ) : null}
               {mode === 'create' && (
                 <div className="model-setting-row">
                   <span>操作權限</span>

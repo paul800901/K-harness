@@ -52,7 +52,7 @@ export function GoalDialog({state, Modal, request, onClose}) {
   return (
     <Modal title="目標模式" onClose={onClose}>
       <p className="modal-description">
-        此聊天室使用 {{codex: 'Codex', claude: 'Claude', gemini: 'Gemini'}[provider] ?? provider}{' '}
+        此聊天室使用 {{codex: 'Codex', claude: 'Claude', gemini: 'Gemini', gemma: 'Gemma'}[provider] ?? provider}{' '}
         原生目標模式，沿用目前模型與操作權限。你可直接設定，不必先請 AI 設定。
       </p>
       {!supported ? (
@@ -74,7 +74,7 @@ export function GoalDialog({state, Modal, request, onClose}) {
               你與 AI 都能直接修改目標，不需再次確認。「儲存目標」只改文字，保留目前狀態與預算；暫停中不會自動繼續。
             </p>
           )}
-          {provider !== 'codex' && (
+          {provider !== 'codex' && provider !== 'gemma' && (
             <p className="modal-description">
               目前原生核心不提供只改文字的操作；「更新並執行」會重新啟動目標，不是單純儲存。
             </p>
@@ -107,14 +107,16 @@ export function GoalDialog({state, Modal, request, onClose}) {
             )}
             {working && (
               <button disabled={locked} onClick={() => run('stop', {})}>
-                {provider === 'codex' ? '停止並暫停目標' : '停止目標工作'}
+                {provider === 'codex' || provider === 'gemma' ? '停止並暫停目標' : '停止目標工作'}
               </button>
             )}
-            {provider === 'codex' && state.goal && ['paused', 'blocked'].includes(state.goal.status) && (
-              <button disabled={locked} onClick={() => run('goal', {status: 'active', resumeOnly: true})}>
-                繼續目標
-              </button>
-            )}
+            {(provider === 'codex' || provider === 'gemma') &&
+              state.goal &&
+              ['paused', 'blocked'].includes(state.goal.status) && (
+                <button disabled={locked} onClick={() => run('goal', {status: 'active', resumeOnly: true})}>
+                  繼續目標
+                </button>
+              )}
             {canEdit && (
               <button
                 className="primary"

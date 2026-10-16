@@ -31,6 +31,25 @@ models.push({
   description: 'Official catalog description',
   supportedReasoningEfforts: [{reasoningEffort: 'ultra'}]
 });
+models.push(
+  {
+    model: 'gemma-local/gemma-4-12b-it-qat',
+    displayName: 'Gemma 4 · 本機量化版',
+    provider: 'gemma',
+    available: true,
+    supportedReasoningEfforts: [],
+    inputModalities: ['text']
+  },
+  {
+    model: 'gemma-cloud/gemma-4-12b-qat-bf16',
+    displayName: 'Gemma 4 · 雲端高精度版',
+    provider: 'gemma',
+    available: false,
+    description: '雲端模型服務尚未連通。',
+    supportedReasoningEfforts: [],
+    inputModalities: ['text']
+  }
+);
 const state = {
   threadId: null,
   workspace: root,
@@ -133,6 +152,15 @@ try {
     0,
     'English catalog description should not be displayed'
   );
+  await provider.getByRole('button', {name: 'GPT', exact: true}).click();
+  await provider.getByRole('button', {name: 'Gemma', exact: true}).click();
+  await picker.click();
+  await menu.waitFor({state: 'visible'});
+  assert.equal(await menu.getByRole('menuitemradio').count(), 2);
+  const cloud = menu.getByRole('menuitemradio', {name: /雲端高精度版/});
+  assert.equal(await cloud.isDisabled(), true);
+  await menu.getByRole('menuitemradio', {name: 'Gemma 4 · 本機量化版', exact: true}).click();
+  assert.equal(await page.getByLabel('主代理推理程度', {exact: true}).count(), 0);
   await provider.getByRole('button', {name: 'GPT', exact: true}).click();
   await picker.click();
   await menu.waitFor({state: 'visible'});

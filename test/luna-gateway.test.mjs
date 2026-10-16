@@ -2,6 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {request as httpRequest} from 'node:http';
 import {createLunaGateway} from '../src/luna-gateway.mjs';
+test('Gemma gemini-named gateway accepts an explicitly selected GPT subscription worker', async () => {
+  const f = fixture();
+  const gateway = await createLunaGateway({bridge: f.bridge, geminiOnly: true, allowCodex: true});
+  try {
+    const {url, headers} = gateway.mcpConfig.mcpServers.k_gemini, token = headers.Authorization.slice(7);
+    const result = await body(await post(url, token, {jsonrpc: '2.0', id: 1, method: 'tools/call', params: {
+      name: 'gemini_start', arguments: {requestId: 'test-gemma-gpt', task: 'synthetic', model: 'gpt-6-luna', effort: 'high'}
+    }}));
+    assert.equal(result.result.isError, undefined);
+    assert.equal(result.result.structuredContent.provider, 'codex');
+  } finally { await gateway.close(); }
+});
 
 function fixture() {
   const records = new Map();

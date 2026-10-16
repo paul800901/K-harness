@@ -10,7 +10,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {listMainSessions, saveMainSession} from '../src/main-sessions.mjs';
 import {scratchBase} from './scratch.mjs';
-async function fixture({catalog, modelPages, browser = false, browserState} = {}) {
+async function fixture({catalog, modelPages, browser = false, browserState, selfHosted} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'desktop-'));
@@ -120,6 +120,7 @@ async function fixture({catalog, modelPages, browser = false, browserState} = {}
   const c = createDesktopController({
     ...(browser ? await fixtureBrowser(root, browserState) : {}),
     root,
+    selfHosted,
     executable: 'fixture',
     hostFactory: options => {
       hostFactoryCalls++;
@@ -146,6 +147,52 @@ async function fixture({catalog, modelPages, browser = false, browserState} = {}
     }
   };
 }
+
+test('self-hosted Gemma retains native permissions, persisted model identity and normal turn lifecycle without ChatGPT auth', async () => {
+  const model = 'gemma-local/gemma-4-12b-it-qat';
+  let prepared = 0;
+  let available = true;
+  const backend = {
+    models: async () => ({models: [{model, displayName: 'Gemma', available, inputModalities: ['text']}]}),
+    prepare: async () => {
+      prepared++;
+    },
+    nativeModel: id => {
+      assert.equal(id, model);
+      return 'gemma-4-12b-it-qat';
+    }
+  };
+  const f = await fixture({selfHosted: backend});
+  try {
+    await f.c.open({model});
+    assert.equal(prepared, 1);
+    const config = f.calls.find(x => x.method === 'thread/start').p;
+    assert.equal(config.model, 'gemma-4-12b-it-qat');
+    assert.equal(config.modelProvider, 'k_gemma');
+    assert.equal(config.sandbox, 'workspace-write');
+    assert.equal(config.approvalPolicy, 'on-request');
+    assert.equal(
+      f.calls.some(x => x.method === 'account/read'),
+      false
+    );
+    assert.equal(f.c.state.model, model);
+    await f.c.send({text: 'synthetic file test'});
+    assert.equal(f.calls.find(x => x.method === 'turn/start').p.model, 'gemma-4-12b-it-qat');
+    await f.c.stop();
+    const saved = (await f.c.sessions()).sessions[0];
+    assert.equal(saved.provider, 'gemma');
+    assert.equal(saved.codexSession.hasSubmitted, true);
+    await f.c.open({model, threadId: saved.threadId});
+    assert.equal(f.calls.findLast(x => x.method === 'thread/resume').p.model, 'gemma-4-12b-it-qat');
+    await f.c.close();
+    available = false;
+    await f.c.open({model, threadId: saved.threadId});
+    assert.equal(f.c.state.model, model, 'saved history remains readable while inference endpoint is offline');
+    await assert.rejects(f.c.open({model}), /目前帳號/);
+  } finally {
+    await f.c.close();
+  }
+});
 
 test('direct work permissions are workspace-scoped, persisted, and may switch back to readonly', async () => {
   const f = await fixture();

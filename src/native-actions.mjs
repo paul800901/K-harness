@@ -1,4 +1,5 @@
 import path from 'node:path';
+import {usesCodexCore} from '../shared/model-provider.mjs';
 
 const MAX_QUERY_LENGTH = 256;
 
@@ -61,7 +62,7 @@ export function normalizeNativeFileSearchResults(response, workspace) {
 }
 
 export function assertNativeActionAvailable({provider, changing, sending, queued, busy, questions, workspace} = {}) {
-  if (provider !== 'codex') throw new Error('此原生 Codex 功能目前不支援 Claude 對話。');
+  if (!usesCodexCore(provider)) throw new Error('此原生 Codex 功能目前不支援 Claude 對話。');
   if (changing || sending || (queued ?? 0) > 0 || busy || (questions?.length ?? 0))
     throw new Error('目前工作、待送訊息或核准尚未結束，請稍後再操作。');
   if (typeof workspace !== 'string' || !workspace) throw new Error('請先選擇工作區。');

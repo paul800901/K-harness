@@ -971,7 +971,15 @@ function App() {
       const model = models.find(x => x.model === m),
         name = model?.displayName || (m === state.model ? state.modelDisplayName : null) || m || '選擇模型',
         provider = model?.provider ?? providerOf(m);
-      return `${name} · ${provider === 'claude' ? 'Claude 訂閱' : provider === 'gemini' ? 'Antigravity 訂閱' : 'Codex 訂閱'}`;
+      const source =
+        provider === 'claude'
+          ? 'Claude 訂閱'
+          : provider === 'gemini'
+            ? 'Antigravity 訂閱'
+            : provider === 'gemma'
+              ? 'Gemma'
+              : 'Codex 訂閱';
+      return `${name} · ${source}`;
     },
     [models, state.model, state.modelDisplayName]
   );
@@ -2336,7 +2344,8 @@ function App() {
                     />
                   </div>
                 ) : (
-                  providerOf(state.model) === 'gemini' && (
+                  providerOf(state.model) !== 'claude' &&
+                  state.efforts?.length > 0 && (
                     <label className="setting-row">
                       <span>推理程度</span>
                       <select

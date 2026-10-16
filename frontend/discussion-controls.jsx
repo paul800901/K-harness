@@ -44,7 +44,9 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
   useEffect(() => {
     if (running) setExpanded(false);
   }, [running]);
-  const available = models.filter(m => m.available !== false && m.hidden !== true);
+  const available = models.filter(
+    m => m.available !== false && m.hidden !== true && modelProvider(m.model) !== 'gemma'
+  );
   const defaults = [
     {model: state.model, effort: state.effort ?? ''},
     {

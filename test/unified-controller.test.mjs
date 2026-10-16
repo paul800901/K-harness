@@ -12,6 +12,51 @@ const CODEX_OTHER = 'gpt-6-luna';
 const CLAUDE_MODEL = 'claude-opus-5-5';
 const TEST_ROOT = scratchBase;
 
+test('Gemma main routes stay distinct, survive unavailable subscription catalogs, and reuse native actions without becoming workers', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'gemma-routing-'));
+  const made = new Map();
+  const connections = ['local', 'cloud'].map(slot => ({
+    slot,
+    model: `gemma-${slot}/model`,
+    nativeModel(model) {
+      assert.equal(model, this.model);
+      return 'model';
+    },
+    models: async () => ({models: [{model: `gemma-${slot}/model`, available: slot === 'local'}]})
+  }));
+  const c = createUnifiedController({
+    root,
+    gemmaConnections: connections,
+    codexFactory: options => {
+      const key = options.selfHosted?.slot ?? 'codex';
+      const fake = createFake(key, root);
+      if (key === 'codex')
+        fake.models = async () => {
+          throw Error('subscription offline');
+        };
+      made.set(key, fake);
+      return fake;
+    },
+    claudeFactory: () => createFake('claude', root),
+    geminiFactory: () => createFake('gemini', root, {models: []})
+  });
+  try {
+    const catalog = await c.models();
+    assert.equal(catalog.models.filter(x => x.provider === 'gemma').length, 2);
+    await c.open({model: connections[0].model});
+    assert.equal(c.state.provider, 'gemma');
+    assert.equal(made.has('cloud'), false);
+    assert.deepEqual(await c.review({confirmed: true}), {started: true});
+    assert.equal((await c.fuzzyFileSearch({query: 'main'})).files[0].path, 'src/main.mjs');
+    await assert.rejects(c.selectModel({model: connections[1].model}), /不同原生歷史/);
+    await saveMainSession(root, {threadId: 'local-saved', model: connections[0].model, workspace: root});
+    await c.open({threadId: 'local-saved', model: connections[0].model});
+    assert.equal(made.get('local').calls.findLast(x => x.method === 'open').data.threadId, 'local-saved');
+  } finally {
+    await c.close();
+  }
+});
+
 test('picker catalog contains the complete official GPT catalog and Claude with native effort choices', async () => {
   const sol = {
     model: 'gpt-6.1-sol',

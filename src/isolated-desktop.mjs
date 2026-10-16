@@ -22,6 +22,7 @@ import {validateWorkspace} from './workspaces.mjs';
 import {openDiscussionSession} from './discussion-native.mjs';
 import {openDiscussionApiSession} from './discussion-api.mjs';
 import {createDiscussionApiConnections, createDiscussionKeyVault} from './discussion-api-connections.mjs';
+import {loadGemmaConnections} from './gemma-main.mjs';
 
 /** Native desktop composition. Provider permissions remain provider-owned. */
 export async function startIsolatedDesktop({
@@ -45,6 +46,7 @@ export async function startIsolatedDesktop({
   if (!path.isAbsolute(executable ?? '') || !path.isAbsolute(commandSpec?.command ?? ''))
     throw Error('Explicit trusted provider executables are required.');
   const stateRoot = await realpath(root);
+  const gemmaConnections = await loadGemmaConnections(stateRoot);
   const validateSelectableWorkspace = async requested => {
     const resolved = await validateWorkspace(requested);
     if (resolved.toLowerCase() === stateRoot.toLowerCase())
@@ -117,6 +119,7 @@ export async function startIsolatedDesktop({
           restrictWorkspace(
             createUnifiedController({
               ...settings,
+              gemmaConnections,
               inspect,
               geminiFactory: opts => {
                 const browser = browsers.session();
@@ -133,6 +136,19 @@ export async function startIsolatedDesktop({
                 let current;
                 const hostFactory = hostOptions => {
                   const candidate = current?.state.workspace ?? selected;
+                  if (opts.selfHosted) {
+                    const nativeEnv = {...(env ?? process.env), CODEX_HOME: opts.selfHosted.home};
+                    // No inherited API credentials are needed for the owner's loopback endpoint.
+                    delete nativeEnv.OPENAI_API_KEY;
+                    delete nativeEnv.CODEX_API_KEY;
+                    return openCodexHost({
+                      ...hostOptions,
+                      executable,
+                      cwd: candidate.toLowerCase() === stateRoot.toLowerCase() ? selected : candidate,
+                      env: nativeEnv,
+                      configOverrides: [...(hostOptions.configOverrides ?? []), ...opts.selfHosted.configOverrides()]
+                    });
+                  }
                   return codexHost(
                     hostOptions,
                     candidate.toLowerCase() === stateRoot.toLowerCase() ? selected : candidate
@@ -144,6 +160,9 @@ export async function startIsolatedDesktop({
                   bridgeFactory: params =>
                     createLunaBridge({
                       ...params,
+                      ...(opts.selfHosted
+                        ? {hostFactory: hostOptions => codexHost(hostOptions, current.state.workspace)}
+                        : {}),
                       claudeOptions: {env, commandSpec},
                       geminiOptions: {env, accounts: geminiAccounts, browserSession: browsers.session}
                     }),
@@ -221,6 +240,7 @@ export async function startIsolatedDesktop({
     await app.controller.selectWorkspace({path: selected});
   } catch (error) {
     await app?.close().catch(() => {});
+    await Promise.all(gemmaConnections.map(connection => connection.close?.()));
     await browsers.close().catch(() => {});
     throw error;
   }
@@ -228,6 +248,7 @@ export async function startIsolatedDesktop({
     ...app,
     async close() {
       await app.close();
+      await Promise.all(gemmaConnections.map(connection => connection.close?.()));
       await browsers.close();
     }
   };

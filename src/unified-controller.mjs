@@ -3,7 +3,7 @@ import {createInputQueue} from './input-queue.mjs';
 import {createDesktopController} from './desktop-controller.mjs';
 import {createClaudeController} from './claude-controller.mjs';
 import {createGeminiController} from './gemini-controller.mjs';
-import {modelProvider} from '../shared/model-provider.mjs';
+import {modelProvider, gemmaConnection, usesCodexCore} from '../shared/model-provider.mjs';
 import {inspectClaude} from './claude-host.mjs';
 import {listMainSessions, saveMainSession, updateMainSession} from './main-sessions.mjs';
 import {normalizeClaudeAccessMode} from './claude-host.mjs';
@@ -27,6 +27,7 @@ export function createUnifiedController(options) {
     codexFactory = createDesktopController,
     claudeFactory = createClaudeController,
     geminiFactory = createGeminiController,
+    gemmaConnections = [],
     inspect = inspectClaude
   } = options;
   let active,
@@ -47,6 +48,25 @@ export function createUnifiedController(options) {
     }
   });
   let claude, gemini;
+  const gemma = new Map();
+  const getGemma = model => {
+    const slot = gemmaConnection(model);
+    const connection = gemmaConnections.find(item => item.slot === slot);
+    if (!connection) throw new Error('Gemma 連線尚未設定。');
+    connection.nativeModel(model);
+    if (!gemma.has(slot)) {
+      const controller = codexFactory({
+        ...options,
+        selfHosted: connection,
+        workerCatalog,
+        onChange() {
+          if (active === controller) changed();
+        }
+      });
+      gemma.set(slot, controller);
+    }
+    return gemma.get(slot);
+  };
   const getGemini = () =>
     (gemini ??= geminiFactory({
       ...options,
@@ -68,7 +88,7 @@ export function createUnifiedController(options) {
       return {
         ...active.state,
         ...queue.state,
-        provider: active === codex ? 'codex' : active === claude ? 'claude' : 'gemini',
+        provider: active === codex ? 'codex' : active === claude ? 'claude' : active === gemini ? 'gemini' : 'gemma',
         usage: {
           ...active.state.usage,
           codex: codex.state.usage?.codex,
@@ -98,6 +118,7 @@ export function createUnifiedController(options) {
       try {
         const record = (await listMainSessions(root)).sessions.find(s => s.threadId === data.threadId);
         if (!record) throw new Error('K 對話不存在。');
+        if (modelProvider(record.model) === 'gemma') return await getGemma(record.model).metadata(data);
         if (modelProvider(record.model) === 'gemini') return await getGemini().metadata(data);
         if (record.model.startsWith('claude-')) {
           claude ??= claudeFactory({
@@ -146,12 +167,13 @@ export function createUnifiedController(options) {
     },
     async fuzzyFileSearch(data = {}) {
       if (changing) throw new Error('正在切換對話，請稍候。');
-      if (api.state.provider !== 'codex') throw new Error('此原生 Codex 功能目前不支援 Claude 對話。');
+      if (!usesCodexCore(api.state.provider)) throw new Error('此原生 Codex 功能目前不支援 Claude 對話。');
       const query = normalizeFileSearchQuery(data);
       if (typeof active.fuzzyFileSearch !== 'function') throw new Error('目前 Codex 控制器尚未提供原生檔案搜尋能力。');
       const workspace = active.state.workspace;
+      const source = active;
       const response = await active.fuzzyFileSearch({query});
-      if (workspace !== active.state.workspace || active !== codex) throw new Error('工作區已切換，搜尋結果已捨棄。');
+      if (workspace !== active.state.workspace || active !== source) throw new Error('工作區已切換，搜尋結果已捨棄。');
       return {files: normalizeNativeFileSearchResults(response, workspace)};
     },
     async models() {
@@ -162,17 +184,19 @@ export function createUnifiedController(options) {
           if (active === claude) changed();
         }
       });
-      const [gpt, anthropic, google] = await Promise.allSettled([
+      const [gpt, anthropic, google, ...selfHosted] = await Promise.allSettled([
         codex.models(),
         claude.models(),
-        getGemini().models()
+        getGemini().models(),
+        ...gemmaConnections.map(connection => connection.models())
       ]);
       const models = [],
         warnings = [];
       for (const [provider, result] of [
         ['codex', gpt],
         ['claude', anthropic],
-        ['gemini', google]
+        ['gemini', google],
+        ...selfHosted.map(result => ['gemma', result])
       ]) {
         if (result.status === 'fulfilled')
           models.push(...result.value.models.filter(m => m.hidden !== true).map(m => ({...m, provider})));
@@ -206,7 +230,13 @@ export function createUnifiedController(options) {
             }
           });
         }
-        const target = isClaude ? claude : provider === 'gemini' ? getGemini() : codex;
+        const target = isClaude
+          ? claude
+          : provider === 'gemini'
+            ? getGemini()
+            : provider === 'gemma'
+              ? getGemma(data.model)
+              : codex;
         if (target !== active) {
           const list = await active.workers();
           if (list.some(w => w.settled === false || ['running', 'starting', 'pending'].includes(w.status)))
@@ -239,14 +269,16 @@ export function createUnifiedController(options) {
       }
     },
     async selectModel(data) {
+      if (api.state.provider === 'gemma' && gemmaConnection(data.model) !== gemmaConnection(active.state.model))
+        throw new Error('本機與雲端 Gemma 使用不同原生歷史，請建立新對話或明確交接。');
       if (modelProvider(data.model) !== api.state.provider)
         throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');
-      if (data.serviceTier !== undefined && api.state.provider !== 'codex')
+      if (data.serviceTier !== undefined && !usesCodexCore(api.state.provider))
         throw new Error('服務速度選擇只支援 Codex 原生服務層級。');
       return active.selectModel(data);
     },
     async prepareContinuation(data) {
-      if (changing || queue.sending || queue.state.queuedMessages.length || api.state.provider !== 'codex')
+      if (changing || queue.sending || queue.state.queuedMessages.length || !usesCodexCore(api.state.provider))
         throw Object.assign(Error('聊天室仍有待送操作或尚未支援此原生接續；未建立新聊天室。'), {notCreated: true});
       changing = true;
       try {
@@ -310,7 +342,9 @@ export function createUnifiedController(options) {
           throw Error('請先結束或查明子代理工作。');
         model ??= source.model;
         const targetProvider = modelProvider(model),
-          same = targetProvider === source.provider;
+          same =
+            targetProvider === source.provider &&
+            (targetProvider !== 'gemma' || gemmaConnection(model) === gemmaConnection(source.model));
         if (same && targetProvider === 'gemini')
           throw Error('Gemini 尚未接入原生分支；請建立新對話，或明確交接到其他供應商。');
         const selected = (await api.models()).models.find(m => m.model === model && m.available !== false);
@@ -344,7 +378,14 @@ export function createUnifiedController(options) {
                 if (active === claude) changed();
               }
             });
-          const target = targetProvider === 'claude' ? claude : targetProvider === 'gemini' ? getGemini() : codex;
+          const target =
+            targetProvider === 'claude'
+              ? claude
+              : targetProvider === 'gemini'
+                ? getGemini()
+                : targetProvider === 'gemma'
+                  ? getGemma(model)
+                  : codex;
           if (active.state.busy || active.state.questions?.length)
             throw Error('原對話收到新的工作事件，請待完成後再分支。');
           await target.selectWorkspace({path: source.workspace});
@@ -405,7 +446,12 @@ export function createUnifiedController(options) {
     },
     async close() {
       await queue.close();
-      await Promise.all([codex.close(), claude?.close(), gemini?.close()]);
+      await Promise.all([
+        codex.close(),
+        claude?.close(),
+        gemini?.close(),
+        ...Array.from(gemma.values(), controller => controller.close())
+      ]);
     }
   };
   for (const name of [

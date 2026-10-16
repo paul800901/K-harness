@@ -59,6 +59,7 @@ export function createDesktopController({
   gatewayFactory,
   geminiOptions = {},
   workerCatalog,
+  selfHosted,
   onChange = () => {},
   onContinueConversation,
   onConversationSettled,
@@ -1061,6 +1062,7 @@ export function createDesktopController({
     changed();
   }
   async function usage(force = false) {
+    if (selfHosted) return state.usage;
     if (closing) return state.usage;
     if (usagePending) return usagePending;
     if (!force && quotaZeroUntil(state.usage.codex)) return state.usage;
@@ -1491,7 +1493,7 @@ export function createDesktopController({
             executable,
             accessMode: state.accessMode === 'auto-review' ? 'workspace-write' : state.accessMode,
             workerPolicy: state.workerPolicy,
-            geminiOnly: true,
+            geminiOnly: !selfHosted,
             geminiOptions,
             onRequest: request,
             onChange: recordFlash,
@@ -1587,6 +1589,7 @@ export function createDesktopController({
     flashGateway = await factory({
       bridge: lazyFlashBridge,
       geminiOnly: true,
+      allowCodex: !!selfHosted,
       readContext: async (args, meta) => {
         const active = host,
           id = nativeId(state.threadId),
@@ -2028,7 +2031,7 @@ export function createDesktopController({
       if (activeGroupId?.startsWith('discussion-host-')) activeGroupId = null;
       const delivery = startNativeTurn(active, {
         threadId: parent,
-        model: state.model,
+        model: selfHosted ? selfHosted.nativeModel(state.model) : state.model,
         ...(state.effort ? {effort: state.effort} : {}),
         serviceTier: state.serviceTier,
         input: [],
@@ -2604,6 +2607,7 @@ export function createDesktopController({
       }
     },
     async models({signal} = {}) {
+      if (selfHosted) return selfHosted.models({signal});
       let reader = host,
         temporary = false;
       try {
@@ -2773,7 +2777,8 @@ export function createDesktopController({
       try {
         const catalog = await this.models();
         const selected = findMainModel(catalog.models, model);
-        if (!selected) throw new Error('目前帳號未提供指定模型。');
+        if (!selected || selected.available === false)
+          throw new Error(selected?.description ?? '目前帳號未提供指定模型。');
         const fast = fastServiceTier(selected);
         if (serviceTier !== undefined && serviceTier !== 'default' && serviceTier !== fast?.id)
           throw new Error('指定服務速度目前不可用。');
@@ -2959,7 +2964,12 @@ export function createDesktopController({
         const catalog = await this.models({signal});
         signal.throwIfAborted();
         const selected = findMainModel(catalog.models, model);
-        if (!selected) throw new Error('目前帳號未提供指定模型。');
+        if (!selected || (selected.available === false && !saved))
+          throw new Error(selected?.description ?? '目前帳號未提供指定模型。');
+        if (selfHosted) {
+          selfHosted.nativeModel(model);
+          await selfHosted.prepare();
+        }
         const workerModels = workerCatalog ? (await workerCatalog()).models : catalog.models;
         const policy = validateWorkerPolicy(
           workerPolicy ?? saved?.workerPolicy ?? (manualFork ? previousState.workerPolicy : undefined),
@@ -3069,8 +3079,10 @@ export function createDesktopController({
               host.notify({method: 'initialized', params: {}});
             }
           }
-          const auth = await call('account/read', {refreshToken: false});
-          if (auth.account?.type !== 'chatgpt') throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
+          if (!selfHosted) {
+            const auth = await call('account/read', {refreshToken: false});
+            if (auth.account?.type !== 'chatgpt') throw new Error('需要既有 ChatGPT 訂閱登入；未切換 API 計費。');
+          }
           // Reading history does not require resuming the agent or starting MCP.
           // Keep the old view intact until the target history has been obtained.
           const selection = selectionKey(model, workspace, policy, effort, access, selectedServiceTier);
@@ -3267,6 +3279,7 @@ export function createDesktopController({
           const workerGateway = await configureFlashGateway();
           const effective = await call('config/read', {includeLayers: false});
           const workerConfig = workerPolicyConfig(policy, {
+            provider: selfHosted ? 'gemma' : 'codex',
             baseInstructions:
               (effective.config?.developer_instructions ?? '') +
               '\n' +
@@ -3292,7 +3305,8 @@ export function createDesktopController({
           );
           const config = {
             cwd: workspace,
-            model,
+            model: selfHosted ? selfHosted.nativeModel(model) : model,
+            ...(selfHosted ? {modelProvider: 'k_gemma'} : {}),
             serviceTier: selectedServiceTier,
             ...threadAccess,
             developerInstructions:
@@ -3679,7 +3693,7 @@ export function createDesktopController({
               };
             const result = await startNativeTurn(host, {
               threadId: state.threadId,
-              model: state.model,
+              model: selfHosted ? selfHosted.nativeModel(state.model) : state.model,
               ...(turnEffort === null || turnEffort === undefined ? {} : {effort: turnEffort}),
               serviceTier: state.serviceTier,
               input,
