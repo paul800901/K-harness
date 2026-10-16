@@ -43,7 +43,7 @@ test('MCP gateway front door admits only authenticated loopback POST /mcp for it
   }
 });
 
-test('an unset host (gateway not listening yet) rejects every request', () => {
+test('before the gateway knows its host, a request carrying a Host header is rejected', () => {
   const res = response();
   assert.equal(admitMcpRequest(request(), res, {host: undefined, token}), false);
   assert.equal(res.status, 403);
