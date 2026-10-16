@@ -76,3 +76,9 @@ Claude Code 2.1.301、Claude.ai Pro / firstParty，實際 assistant 模型 `clau
 - 自動測試、真正原生權限、實際 Google Sheets 查詢、主代理 diff 檢查與 Opus 意見都各自保留，不把其中之一冒充其他層驗收。Opus 封包中的程式與最終 code commit 相同。
 
 本人回來關閉 K 後：先確認本機 main 與其他聊天室最新已驗收批次及部署者，必要時以新基底重新驗證，不覆蓋其他工作。依 `Update-K.ps1` 指定完整已驗收 SHA；失敗保留原錯誤、不重試。成功後在正式私有 `.runtime/gemini-mcp.json` 合併本次 exact-workspace 唯讀綁定，指向正式 runtime 的接頭檔案與已核准既有 CLI／試算表清單，讀回原有綁定未損。重開後驗證正式設定與查詢能力，不重播原本收入查詢；最後才依規則 push 與遠端 SHA 讀回。以上目前均未執行。
+
+### 本輪停止點讀回
+
+程式與首份文件已於本輪 fast-forward 合回 `D:\K-harness` 的 main，讀回為 `01e1155fe9dadfd5fec723d83a905de93ec9025c`（後續本段為純文件收尾）。main 與候選工作樹皆無未提交程式變更。正式 47831 仍由原 K 程序監聽，`.local/runtime.json` 版本未變、正式 Gemini MCP 綁定檔仍不存在；符合本人先暫停、不關 K、不部署、不 push 的要求。
+
+本輪證據實際保留於 `C:\Users\Paulus\.codex\worktrees\gemini-sheets-read\K-harness\.runtime\archive\gemini-sheets-20261016`。暫不封存該工作樹，避免遺失 Git 排除的原生驗證與審核紀錄；沒有複製原生帳號、登入或憑證。下一輪依本文件接續，不能只看到 main 新程式就當正式已更新。
