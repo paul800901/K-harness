@@ -9,7 +9,7 @@
 .discussion-roundtable-summary{flex-shrink:0;border:1px solid var(--k-line);padding:8px;border-radius:6px}
 .discussion-roundtable-summary summary{cursor:pointer;min-height:36px}
 .discussion-roundtable-summary p,.discussion-roundtable-cell p{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;line-height:1.6;overflow-wrap:anywhere;margin:6px 0;text-align:left}
-.discussion-roundtable-grid{overflow:auto;min-height:0;flex:1;isolation:isolate;scrollbar-gutter:stable}
+.discussion-roundtable-grid{overflow:auto;min-height:0;flex:1;isolation:isolate;scrollbar-gutter:stable;container:roundtable / inline-size}
 .discussion-roundtable-grid table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content;min-width:100%}
 .discussion-roundtable-grid th,.discussion-roundtable-grid td{width:230px;min-width:230px;max-width:230px;border-right:1px solid var(--k-line);border-bottom:1px solid var(--k-line);padding:8px;vertical-align:top;background:var(--k-raised);text-align:left}
 .discussion-roundtable-grid th{position:sticky;top:0;z-index:3}
@@ -19,6 +19,18 @@
 .discussion-roundtable-grid i,.discussion-roundtable-map i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
 .discussion-roundtable-cell{display:block;width:100%;border:0;background:transparent;color:inherit;text-align:left}
 .discussion-roundtable-cell small,.discussion-roundtable-full small{display:block;color:var(--k-ink-3);margin-top:4px}
+.discussion-roundtable-cell-name,.discussion-roundtable-card-target{display:none}
+/* A comparison needs room for the host and two participant columns. */
+@container roundtable (width < 650px){
+ .discussion-roundtable-grid table,.discussion-roundtable-grid tbody,.discussion-roundtable-grid tr{display:block}
+ .discussion-roundtable-grid table{width:auto;min-width:0}
+ .discussion-roundtable-grid thead{display:none}
+ .discussion-roundtable-grid tr{margin-bottom:12px;border:1px solid var(--k-line);border-radius:6px;overflow:hidden}
+ .discussion-roundtable-grid td,.discussion-roundtable-grid td:first-child:not([colspan]){display:block;position:static;width:auto;min-width:0;max-width:none;border-right:0}
+ .discussion-roundtable-grid td:last-child{border-bottom:0}
+ .discussion-roundtable-cell-name{display:block;font-weight:700;overflow-wrap:anywhere;margin-bottom:6px}
+ .discussion-roundtable-card-target{display:block;margin:0 10px 6px}
+}
 .discussion-roundtable-interjection{font-size:var(--k-text-sm);white-space:pre-wrap;overflow-wrap:anywhere}
 .discussion-roundtable-interjection small{display:block}
 .discussion-roundtable-reader{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}

@@ -206,10 +206,20 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                         {r.cells.map(c => (
                           <td key={c.id} data-status={c.status}>
                             <button className="discussion-roundtable-cell" onClick={() => open(c)}>
+                              <span className="discussion-roundtable-cell-name">{c.name}</span>
                               <strong>{label(r.round)}</strong>
                               <small>{c.status}</small>
                               <p>{c.text || '尚無發言。'}</p>
                             </button>
+                            {live && r.round === data.last && c.id !== 'host' && (
+                              <button
+                                className="discussion-roundtable-card-target"
+                                aria-label={`補充給 ${c.name}`}
+                                onClick={() => onTarget(run.id, c.id)}
+                              >
+                                補充給此人
+                              </button>
+                            )}
                           </td>
                         ))}
                       </tr>

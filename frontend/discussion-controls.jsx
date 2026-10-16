@@ -4,7 +4,7 @@ import {effortName} from './model-picker.jsx';
 import {modelProvider} from '../shared/model-provider.mjs';
 import './discussion.css';
 
-export function useDiscussionConfig(threadId) {
+export function useDiscussionConfig(threadId, discussionId) {
   const key = `k-discussion:${threadId}`;
   const read = () => {
     try {
@@ -13,11 +13,23 @@ export function useDiscussionConfig(threadId) {
       return {mode: 'normal', participants: [], includeContext: true};
     }
   };
-  const [config, setConfig] = useState(read);
+  const [saved, setConfig] = useState(read);
+  // A new run consumes the armed settings. Its live controls still use discussion.mode;
+  // the next ordinary turn must not carry the previous run's settings, even after a reload.
+  const config =
+    discussionId && saved.runId !== discussionId
+      ? {...saved, mode: 'normal', target: undefined, runId: discussionId}
+      : saved;
   useEffect(() => setConfig(read()), [threadId]);
+  useEffect(() => {
+    if (config === saved) return;
+    setConfig(config);
+    sessionStorage.setItem(key, JSON.stringify(config));
+  }, [config, saved, key]);
   const update = next => {
-    setConfig(next);
-    sessionStorage.setItem(key, JSON.stringify(next));
+    const value = {...next, runId: discussionId ?? next.runId};
+    setConfig(value);
+    sessionStorage.setItem(key, JSON.stringify(value));
   };
   return [config, update];
 }
@@ -137,6 +149,7 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
         )}
         {d && (
           <small role="status">
+            {!running && '上一場：'}
             {discussionModes[d.mode]} · {discussionStatus[d.status] ?? d.status}
           </small>
         )}

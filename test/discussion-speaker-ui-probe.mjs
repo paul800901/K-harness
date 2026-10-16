@@ -196,6 +196,8 @@ try {
   await page.getByRole('button', {name: '回到聊天室', exact: true}).click();
   await page.waitForFunction(() => !history.state?.kMobilePanel);
   long = true;
+  assert.equal(await mode.inputValue(), 'normal', 'a new comparison needs an explicit mode selection');
+  await mode.selectOption('parallel');
   await page.getByLabel('工作訊息', {exact: true}).fill('請提供長文以驗證持續辨識');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.waitForFunction(

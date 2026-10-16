@@ -154,7 +154,7 @@ const ChatView = React.memo(function ChatView({
   const fileInput = useRef();
   const threadId = state.threadId;
   const threadApi = (route, data = {}) => api(route, {...data, threadId});
-  const [discussionConfig, setDiscussionConfig] = useDiscussionConfig(threadId);
+  const [discussionConfig, setDiscussionConfig] = useDiscussionConfig(threadId, state.discussion?.id);
   const {models: discussionModels, setModels: discussionCatalog} = useContext(TranscriptContext);
   useEffect(() => {
     const target = event => {

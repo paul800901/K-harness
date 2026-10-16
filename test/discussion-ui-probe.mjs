@@ -93,6 +93,9 @@ const nativeFactory = ({onChange}) => {
           Object.assign(state, {busy: false, status: 'completed'});
           onChange();
         }, 20);
+      } else {
+        state.messages.push({id: `ordinary-${calls.length}`, role: 'assistant', text: '主模型已確認，沒有開新討論。'});
+        onChange();
       }
       return {sent: true};
     },
@@ -171,6 +174,17 @@ try {
   await page.waitForFunction(
     () => document.querySelector('[aria-label="參與模型 2"]').value === 'native:claude-opus-5-5'
   );
+  // Settings remain armed while planning; an ordinary reply without a start mark does not consume them.
+  noMark = true;
+  for (const text of ['先確認討論目的', '再確認討論材料']) {
+    const replies = await page.getByText('好的，先不開始討論。', {exact: true}).count();
+    await page.getByLabel('工作訊息', {exact: true}).fill(text);
+    await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+    await page.getByText('好的，先不開始討論。', {exact: true}).nth(replies).waitFor();
+    assert.equal(await mode.inputValue(), 'parallel');
+    assert.match(calls.filter(c => c.op === 'native-send').at(-1).text, /K 討論設定/u);
+  }
+  noMark = false;
   await page.getByLabel('工作訊息', {exact: true}).fill('請比較速度與資訊的取捨');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   // The settings ride with the message to the main model; its brief starts the discussion.
@@ -180,37 +194,80 @@ try {
   assert.equal(await page.getByText('k-discussion', {exact: false}).count(), 0, 'the start mark reads as a note');
   await page.getByText('Sol 的原始觀點：重視速度。', {exact: true}).waitFor();
   await page.getByText('Opus 的原始觀點：重視資訊。', {exact: true}).waitFor();
-  await page.getByRole('heading', {name: '分歧', exact: true}).waitFor();
+  await page.getByRole('heading', {name: '分歧', exact: true}).first().waitFor();
+  assert.equal(await mode.inputValue(), 'normal', 'a finished discussion defaults the next turn to ordinary chat');
+  const saved = await page.evaluate(id => JSON.parse(sessionStorage.getItem(`k-discussion:${id}`)), a.threadId);
+  assert.equal(saved.mode, 'normal');
+  assert.equal(saved.participants.length, 2, 'reset must keep participant choices');
+  const discussionCount = calls.filter(c => c.op === 'discussion').length;
+  await page.getByLabel('工作訊息', {exact: true}).fill('只跟主模型確認剛才的結論');
+  await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  await page.getByText('主模型已確認，沒有開新討論。', {exact: true}).waitFor();
+  const ordinary = calls.find(c => c.op === 'native-send' && c.text.includes('只跟主模型確認剛才的結論'));
+  assert(ordinary, 'the checked native request must be this ordinary message, not an earlier turn');
+  assert.doesNotMatch(ordinary.text, /K 討論設定/u);
+  assert.equal(calls.filter(c => c.op === 'discussion').length, discussionCount);
   assert.equal((await app.controller.sessions()).sessions.length, 1);
   await page.screenshot({path: path.join(out, 'discussion-desktop.png')});
   await mode.selectOption('review');
+  await page.reload();
+  await mode.waitFor();
+  assert.equal(await mode.inputValue(), 'review', 'reselecting after the same completed run survives reload');
   nextBrief = '要審查的指定方案：首頁建議全文。';
   await page.getByLabel('工作訊息', {exact: true}).fill('請審查指定方案');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.waitForFunction(
-    () => document.querySelector('.discussion-toolbar small')?.textContent === '交叉審查 · 已整理'
+    () => document.querySelector('.discussion-toolbar small')?.textContent === '上一場：交叉審查 · 已整理'
   );
+  assert.equal(await mode.inputValue(), 'normal');
   assert(calls.filter(c => c.id === 'p2').some(c => c.prompt.includes('要審查的指定方案')));
+  // Simulate returning after another run completed while this tab was away.
+  await page.evaluate(
+    ({id, saved}) => {
+      sessionStorage.setItem(`k-discussion:${id}`, JSON.stringify({...saved, mode: 'meeting', target: 'p2'}));
+      sessionStorage.setItem('k-discussion:other-room', JSON.stringify({mode: 'review', participants: []}));
+    },
+    {id: a.threadId, saved}
+  );
+  await page.reload();
+  await mode.waitFor();
+  assert.equal(await mode.inputValue(), 'normal', 'a different completed run consumes stale saved settings');
+  assert.equal(
+    await page.evaluate(id => JSON.parse(sessionStorage.getItem(`k-discussion:${id}`)).target, a.threadId),
+    undefined
+  );
+  assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem('k-discussion:other-room')).mode), 'review');
+  await mode.selectOption('meeting');
+  await page.getByLabel('工作訊息', {exact: true}).fill('完成一場多人討論');
+  await page.getByRole('button', {name: '送出訊息', exact: true}).click();
+  await page.waitForFunction(
+    () => document.querySelector('.discussion-toolbar small')?.textContent === '上一場：多人討論 · 已整理'
+  );
+  assert.equal(await mode.inputValue(), 'normal');
   await mode.selectOption('meeting');
   slow = true;
   await page.getByLabel('工作訊息', {exact: true}).fill('開始一場需要插話的討論');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
   await page.getByLabel('補充給', {exact: true}).waitFor();
+  assert.equal(await mode.inputValue(), 'meeting', 'the live mode stays visible while next-turn settings are normal');
+  assert.equal(await mode.isDisabled(), true);
   await page.getByLabel('補充給', {exact: true}).selectOption('p2');
   await page.getByLabel('工作訊息', {exact: true}).fill('請 Opus 注意新增限制');
   await page.getByRole('button', {name: '送出訊息（加入待送）', exact: true}).click();
   await page.locator('.discussion-roundtable-interjection').filter({hasText: '請 Opus 注意新增限制'}).waitFor();
   await page.getByRole('button', {name: '停止工作', exact: true}).click();
   await page.waitForFunction(
-    () => document.querySelector('.discussion-toolbar small')?.textContent === '多人討論 · 已停止'
+    () => document.querySelector('.discussion-toolbar small')?.textContent === '上一場：多人討論 · 已停止'
   );
+  assert.equal(await mode.inputValue(), 'normal');
   slow = false;
   // A reply without the start mark only answers; no discussion starts.
   const askedBefore = calls.filter(c => ['p1', 'p2'].includes(c.id)).length;
   noMark = true;
+  await mode.selectOption('meeting');
   await page.getByLabel('工作訊息', {exact: true}).fill('先聊聊，不用討論');
   await page.getByRole('button', {name: '送出訊息', exact: true}).click();
-  await page.getByText('好的，先不開始討論。', {exact: true}).waitFor();
+  await page.getByText('好的，先不開始討論。', {exact: true}).last().waitFor();
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(calls.filter(c => ['p1', 'p2'].includes(c.id)).length, askedBefore);
   noMark = false;
@@ -253,6 +310,9 @@ try {
           'all original model messages visible',
           'settings ride with the message; brief from the main model starts the discussion',
           'no start mark, no discussion',
+          'all three completed modes and stopped discussion default to ordinary chat',
+          'next ordinary message carries no discussion settings and starts no participants',
+          'explicit rearm survives reload; stale run settings reset without touching other rooms',
           'targeted interjection',
           'whole discussion stop',
           'ordinary handoff',

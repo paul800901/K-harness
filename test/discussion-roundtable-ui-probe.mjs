@@ -9,7 +9,40 @@ await mkdir(output, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 0}});
 let browser;
 const results = [],
-  errors = [];
+  errors = [],
+  layouts = [];
+async function checkLayout(page, compact, context) {
+  const layout = await page.locator('.discussion-roundtable-grid').evaluate(n => {
+    const zoom = Number(getComputedStyle(document.documentElement).getPropertyValue('--k-ui-scale')) || 1;
+    const left = n.getBoundingClientRect().left,
+      right = left + n.clientWidth * zoom;
+    const cells = [
+      ...n.querySelectorAll('.discussion-roundtable-cell, .discussion-roundtable-card-target, td[colspan]')
+    ].filter(e => e.getClientRects().length);
+    const headers = [...n.querySelectorAll('th')].slice(0, 3);
+    return {
+      width: n.clientWidth,
+      scrollWidth: n.scrollWidth,
+      compact: getComputedStyle(n.querySelector('thead')).display === 'none',
+      cellsFit: cells.every(
+        e => e.getBoundingClientRect().left >= left - 1 && e.getBoundingClientRect().right <= right + 1
+      ),
+      headersFit: headers.every(e => e.getBoundingClientRect().right <= right + 1),
+      names: [...n.querySelectorAll('.discussion-roundtable-cell-name')].every(
+        e => e.getClientRects().length && e.textContent.trim()
+      )
+    };
+  });
+  layouts.push({...context, ...layout});
+  assert.equal(layout.compact, compact, JSON.stringify({...context, ...layout}));
+  if (compact) {
+    assert(
+      layout.scrollWidth <= layout.width && layout.cellsFit,
+      'all compact cards and controls must fit the visible panel'
+    );
+    assert(layout.names, 'compact cards must identify their speaker without hidden table headers');
+  } else assert(layout.headersFit, 'wide comparison must fit host and up to two participant columns');
+}
 function snapshot(count, legacy = false) {
   const participants = Array.from({length: count}, (_, i) => ({
     id: `p${i + 1}`,
@@ -97,7 +130,8 @@ function snapshot(count, legacy = false) {
 try {
   browser = await launchProbeBrowser();
   for (const [count, width, legacy] of [
-    [3, 1440, false],
+    [1, 1920, false],
+    [3, 1920, false],
     [6, 1440, false],
     [6, 390, false],
     [3, 1440, true]
@@ -198,30 +232,91 @@ try {
       });
     } else {
       await page.locator('.discussion-roundtable-grid').waitFor();
+      assert(
+        await page.locator('.discussion-roundtable-grid').evaluate(n => n.scrollWidth <= n.clientWidth),
+        'default narrow roundtable must not clip participant cards horizontally'
+      );
       assert.equal(await page.locator('.discussion-roundtable-grid thead th').count(), count + 1);
       assert.equal(await page.locator('.discussion-roundtable-grid tbody tr').count(), 4);
       const first = page.locator('.discussion-roundtable-grid tbody tr').first();
       assert((await first.locator('td').nth(1).innerText()).includes('p1'));
-      assert((await first.locator('td').nth(2).innerText()).includes('p2'));
+      if (count > 1) assert((await first.locator('td').nth(2).innerText()).includes('p2'));
       if (legacy) assert((await page.locator('.discussion-roundtable').innerText()).includes('安排未記錄'));
       else if (count === 6)
         for (const status of ['回覆中', '已完成', '未完成', '本批未點名'])
           assert(await page.locator(`td[data-status="${status}"]`).count());
-      await page.locator('.discussion-roundtable-grid').evaluate(n => (n.scrollLeft = 180));
-      await first.locator('td').nth(1).getByRole('button').click();
-      await page.getByRole('button', {name: '下一位', exact: true}).click();
-      assert((await page.locator('.discussion-roundtable-reader').innerText()).includes('END-1-2'));
-      await page.getByRole('button', {name: '下一批', exact: true}).click();
-      assert((await page.locator('.discussion-roundtable-reader').innerText()).includes('END-2-2'));
+      await checkLayout(page, true, {count, legacy, scale: 100, panel: 420});
+      await page.screenshot({path: path.join(output, `${count}-${width}-${legacy ? 'legacy' : 'new'}-compact.png`)});
+      // Compact cards retain full-text navigation, vertical position and the run-bound target action.
+      const lastCard = page
+        .locator('.discussion-roundtable-grid tbody tr')
+        .last()
+        .locator('.discussion-roundtable-cell')
+        .nth(1);
+      await lastCard.scrollIntoViewIfNeeded();
+      const top = await page.locator('.discussion-roundtable-grid').evaluate(n => n.scrollTop);
+      await lastCard.focus();
+      await page.keyboard.press('Tab');
+      assert(
+        await page
+          .locator('.discussion-roundtable-card-target')
+          .first()
+          .evaluate(n => n === document.activeElement)
+      );
+      await page.keyboard.press('Enter');
+      assert.equal(await page.getByLabel('補充給', {exact: true}).inputValue(), 'p1');
+      await lastCard.click();
       await page.getByRole('button', {name: '回到格子', exact: true}).click();
-      assert(await page.locator('.discussion-roundtable-grid').evaluate(n => n.scrollLeft > 0));
+      assert(Math.abs((await page.locator('.discussion-roundtable-grid').evaluate(n => n.scrollTop)) - top) < 2);
+      if (count === 3 && !legacy) {
+        for (const scale of [90, 100, 110, 125]) {
+          for (const panel of [360, 420, 900]) {
+            await page.evaluate(
+              ({scale, panel}) => {
+                document.documentElement.style.setProperty('--k-ui-scale', String(scale / 100));
+                document.querySelector('.app').style.setProperty('--inspector-width', panel + 'px');
+              },
+              {scale, panel}
+            );
+            await checkLayout(page, panel < 900, {count, scale, panel});
+          }
+        }
+        await page.evaluate(() => document.documentElement.style.setProperty('--k-ui-scale', '1'));
+        for (const content of [649, 650]) {
+          await page.evaluate(content => {
+            const inset =
+              document.querySelector('.inspector').offsetWidth -
+              document.querySelector('.discussion-roundtable-grid').clientWidth;
+            document.querySelector('.app').style.setProperty('--inspector-width', content + inset + 'px');
+          }, content);
+          await checkLayout(page, content < 650, {count, scale: 100, content});
+        }
+      }
+      // Use the existing resize control to get a genuine wide comparison, not a window-size heuristic.
+      await page.evaluate(() => document.querySelector('.app').style.setProperty('--inspector-width', '420px'));
+      const resize = page.getByRole('separator', {name: '調整聊天與工作面板寬度'});
+      await resize.focus();
+      for (let i = 0; i < 13; i++) await page.keyboard.press('ArrowLeft');
+      await checkLayout(page, false, {count, legacy, panel: 'resized'});
+      if (count > 1) await page.locator('.discussion-roundtable-grid').evaluate(n => (n.scrollLeft = 180));
+      await first
+        .locator('td')
+        .nth(count > 1 ? 2 : 1)
+        .locator('.discussion-roundtable-cell')
+        .click();
+      if (count > 1) await page.getByRole('button', {name: '下一位', exact: true}).click();
+      assert((await page.locator('.discussion-roundtable-reader').innerText()).includes(`END-1-${Math.min(count, 3)}`));
+      await page.getByRole('button', {name: '下一批', exact: true}).click();
+      assert((await page.locator('.discussion-roundtable-reader').innerText()).includes(`END-2-${Math.min(count, 3)}`));
+      await page.getByRole('button', {name: '回到格子', exact: true}).click();
+      if (count > 1) assert(await page.locator('.discussion-roundtable-grid').evaluate(n => n.scrollLeft > 0));
       if (count === 6 && !legacy) {
         await page
           .locator('.discussion-roundtable-grid tbody tr')
           .last()
           .locator('td')
           .nth(1)
-          .getByRole('button')
+          .locator('.discussion-roundtable-cell')
           .click();
         const reader = page.locator('.discussion-roundtable-reader .discussion-roundtable-full');
         const update = async marker => {
@@ -235,7 +330,13 @@ try {
         assert.equal(await reader.evaluate(n => n.scrollTop), 0);
         await update('STREAM-ONE');
         assert.equal(await reader.evaluate(n => n.scrollTop), 0, 'reading the beginning must not jump to the end');
-        await reader.evaluate(n => (n.scrollTop = n.scrollHeight));
+        await reader.evaluate(
+          n =>
+            new Promise(resolve => {
+              n.addEventListener('scroll', () => requestAnimationFrame(resolve), {once: true});
+              n.scrollTop = n.scrollHeight;
+            })
+        );
         await page.waitForFunction(() => {
           const n = document.querySelector('.discussion-roundtable-reader .discussion-roundtable-full');
           return n.scrollHeight - n.clientHeight - n.scrollTop < 2;
@@ -255,13 +356,64 @@ try {
     }
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({path: path.join(output, `${count}-${width}-${legacy ? 'legacy' : 'new'}.png`)});
+    if (count === 1) {
+      const emit = async () =>
+        page.evaluate(state => window.probeStream.onmessage({data: JSON.stringify({type: 'snapshot', state})}), state);
+      Object.assign(state, {busy: false, status: 'completed'});
+      Object.assign(state.discussion, {busy: false, status: 'completed'});
+      state.discussion.runs[0].status = 'completed';
+      state.messages.push({
+        id: 'note',
+        kind: 'discussion',
+        runId: 'run-one',
+        role: 'user',
+        source: 'steer',
+        text: '補充原文與限制。'.repeat(30)
+      });
+      await emit();
+      await page.evaluate(() => document.querySelector('.app').style.setProperty('--inspector-width', '420px'));
+      await page.locator('td[colspan]').waitFor();
+      await checkLayout(page, true, {count, status: 'completed', interjection: true});
+      assert.equal(await page.locator('.discussion-roundtable-card-target:visible').count(), 0);
+      const mode = page.getByLabel('對話模式', {exact: true});
+      assert.equal(await mode.inputValue(), 'normal');
+      await mode.selectOption('review');
+      state.messages.push({id: 'same-run-refresh', role: 'assistant', text: '同場快照已更新'});
+      await emit();
+      await page.getByText('同場快照已更新', {exact: true}).waitFor();
+      assert.equal(await mode.inputValue(), 'review', 'same-run snapshots must not erase an explicit new choice');
+      const original = structuredClone(state);
+      // Switching rooms remounts the composer. An absent discussion snapshot must not consume saved intent.
+      await page.evaluate(() =>
+        sessionStorage.setItem(
+          'k-discussion:room-b',
+          JSON.stringify({mode: 'parallel', runId: 'b-old', participants: []})
+        )
+      );
+      Object.assign(state, {threadId: 'room-b', discussion: undefined, messages: []});
+      await emit();
+      await page.waitForFunction(() => document.querySelector('[aria-label="對話模式"]')?.value === 'parallel');
+      await mode.selectOption('meeting');
+      assert.equal(await page.evaluate(() => JSON.parse(sessionStorage.getItem('k-discussion:room-b')).runId), 'b-old');
+      Object.assign(state, original);
+      // This room's run changed while it was not visible; returning consumes the stale setting.
+      state.discussion.id = 'run-two';
+      state.discussion.status = 'uncertain';
+      await emit();
+      await page.waitForFunction(() => document.querySelector('[aria-label="對話模式"]')?.value === 'normal');
+      assert.equal(await page.locator('.discussion-toolbar small').innerText(), '上一場：多人討論 · 結果待確認');
+      assert.equal(
+        await page.evaluate(() => JSON.parse(sessionStorage.getItem('k-discussion:room-b')).mode),
+        'meeting'
+      );
+    }
     results.push({count, width, legacy, passed: true});
     await page.close();
   }
   assert.deepEqual(errors, []);
-  await writeFile(path.join(output, 'result.json'), JSON.stringify({results, errors}, null, 2));
+  await writeFile(path.join(output, 'result.json'), JSON.stringify({results, layouts, errors}, null, 2));
   console.log(
-    `4/4 roundtable UI scenarios passed (3/6 seats, 390px, long reports, legacy, same-model seats, run-bound operations).`
+    `${results.length}/${results.length} roundtable UI scenarios passed (1/3/6 seats, narrow/wide panels, 90/100/110/125% scale, 390px, long reports, legacy, same-model seats, run-bound operations).`
   );
 } finally {
   await browser?.close();
