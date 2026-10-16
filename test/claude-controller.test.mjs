@@ -2834,7 +2834,8 @@ for (const action of ['clear', 'stop', 'human-send', 'blocked', 'budget', 'unkno
         subtype: action === 'budget' ? 'error_max_budget_usd' : 'error_during_execution',
         ...(action === 'permission' ? {permission_denials: [{tool_name: 'Write'}]} : {})
       });
-      await tick();
+      // A result also refreshes and persists the native goal before clear is allowed.
+      await waitFor(() => !f.controller.state.goalPending);
       if (action === 'clear') await f.controller.goal({clear: true});
       if (action === 'stop') await f.controller.stop();
       if (action === 'human-send') {
