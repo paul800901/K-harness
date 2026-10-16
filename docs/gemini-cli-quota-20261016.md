@@ -44,4 +44,12 @@
 
 程式與測試提交：`b0559347f0fb81eece6a71f2a487f363121db086`。
 
-已完成程式、回歸、完整測試、五帳號候選實查與真正 Opus 5.5 複查；待南區部署及正式畫面讀回。東區未更新。
+已完成程式、回歸、開發工作樹完整測試、五帳號候選實查與真正 Opus 5.5 複查；**正式部署未完成**。東區未更新。
+
+2026-10-16，對完整版本 `108cd8f5c9297ee1432ce78dbb2b6aaffde3a0a3` 執行一次更新。候選建置的完整測試為 **1689/1690 通過**，`test/fresh-target-model.test.mjs:147` 的 `fresh native selection: different model uses native default not unsupported source effort` 失敗，原始錯誤為 `Error: target handoff timed out`。更新程式停止於套用前；不能將開發工作樹的 1690/1690 當成這次部署通過，也尚未判定逾時原因。
+
+- 已停止，沒有重試、略過測試、退版、強制結束程序或 push。
+- 失敗後 `.local/runtime.json` 仍為 `be96457721bcade1249b6ad2b36c89a7e7f7377a`，未套用新版；K 保持關閉，47831 無 listener，沒有正式 K 自有程序。
+- 部署前依三份退版保留規則，最舊的非 previous 程式退版已移至資源回收筒並讀回確認可還原；目前 previous 未動。沒有清理帳號或對話。
+- 原始錯誤保存在 `.runtime/archive/gemini-quota-schema-20261016/deploy.log`；未套用候選 `prepare-1792138940127` 原地保留，未自行清除。
+- 待釐清部署測試逾時並取得繼續授權後，才進行後續部署、正式健康檢查及正式額度讀回。
