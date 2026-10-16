@@ -277,6 +277,8 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 介面
 
+- 10-16 [原生檔案連結預覽與桌面右鍵選單（待部署，依本人要求停在重啟前）](native-file-actions-20261016.md)
+
 - 10-16 [圓桌窄側欄與討論後回一般對話](roundtable-layout-next-turn-20261016.md)（南區已部署）
 - 10-16 [側欄手動排序跨完整重啟保存](sidebar-order-persistence-20261016.md)（南區已部署）
 - 常設 [專案側欄來源](third-party-workspace.md)
