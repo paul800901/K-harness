@@ -631,6 +631,9 @@ export function createClaudeController({
         } else state.error = `K 子代理通知已送出，但介面紀錄保存失敗；不重送：${error.message}`;
       }
     } finally {
+      // A native turn may finish while the aborted preflight restores its queue.
+      // Its result callback then sees notifying=true and cannot deliver the notice.
+      const nativeTurnWasBusy = handoff && !sendAttempted && state.busy;
       if (handoff && sendAttempted) {
         geminiHandoff = consumeGeminiHandoff(geminiHandoff, handoff);
         if (geminiHandoff?.status !== 'ready')
@@ -657,7 +660,7 @@ export function createClaudeController({
       notifying = false;
       changed();
       if (
-        sendCompleted &&
+        (sendCompleted || (nativeTurnWasBusy && host === active && state.threadId === parent)) &&
         state.status === 'completed' &&
         (workerQueue.size || ['ready', 'blocked'].includes(geminiHandoff?.status)) &&
         !closing &&

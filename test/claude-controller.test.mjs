@@ -2983,6 +2983,157 @@ for (const action of ['native-takeover', 'human-send'])
     }
   });
 
+for (const action of ['native-takeover', 'human-send', 'stop'])
+  test(
+    'Claude unsent Gemini notification restoration handles ' + action + ' without a lost wake or replay',
+    async t => {
+      const f = await fixture();
+      let releasePreflight, releaseRestore, patched, sending, stopping;
+      const preflightGate = new Promise(resolve => (releasePreflight = resolve)),
+        restoreGate = new Promise(resolve => (releaseRestore = resolve));
+      let preflightHit = false,
+        restoreHit = false;
+      try {
+        const {threadId} = await f.controller.open({});
+        await f.controller.send({text: 'original work'});
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+        const row = {
+            parentId: threadId,
+            provider: 'gemini',
+            requestId: 'quota',
+            settled: true,
+            status: 'failed',
+            output: 'saved original result'
+          },
+          file = path.join(f.root, '.runtime/claude-sessions', `${threadId}.json`),
+          original = fs.rename;
+        f.bridge.records = [row];
+        patched = t.mock.method(fs, 'rename', async (from, to) => {
+          if (to === file) {
+            const marker = JSON.parse(await readFile(from, 'utf8')).workerNotifications?.quota;
+            if (!preflightHit && marker === 'delivery-attempted') {
+              preflightHit = true;
+              await preflightGate;
+            } else if (preflightHit && !restoreHit && !marker) {
+              restoreHit = true;
+              await restoreGate;
+            }
+          }
+          return original(from, to);
+        });
+        syncBuiltinESMExports();
+        f.bridgeOptions.onChange(row);
+        f.bridgeOptions.onGeminiHandoff({
+          parentId: threadId,
+          requestIds: ['quota'],
+          status: 'ready',
+          accountId: 'fake'
+        });
+        await waitFor(() => preflightHit);
+        if (action === 'human-send') sending = f.controller.send({text: 'new human work'});
+        else f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting'});
+        releasePreflight();
+        await waitFor(() => restoreHit);
+        if (action === 'human-send') await waitFor(() => f.host.startCalls.length === 2);
+        assert.equal(f.controller.state.busy, true);
+        const before = action === 'human-send' ? 2 : 1;
+        assert.equal(f.host.startCalls.length, before, 'the notification has not been sent');
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        // Drain the result's queued wake while notification restoration is still held.
+        await new Promise(resolve => setImmediate(resolve));
+        if (action === 'stop') stopping = f.controller.stop();
+        releaseRestore();
+        await sending;
+        if (action === 'stop') {
+          await stopping;
+          await tick();
+          assert.equal(f.host.startCalls.length, before, 'stop wins over the queued result');
+          assert.equal(f.controller.state.status, 'interrupted');
+          return;
+        }
+        await waitFor(() => f.host.startCalls.length === before + 1);
+        assert.match(f.host.startCalls.at(-1)[0].text, /saved original result/);
+        if (action === 'human-send') {
+          const notice = f.controller.state.messages.filter(m => m.kind === 'worker-completion').at(-1);
+          assert.match(notice.id, /^luna-completion-/);
+          assert.doesNotMatch(f.host.startCalls.at(-1)[0].text, /k_gemini_account_ready/);
+        }
+        await waitFor(() => !f.controller.state.completionPending);
+        f.hostOptions.onMessage({type: 'result', is_error: false});
+        await tick();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(f.host.startCalls.length, before + 1, 'the same result is not sent twice');
+      } finally {
+        releasePreflight?.();
+        releaseRestore?.();
+        await sending;
+        await stopping;
+        if (patched) {
+          patched.mock.restore();
+          syncBuiltinESMExports();
+        }
+        await f.controller.close();
+      }
+    }
+  );
+
+for (const action of ['preparation-error', 'uncertain-send'])
+  test('Claude native result during Gemini notification ' + action + ' does not retry', async () => {
+    const f = await fixture();
+    const originalList = f.bridge.list;
+    let release,
+      entered = false,
+      attempts = 0;
+    const gate = new Promise(resolve => (release = resolve));
+    try {
+      const {threadId} = await f.controller.open({});
+      await f.controller.send({text: 'original work'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await f.gatewayOptions.bridge.start({requestId: 'quota', model: 'gemini-3.8-flash'});
+      const row = {
+        parentId: threadId,
+        provider: 'gemini',
+        requestId: 'quota',
+        settled: true,
+        status: 'failed',
+        output: 'saved original result'
+      };
+      f.bridge.records = [row];
+      const fail = async () => {
+        attempts++;
+        entered = true;
+        await gate;
+        throw Error('fixture notification failure');
+      };
+      if (action === 'preparation-error') f.bridge.list = fail;
+      else f.host.start = fail;
+      f.bridgeOptions.onChange(row);
+      f.bridgeOptions.onGeminiHandoff({parentId: threadId, requestIds: ['quota'], status: 'ready', accountId: 'fake'});
+      await waitFor(() => entered);
+      f.hostOptions.onMessage({type: 'system', subtype: 'status', status: 'requesting'});
+      f.hostOptions.onMessage({type: 'result', is_error: false});
+      await new Promise(resolve => setImmediate(resolve));
+      release();
+      await waitFor(() => f.controller.state.error?.includes('fixture notification failure'));
+      await tick();
+      assert.equal(attempts, 1, 'a result during a failed preparation or uncertain send is not a retry');
+      assert.equal(f.host.startCalls.length, 1);
+      assert.equal(f.controller.state.status, action === 'preparation-error' ? 'completed' : 'uncertain');
+      assert.match(f.controller.state.error, action === 'preparation-error' ? /準備失敗/ : /未重送/);
+      f.bridge.list = originalList;
+      await f.controller.close();
+      const saved = JSON.parse(
+        await readFile(path.join(f.root, '.runtime/claude-sessions', `${threadId}.json`), 'utf8')
+      );
+      assert.equal(saved.workerNotifications?.quota, action === 'uncertain-send' ? 'delivery-attempted' : undefined);
+    } finally {
+      release?.();
+      f.bridge.list = originalList;
+      await f.controller.close();
+    }
+  });
+
 test('Claude completed Gemini ready consumes one episode and resolves ready info', async () => {
   const f = await fixture();
   try {
