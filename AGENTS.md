@@ -30,6 +30,8 @@
 
 ## 三、訂閱、登入與憑證
 
+- Gemma 主代理例外：本人可直接選本機量化 Gemma 或自行租機的雲端高精度 Gemma，沿用 Codex 原生代理核心與 K 既有操作，不是 GPT／OpenAI API 計費。兩條連線使用各自無訂閱憑證的 home；不複製原訂閱登入。雲端採本人管理的 SSH 本機轉送；不因完成接入就自行租機、付款、轉移憑證或改變計費。只為實際協定差異轉換 Responses 工具格式，不重造代理迴圈；不另加小說專用白名單、跨專案封鎖或權限模式，沿用所選工作區及原生核准。Gemma 不列入工人或討論參與者清單；不假造 GPT effort／Fast／訂閱額度。
+
 - GPT 主代理與 GPT 子代理用 Codex 訂閱，Claude 用 Claude Code 訂閱，Gemini 主代理與 Flash 用 Antigravity 訂閱。不改 API 計費、不用 API key（討論專用 API 例外見第九節）。Fable 系列沿用 Claude Code 原生模型清單、額度與計費處理；K 不另加系列排除或啟動限制，不替本人修改計費設定。
 - 不讀、複製、搬移或提交任何憑證，含其他專案、Chrome 登入資料、Google 密碼與授權碼。登入與 QR／手機驗證一律本人操作，AI 不同時操作。
 - 保留 K 專用 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、Antigravity profile（覆寫 USERPROFILE／HOME）及對話／瀏覽器資料位置；不改真實 `~/.gemini` 或全域 Codex／Claude 設定。唯一全域例外：Codex 全域設定登記 `D:\K-harness` 為 `trust_level = "trusted"`。
@@ -51,6 +53,7 @@
 
 - 不強制派工。子代理選單第一項為「AI 自動選擇」（新對話預設），手選依 GPT／Claude／Gemini 分組，列本台訂閱原生目錄與已接路線的全部可派型號；effort 依原生清單，沒有 effort 傳 null。主模型選單同樣跟隨官方原生目錄（hidden 不顯示）。K 不寫死、不編造型號，不把口語稱呼當型號；既有對話不自動換模型。
 - 派工路線：Claude 主代理選定的工人一律走 `k_luna`／`luna_start`。GPT 主代理派 Sol／Luna 走 Codex 原生 agents，派 Flash／Claude 走 `k_gemini`／`gemini_start`，不把 Gemini 塞進 GPT 原生模型設定。Gemini 主代理不反向派 GPT／Claude；這是選定的使用方式，不列為待辦。Claude 原生 Agent 只在明確要求時使用，且不得忽略選定的模型／effort。
+- Gemma 主代理如有明確選用 K 工人，沿既有 `k_gemini` gateway 派到各家原訂閱入口；GPT 工人不能送往 Gemma 推論端點，不把 GPT 寫進 Gemma 原生 home 的預設子模型。這不強制派工，也不將 Gemma 新增為工人。
 - 自動選擇時由主代理明確指定模型與 effort，不送假的 auto，也不暗中固定某個模型。K 不分類難度、不為自動選擇設品質驗收。手動、當輪指定與既有手動設定優先。
 - 本人分工偏好（只供 AI 內部選模，不向使用者重述，不加提醒、彈窗或按鈕；不是能力排名或固定路由）：
   - Opus 5.5：通才、平常的大腦。文章多由 Gemini 閱讀與撰寫，Opus 最後提供盲點與第二意見，但不是裁判；採納與否由本人依理由與效果決定。
