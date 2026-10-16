@@ -115,6 +115,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Gemini 帳號、額度與調度
 
+- 10-16 [更新前交接測試逾時與原生完成通知競態（待部署）](fresh-target-timeout-20261016.md)
 - 10-16 [Gemini 獨立額度的 CLI 識別修正與 Gemini 4 查證（待部署）](gemini-cli-quota-20261016.md)
 - 10-14 [Gemini 非目前帳號背景查詢：不再停在快照，失敗會自動重查，南區已部署](gemini-background-quota-20261014.md)
 - 10-13 [帳號觀察／事件等待與聊天效能修正](scheduler-wait-ui-performance-20261013.md)
