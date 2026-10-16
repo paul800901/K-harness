@@ -4,7 +4,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ## 目前狀態
 
-- **Gemini 核心已準備、待完整重開**：Antigravity 1.3.4 通過 8/8 權限驗證與隔離主代理實測，已設為下次啟動版本；原生目錄尚無 Gemini 4。見 [Gemini 4 可用性與核心更新](gemini4-core-20261014.md)。
+- **Gemini 核心現況**：2026-10-16 讀回 Antigravity 1.4.0 已選用；五帳號的 Gemini 4 Argon 仍由官方模型目錄標為停用。獨立額度查詢的 CLI 識別修正已驗證，待部署。見 [本次查證與修正](gemini-cli-quota-20261016.md)。
 - **正式 K（南區）已部署**：2026-10-16 套用 `be96457721bcade1249b6ad2b36c89a7e7f7377a`（排序跨重啟保存、圓桌窄側欄、討論後回一般對話）；更新器完整測試 1689/1689、部署前介面實測 48/48。`.local/runtime.json` 與 previous 已讀回，正常啟動一次後 health 200／native，退版保留三份，首次 push 後遠端與本機 SHA 一致。見[本批部署讀回](roundtable-layout-next-turn-20261016.md#部署狀態)；後續純文件提交不重啟 K。
 - **已驗收並發布**：本人確認 Claude 的 350 檔／前端產物一致性與啟動驗證通過，正式 health 再查 **200／native**；首次 push 後本機 `main`、`origin/main` 與 GitHub 遠端均為 `16b40ac`，其後僅補本文件與[部署收尾](code-split-20261014.md#claude-驗證與-github-發布收尾2026-10-14)，不再部署。本批含[存檔遇防毒占用](atomic-write-lock-20261014.md)、[整理與防再生](runtime-cleanup-20261013.md)、[大檔拆分](code-split-20261014.md)；桌面工具與最舊退版回收的驗證限制保留於紀錄。
 - **東區**：等本人到當地再更新；南區部署或 push 不代表東區完成。步驟見 [Git 安裝更新](git-install-update.md)。
@@ -115,6 +115,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Gemini 帳號、額度與調度
 
+- 10-16 [Gemini 獨立額度的 CLI 識別修正與 Gemini 4 查證（待部署）](gemini-cli-quota-20261016.md)
 - 10-14 [Gemini 非目前帳號背景查詢：不再停在快照，失敗會自動重查，南區已部署](gemini-background-quota-20261014.md)
 - 10-13 [帳號觀察／事件等待與聊天效能修正](scheduler-wait-ui-performance-20261013.md)
 - 10-13 [Gemini 跨聊天室調度生命週期修正](gemini-scheduler-lifecycle-20261013.md)
