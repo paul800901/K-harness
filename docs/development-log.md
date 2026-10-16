@@ -335,6 +335,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 研究與調查
 
+- 10-16 [Gemma 雲端小說主代理：Codex 原生核心＋12B QAT BF16 接入方案與準備（未租機、未實作）](gemma-cloud-preparation-20261016.md)
 - 10-10 [K 輔助原生壓縮：協定實測與最小候選](compaction-assist-probe-20261010.md)
 - 10-10 [K 輔助原生壓縮：產品候選](compaction-assist-candidate-20261010.md)
 - 10-10 [極長任務記憶：全球論文、開源實作、DSH 與 K 適用性研究](agent-memory-research-20261010.md)
