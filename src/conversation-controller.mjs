@@ -12,6 +12,7 @@ import {abortable} from './abortable.mjs';
 import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
+import {workerEnded, workerMayBeLive} from './worker-status.mjs';
 
 const FENCE = '```';
 // The main model ends a reply with this block when the person asked it to start the armed discussion.
@@ -180,13 +181,7 @@ export function createConversationController({
       const disconnected = ['offline', 'error', 'uncertain'].includes(s.status) || s.workerConnection === 'failed';
       uncertain ||= disconnected;
       for (const worker of s.workers ?? []) {
-        if (
-          worker.kind === 'command' ||
-          worker.settled === true ||
-          (worker.settled !== false &&
-            ['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted'].includes(worker.status))
-        )
-          continue;
+        if (worker.kind === 'command' || workerEnded(worker)) continue;
         if (worker.executionUnowned === true) {
           if (!worker.reconciliation?.reviewedAt) historicalUnconfirmed++;
           continue;
@@ -222,10 +217,7 @@ export function createConversationController({
           const question = nativeThreadId
             ? (s.questions ?? []).find(item => item.isSubagent && item.threadId === nativeThreadId)
             : null;
-          const ended =
-            worker.settled === true ||
-            (worker.settled !== false &&
-              ['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted'].includes(worker.status));
+          const ended = workerEnded(worker);
           const unresolved = !ended && (disconnected || !['running', 'starting', 'pending'].includes(worker.status));
           return {
             requestId: worker.requestId,
@@ -293,8 +285,7 @@ export function createConversationController({
     }
   };
   const workerRows = async controller => {
-    const result = await controller.workers();
-    return Array.isArray(result) ? result : (result?.workers ?? []);
+    return controller.workers();
   };
   const continuationNotice = (controller, receipt) => {
     continuationStates.set(controller, {
@@ -655,13 +646,7 @@ export function createConversationController({
     if (!(await read(listMainSessions(root))).sessions.some(row => row.threadId === s.threadId)) return false;
     const workers = await read(workerRows(controller));
     if (
-      workers.some(
-        row =>
-          row.settled === false ||
-          ['running', 'starting', 'pending', 'unresolved'].includes(row.status) ||
-          (row.settled !== true &&
-            !['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted'].includes(row.status))
-      )
+      workers.some(workerMayBeLive)
     )
       return false;
     if (s.browserAccess?.enabled) {
@@ -692,13 +677,7 @@ export function createConversationController({
       !latest.queuedMessages?.length &&
       idleStatuses.includes(latest.status) &&
       latest.workerConnection !== 'failed' &&
-      !finalWorkers.some(
-        row =>
-          row.settled === false ||
-          ['running', 'starting', 'pending', 'unresolved'].includes(row.status) ||
-          (row.settled !== true &&
-            !['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted'].includes(row.status))
-      )
+      !finalWorkers.some(workerMayBeLive)
     );
   };
   const releaseIdleRooms = async () => {
@@ -1055,8 +1034,7 @@ export function createConversationController({
             throw Error('背景聊天室仍有工作、待確認或待送訊息，不能刪除。');
           locked.add(controller);
           held.push(controller);
-          const workers = await controller.workers();
-          const rows = Array.isArray(workers) ? workers : (workers?.workers ?? []);
+          const rows = await controller.workers();
           if (
             controller.state.busy ||
             rows.some(

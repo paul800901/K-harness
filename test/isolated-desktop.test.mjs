@@ -295,6 +295,7 @@ test('isolated desktop forces launch-token capability, fixes workspace, and deni
   assert.equal(f.optionsRead.port, 47832);
   assert.equal((await f.app.controller.state).workspace, f.workspace);
   await assert.rejects(f.app.controller.selectWorkspace({path: f.outsider}), /此隔離環境僅允許指定的工作區/u);
+  await assert.rejects(f.app.controller.selectWorkspace({path: f.root}), /此隔離環境僅允許指定的工作區/u);
   await assert.rejects(
     f.app.controller.open({model: 'gpt-6-luna', workspace: f.outsider}),
     /此隔離環境僅允許指定的工作區/u

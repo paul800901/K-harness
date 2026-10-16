@@ -79,18 +79,23 @@ export async function startIsolatedDesktop({
       enabled: allowLogin
     })
   });
-  function restrictWorkspace(controller) {
-    const change = controller.selectWorkspace.bind(controller);
-    controller.selectWorkspace = async data => {
-      const canonical = await validateRegisteredWorkspace(data?.path);
-      return change({path: canonical});
-    };
+  // The room router hands selection to a provider controller restricted below,
+  // so it only needs the move pre-check, made before it loads an unopened room.
+  function restrictMove(controller) {
     if (controller.moveWorkspace) {
       const move = controller.moveWorkspace.bind(controller);
       controller.moveWorkspace = async data =>
         move({...data, workspace: await validateRegisteredWorkspace(data?.workspace)});
     }
     return controller;
+  }
+  function restrictWorkspace(controller) {
+    const change = controller.selectWorkspace.bind(controller);
+    controller.selectWorkspace = async data => {
+      const canonical = await validateRegisteredWorkspace(data?.path);
+      return change({path: canonical});
+    };
+    return restrictMove(controller);
   }
   let conversationController;
   const discussionApi = createDiscussionApiConnections({
@@ -99,7 +104,7 @@ export async function startIsolatedDesktop({
     isBusy: () => conversationController?.discussionBusy
   });
   const controllerFactory = options =>
-    (conversationController = restrictWorkspace(
+    (conversationController = restrictMove(
       createConversationController({
         ...options,
         browserRequest: browsers.request,

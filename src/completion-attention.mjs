@@ -1,3 +1,5 @@
+import {workerEnded} from './worker-status.mjs';
+
 // Session-local presentation state: never infer completion from saved history
 // or a child's result. A fresh main turn must have actually run in this process.
 export function createCompletionAttention() {
@@ -30,13 +32,7 @@ export function createCompletionAttention() {
       if (state.status !== 'completed' || state.busy) return;
       if (state.completionPending || state.goalError || ['starting', 'active', 'unknown'].includes(state.goal?.status))
         return;
-      const waiting = (state.workers ?? []).some(
-        w =>
-          w.executionUnowned !== true &&
-          (w.settled === false ||
-            (w.settled !== true &&
-              !['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted'].includes(w.status)))
-      );
+      const waiting = (state.workers ?? []).some(w => w.executionUnowned !== true && !workerEnded(w));
       if (waiting) {
         run.waitingForMain = true;
         return;

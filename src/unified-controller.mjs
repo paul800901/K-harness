@@ -208,8 +208,7 @@ export function createUnifiedController(options) {
         }
         const target = isClaude ? claude : provider === 'gemini' ? getGemini() : codex;
         if (target !== active) {
-          const workers = await active.workers();
-          const list = Array.isArray(workers) ? workers : (workers?.workers ?? []);
+          const list = await active.workers();
           if (list.some(w => w.settled === false || ['running', 'starting', 'pending'].includes(w.status)))
             throw new Error('子代理尚未結束，請先停止或查明原工作。');
           await target.selectWorkspace({path: saved?.workspace ?? active.state.workspace});
@@ -276,8 +275,7 @@ export function createUnifiedController(options) {
         const saved = (await listMainSessions(root, {threadId})).sessions[0];
         if (!saved) throw Error('找不到聊天室紀錄。');
         if (next.toLowerCase() === saved.workspace.toLowerCase()) return {threadId, workspace: next};
-        const result = await active.workers(),
-          workers = Array.isArray(result) ? result : (result?.workers ?? []);
+        const workers = await active.workers();
         if (
           workers.some(w => w.settled === false || ['running', 'starting', 'pending', 'unresolved'].includes(w.status))
         )
@@ -305,8 +303,7 @@ export function createUnifiedController(options) {
       changing = true;
       let created = null;
       try {
-        const list = await active.workers(),
-          workers = Array.isArray(list) ? list : (list?.workers ?? []);
+        const workers = await active.workers();
         if (
           workers.some(w => w.settled === false || ['running', 'starting', 'pending', 'unresolved'].includes(w.status))
         )

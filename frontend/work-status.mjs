@@ -1,8 +1,8 @@
 import {formatElapsed} from '../shared/conversation-groups.mjs';
+import {workerEnded as endedWorker} from '../src/worker-status.mjs';
 
 export const QUIET_WORK_MS = 5 * 60 * 1000;
 const age = (at, now) => (Number.isFinite(at) ? Math.max(0, now - at) : null);
-const terminalWorkers = ['completed', 'failed', 'cancelled', 'canceled', 'stopped', 'interrupted', 'ended'];
 const statusLabel = {
   running: '執行中',
   starting: '準備中',
@@ -15,8 +15,9 @@ const statusLabel = {
   interrupted: '已中斷',
   ended: '已結束，結果未知'
 };
+// 'ended' is the summary status workerDetails gives a settled worker without a native status.
 export const workerEnded = worker =>
-  worker.settled === true || (worker.settled !== false && terminalWorkers.includes(worker.status));
+  endedWorker(worker) || (worker.settled !== false && worker.status === 'ended');
 // A main-agent handling note is separate from native execution settlement.
 export const workerReconciled = worker =>
   !workerEnded(worker) && worker.executionUnowned === true && !!worker.reconciliation?.reviewedAt;
