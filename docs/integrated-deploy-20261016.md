@@ -55,6 +55,15 @@
 - 失敗後正式 `.local/runtime.json` 仍為 `0d14cbd14c3f5c841dda32db254665685ac0d5e6`、previous 未變、47831 未監聽、正式試算表綁定仍不存在。候選 `prepare-1792161324050` 保留；沒有套用主程式、退版、重試、重開 K、重播工作或 push。
 - 已向本人詢問是否修正確認後再執行一次部署。未取得新答覆前停止正式更新；雲端未租機。
 
+### 本人授權接續：修正測試時序
+
+- 本人明確回覆「繼續」，授權查明修正、完整驗證後再部署一次；不是在未獲同意時重跑原更新。
+- 已用相同假資料重現：暫時把 fake native goal read 延遲 120 ms，原測試固定等待 40 ms 後讀回 `busy:false, goalPending:true, status:failed`，精確重現同一清除錯誤。改為等待 `goalPending` 結束後，相同 120 ms 延遲測試 **1/1 通過**，讀回 `goalPending:false`。診斷延遲與輸出均已移除，未進入正式測試或產品。
+- 最小修改僅 `test/claude-controller.test.mjs`：結果事件後重用既有有期限的 `waitFor`，等待目標讀回與存檔完成。八個 action 的原斷言保留；不放寬產品保護、不加重試、沒有測試略過。原生 `goalCommand` 在事件同步階段就設 pending，存檔完成才清除，所以不是等待尚未出現的假訊號。
+- 定向完整 Claude controller **132/132** 通過；正常預設並行 `npm test` 全套 **1729/1729** 通過、0 失敗／取消／略過，75.0 秒。產品與前端未再改動，沿用前一輪 UI 48/48 及建置證據。
+- 真正 Opus 5.5 複查 session `dbbd5f0e-ff08-42fd-8549-d34d063a9e20`，init／assistant 都是 `claude-opus-5-5`、apiKeySource `none`、success。確認根因、等待條件會真正生效、八項斷言未削弱、沒有產品問題被隱藏，無阻擋；只讀未代跑測試。
+- 新固定程式／測試版本 **`be7ffb321d61f2c8e2e4830c6a061dd65f948e84`**；正式更新結果待下節讀回。原失敗、延遲重現、修正後延遲驗證、完整回歸與 Opus 證據皆保留，沒有覆寫首次紀錄。
+
 本機證據：本任務工作樹 `.runtime/archive/integrated-deploy-20261016/`，包含整合測試、真正 Opus 的 packet／identity／events／result、更新與讀回紀錄，不提交公開 Git。
 
 ## 保留的驗證邊界
