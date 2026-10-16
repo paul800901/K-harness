@@ -46,7 +46,14 @@
 - 固定程式版本：`a58973cd7e1f31464883df5f58e4ddced6d1be77`。文件另筆提交，不用浮動 main 當部署目標。
 - 正式 `Update-K.ps1` 會優先使用舊 installed updater，故本次需在 K 已停止後備存原兩個 updater 程式檔，再補入已驗收的三個 script；不動 home／憑證／對話。其後仍執行原 `Update-K.ps1`，不改入口或另建部署器。原版退版將包含這三個更新器補丁，版本標示仍代表原主程式，不能稱完全逐檔原樣快照。
 
-正式更新與啟動讀回尚在執行中，完成後補入；上列固定版本與本機驗收不代表正式已部署。
+### 首次正式更新：套用前停止
+
+- 已備存原 `manage-install.mjs`、`install-runtime.mjs`，補入三個已驗收更新器 script，逐檔 SHA-256 與本機 main 相符；備存與讀回在 `updater-original/`、`updater-bootstrap.json`。只修改更新器程式，尚未宣稱正式主程式更新。
+- 原 `Update-K.ps1 -Ref a58973cd7e1f31464883df5f58e4ddced6d1be77` 僅執行一次。候選建置成功，更新器完整測試 **1728/1729**，1 項失敗、0 取消／略過，75.2 秒，因此在 activation 之前停止。
+- 原始失敗：`test/claude-controller.test.mjs:2803` 的 `Claude Gemini ready does not bypass clear`，在第 2838 行清除目標時收到 `請先停止目前工作，再設定或清除目標。`；更新器回 `cmd.exe 執行失敗 (1)；候選保留，未自動重試。`。原始完整紀錄為 `update.log`，沒有覆寫或刪除。
+- 唯讀核對：該測試結果事件後只固定等待 40 ms，控制器此時會非同步讀回原生目標並等待存檔，`goalPending` 尚未解除時正確拒絕清除。這是目前找到的時序嫌疑；尚未以修正或重跑確認，不把推論當作排除產品問題。
+- 失敗後正式 `.local/runtime.json` 仍為 `0d14cbd14c3f5c841dda32db254665685ac0d5e6`、previous 未變、47831 未監聽、正式試算表綁定仍不存在。候選 `prepare-1792161324050` 保留；沒有套用主程式、退版、重試、重開 K、重播工作或 push。
+- 已向本人詢問是否修正確認後再執行一次部署。未取得新答覆前停止正式更新；雲端未租機。
 
 本機證據：本任務工作樹 `.runtime/archive/integrated-deploy-20261016/`，包含整合測試、真正 Opus 的 packet／identity／events／result、更新與讀回紀錄，不提交公開 Git。
 
