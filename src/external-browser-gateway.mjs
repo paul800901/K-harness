@@ -1,10 +1,11 @@
 import {createServer} from 'node:http';
-import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {randomBytes} from 'node:crypto';
 import {mkdir, realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {createBrowserOwnerGateway} from './browser-owner-gateway.mjs';
+import {admitMcpRequest, readLimitedBody} from './mcp-http-guard.mjs';
 
 const MODES = new Set(['regular', 'incognito']);
 const browserSessionTool = {
@@ -32,12 +33,6 @@ const browserProfilesTool = {
   inputSchema: {type: 'object', properties: {}, additionalProperties: false}
 };
 
-function bearerMatches(header, token) {
-  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
-  const a = Buffer.from(header.slice(7)),
-    b = Buffer.from(token);
-  return a.length === b.length && timingSafeEqual(a, b);
-}
 function rpcError(id, code, message) {
   return {jsonrpc: '2.0', id: id ?? null, error: {code, message}};
 }
@@ -167,27 +162,7 @@ export async function createExternalBrowserGateway({
       res.writeHead(503).end();
       return;
     }
-    if (
-      !['127.0.0.1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ||
-      req.headers.host !== host ||
-      (req.headers.origin !== undefined && req.headers.origin !== `http://${host}`)
-    ) {
-      res.writeHead(403).end();
-      return;
-    }
-    res.setHeader('Cache-Control', 'no-store');
-    if (!bearerMatches(req.headers.authorization, token)) {
-      res.writeHead(401).end();
-      return;
-    }
-    if (req.url !== '/mcp') {
-      res.writeHead(404).end();
-      return;
-    }
-    if (req.method !== 'POST') {
-      res.writeHead(405, {Allow: 'POST'}).end();
-      return;
-    }
+    if (!admitMcpRequest(req, res, {host, token})) return;
     let timer,
       reqMessage,
       finished = false,
@@ -197,14 +172,7 @@ export async function createExternalBrowserGateway({
       if (!finished) controller.abort();
     };
     try {
-      const chunks = [];
-      let size = 0;
-      for await (const chunk of req) {
-        size += chunk.length;
-        if (size > 1024 * 1024) throw Error('Request too large.');
-        chunks.push(chunk);
-      }
-      reqMessage = JSON.parse(Buffer.concat(chunks));
+      reqMessage = JSON.parse(await readLimitedBody(req));
       if (
         !reqMessage ||
         Array.isArray(reqMessage) ||
