@@ -40,6 +40,9 @@ test('failed safe shutdown leaves the window reopenable and attention attached, 
     }
   }
   class Contents extends EventEmitter {
+    get session() {
+      return session;
+    }
     isDestroyed() {
       return !!this.destroyed;
     }

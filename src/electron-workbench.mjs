@@ -112,7 +112,7 @@ export async function createElectronWorkbench({electron, servicesFactory, browse
       contextIsolation: true,
       nodeIntegration: false,
       backgroundThrottling: false,
-      partition: 'k-trusted-owner',
+      partition: 'persist:k-trusted-owner',
       preload: fileURLToPath(new URL('./electron-owner-preload.cjs', import.meta.url))
     }
   });
@@ -180,7 +180,7 @@ export async function createElectronWorkbench({electron, servicesFactory, browse
   try {
     services = await servicesFactory({gatewayFactory: browserGatewayFactory});
     taskbarAttention = createTaskbarAttentionController({window, electron, app: services.app});
-    const ownerSession = electron.session.fromPartition('k-trusted-owner');
+    const ownerSession = owner.webContents.session;
     const permissionHandlers = createOwnerSessionMediaPermissionHandlers({
       ownerWebContents: owner.webContents,
       getAppOrigin: () => services?.app?.origin,
