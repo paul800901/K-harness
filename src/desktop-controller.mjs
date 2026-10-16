@@ -218,6 +218,7 @@ export function createDesktopController({
     !turnId &&
     (!goalRecovery.workerWait || waitedWorkersSettled());
   const recoverableError = error => ['rate', 'other'].includes(recoveryErrorClass(error));
+  const isNativeWorker = worker => worker?.origin !== 'flash-bridge';
   const clearNativeResults = () => {
     invalidateRecovery();
     cancelGeminiHandoff();
@@ -225,7 +226,7 @@ export function createDesktopController({
     nativeRecheckTimer = null;
     nativeRecheckDelay = 1000;
     nativeTerminals.clear();
-    for (const [id, row] of flashQueue) if (row.provider === 'codex') flashQueue.delete(id);
+    for (const [id, row] of flashQueue) if (row.provider === 'codex' && isNativeWorker(row)) flashQueue.delete(id);
     for (const child of childActivities.values()) delete child.epoch;
   };
   state.capabilities = {goal: true, goalEdit: true, goalContinuesWhileIdle: true};
@@ -1183,6 +1184,7 @@ export function createDesktopController({
         ? state.workers.filter(
             w =>
               w.provider === 'codex' &&
+              isNativeWorker(w) &&
               ids.includes(w.threadId) &&
               w.settled === true &&
               !loaded.has(nativeId(w.threadId))
@@ -1202,7 +1204,7 @@ export function createDesktopController({
     if (host !== active || threadId !== state.threadId || epoch !== viewEpoch) return result;
     const rows = [
       ...result.map(row => ({...row, activity: childActivities.get(row.threadId)?.holder.activity})),
-      ...flash
+      ...flash.map(row => ({...row, origin: 'flash-bridge'}))
     ];
     // Reusing a child retires its dispatch intent, not the saved old terminal fact.
     // Verify only outstanding display facts; never enqueue or replay old work.
@@ -1458,6 +1460,7 @@ export function createDesktopController({
   };
   const recordFlash = record => {
     if (!record || record.parentId !== state.threadId) return;
+    record = {...record, origin: 'flash-bridge'};
     const index = state.workers.findIndex(w => w.provider === record.provider && w.requestId === record.requestId);
     if (index < 0) state.workers.push(record);
     else state.workers[index] = record;
@@ -1830,6 +1833,7 @@ export function createDesktopController({
     for (const [id, record] of flashQueue)
       if (
         (record.provider === 'codex' &&
+          isNativeWorker(record) &&
           (record.epoch !== requestEpoch || stopRequested || state.goal?.status === 'paused')) ||
         !workerNoticeCurrent(
           record,
@@ -1952,7 +1956,9 @@ export function createDesktopController({
           return;
         for (const id of [
           parent,
-          ...rows.filter(w => w.provider === 'codex' && loaded.has(nativeId(w.threadId))).map(w => w.threadId)
+          ...rows
+            .filter(w => w.provider === 'codex' && isNativeWorker(w) && loaded.has(nativeId(w.threadId)))
+            .map(w => w.threadId)
         ]) {
           const terminals = await listTerminals(active, id);
           if (!current() || terminals.length) return;
@@ -1962,10 +1968,10 @@ export function createDesktopController({
       batch = [...flashQueue.values()].filter(row => !waitingJobs.has(row.requestId));
       for (const record of batch) flashQueue.delete(record.requestId);
       for (const record of batch) if (record.settled) flashArmed.delete(record.requestId);
-      const native = batch.some(record => record.provider === 'codex');
+      const native = batch.some(record => record.provider === 'codex' && isNativeWorker(record));
       const results = await Promise.all(
         batch.map(record =>
-          record.provider === 'codex'
+          record.provider === 'codex' && isNativeWorker(record)
             ? {provider: 'codex', threadId: record.threadId, turnId: record.turnId, status: record.status}
             : lunaResult(record)
         )
@@ -2312,7 +2318,8 @@ export function createDesktopController({
         }
       }
       const children = await workers(true);
-      if (children.some(w => w.provider === 'codex' && !w.settled)) throw new Error('子代理尚未確認停止。');
+      if (children.some(w => w.provider === 'codex' && isNativeWorker(w) && !w.settled))
+        throw new Error('子代理尚未確認停止。');
       await closeFlashBridge();
       if (state.goalError) throw Error(state.goalError);
       if (goalRecovery?.attempted && !goalRecovery.turnId && !turnId && !flashDeliveryUncertain) goalRecovery = null;
@@ -2543,7 +2550,11 @@ export function createDesktopController({
       opening = true;
       try {
         const workspace = await validateWorkspace(requested);
-        if ((await workers()).some(w => w.status === 'running' || (w.provider === 'codex' && !w.settled)))
+        if (
+          (await workers()).some(
+            w => w.status === 'running' || (w.provider === 'codex' && isNativeWorker(w) && !w.settled)
+          )
+        )
           throw new Error('子代理還在執行或狀態未確認，請先停止工作再切換。');
         await closeFlashGateway();
         if (host) {
@@ -2985,7 +2996,7 @@ export function createDesktopController({
         if (host) {
           if (state.threadId) await stopParentTerminals(host, state.threadId);
           const stopped = await workers(true);
-          if (stopped.some(w => w.provider === 'codex' && !w.settled))
+          if (stopped.some(w => w.provider === 'codex' && isNativeWorker(w) && !w.settled))
             throw new Error('子代理尚未確認停止，請先查詢原工作。');
           await closeFlashBridge();
         } else if (flashBridge || flashBridgeInit) await closeFlashBridge();
@@ -3890,7 +3901,7 @@ export function createDesktopController({
           if (turnId) await host.request('turn/interrupt', {threadId: state.threadId, turnId});
           if (state.threadId) await stopParentTerminals(host, state.threadId);
           const stopped = await workers(true);
-          if (stopped.some(w => w.provider === 'codex' && !w.settled))
+          if (stopped.some(w => w.provider === 'codex' && isNativeWorker(w) && !w.settled))
             throw new Error('子代理尚未確認停止，後端保持開啟，請先查詢原工作。');
           await closeFlashGateway();
           const previous = host;

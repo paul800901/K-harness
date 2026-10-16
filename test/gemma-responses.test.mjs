@@ -68,7 +68,7 @@ test('loopback bridge sends exactly one request, preserves error status, never f
   try {
     const response = await fetch(`${server.baseUrl}/responses`, {
       method: 'POST',
-      headers: {authorization: 'Bearer test-caller'},
+      headers: server.headers,
       body: JSON.stringify({model: 'gemma', tools})
     });
     assert.equal(response.status, 503);
@@ -76,6 +76,114 @@ test('loopback bridge sends exactly one request, preserves error status, never f
     assert.equal(calls[0].url, 'http://127.0.0.1:18080/v1/responses');
     assert.equal(calls[0].options.headers.authorization, undefined);
     assert.equal(JSON.parse(calls[0].options.body).tools.length, 3);
+    const denied = await fetch(`${server.baseUrl}/responses`, {method: 'POST', body: '{}'});
+    assert.equal(denied.status, 403);
+    const browser = await fetch(`${server.baseUrl}/responses`, {
+      method: 'POST',
+      headers: {...server.headers, Origin: new URL(server.baseUrl).origin},
+      body: '{}'
+    });
+    assert.equal(browser.status, 403);
+    assert.equal(calls.length, 1);
+  } finally {
+    await server.close();
+  }
+});
+
+test('deterministic request errors return 400 without upstream inference', async () => {
+  let calls = 0;
+  const server = await openGemmaResponses('http://127.0.0.1:18080/v1', {
+    fetchImpl: async () => {
+      calls++;
+      throw Error('must not infer');
+    }
+  });
+  try {
+    for (const body of ['bad-json', JSON.stringify({tools: [{type: 'unsupported'}]})]) {
+      const response = await fetch(`${server.baseUrl}/responses`, {method: 'POST', headers: server.headers, body});
+      assert.equal(response.status, 400);
+      assert.match(await response.text(), /未送出推論/);
+    }
+    assert.equal(calls, 0);
+  } finally {
+    await server.close();
+  }
+});
+
+test('malformed custom wrappers remain native tool input, not broken streams or retries', () => {
+  const {aliases} = gemmaRequest({tools});
+  for (const args of ['{bad-json', '{"wrong":"field"}', 'null']) {
+    const translate = gemmaResponseEvents(aliases);
+    translate({
+      type: 'response.output_item.added',
+      item: {
+        type: 'function_call',
+        name: 'apply_patch',
+        id: 'patch',
+        call_id: 'call',
+        arguments: ''
+      }
+    });
+    const [delta, done] = translate({type: 'response.function_call_arguments.done', item_id: 'patch', arguments: args});
+    assert.equal(delta.delta, args);
+    assert.equal(done.input, args);
+    const result = translate({
+      type: 'response.completed',
+      response: {output: [{type: 'function_call', name: 'apply_patch', id: 'patch', call_id: 'call', arguments: args}]}
+    });
+    assert.equal(result[0].response.output[0].input, args);
+    assert.equal(result[0].response.output[0].call_id, 'call');
+  }
+});
+
+test('HTTP SSE bridge preserves split Unicode, namespace tools and completed custom calls', async () => {
+  const events = [
+    {
+      type: 'response.output_item.added',
+      item: {type: 'function_call', name: 'apply_patch', id: 'p', call_id: 'c', arguments: ''}
+    },
+    {type: 'response.function_call_arguments.delta', item_id: 'p', delta: '{"input":"台灣"}'},
+    {
+      type: 'response.output_item.done',
+      item: {type: 'function_call', name: 'apply_patch', id: 'p', call_id: 'c', arguments: '{"input":"台灣"}'}
+    },
+    {
+      type: 'response.output_item.done',
+      item: {type: 'function_call', name: 'mcp__k_gemini__conversation_context', id: 'm', call_id: 'k', arguments: '{}'}
+    },
+    {type: 'response.completed', response: {output: []}}
+  ];
+  const wire = Buffer.from(
+    events.map(event => `data: ${JSON.stringify(event)}\r\n\r\n`).join('') + 'data: [DONE]\r\n\r\n'
+  );
+  let calls = 0;
+  const server = await openGemmaResponses('http://127.0.0.1:18080/v1', {
+    fetchImpl: async () => {
+      calls++;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            for (let i = 0; i < wire.length; i += 7) controller.enqueue(wire.subarray(i, i + 7));
+            controller.close();
+          }
+        }),
+        {headers: {'content-type': 'text/event-stream'}}
+      );
+    }
+  });
+  try {
+    const response = await fetch(`${server.baseUrl}/responses`, {
+      method: 'POST',
+      headers: server.headers,
+      body: JSON.stringify({tools, input: [], stream: true})
+    });
+    const text = await response.text();
+    assert.equal(response.status, 200);
+    assert.match(text, /"input":"台灣"/);
+    assert.match(text, /"namespace":"mcp__k_gemini"/);
+    assert.match(text, /response.completed/);
+    assert.match(text, /data: \[DONE\]/);
+    assert.equal(calls, 1);
   } finally {
     await server.close();
   }

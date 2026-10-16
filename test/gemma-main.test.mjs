@@ -30,6 +30,7 @@ test('two main Gemma endpoints have distinct native homes, honest availability a
   assert.equal(modelProvider('gemini-3.8-flash'), 'gemini');
   assert.throws(() => local.nativeModel(cloud.model), /不符/);
   assert.equal(availableWorkerModels([localRow]).length, 0);
+  assert.throws(() => local.configOverrides(), /尚未準備完成/);
   await local.prepare();
   const entry = JSON.parse(await readFile(path.join(local.home, 'model-catalog.json'), 'utf8')).models[0];
   assert.equal(entry.slug, 'gemma-4-12b-it-qat');
@@ -40,6 +41,10 @@ test('two main Gemma endpoints have distinct native homes, honest availability a
     true
   );
   assert.deepEqual(urls, ['http://127.0.0.1:1234/v1/models', 'http://127.0.0.1:18080/v1/models']);
+  await local.close();
+  assert.throws(() => local.configOverrides(), /尚未準備完成/);
+  await local.prepare();
+  assert(local.configOverrides().some(value => value.includes('http_headers={Authorization=')));
   await local.close();
 });
 

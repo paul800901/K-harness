@@ -183,20 +183,25 @@ async function readConnections(root, fetchImpl) {
             })
           );
           transport = await openGemmaResponses(baseUrl, {fetchImpl});
-        })());
+        })().catch(error => {
+          prepared = null;
+          throw error;
+        }));
       },
       async close() {
         await prepared?.catch(() => {});
         await transport?.close();
         transport = null;
+        prepared = null;
       },
       configOverrides() {
+        if (!transport) throw new Error('Gemma 連線尚未準備完成；未繞過工具格式轉換。');
         return [
           `model_catalog_json=${JSON.stringify(catalogFile)}`,
           'model_provider="k_gemma"',
           `model=${JSON.stringify(config.model)}`,
           `review_model=${JSON.stringify(config.model)}`,
-          `model_providers.k_gemma={name="Gemma",base_url=${JSON.stringify(transport?.baseUrl ?? baseUrl)},wire_api="responses",requires_openai_auth=false,supports_websockets=false}`,
+          `model_providers.k_gemma={name="Gemma",base_url=${JSON.stringify(transport.baseUrl)},wire_api="responses",requires_openai_auth=false,supports_websockets=false,http_headers={Authorization=${JSON.stringify(transport.headers.Authorization)}}}`,
           'web_search="disabled"',
           // The fresh, unauthenticated self-host home has no OpenAI account plugins.
           // Avoid native startup downloading the curated marketplace. K MCP tools stay intact.

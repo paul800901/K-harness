@@ -1,12 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-test('Gemma routes selected GPT workers through the subscription gateway, never native Gemma defaults', () => {
-  const config = workerPolicyConfig({model: 'gpt-6-luna', effort: 'high'}, {provider: 'gemma', geminiGateway: true,
-    models: [{model: 'gpt-6-luna', supportedReasoningEfforts: [{reasoningEffort: 'high'}]}]});
-  assert.deepEqual(config.agents, {enabled: true});
-  assert.match(config.developer_instructions, /every provider use k_gemini \/ gemini_start/);
-  assert.doesNotMatch(config.developer_instructions, /For GPT use native delegation/);
-});
 import {
   availableWorkerModels,
   MODEL_ROLE_GUIDANCE,
@@ -14,6 +7,19 @@ import {
   validateWorkerPolicy,
   workerPolicyConfig
 } from '../src/worker-policy.mjs';
+test('Gemma routes selected GPT workers through the subscription gateway, never native Gemma defaults', () => {
+  const config = workerPolicyConfig(
+    {model: 'gpt-6-luna', effort: 'high'},
+    {
+      provider: 'gemma',
+      geminiGateway: true,
+      models: [{model: 'gpt-6-luna', supportedReasoningEfforts: [{reasoningEffort: 'high'}]}]
+    }
+  );
+  assert.deepEqual(config.agents, {enabled: true});
+  assert.match(config.developer_instructions, /every provider use k_gemini \/ gemini_start/);
+  assert.doesNotMatch(config.developer_instructions, /For GPT use native delegation/);
+});
 const gptModels = [
   {
     model: 'gpt-6.1-sol',

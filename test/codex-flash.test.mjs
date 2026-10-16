@@ -17,10 +17,12 @@ async function fixture({
   root: existingRoot,
   workerPolicy = {model: 'gpt-6-luna', effort: 'high'},
   cancelSettles = true,
+  unconfirmedNativeChild = false,
   delayToolOutput = false,
   rejectToolOutput = false,
   onConversationSettled,
-  onChange
+  onChange,
+  selfHosted
 } = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
@@ -45,6 +47,7 @@ async function fixture({
   let hostCloseCount = 0,
     gatewayCloseCount = 0,
     bridgeCloseCount = 0,
+    nativeChildUnconfirmed = unconfirmedNativeChild,
     resolveToolOutput,
     releaseToolOutput;
   const toolOutputSent = new Promise(resolve => {
@@ -109,8 +112,8 @@ async function fixture({
                   id: 'child-gpt',
                   parentThreadId: 'codex-parent',
                   cwd: root,
-                  status: {type: 'idle'},
-                  turns: [{id: 'child-turn', status: 'completed', items: []}]
+                  status: {type: nativeChildUnconfirmed ? 'active' : 'idle'},
+                  turns: [{id: 'child-turn', status: nativeChildUnconfirmed ? 'inProgress' : 'completed', items: []}]
                 }
               }
             : {thread: {id: params.threadId, cwd: root, status: {type: 'idle'}, turns: []}};
@@ -140,6 +143,7 @@ async function fixture({
   };
   const c = createDesktopController({
     root,
+    selfHosted,
     executable: 'fixture-codex',
     onConversationSettled,
     onChange,
@@ -236,6 +240,9 @@ async function fixture({
     },
     get bridgeCloseCount() {
       return bridgeCloseCount;
+    },
+    setNativeChildUnconfirmed(value) {
+      nativeChildUnconfirmed = value;
     }
   };
 }
@@ -264,6 +271,84 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
     );
     assert.equal(f.gatewayOptions[0].geminiOnly, true);
     assert.equal(f.bridgeOptions.length, 0, 'bridge is lazy until a Flash tool is called');
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('Gemma main delivers a bridge Codex worker result as bridge content and preserves the local model route', async () => {
+  const localModel = 'gemma-local/gemma-4-12b-it-qat';
+  const f = await fixture({
+    selfHosted: {
+      models: async () => ({models: [{model: localModel, displayName: 'Gemma', available: true}]}),
+      prepare: async () => {},
+      nativeModel: () => 'gemma-4-12b-it-qat'
+    }
+  });
+  try {
+    await f.c.open({model: localModel});
+    await f.c.send({text: '派一個 GPT 工人'});
+    const bridge = f.gatewayOptions[0].bridge;
+    await bridge.start({requestId: 'gemma-gpt-result', model: 'gpt-6-luna', effort: 'high', task: '完成工作'});
+    const record = f.workerRecords.get('gemma-gpt-result');
+    Object.assign(record, {status: 'completed', settled: true, output: 'GPT 工人的實際輸出'});
+    f.bridgeOptions[0].onChange(record);
+    f.hostOptions.at(-1).onEvent({
+      method: 'turn/completed',
+      params: {threadId: 'codex-parent', turn: {id: 'turn-1', status: 'completed'}}
+    });
+    await f.toolOutputSent;
+    await new Promise(resolve => setImmediate(resolve));
+    const delivery = f.calls.find(call => call.method === 'turn/start' && call.params.toolOutput);
+    assert.ok(delivery);
+    assert.equal(delivery.params.model, 'gemma-4-12b-it-qat');
+    assert.equal(delivery.params.toolOutput.name, 'gemini_start');
+    assert.match(delivery.params.toolOutput.output, /GPT 工人的實際輸出/);
+    assert.doesNotMatch(delivery.params.toolOutput.output, /原生子代理終止不等於交付成功/);
+    await f.c.close();
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('Gemma stop cancels and verifies an unsettled bridge Codex worker before closing the bridge', async () => {
+  const localModel = 'gemma-local/gemma-4-12b-it-qat';
+  const f = await fixture({
+    selfHosted: {
+      models: async () => ({models: [{model: localModel, displayName: 'Gemma', available: true}]}),
+      prepare: async () => {},
+      nativeModel: () => 'gemma-4-12b-it-qat'
+    }
+  });
+  try {
+    await f.c.open({model: localModel});
+    const bridge = f.gatewayOptions[0].bridge;
+    await bridge.start({requestId: 'gemma-gpt-stop', model: 'gpt-6-luna', effort: 'high', task: '長工單'});
+    await f.c.stop();
+    assert.ok(f.workerOperations.some(([op, id]) => op === 'cancel' && id === 'gemma-gpt-stop'));
+    assert.ok(f.workerOperations.some(([op, id]) => op === 'wait' && id === 'gemma-gpt-stop'));
+    assert.ok(f.workerOperations.some(([op, id]) => op === 'inspect' && id === 'gemma-gpt-stop'));
+    assert.equal(f.bridgeCloseCount, 1);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('unconfirmed native Codex child still blocks stop before bridge cancellation', async () => {
+  const f = await fixture({unconfirmedNativeChild: true});
+  try {
+    await f.c.open({model: 'gpt-6-astra'});
+    f.hostOptions.at(-1).onEvent({
+      method: 'item/started',
+      params: {
+        threadId: 'codex-parent',
+        turnId: 'turn-parent',
+        item: {id: 'native-child', type: 'subAgentActivity', kind: 'started', agentThreadId: 'child-gpt'}
+      }
+    });
+    await assert.rejects(f.c.stop(), /子代理尚未確認停止/);
+    assert.equal(f.bridgeCloseCount, 0);
+    f.setNativeChildUnconfirmed(false);
   } finally {
     await f.c.close();
   }

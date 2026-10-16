@@ -1,4 +1,6 @@
 import {createServer} from 'node:http';
+import {randomBytes} from 'node:crypto';
+import {bearerMatches, readLimitedBody} from './mcp-http-guard.mjs';
 
 // Codex 0.163 sends namespace/custom tools; the tested LM Studio Responses endpoint
 // exposes only function tools. This translates the wire format, never executes tools,
@@ -55,9 +57,13 @@ export function gemmaRequest(body) {
 }
 
 function rawInput(argumentsText) {
-  const parsed = JSON.parse(argumentsText);
-  if (typeof parsed.input !== 'string') throw Error('Gemma 自由格式工具缺少文字 input；未執行工具。');
-  return parsed.input;
+  try {
+    const parsed = JSON.parse(argumentsText);
+    if (typeof parsed?.input === 'string') return parsed.input;
+  } catch {}
+  // Let the native tool reject malformed model input and return its error to the
+  // model. A deterministic argument error must not look like a broken stream.
+  return argumentsText ?? '';
 }
 function nativeItem(item, aliases, {started = false} = {}) {
   const alias = item?.type === 'function_call' && aliases.get(item.name);
@@ -107,7 +113,17 @@ export function gemmaResponseEvents(aliases) {
 
 export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
   const requests = new Set();
+  const token = randomBytes(32).toString('base64url');
+  let expectedHost;
   const server = createServer(async (request, response) => {
+    if (
+      request.headers.host !== expectedHost ||
+      request.headers.origin !== undefined ||
+      !bearerMatches(request.headers.authorization, token)
+    ) {
+      response.writeHead(403).end();
+      return;
+    }
     if (request.method !== 'POST' || request.url !== '/v1/responses') {
       response.writeHead(404).end();
       return;
@@ -116,9 +132,16 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
     requests.add(abort);
     response.on('close', () => abort.abort());
     try {
-      const chunks = [];
-      for await (const chunk of request) chunks.push(chunk);
-      const {body, aliases} = gemmaRequest(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      let translated;
+      try {
+        translated = gemmaRequest(JSON.parse((await readLimitedBody(request, 16 * 1024 * 1024)).toString('utf8')));
+      } catch {
+        response
+          .writeHead(400, {'content-type': 'application/json'})
+          .end(JSON.stringify({error: {message: 'Gemma 請求或工具格式無效；未送出推論。'}}));
+        return;
+      }
+      const {body, aliases} = translated;
       const upstream = await fetchImpl(`${baseUrl}/responses`, {
         method: 'POST',
         headers: {'content-type': 'application/json'},
@@ -179,8 +202,10 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
     server.once('error', reject);
     server.listen(0, '127.0.0.1', resolve);
   });
+  expectedHost = `127.0.0.1:${server.address().port}`;
   return {
-    baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
+    baseUrl: `http://${expectedHost}/v1`,
+    headers: {Authorization: `Bearer ${token}`},
     async close() {
       for (const abort of requests) abort.abort();
       server.closeAllConnections();
