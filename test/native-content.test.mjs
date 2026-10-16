@@ -67,6 +67,22 @@ test('encoded destinations, image links and reference definitions are attributed
     assert.ok(referencesNativeDestination([{role: 'assistant', text}], 'D:/a.md'));
 });
 
+test(
+  'Windows slash-prefixed drive links read the original file, including encoded names and line suffixes',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const root = await mkdtemp(path.join(scratchBase, 'native-drive-'));
+    const file = path.join(root, '中文 #交接 (1).md');
+    await writeFile(file, 'exact original file');
+    const href = '/' + file.replaceAll('\\', '/');
+    for (const value of [href, encodeURI(href).replace('#', '%23'), `${href}#L2`, `${href}:2:3`]) {
+      const state = {workspace: root, messages: [{role: 'assistant', text: `[檔案](<${value}>)`}]};
+      assert.equal((await readNativeMessageFile(state, value)).bytes.toString(), 'exact original file');
+      await assert.rejects(readNativeMessageFile({...state, messages: []}, value), /本聊天室/);
+    }
+  }
+);
+
 test('Windows repair preserves parentheses, outer nested links, titles and reference definitions without overriding mismatched nodes', () => {
   const cases = [
     ['link', '[t](D:\\.codex\\report(1).md)', 'D:.codex\\report(1).md', 'D:\\.codex\\report(1).md'],

@@ -193,6 +193,21 @@ const eventually = async check => {
   }
 };
 
+test('desktop file menu resolves the original room after switching and rejects unrelated destinations', async () => {
+  const f = await fixture(), c = f.controller;
+  try {
+    const a = await c.open({model: codexModel});
+    const file = path.join(f.root, 'original.md');
+    await f.room(a.threadId).finish(`[檔案](<${file}>)`);
+    const b = await c.open({model: claudeModel});
+    assert.equal(c.messageFilePath(file, {threadId: a.threadId}), file);
+    assert.throws(() => c.messageFilePath(file, {threadId: b.threadId}), /本聊天室/);
+    assert.throws(() => c.messageFilePath(path.join(f.root, 'other.md'), {threadId: a.threadId}), /本聊天室/);
+  } finally {
+    await c.close();
+  }
+});
+
 test('history invalidation follows the selected room, not background activity or quota', async () => {
   const f = await fixture(),
     c = f.controller;

@@ -1,11 +1,13 @@
 import {fileURLToPath} from 'node:url';
 import {createTaskbarAttentionController, createWindowFocusNotifier} from './taskbar-attention.mjs';
+import {nativeFileMenuItems} from './electron-file-actions.mjs';
 
-export function createExternalLinkWindowHandler(openExternal) {
+export function createExternalLinkWindowHandler(openExternal, getAppOrigin = () => null) {
   return ({url}) => {
     // Web, email and phone links use their standard handler after a human click.
     // Never turn a Markdown destination into an arbitrary OS protocol launch.
     try {
+      if (new URL(url).origin === getAppOrigin()) return {action: 'deny'};
       if (['http:', 'https:', 'mailto:', 'tel:'].includes(new URL(url).protocol))
         void openExternal(url).catch(() => {});
     } catch {}
@@ -120,10 +122,18 @@ export async function createElectronWorkbench({electron, servicesFactory, browse
     owner.webContents.setBackgroundThrottling(false);
     focusNotifier?.notify();
   });
-  owner.webContents.on('context-menu', (event, {isEditable, selectionText, editFlags, linkURL}) => {
-    const items = [];
+  owner.webContents.on('context-menu', (event, params) => {
+    const {isEditable, selectionText, editFlags, linkURL} = params;
+    const items = nativeFileMenuItems({
+      electron,
+      window,
+      owner: owner.webContents,
+      app: services?.app,
+      params,
+      isClosing: () => closed || closing
+    });
     try {
-      if (typeof linkURL === 'string' && ['http:', 'https:'].includes(new URL(linkURL).protocol))
+      if (!items.length && typeof linkURL === 'string' && ['http:', 'https:'].includes(new URL(linkURL).protocol))
         items.push({label: '複製連結網址', click: () => electron.clipboard.writeText(linkURL)});
     } catch {}
     const editItems = isEditable
@@ -189,7 +199,12 @@ export async function createElectronWorkbench({electron, servicesFactory, browse
     ownerSession.setPermissionRequestHandler(permissionHandlers.request);
     ownerSession.setPermissionCheckHandler(permissionHandlers.check);
     ownerSession.setDisplayMediaRequestHandler(permissionHandlers.display);
-    owner.webContents.setWindowOpenHandler(createExternalLinkWindowHandler(url => electron.shell.openExternal(url)));
+    owner.webContents.setWindowOpenHandler(
+      createExternalLinkWindowHandler(
+        url => electron.shell.openExternal(url),
+        () => services.app.origin
+      )
+    );
     owner.webContents.on('will-navigate', (event, url) => {
       if (new URL(url).origin !== services.app.origin) event.preventDefault();
     });

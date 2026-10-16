@@ -35,14 +35,24 @@ export function CodeHeader({language, code}) {
   );
 }
 export function NativeLink({href, children, title}) {
-  const {preview} = useContext(TranscriptContext),
+  const {preview, state} = useContext(TranscriptContext),
     kind = nativeDestinationKind(href);
   if (kind === 'file')
     return (
-      <button type="button" className="inline-file" title={title || href} onClick={() => preview(href, 'message-file')}>
+      <a
+        href={messageFileUrl(href, state.threadId)}
+        draggable={false}
+        className="inline-file"
+        title={title || href}
+        onAuxClick={event => event.preventDefault()}
+        onClick={event => {
+          event.preventDefault();
+          preview(href, 'message-file');
+        }}
+      >
         <FileText size={14} />
         {children}
-      </button>
+      </a>
     );
   if (['web', 'external', 'fragment'].includes(kind))
     return (

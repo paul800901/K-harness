@@ -6,7 +6,7 @@ import {createCompletionAttention} from './completion-attention.mjs';
 import {createDiscussionController} from './discussion-controller.mjs';
 import {sessionAttachment, messageAttachment} from './session-workspace.mjs';
 import {readPresentedFile} from './desktop-files.mjs';
-import {readNativeMessageFile} from './native-message-file.mjs';
+import {readNativeMessageFile, resolveNativeMessageFile} from './native-message-file.mjs';
 import {discussionModes, discussionTranscript} from '../shared/discussion.mjs';
 import {abortable} from './abortable.mjs';
 import {readFile} from 'node:fs/promises';
@@ -1095,6 +1095,10 @@ export function createConversationController({
     },
     messageFile(href, context) {
       return readNativeMessageFile(projected(target(context)), href);
+    },
+    // In-process desktop menu only; not exposed as an HTTP/remote action.
+    messageFilePath(href, context) {
+      return resolveNativeMessageFile(projected(target(context)), href);
     },
     async close() {
       closing = true;

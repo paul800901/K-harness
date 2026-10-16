@@ -242,3 +242,15 @@ test('unapproved protocols cannot launch OS handlers or Electron popups', async 
   assert.deepEqual(failed({url: 'https://example.test/'}), {action: 'deny'});
   await new Promise(resolve => setImmediate(resolve));
 });
+
+test('internal file links never escape to the system browser, while external links still work', () => {
+  const opened = [],
+    handler = createExternalLinkWindowHandler(
+      async url => opened.push(url),
+      () => appOrigin
+    );
+  assert.deepEqual(handler({url: `${appOrigin}/api/message-file?path=a.md&threadId=one`}), {action: 'deny'});
+  assert.deepEqual(opened, []);
+  handler({url: 'https://example.test/'});
+  assert.deepEqual(opened, ['https://example.test/']);
+});

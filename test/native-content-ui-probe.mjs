@@ -16,6 +16,7 @@ const png = await readFile(path.resolve('frontend/assets/k-logo.jpg'));
 await writeFile(file, '原生已存檔：不需fileChange。');
 await writeFile(picture, png);
 const bracketFile = path.join(root, 'report(1).md');
+const slashFile = process.platform === 'win32' ? '/' + file.replaceAll('\\', '/') : file;
 await writeFile(bracketFile, '原生已存檔：不需fileChange。');
 const text = `[含括號檔名](${bracketFile})\n\n[括號標題](${bracketFile} (title))\n\n[帶標題](${bracketFile} "title")\n\n[參考連結][r]\n\n[r]: <${file}> "title"\n\n[![巢狀圖](<${picture}>)](${bracketFile})\n\n[本機絕對路徑](<${file}>)\n\n[檔案URI](${pathToFileURL(file).href})\n\n[相對路徑](<../中文 交接.md>)\n\n[行號](<${file}#L3>)\n\n[網頁](https://example.test/a?q=1#x) [郵件](mailto:me@example.test) [電話](tel:+886123)\n\n[其他原生入口](vscode://file/D:/a.js) [不可執行文字](javascript:alert%281%29)\n\n![本機圖](<${picture}>)\n\n![網頁圖](https://example.test/native.png)\n\n<b>原生HTML不得消失</b>\n\n\`\`\`text\n完整原始碼\n\`\`\``;
 const results = [];
@@ -31,7 +32,14 @@ try {
       model: provider === 'codex' ? 'gpt-6.1-sol' : provider === 'claude' ? 'claude-opus-5-5' : 'gemini-3.8-flash',
       status: 'ready',
       busy: false,
-      messages: [{id: 'reply', role: 'assistant', text, completedAt: new Date().toISOString()}],
+      messages: [
+        {
+          id: 'reply',
+          role: 'assistant',
+          text: text + `\n\n[斜線磁碟路徑](<${slashFile}>)\n\n[編碼磁碟路徑](${encodeURI(slashFile)})`,
+          completedAt: new Date().toISOString()
+        }
+      ],
       workers: Array.from({length: 461}, (_, i) => ({
         requestId: 'history-' + i,
         status: i === 460 ? 'failed' : 'completed',
@@ -69,7 +77,11 @@ try {
         await page.goto(app.createLaunchUrl());
         await page.screenshot({path: path.join(out, 'initial-' + provider + '-' + width + '.png')});
         const m = page.locator('.assistant-message');
-        await m.getByRole('button', {name: '本機絕對路徑', exact: true}).waitFor();
+        await m.getByRole('link', {name: '本機絕對路徑', exact: true}).waitFor();
+        assert.equal(await m.getByRole('link', {name: '本機絕對路徑', exact: true}).getAttribute('draggable'), 'false');
+        const documentUrl = page.url();
+        await m.getByRole('link', {name: '本機絕對路徑', exact: true}).click({button: 'middle'});
+        assert.equal(page.url(), documentUrl);
         assert.equal(
           await m.getByRole('link', {name: '郵件', exact: true}).getAttribute('href'),
           'mailto:me@example.test'
@@ -88,9 +100,11 @@ try {
           '帶標題',
           '參考連結',
           '巢狀圖',
-          '括號標題'
+          '括號標題',
+          '斜線磁碟路徑',
+          '編碼磁碟路徑'
         ]) {
-          await m.getByRole('button', {name, exact: true}).click();
+          await m.getByRole('link', {name, exact: true}).click();
           await page.locator('.file-preview').getByText('原生已存檔：不需fileChange。', {exact: true}).waitFor();
           const download = page.getByRole('link', {name: '下載完整檔案'});
           const response = await page.request.get(new URL(await download.getAttribute('href'), app.origin).href);
@@ -112,7 +126,7 @@ try {
         results.push({
           provider,
           width,
-          fileLinks: 9,
+          fileLinks: 11,
           downloadExact: true,
           localAndWebImages: true,
           htmlNotDiscarded: true,

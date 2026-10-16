@@ -3,7 +3,7 @@ import {fileURLToPath} from 'node:url';
 import {nativeDestinationKind, referencesNativeDestination} from '../shared/native-content.mjs';
 import {readPresentedPath} from './desktop-files.mjs';
 
-export async function readNativeMessageFile(state, href) {
+export function resolveNativeMessageFile(state, href) {
   if (
     typeof href !== 'string' ||
     nativeDestinationKind(href) !== 'file' ||
@@ -16,8 +16,14 @@ export async function readNativeMessageFile(state, href) {
     try {
       name = decodeURIComponent(name);
     } catch {}
+    // Markdown sometimes emits URL-style /D:/ paths. On Windows the leading
+    // slash otherwise resolves against the current drive, producing D:\D:\...
+    if (process.platform === 'win32') name = name.replace(/^\/([a-z]:[\\/])/iu, '$1');
     name = name.replaceAll('\\', path.sep);
   }
-  const target = path.resolve(state.workspace, name);
-  return readPresentedPath(target);
+  return path.resolve(state.workspace, name);
+}
+
+export async function readNativeMessageFile(state, href) {
+  return readPresentedPath(resolveNativeMessageFile(state, href));
 }
