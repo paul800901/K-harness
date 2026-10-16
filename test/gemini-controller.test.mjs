@@ -6,7 +6,7 @@ import {randomUUID} from 'node:crypto';
 import {createGeminiController, geminiModelsFrom} from '../src/gemini-controller.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
-import {GEMINI_MEDIA_GUIDANCE} from '../src/gemini-worker.mjs';
+import {GEMINI_MEDIA_GUIDANCE, GEMINI_TOOL_GUIDANCE} from '../src/gemini-worker.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
 import {scratchBase} from './scratch.mjs';
 
@@ -286,7 +286,7 @@ test('Gemini sends only new input, reopens native history and retains provider m
     const rules = path.join(last.params.env.HOME, '.gemini/config/rules/k-model-roles.md');
     assert.equal(
       await readFile(rules, 'utf8'),
-      `---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${GEMINI_MEDIA_GUIDANCE}\n`
+      `---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${GEMINI_TOOL_GUIDANCE}\n${GEMINI_MEDIA_GUIDANCE}\n`
     );
     assert.equal(c.state.messages.filter(m => m.role === 'user').at(-1).text, 'second input');
     assert.equal(last.args[last.args.indexOf('--model') + 1], 'gemini-3.8-flash-medium');

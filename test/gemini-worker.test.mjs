@@ -515,6 +515,27 @@ for (const [name, parsed, processResult, pattern] of [
     assert.equal(r.status, 'failed');
     assert.match(r.error, pattern);
   });
+test('Gemini no-output reports evidenced denied targets, not an invented permission cause', () => {
+  const result = {status: 'SUCCESS', response: ''};
+  const native = {code: 0, stderr: 'jetski: no output produced'};
+  const unknown = geminiOutcome({result}, native);
+  assert.doesNotMatch(unknown.error, /無法核准/);
+  assert.match(unknown.error, /未取得足以確認/);
+  const deniedTools = [
+    {tool: 'run_command', target: 'Get-ChildItem'},
+    {tool: 'view_file', target: 'D:/outside/POLICY.md'}
+  ];
+  const denied = geminiOutcome({result, deniedTools}, native);
+  assert.equal(denied.failureKind, 'permission-denied');
+  assert.match(denied.error, /執行命令：Get-ChildItem/);
+  assert.match(denied.error, /讀取檔案：D:\/outside\/POLICY.md/);
+  assert.match(denied.error, /未重送或變更權限/);
+  assert.equal(denied.nativeError, native.stderr);
+  assert.equal(
+    geminiOutcome({result: {...result, response: 'Recovered with allowed tools'}, deniedTools}, {code: 0}).status,
+    'completed'
+  );
+});
 for (const kind of ['timeout', 'cancel', 'stdout', 'stderr'])
   test(`Gemini ${kind} terminates whole tree and waits for kill completion`, async () => {
     const fake = fakeSpawn(null),
