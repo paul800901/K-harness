@@ -275,6 +275,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 介面
 
+- 10-16 [側欄手動排序跨完整重啟保存](sidebar-order-persistence-20261016.md)（待部署）
 - 常設 [專案側欄來源](third-party-workspace.md)
 - 10-13 [D:\K-harness 原始碼工作區對齊](workspace-alignment-20261013.md)
 - 10-09 [使用者訊息一鍵複製](user-message-copy-20261009.md)
