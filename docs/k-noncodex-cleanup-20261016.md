@@ -30,3 +30,22 @@
 - Astra 複查「同意」（提交 `2941297`）：逐處核對與原條件等價，另以 128 組狀態、2,688 次比較對照基準原判斷式零差異；三家 `workers()` 回傳契約支持直接刪除相容寫法（原盤點建議的 helper 不需要）；選擇、新建／重開、內部接續都經 provider 層登記檢查，移動預檢仍在載入聊天室之前。它在自己的 scratch 副本另跑 3 項邊界測試（state 目錄 junction 別名、三家保存對話的未登記工作區、未載入聊天室的非法移動目的地）全過；這些測試未加入本 repo。
 - 採納的文件補正：切換供應商與 `unresolved` 的說法收窄（見上）；補 `development-log.md` 索引。
 - 部署：本批與第 5 項後續批次一起，待 K 完全停止後在 K 外執行 `Update-K.ps1`，由本人安排；合回 main 不等於正式 K 已更新。
+- 已合回 main 並 push：`2941297`（程式）、`9ee63a3`（紀錄）。
+
+## 第二批：三個本機 MCP gateway 共用 HTTP 前門（拓樸不變）
+
+### 修改
+- 新增 `src/mcp-http-guard.mjs`：`admitMcpRequest`（來源必須是 loopback、Host 必須是本 gateway、Origin 若有必須同源、Bearer 以 `timingSafeEqual` 比對、只收 `POST /mcp`；不符就回 403／401／404／405 並回 `false`）、`readLimitedBody`（1 MiB 上限）、`bearerMatches`。
+- `src/browser-owner-gateway.mjs`、`src/external-browser-gateway.mjs`、`src/luna-gateway.mjs` 改用它，刪除三份 Bearer 比對、兩份 body 讀取迴圈與三段逐字相同的前門檢查。
+- 統一後的兩處小差異（無測試依賴）：Luna gateway 通過 403 之後的回應預設帶 `Cache-Control: no-store`（SDK 串流回應仍會覆寫成自己的設定，403／503 沒有）；瀏覽器 gateway 的 401 也帶 `WWW-Authenticate: Bearer`。
+- 各 gateway 的關閉中 503、請求 ID、取消、串流與錯誤回應都留在原處，未合併；外層轉送內層的 HTTP 拓樸不變（第三批才處理）。
+- 新增 `test/mcp-http-guard.test.mjs`：loopback／IPv4-mapped／外部位址、錯 Host、外來 Origin、錯或缺 Bearer、錯路徑、非 POST、尚未 listen 時 Host 未定、body 上限。
+
+### 驗證
+- 實作中一度把 browser-owner-gateway 後面轉送用的 `body` 變數省掉，既有 `browser-owner-gateway` 測試立刻以 400 失敗抓出，已改回。
+- 受影響 7 個測試檔 52 項全過；`npm test` 1710 項全過（多的 3 項是新測試）。介面未改，不需 UI 建置與 UI 測試。
+
+### 複查與部署
+- Astra 複查「同意」（提交 `d20503f`）：順序仍是 503 → 位址／Host／Origin 403 → Bearer 401 → 路徑 404 → 方法 405，全部通過才讀 body；排除上述 header 差異，新舊版 16,200 組條件比較一致。兩個瀏覽器 gateway 的取消仍掛在 `res.close`，body 未讀完就斷線時三個 gateway 新舊版都不進後續處理。它在自己的 scratch 另跑 6 項邊界測試（錯誤優先序、未讀完 body 即拒絕、實際 1 MiB 邊界、讀取中斷、初始化時序）全過，未加入本 repo。
+- 採納的收窄：新測試名稱改為「尚未知道 host 時，帶 Host 的請求被拒」（缺 Host 又缺 Origin 的請求在 listen 前新舊版都會通過，但 host 在接受連線前就已設定，實測 listening 當下連線為 403，屬不可達狀態）；`no-store` 的適用範圍如上。
+- 部署同第一批，由本人安排。

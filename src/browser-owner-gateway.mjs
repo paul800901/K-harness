@@ -1,5 +1,5 @@
 import {createServer} from 'node:http';
-import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {randomBytes} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
@@ -9,13 +9,7 @@ import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/se
 import {createConnection} from '@playwright/mcp';
 import {createBrowserLiveSession} from './browser-live-session.mjs';
 import {restrictedBrowserTransport} from './browser-mcp-stdio.mjs';
-
-function matchesBearer(header, token) {
-  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
-  const actual = Buffer.from(header.slice(7)),
-    expected = Buffer.from(token);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
+import {admitMcpRequest, readLimitedBody} from './mcp-http-guard.mjs';
 
 /**
  * Owner-side pilot: the CLI receives only AI MCP authority. Browser lifetime,
@@ -58,27 +52,7 @@ export async function createBrowserOwnerGateway({
       res.writeHead(503).end();
       return;
     }
-    if (
-      !['127.0.0.1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress) ||
-      req.headers.host !== host ||
-      (req.headers.origin !== undefined && req.headers.origin !== `http://${host}`)
-    ) {
-      res.writeHead(403).end();
-      return;
-    }
-    res.setHeader('Cache-Control', 'no-store');
-    if (!matchesBearer(req.headers.authorization, aiToken)) {
-      res.writeHead(401).end();
-      return;
-    }
-    if (req.url !== '/mcp') {
-      res.writeHead(404).end();
-      return;
-    }
-    if (req.method !== 'POST') {
-      res.writeHead(405, {Allow: 'POST'}).end();
-      return;
-    }
+    if (!admitMcpRequest(req, res, {host, token: aiToken})) return;
     let message,
       timer,
       registered = false,
@@ -92,14 +66,7 @@ export async function createBrowserOwnerGateway({
       raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});
     };
     try {
-      const chunks = [];
-      let size = 0;
-      for await (const chunk of req) {
-        size += chunk.length;
-        if (size > 1024 * 1024) throw new Error('Request too large.');
-        chunks.push(chunk);
-      }
-      const body = Buffer.concat(chunks);
+      const body = await readLimitedBody(req);
       message = JSON.parse(body);
       // Do not accept batches: each HTTP lifetime owns exactly one request ID.
       if (!message || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string')

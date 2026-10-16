@@ -18,6 +18,7 @@ import {
   geminiOutcome,
   killGeminiTree,
   GEMINI_BROWSER_GUIDANCE,
+  GEMINI_TOOL_GUIDANCE,
   GEMINI_MEDIA_GUIDANCE
 } from './gemini-worker.mjs';
 import {saveMainSession, listMainSessions} from './main-sessions.mjs';
@@ -237,7 +238,7 @@ export function createGeminiController({
     await atomicWrite(path.join(home(), '.gemini/antigravity-cli/settings.json'), JSON.stringify(settings, null, 2));
     await atomicWrite(
       path.join(home(), '.gemini/config/rules/k-model-roles.md'),
-      `---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}`
+      `---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n${GEMINI_TOOL_GUIDANCE}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}`
     );
     state.browserAccess = {
       enabled: !!browserServer,

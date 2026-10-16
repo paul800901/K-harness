@@ -1,10 +1,11 @@
 import {createServer} from 'node:http';
-import {randomBytes, timingSafeEqual} from 'node:crypto';
+import {randomBytes} from 'node:crypto';
 import {Readable} from 'node:stream';
 import {pipeline} from 'node:stream/promises';
 import {McpServer, WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
 import {lunaResult} from './luna-bridge.mjs';
+import {admitMcpRequest, readLimitedBody} from './mcp-http-guard.mjs';
 
 const requestId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u);
 const idSchema = z.strictObject({requestId});
@@ -340,22 +341,6 @@ function createMcpServer(
   return server;
 }
 
-async function readBody(req, limit = 1024 * 1024) {
-  const chunks = [];
-  let length = 0;
-  for await (const chunk of req) {
-    length += chunk.length;
-    if (length > limit) throw new Error('request too large');
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
-function bearerMatches(header, token) {
-  if (typeof header !== 'string' || !header.startsWith('Bearer ')) return false;
-  const actual = Buffer.from(header.slice(7));
-  const expected = Buffer.from(token);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
 
 /** Start a token-authenticated, loopback-only MCP HTTP gateway for one Luna bridge. */
 export async function createLunaGateway({
@@ -383,38 +368,15 @@ export async function createLunaGateway({
   let closed = false,
     closing = false,
     closePromise,
-    expectedHost,
-    expectedOrigin;
+    expectedHost;
   const http = createServer(async (req, res) => {
     if (closed || closing) {
       res.writeHead(503).end();
       return;
     }
-    if (req.socket.remoteAddress !== '127.0.0.1' && req.socket.remoteAddress !== '::ffff:127.0.0.1') {
-      res.writeHead(403).end();
-      return;
-    }
-    if (
-      req.headers.host !== expectedHost ||
-      (req.headers.origin !== undefined && req.headers.origin !== expectedOrigin)
-    ) {
-      res.writeHead(403).end();
-      return;
-    }
-    if (!bearerMatches(req.headers.authorization, token)) {
-      res.writeHead(401, {'WWW-Authenticate': 'Bearer'}).end();
-      return;
-    }
-    if (req.url !== '/mcp') {
-      res.writeHead(404).end();
-      return;
-    }
-    if (req.method !== 'POST') {
-      res.writeHead(405, {Allow: 'POST'}).end();
-      return;
-    }
+    if (!admitMcpRequest(req, res, {host: expectedHost, token})) return;
     try {
-      const body = await readBody(req);
+      const body = await readLimitedBody(req);
       const webRequest = new Request(`http://127.0.0.1${req.url}`, {
         method: 'POST',
         headers: req.headers,
@@ -441,7 +403,6 @@ export async function createLunaGateway({
   const address = http.address();
   const url = `http://127.0.0.1:${address.port}/mcp`;
   expectedHost = `127.0.0.1:${address.port}`;
-  expectedOrigin = `http://${expectedHost}`;
   const mcpConfig = {
     mcpServers: {[geminiOnly ? 'k_gemini' : 'k_luna']: {type: 'http', url, headers: {Authorization: `Bearer ${token}`}}}
   };
