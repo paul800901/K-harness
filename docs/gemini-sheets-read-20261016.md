@@ -82,3 +82,7 @@ Claude Code 2.1.301、Claude.ai Pro / firstParty，實際 assistant 模型 `clau
 程式與首份文件已於本輪 fast-forward 合回 `D:\K-harness` 的 main，讀回為 `01e1155fe9dadfd5fec723d83a905de93ec9025c`（後續本段為純文件收尾）。main 與候選工作樹皆無未提交程式變更。正式 47831 仍由原 K 程序監聽，`.local/runtime.json` 版本未變、正式 Gemini MCP 綁定檔仍不存在；符合本人先暫停、不關 K、不部署、不 push 的要求。
 
 本輪證據實際保留於 `C:\Users\Paulus\.codex\worktrees\gemini-sheets-read\K-harness\.runtime\archive\gemini-sheets-20261016`。暫不封存該工作樹，避免遺失 Git 排除的原生驗證與審核紀錄；沒有複製原生帳號、登入或憑證。下一輪依本文件接續，不能只看到 main 新程式就當正式已更新。
+
+## 後續正式部署（2026-10-16 23:15）
+
+本人已授權與其他聊天室成果整合部署，本文件先前的暫停點為歷史紀錄。南區現已套用 `46ec46040d3ee0df1a4fc82cfd5f21a6591800a3`，正式 health 200／native，首次 push 與遠端讀回成功。完整驗證、真正 Opus 5.5 複查與正式接線讀回見 [三聊天室整合部署](integrated-deploy-20261016.md)。既有未驗證邊界保留；雲端 Gemma 尚未租機，東區未更新。
