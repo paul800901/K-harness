@@ -71,3 +71,7 @@
 
 ### 驗證
 - `npm run build:ui` 成功；`npm test` 1739 項全過。`npm run test:ui` 47/48：`long-user-text-ui-probe`（長訊息收合後焦點位置）在整輪中失敗一次，單獨重跑 2 次皆通過；該 probe 不開設定視窗，判斷為整輪負載下的時序偶發，與本批無關，列為待觀察。會實際打開設定視窗的 probe（core-updates、gemini-accounts、discussion-api-settings、mobile-remote、modal-focus、completion-attention 等）全過。
+
+### 複查與部署
+- GPT-6.1 Sol 驗收「同意」（提交 `36cc5f1`）：人工比對並把新元件的 props／callback 代回原 JSX 做結構比對，文字、順序、className、aria、條件分支一致；封存先清空訊息、遠端登出後導頁、停止後端後關閉並標記離線都保留；沒有遺失或多餘的 import。它在自己的工作槽建置候選版與拆分前的 `9bc0d74`，6 支會開設定視窗的 probe 全過；`long-user-text-ui-probe` 候選版與拆分前各重跑 5 次全過，同意「偶發、無本批回歸證據」，但整輪負載是原因尚未證實。
+- 部署：與後續批次一起，由本人在 K 外更新。
