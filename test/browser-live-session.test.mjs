@@ -228,7 +228,7 @@ test('fail-closed makes the session unavailable at once and releases busy only a
     state = await session.getState();
     assert.equal(state.available, false);
     assert.equal(state.busy, false);
-    assert.match(state.error, /重新開啟對話/);
+    assert.match(state.error, /下次使用瀏覽器時會重新連線/);
     assert.equal(state.recoveryRequired, true);
   } finally {
     finishClose();

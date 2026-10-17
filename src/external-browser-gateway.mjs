@@ -11,7 +11,7 @@ const MODES = new Set(['regular', 'incognito']);
 const browserSessionTool = {
   name: 'browser_session',
   description:
-    'Select external Chrome mode and profileId before browser tools. Use browser_profiles to discover connected profile identities. A Chrome profile is NOT a Google account; verify the website account before account-specific work. Tabs are only the assistant-managed group, not all profile tabs. Multiple profiles require an explicit target; existing sessions stay pinned, without fallback.',
+    'Select external Chrome mode and profileId before browser tools. Use browser_profiles to discover connected profile identities. A Chrome profile is NOT a Google account; verify the website account before account-specific work. Tabs are only the assistant-managed group, not all profile tabs. Multiple profiles require an explicit target; existing sessions stay pinned, without fallback. If K Chrome is not running, this starts it minimized. After a stop or a closed Chrome, call this again for a fresh connection; interrupted operations are not replayed.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -29,7 +29,7 @@ const browserSessionTool = {
 const browserProfilesTool = {
   name: 'browser_profiles',
   description:
-    'List K Chrome profile IDs and current native connection/mode capabilities on demand. Does not read account data, open tabs, reconnect or select a profile.',
+    'List K Chrome profile IDs and current native connection/mode capabilities on demand. Does not read account data, open tabs, reconnect or select a profile. If none is connected, browser_session starts K Chrome.',
   inputSchema: {type: 'object', properties: {}, additionalProperties: false}
 };
 
@@ -71,6 +71,7 @@ export async function createExternalBrowserGateway({
   profile,
   launchExternalContext,
   listExternalProfiles,
+  startExternalBrowser,
   childGatewayFactory = createBrowserOwnerGateway,
   toolTimeoutMs = 120000
 }) {
@@ -100,7 +101,14 @@ export async function createExternalBrowserGateway({
   };
   async function child(mode, profileId = null) {
     const key = childKey(mode, profileId);
-    if (children.has(key)) return children.get(key);
+    if (children.has(key)) {
+      const existing = await children.get(key);
+      // A stopped or closed browser is replaced by a fresh connection when it is
+      // selected again; nothing that was interrupted is replayed.
+      if (!(await existing.getState()).recoveryRequired) return existing;
+      if (children.get(key) === existing) children.delete(key);
+      await existing.close().catch(() => {});
+    }
     const opening = (async () => {
       const childDirectory = await makeDir(outputRoot, `external-${key}`),
         childProfile = await makeDir(profileRoot, `external-${key}`);
@@ -255,15 +263,11 @@ export async function createExternalBrowserGateway({
           const gateway = current();
           if (gateway) {
             const state = await gateway.getState();
-            if (state.recoveryRequired)
-              return jsonResponse(
-                toolError(reqMessage.id, '瀏覽器連線已中止。請重新開啟對話以重新連線；先前操作不會自動重送。')
-              );
             if (inFlight || state.busy)
               return jsonResponse(
                 toolError(reqMessage.id, 'Cannot switch browser mode while a browser operation is active.')
               );
-            if (mode === selected && targetProfileId === selectedProfileId)
+            if (!state.recoveryRequired && mode === selected && targetProfileId === selectedProfileId)
               return jsonResponse({
                 jsonrpc: '2.0',
                 id: reqMessage.id,
@@ -284,8 +288,12 @@ export async function createExternalBrowserGateway({
           let target;
           try {
             if (listExternalProfiles) {
-              const profiles = await listExternalProfiles(),
-                online = profiles.filter(p => p.connected);
+              let profiles = await listExternalProfiles();
+              // Nothing connected means K Chrome is not running: start it minimized
+              // rather than asking the owner to open it (owner decision 2026-10-18).
+              if (startExternalBrowser && !profiles.some(p => p.connected))
+                profiles = await startExternalBrowser({mode, signal: controller.signal});
+              const online = profiles.filter(p => p.connected);
               if (!targetProfileId) {
                 if (online.length !== 1)
                   throw Error('Use browser_profiles and specify profileId; no unique connected profile.');

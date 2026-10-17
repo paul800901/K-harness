@@ -2,6 +2,7 @@ import {readFile, mkdir, realpath, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {createExternalBrowserGateway} from './external-browser-gateway.mjs';
 import {createChromeExtensionContext} from './chrome-extension-context.mjs';
+import {startKChrome} from './k-chrome-launcher.mjs';
 import {
   openChromeConnectPageViaNative,
   listChromeProfiles,
@@ -33,10 +34,19 @@ export async function loadKBrowserAssistant({vault}) {
     throw Error('Chrome profile cannot redirect outside the owner vault.');
   // User input elsewhere on the computer is not a browser stop command.
   const descriptorPath = path.join(root, 'k-browser-native-link.json');
+  const listExternalProfiles = () => listChromeProfiles({descriptorPath});
   return options =>
     createExternalBrowserGateway({
       ...options,
-      listExternalProfiles: () => listChromeProfiles({descriptorPath}),
+      listExternalProfiles,
+      startExternalBrowser: ({mode, signal}) =>
+        startKChrome({
+          chromeExecutable: config.chromeExecutable,
+          userDataDir,
+          mode,
+          signal,
+          listProfiles: listExternalProfiles
+        }),
       launchExternalContext: async ({mode, profileId}) => {
         // Snapshot one native instance for this context. A different worker starting
         // later cannot silently retarget an already selected session.

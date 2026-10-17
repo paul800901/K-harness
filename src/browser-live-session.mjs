@@ -182,7 +182,7 @@ export async function createBrowserLiveSession(profile, {launchContext, download
   }
   const state = async () => ({
     recoveryRequired: closed || disconnected,
-    ...(closed || disconnected ? {error: '瀏覽器連線已中止。請重新開啟對話以重新連線；先前操作不會自動重送。'} : {}),
+    ...(closed || disconnected ? {error: '瀏覽器連線已中止；AI 下次使用瀏覽器時會重新連線，先前操作不會自動重送。'} : {}),
     busy: aiCalls > 0,
     available: !!context && !disconnected && !closed
   });

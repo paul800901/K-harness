@@ -4,7 +4,8 @@ import {randomUUID} from 'node:crypto';
 import {WebSocket} from 'ws';
 
 // Only the trusted K owner reads this descriptor from its protected vault.
-// No Chrome launch, foreground operation, or command retry is permitted here.
+// Chrome is started only by k-chrome-launcher; this module never launches it,
+// changes the foreground window or retries a command.
 export function validateProfileId(profileId) {
   if (typeof profileId !== 'string' || !/^[a-f0-9]{32}$/.test(profileId)) throw Error('K Chrome 設定檔識別碼無效。');
   return profileId;
@@ -56,7 +57,7 @@ export async function openChromeConnectPageViaNative({descriptorPath, descriptor
     selected ??= await readDescriptor(descriptorPath);
   } catch {
     throw Error(
-      'K 專用 Chrome 尚未連上瀏覽器助手。請手動開啟 K 專用 Chrome 並載入新版擴充；K 不會自動跳出瀏覽器視窗。'
+      'K 專用 Chrome 尚未連上瀏覽器助手。請確認 K 專用 Chrome 已載入並啟用 K 瀏覽器助手擴充。'
     );
   }
   await nativeRequest(selected, {type: 'openConnectPage', url}, timeoutMs);
@@ -110,13 +111,13 @@ async function nativeRequest(descriptor, request, timeoutMs) {
       finish(
         message.ok === true
           ? undefined
-          : Error('K 瀏覽器助手無法在背景建立連線頁。請確認專用 Chrome 的擴充已啟用；沒有退回前景啟動。'),
+          : Error('K 瀏覽器助手無法在背景建立連線頁。請確認專用 Chrome 的擴充已啟用。'),
         message
       );
     });
     socket.on('error', () =>
       finish(
-        Error('K 專用 Chrome 的原生連線不可用。請手動開啟專用 Chrome 或重新載入 K 瀏覽器助手；K 不會搶走前景視窗。')
+        Error('K 專用 Chrome 的原生連線不可用。請確認專用 Chrome 仍開著，或重新載入 K 瀏覽器助手。')
       )
     );
     socket.on('close', () => finish(Error('K 瀏覽器助手背景連線已中斷；沒有自動重送。')));

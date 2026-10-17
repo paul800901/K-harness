@@ -43,7 +43,7 @@ async function fixture(settings = {}) {
   async function childFactory(childOptions) {
     const childName = path.basename(childOptions.profile).replace('external-', ''),
       mode = childName.split('-')[0];
-    const record = {mode, options: childOptions};
+    const record = {mode, options: childOptions, calls: []};
     created.push(record);
     let busy = false;
     const reply = message => Response.json(message);
@@ -69,6 +69,7 @@ async function fixture(settings = {}) {
             ]
           }
         });
+      if (m.method === 'tools/call') record.calls.push(m.params.name);
       if (m.method === 'tools/call' && m.params.name === 'browser_snapshot') {
         await childOptions.launchContext?.(childOptions.profile, {width: 800, height: 600});
         if (settings.warmDelayMs) await new Promise(resolve => setTimeout(resolve, settings.warmDelayMs));
@@ -110,6 +111,7 @@ async function fixture(settings = {}) {
     profile,
     childGatewayFactory: childFactory,
     ...(settings.profiles ? {listExternalProfiles: async () => structuredClone(settings.profiles)} : {}),
+    ...(settings.startExternalBrowser ? {startExternalBrowser: settings.startExternalBrowser} : {}),
     launchExternalContext: async options => {
       launched.push(options);
       return {};
@@ -266,19 +268,74 @@ test('MCP cancellation reaches a browser_session while its warm-up is queued', a
   }
 });
 
-test('disconnected browser selection reports recovery', async () => {
+test('selecting a stopped or closed browser again opens a fresh connection without replaying work', async () => {
   const f = await fixture();
   try {
     await f.call(1, 'browser_session', {mode: 'regular'});
-    f.created[0].gateway.getState = async () => ({
-      available: false,
-      busy: false,
-      recoveryRequired: true
-    });
+    await f.call(2, 'browser_navigate', {url: 'https://example.invalid/form'});
+    f.created[0].gateway.getState = async () => ({available: false, busy: false, recoveryRequired: true});
+    const reply = await f.call(3, 'browser_session', {mode: 'regular'});
+    assert.match(reply.result.content[0].text, /Selected external Chrome regular mode/);
+    assert.equal(f.created.length, 2, 'a new child replaces the broken one');
+    assert.equal(f.created[0].gatewayClosed, true);
+    assert.deepEqual(f.created[1].calls, ['browser_snapshot'], 'only the readiness check runs; nothing is replayed');
+    assert.match(JSON.stringify(await f.call(4, 'browser_navigate')), /regular:browser_navigate/);
+    assert.equal(f.created[1].calls.at(-1), 'browser_navigate');
+  } finally {
+    await closeFixture(f);
+  }
+});
+
+test('a broken browser is not replaced while a call is still running on it', async () => {
+  const f = await fixture();
+  try {
+    await f.call(1, 'browser_session', {mode: 'regular'});
+    f.created[0].gateway.getState = async () => ({available: false, busy: true, recoveryRequired: true});
     const reply = await f.call(2, 'browser_session', {mode: 'regular'});
+    assert.match(JSON.stringify(reply), /operation is active/);
+    assert.equal(f.created.length, 1);
+  } finally {
+    await closeFixture(f);
+  }
+});
+
+test('with no connected profile, browser_session starts K Chrome once and selects the profile that connects', async () => {
+  const id = 'a'.repeat(32);
+  const profiles = [{profileId: id, connected: false, modes: []}];
+  const starts = [];
+  const f = await fixture({
+    profiles,
+    startExternalBrowser: async ({mode, signal}) => {
+      starts.push({mode, signal: signal instanceof AbortSignal});
+      return [{profileId: id, connected: true, modes: ['regular', 'incognito']}];
+    }
+  });
+  try {
+    const selected = await f.call(1, 'browser_session', {mode: 'incognito'});
+    assert.match(selected.result.content[0].text, new RegExp(`incognito mode\\. profileId=${id}`));
+    assert.deepEqual(starts, [{mode: 'incognito', signal: true}]);
+    profiles[0] = {profileId: id, connected: true, modes: ['regular', 'incognito']};
+    await f.call(2, 'browser_session', {mode: 'regular'});
+    assert.equal(starts.length, 1, 'a connected Chrome is not started again');
+  } finally {
+    await closeFixture(f);
+  }
+});
+
+test('a failed Chrome start is reported and selects nothing', async () => {
+  const f = await fixture({
+    profiles: [{profileId: 'a'.repeat(32), connected: false, modes: []}],
+    startExternalBrowser: async () => {
+      throw Error('K 專用 Chrome 已在執行，但瀏覽器助手沒有連上；請確認擴充已啟用。');
+    }
+  });
+  try {
+    const reply = await f.call(1, 'browser_session', {mode: 'regular'});
     assert.equal(reply.result.isError, true);
-    assert.match(reply.result.content[0].text, /連線已中止/);
-    assert.match(reply.result.content[0].text, /不會自動重送/);
+    assert.match(reply.result.content[0].text, /瀏覽器助手沒有連上/);
+    assert.match(reply.result.content[0].text, /No fallback was selected/);
+    assert.equal((await f.gateway.getState()).selectedMode, null);
+    assert.equal(f.created.length, 0);
   } finally {
     await closeFixture(f);
   }

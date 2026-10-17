@@ -72,7 +72,7 @@ test('native opener rejects a response for another request', async () => {
 test('native opener rejects missing and non-loopback descriptors without network access', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'k-native-invalid-')),
     descriptorPath = path.join(dir, 'link.json');
-  await assert.rejects(openChromeConnectPageViaNative({descriptorPath}, 'fixture'), /手動開啟/);
+  await assert.rejects(openChromeConnectPageViaNative({descriptorPath}, 'fixture'), /尚未連上瀏覽器助手/);
   await writeFile(
     descriptorPath,
     JSON.stringify({

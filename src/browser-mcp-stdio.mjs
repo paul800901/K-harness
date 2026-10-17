@@ -74,7 +74,7 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
             const name = message.params?.name,
               args = message.params?.arguments ?? {};
             if (liveSession && !liveSession.beginAiCall())
-              return await deny({...message, reason: 'browser session is unavailable.'});
+              return await deny({...message, reason: 'browser session is unavailable. Call browser_session to reconnect; interrupted operations are not replayed.'});
             if (liveSession) activeCalls.add(message.id);
             // Upstream explicitly exempts code-origin file accesses from its
             // workspace guard; do not expose that escape hatch in K.
