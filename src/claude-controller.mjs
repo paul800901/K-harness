@@ -1185,12 +1185,16 @@ export function createClaudeController({
           /^(TaskStop|KillShell|KillBash)$/i.test(tool.name ?? '') &&
           typeof stoppedId === 'string' &&
           ((toolResults.length === 1 && nativeAgentOutput?.task_id === stoppedId) ||
-            tool.output.includes(`stopped task: ${stoppedId}`))
+            /stopped task: ([\w-]+)/.exec(tool.output)?.[1] === stoppedId)
         ) {
           const worker = state.workers.find(
             item => item.provider === 'claude-native' && item.nativeTaskId === stoppedId && !item.settled
           );
-          if (worker) Object.assign(worker, {status: 'stopped', settled: true, endedAt: new Date().toISOString()});
+          if (worker) {
+            delete worker.backgroundMissing;
+            delete worker.error;
+            Object.assign(worker, {status: 'stopped', settled: true, endedAt: new Date().toISOString()});
+          }
         }
         if (!block.is_error && /^(Write|Edit|NotebookEdit|MultiEdit)$/i.test(tool.name ?? '')) {
           const candidate = tool.details?.file_path ?? tool.details?.path ?? tool.details?.notebook_path;
