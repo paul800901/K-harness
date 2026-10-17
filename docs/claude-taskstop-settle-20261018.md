@@ -13,10 +13,11 @@
 
 ## 修改
 
-- `src/claude-controller.mjs`：處理工具回覆時，若是成功（非 `is_error`）的 `TaskStop`（含舊名 `KillShell`／`KillBash`），且結構化結果的 `task_id` 等於輸入的 `task_id`（或 `shell_id`），或回覆文字含「stopped task: <該 id>」，就把同一 `nativeTaskId` 的 `claude-native` 工作標為 `stopped`、已結束。停止失敗不改狀態。只依 Claude Code 自己的明確回覆，不猜測程序狀態。
-- `test/claude-controller.test.mjs`：結構化結果、只有文字、停止失敗三種情況；修正前的程式上此測試失敗。
+- `src/claude-controller.mjs`：處理工具回覆時，若是成功（非 `is_error`）的 `TaskStop`（含同一工具的別名 `KillShell`／`KillBash`），且回覆文字「Successfully stopped task: <id>」的 id 與輸入的 `task_id`（或 `shell_id`）完全相同，就把同一 `nativeTaskId`、尚未結束的 `claude-native` 工作標為 `stopped`，並清掉先前「原生背景清單已無此工作」的錯誤。停止失敗、「had already ended」都不算停止。只依 Claude Code 自己的明確回覆，不猜測程序狀態。
+- `test/claude-controller.test.mjs`：停止成功、停止失敗、「早就結束」、id 前綴相同的另一工作（`bg-de`）、`bg-1` 與 `bg-10` 並存、已結束的工作不被改寫、背景清單先移除再停止會清錯誤。第一版程式上此測試失敗。
 
 ## 驗證與複查
 
-- 完整 `npm test` 1748/1748（建置介面後）。
-- 待 Sol 驗收、Fable 第二審；與 K 自行開啟 Chrome 批次一起部署。
+- GPT-6.1 Sol 驗收（`ddfd8cc`）：「不同意」，兩項 P2——文字比對用 `includes`，回覆寫 `bg-ab` 會誤結案 `bg-a`；背景清單先移除再收到停止成功時，殘留「尚未收到完成結果」錯誤。其餘（多個工具回覆、原生 Agent、舊工具名、前後到達的 task_notification、晚到事件、host 關閉）通過；隔離槽 `npm test` 1748/1748。認為結構化與文字兩種證據並存不算過度。已修（`a966386`）。
+- Fable 5.1 唯讀第二審（`ddfd8cc`）：無 P1／P2。從本機 Claude Code 2.1.285 的實作核對：成功文字固定為「Successfully stopped task: <id> (<command>)」，`KillShell`／`KillBash` 是同一工具別名；輸入 id 不精確命中時走代理名稱解析而非前綴，失敗回錯誤；工作已結束時回「Task <id> had already ended (...)」且 `task_id` 仍等於輸入。採納：P3 結構化證據會把「早就結束」標成 stopped、測試未真正驗到結構化路徑、補測試缺口、id 邊界。主代理據此簡化為只認成功文字（`e67adc1`）：工具回覆的內容就是完整的結構化結果，另一條判斷沒有增加證據，反而會誤標。另記：`local_bash` 的 `task_started` 沒有 `isReplay` 防護（`local_agent` 分支有），目前看不出會被重播，不在本批處理。
+- 完整 `npm test` 1748/1748（`e67adc1`，建置介面後）。待 Sol 複驗簡化後版本；與 K 自行開啟 Chrome 批次一起部署。
