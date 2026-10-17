@@ -26,11 +26,13 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 安裝、啟動、更新與發布
 
+- 10-17 [東區更新準備：46ec460 候選、首次外部更新中斷紀錄](dongqu-update-20261017.md)
 - 10-16 [三聊天室成果整合、更新器回收與正式部署](integrated-deploy-20261016.md)
 - 常設 [K：Git 下載、安裝、更新與退版](git-install-update.md)
 - 10-11 [附件可信投影與 remote compact 提示正式安裝](trusted-attachments-deploy-20261011.md)
 - 10-11 [原生調度與本人目標意圖正式更新](native-coordination-deploy-20261011.md)
 - 10-10 [2026-10-10 三聊天室成果整合更新](integrated-update-20261010.md)
+- 10-09 [東區正式套用已驗收版本 1a45a734](dongqu-update-20261009.md)
 - 10-09 [公開來源發布與東區取用](public-source-release-20261009.md)
 - 10-07 [南區三項 K 修正：已套用、保持關閉](k-fixes-deploy-held-20261007.md)
 - 10-03 [南區下載新版、Gemini 啟用與正式讀回](south-main-update-20261003.md)
