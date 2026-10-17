@@ -32,7 +32,7 @@
   - 停止或 Chrome 關閉造成的斷線（`recoveryRequired`）不再要求重新開啟對話：明確再選一次時關掉舊連線、建立新連線，只做就緒檢查，不重送任何先前操作。仍有操作在跑（busy／in-flight）時照舊拒絕切換。
   - `browser_session`／`browser_profiles` 的工具說明補上「沒開會自己縮小開」「斷線後再選一次即可重連、不重做」。
 - 文字：右側狀態改為「瀏覽器連線已中止；AI 下次使用瀏覽器時會重新連線，先前操作不會自動重送。」；拒絕操作時提示模型呼叫 `browser_session` 重連；`chrome-native-connection.mjs` 拿掉「K 不會自動跳出／不會搶前景」等已不成立的說法。
-- K 瀏覽器助手擴充（`de6ef29`，版本 0.1.3 → 0.1.4）：`background.ts` 在沒有該模式視窗時，以 `chrome.windows.create({incognito, url:'about:blank', state:'minimized'})` 自己開一個縮小的視窗，用它的空白分頁當工作分頁（原本直接拒絕並要本人開視窗，K 要等 90 秒逾時才知道）；`nativeConnection.ts` 在沒有一般視窗時，把連線頁開在自己的縮小一般視窗（連線完成後連線頁關閉，該視窗隨之關閉）。
+- K 瀏覽器助手擴充（`de6ef29`，版本 0.1.3 → 0.1.4）：`background.ts` 在沒有該模式視窗時，以 `chrome.windows.create({incognito, url:'about:blank', state:'minimized'})` 自己開一個縮小的視窗，用它的空白分頁當工作分頁（原本直接拒絕並要本人開視窗，K 要等 90 秒逾時才知道）；`nativeConnection.ts` 在沒有一般視窗時，把連線頁開在自己的縮小一般視窗（一般請求時該視窗成為工作視窗；無痕請求時連線完成、連線頁關閉後該視窗隨之關閉）。開窗被 Chrome 拒絕時（例如停用無痕）回報中文說明。
 - `AGENTS.md` 第九節改為新規則。
 - 未改：開啟的是 K 專用 Chrome 最近使用的設定檔（Profile 2）；AI 指定其他設定檔時仍回報。擴充遇到其他錯誤時仍只在連線頁顯示、不回報給 K（K 等 90 秒逾時），本批只消除最常見的「缺少該模式視窗」。聊天室重開時的舊恢復流程（`desktop-controller`、`conversation-controller` 的 `recoveryRequired` 重建 host）保留，屬第 7 項 Codex 主控範圍。`Open-K-Browser.ps1`（本人手動開、要看得到視窗）與新腳本（AI 用、立即縮小）行為不同，不合併。
 
@@ -41,12 +41,16 @@
 - 新測試：`test/k-chrome-launcher.test.mjs`（以另一程式獨佔 lockfile 模擬執行中的 Chrome：不重開只等待、等不到回報；殘留 lockfile 照常開；兩個聊天室共用一次開啟；一律開一般視窗、腳本參數；開啟失敗不重試；已停止的請求不開；等待中被停止立即放手而別房的開啟照常；取消停止等待）；`test/external-browser-gateway.test.mjs` 補「斷線後再選建立新連線、只跑就緒檢查不重做」「仍有操作在跑時不換連線」「沒連線時只開一次並選到連上的設定檔」「開啟失敗如實回報、不選任何模式」；原「斷線回報需重新開啟」測試改為新行為。兩項停止測試在修正前的程式上都卡到逾時。
 - 真機端對端（`run-start.mjs` 直接呼叫 `startKChrome`＋真 `listChromeProfiles`）：一般、無痕各 1 次與交還焦點後 2 次，約 1.9 秒助手連上；Chrome 已開著時不重開。之後以分支的真瀏覽器閘道（`gateway-e2e.mjs`，接本人 K 專用 Chrome 與擴充）：Chrome 關著時 `browser_session regular` 2,148ms 選好（閃約 0.19 秒、焦點回原視窗），`browser_navigate example.com` 成功；接著 `browser_session incognito` 90,026ms 逾時（擴充改版前的既有限制，促成 `de6ef29`）。
 - 擴充改版的真瀏覽器驗證（`ext-incognito-probe.mjs`，拋棄式 Chromium 1246 設定檔載入新建置的擴充、開無痕權限，只有一個已縮小的一般視窗，不碰本人 K 專用 Chrome）：AI 要無痕時擴充自開縮小的無痕視窗，`browser_session incognito` 206–216ms 選好、`browser_navigate` 成功，3/3；每次約 77 筆 20ms 前景抽樣，測試 Chromium 0 次在前景。`nativeConnection` 的「沒有一般視窗」路徑走真原生 host，只有單元測試，部署後再實測。
-- 完整 `npm test`：最終 1743/1743（建置介面後）。介面原始碼未改，未跑 `test:ui`。
+- 完整 `npm test`：最終 1747/1747（含 Fable 第二審後補的測試，建置介面後）。介面原始碼未改，未跑 `test:ui`。
 
 ## 複查與部署
 
 - GPT-6.1 Sol 驗收（`5d0a6b0`）：「不同意」，P2 必修——已被停止的請求仍會開 Chrome，等待共用開啟時被停止也不放手（它在隔離槽重現）。其餘通過：重連只建立新連線、只跑就緒檢查，不重做；共用開啟沒有競態；PowerShell 5.1 解析與 `Add-Type` 通過；拋棄式 Chrome 實測縮小與焦點交還成功、正常關閉後 lockfile 移除；隔離槽 `npm test` 1740/1740。殘餘風險：本人若剛好在約 250ms 內切到別的視窗，可能被拉回原視窗（屬已接受的短暫干擾）。已修（`453e9ad`）。
 - Fable 5.1 唯讀第二審（`5d0a6b0`）：無 P1。採納：P2 殘留 lockfile 會讓 K 永遠不開 Chrome（改為以能否開啟判斷，`8a2138d`）；P2 冷啟動只開無痕視窗時另一模式被擴充拒絕——查證後更嚴重：連線頁一律開在一般視窗，只有無痕視窗時兩種模式都連不上，改為一律開一般視窗（`8a2138d`），擴充自開缺少模式視窗另待決定；P3 腳本一律回成功（改為 Chrome 立刻結束或沒出現視窗時回報失敗）；P3 `$previous` 可能抓到 Chrome 自己的視窗（排除）；P3 `chrome-extension-context.mjs` 舊說法（更新）；P3 `children.get(key) === existing` 在佇列序列化下恆真（刪除）。不採納：手動開啟腳本與新腳本合併（行為不同）。P3「`await starting` 期間取消不生效」已由 `453e9ad` 修正。P3「本人在非 K 視窗時焦點交還可能失敗」：前幾輪本人在日常 Chrome 時，焦點都由系統正確交還，未需交還步驟；列為殘餘風險。
-- 待 Sol 複驗 `453e9ad`、`8a2138d`；擴充 `de6ef29` 待 Sol 驗收與 Fable 第二審。
+- Sol 複驗 `8a2138d`：上次的取消缺口已解決、取消後開啟失敗無未處理 rejection、lockfile 正常／殘留／獨佔判斷通過、隔離槽 1743/1743；但仍「不同意」，P2：lockfile 檢查期間被停止（且沒有別的聊天室在等）仍會開 Chrome（經 MCP 閘道重現）；另建議逾時訊息別宣稱 Chrome 已開啟（權限錯誤時會失真）。已修（`d7b4ddb`）：共用開啟在 lockfile 檢查後確認仍有未停止的請求才開；逾時訊息改為「瀏覽器助手沒有在 N 秒內連上；請確認 K 專用 Chrome 已開啟並啟用擴充」。新測試在 `8a2138d` 上啟動 1 次而失敗。
+- Sol 最終驗收（`d7b4ddb`，含擴充 `de6ef29`）：「同意」合回 main。原重現程式 `8a2138d` 啟動 1 次、新版 0 次，另驗「仍有存活請求」「全部停止後再請求」「停止後另一請求加入」皆通過；擴充改動合理、建置版本 0.1.4、無過度工程化；`Setup-K-Browser.ps1` 確實備份既有擴充與設定、複製正式 runtime 建置的擴充、重套同一 HKCU native host 登記並讀回，與部署說明一致；「允許無痕」仍需在擴充頁已啟用（本人 K 專用 Chrome 先前已允許，descriptor 讀回 incognitoAllowed）。隔離槽 build:ui、擴充建置成功，`npm test` 1744/1744。未跑 test:ui、未重做真 Chrome 實測。
+- 主代理 `npm test` 1744/1744（`d7b4ddb`）。
+- Fable 5.1 唯讀第二審（擴充 `de6ef29`）：無 P1。查證無問題：無痕不建分頁群組、一般模式建群組已帶 windowId，新視窗唯一分頁當工作分頁不會被搬走；連線結束只解除群組、留下的縮小視窗下次同模式會重用、不會累積；本人關掉該視窗會斷線、下次自動重連；連線頁放新縮小視窗不影響其他連線；權限檢查在建窗前。採納：P2 部署後實測要涵蓋 `nativeConnection` 新路徑（見下方實測清單）；P2 `background.ts` 一般模式自開視窗在 K 流程幾乎不可達（連線頁一定在一般視窗），列為已知未在真 Chrome 驗證；P3 開窗被拒時 Chrome 英文例外改為中文說明；P3 補三個錯誤分支測試（建窗被拒、建窗無分頁、原生連線建窗被拒不回傳 Chrome 錯誤）；P3 文件與註解改正：一般請求時連線頁的縮小視窗會成為工作視窗，只有無痕請求時隨連線頁關閉；P3 `browser-extension/README.md` 拿掉早已不存在的「允許並開啟新分頁」按鈕與「候選、未安裝」說法。不採納：P3 建窗成功但後續失敗留下一個空白縮小視窗（下次同模式重用、不累積）。這些修改在 Sol 最終驗收之後，限於錯誤訊息文字、測試與文件，未再送 Sol；最終 `npm test` 1747/1747。
+- 部署後實測清單（在 K 裡由 AI 執行）：1. 關掉 K 專用 Chrome，叫 AI 用一般模式開網頁（K 縮小開 Chrome）；2. 接著用無痕模式（擴充縮小開無痕視窗）；3. 只留無痕視窗、關掉一般視窗，再分別要一般與無痕（走 `nativeConnection` 自開連線頁視窗）；4. 確認擴充版本 0.1.4、右側狀態與焦點沒有被搶。
 - 部署（擴充有變更）：K 外 `Update-K.ps1` 之後，執行 `scripts/Setup-K-Browser.ps1`（以正式 trusted-runtime 建置的擴充更新 `installed/k-browser-assistant`，先備份；重套同一 K native host 登記），再讓 K 專用 Chrome 載入 0.1.4（關閉 K 專用 Chrome 後重開，或在擴充頁按重新載入），並讀回擴充版本。
 - 部署：待合回 main 後由本人在 K 外更新（同前，交給 Codex App 的 Sol 執行）。更新後可實測：關掉 K 專用 Chrome，再叫 AI 用瀏覽器。
