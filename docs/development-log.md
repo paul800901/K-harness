@@ -4,6 +4,8 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ## 目前狀態
 
+- 2026-10-17：[Gemini 試算表單列寫入已在本機部署](sheets-write-row-20261017.md)：原 `f92a548` 經主代理覆核並 rebase，固定程式 `a81475f345319c22413cb30040db90925fe65c1b` 已由 K 外更新器套用；分支與更新器完整均 1739/1739，health 200／native，私人寫入映射已合併並讀回。真正 Flash 新聊天室只讀原生工具定義，read-only 無 writer 許可；正式試算表零呼叫、零寫入。GitHub 發布待本筆部署紀錄提交後執行，其他電腦未更新。
+
 - 2026-10-17：[Codex 點數與重置次數顯示](codex-credits-display-20261017.md)：額度視窗顯示官方剩餘點數、可用重置與到期時間，只顯示不接使用重置；Claude 無官方欄位不接。程式 `c81575357db6997bd68014403c0a10d7c855f5ed`，1736/1736，Sol 複查意見已採納。2026-10-17 東區已部署並讀回（runtime c815753、health native、Windows 聽寫保留、退版 before-1792211163138），本人對照 ChatGPT 確認點數／重置；`01a7ee6` 已 push 並讀回遠端。
 
 - 2026-10-17：[東區更新修復與部署](dongqu-update-handoff-20261017.md)：46ec4604 更新被交接 receipt 並行保存競態擋下；修正為每檔依序保存＋決定性回歸測試，程式 `7271fdefa2d27a005a996e06076c9c12875195d3`，完整 1735/1735、Opus 5.5 子代理複查無阻擋。東區已部署，health native、792 檔核對、Windows 聽寫保留、退版 before-1792179282418；未 push，南區仍 46ec4604。
@@ -341,7 +343,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Google 營運
 
-- 10-17 [Gemini 試算表單列寫入](sheets-write-row-20261017.md)：本人核准分頁／識別欄、依表頭寫入、appendCells、原始值讀回驗收；Sol 覆核必修已修，完整 1739/1739、真正 Flash 假表實測通過，待 Codex Sol 部署。
+- 10-17 [Gemini 試算表單列寫入](sheets-write-row-20261017.md)：本人核准分頁／識別欄、依表頭寫入、appendCells、原始值讀回驗收；已部署 `a81475f`，兩輪完整 1739/1739、health native、私人設定及真正 Flash 工具定義讀回；正式試算表未寫入。
 - 10-16 [Gemini 工作區 Google 試算表唯讀接線](gemini-sheets-read-20261016.md)：沿用既有授權工具、限定試算表與唯讀 MCP；修正 no-output 原因判讀，原生查詢與部署狀態見紀錄。
 
 - 10-04 [Google 商家營運 API 接入](google-ops-connect-20261004.md)

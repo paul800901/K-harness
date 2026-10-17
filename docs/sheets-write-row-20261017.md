@@ -54,7 +54,7 @@ K 工單 `sheets-write-row-review-20261017`（gpt-6.1-sol high，唯讀，覆核
 - 建議 9 收入查詢欄位字母改依表頭：採納，已改營運規則。
 - 可忽略 7（無命令或公式注入入口）：確認。
 
-修正版未再送 Sol 複審；部署者（Codex Sol）部署前會再看 `f92a548` diff。本批程式由 Opus 5.5 撰寫，不適用「Sol 程式須 Opus 審」規則。
+修正版在交接時未再送 Sol 複審；本次 Codex 主代理部署前已獨立檢查 `f92a548` diff，確認必修 1–4 的修正與測試對應。本批程式由 Opus 5.5 撰寫，不適用「Sol 程式須 Opus 審」規則；部署未新增產品程式修改。
 
 ## 部署交接（給 Codex 主聊天室 GPT-6.1 Sol）
 
@@ -73,4 +73,15 @@ K 工單 `sheets-write-row-review-20261017`（gpt-6.1-sol high，唯讀，覆核
 
 ## 部署狀態
 
-尚未部署。正式 K 仍為部署前版本，正式 `gemini-mcp.json` 的 `allowWrite` 仍為空。
+### 2026-10-17 本機部署與讀回
+
+- 原 `main` 已前進至 `f15af38d063b82df46b1d92b72fcf122c2e07039`（新增文件，沒有其他待合程式批次）；分支依交接 rebase 後完整 `npm test` **1739/1739 通過**，0 失敗／取消／略過，71.1 秒。`f92a548` 的接頭內容與 rebase 後完全相同。
+- 已 fast-forward 合回 `main`。固定程式版本 **`a81475f345319c22413cb30040db90925fe65c1b`**（原 `f92a548` 重新套用後的 SHA）；程式與文件仍分開提交。公開文件範例改用 `<已核准試算表ID>`，也從待發布的文件提交歷史移除實際識別碼；私人設定沿用既有值。
+- 更新前確認 47831 拒絕連線、正式 K／原生程序不在執行、啟動器沒有占用。在 K 外執行一次 `Update-K.ps1 -Ref a81475f345319c22413cb30040db90925fe65c1b`；介面／擴充／啟動器建置成功，更新器完整 **1739/1739 通過**，0 失敗／取消／略過，71.0 秒，正常套用、exit 0，未重試。沒有前端程式差異，未另重跑 `test:ui`。
+- 15:32 讀回 `.local/runtime.json` 為上述 SHA，退版 **`releases/before-1792222347302`**，最新三份程式退版保留；本批兩個變更檔與固定 Git 版本按 checkout filter 比對完全相同。Node／語音設定未變，帳號 home、vault、workspace、browser-output 留在原處。程式退版不代表對話備份。
+- 正式私有 `vault/private-state/.runtime/gemini-mcp.json` 已備存原檔後合併：只為原營運工作區的既有試算表加 `日業績: record_id` 寫入映射及 `mcp(k_sheets/sheets_write_row)` 許可。接頭仍指向正式 runtime、CLI 與試算表白名單未變；移除本次兩項差異後，整份設定與原檔完全相同。
+- 正常啟動 K 一次，正式 `/health` **HTTP 200、deployment=native**。15:33 透過正式已部署 `createGeminiController` 在營運工作區新開真正 **Gemini 3.8 Flash high／workspace-write** 聊天室：原生載入的 `sheets_write_row.json` 確有工具名稱與「日業績」（識別欄 `record_id`）描述；唯一工具事件是成功的 `view_file`，只讀該定義，沒有呼叫任何試算表 MCP。
+- 另開 **read-only** 聊天室，讀回原生 `settings.json`：沒有 writer／`k_sheets/*`／全部 MCP 的 allow，保留寫檔與命令 deny。這是正式權限設定讀回，**未呼叫 writer 測試原生拒絕**，不宣稱做過真實拒絕測試。兩個新聊天室均保留。
+- **正式試算表零呼叫、零寫入**，沒有讀資料列或重播口述。10/17 三筆仍留給本人在 Flash 聊天室交代，登錄前須依工作區規則查核既有結果。
+- 本批部署與讀回證據在原工作樹 `.runtime/archive/sheets-write-20261017/deploy-*`，包含完整測試、更新器原始紀錄、原設定、runtime／設定／health／原生定義與工具事件；不提交 Git。其他電腦未更新。
+- 已完成待發布四個提交的新增內容與秘密模式檢查；GitHub push 與遠端 SHA 讀回待本筆部署文件提交後執行。
