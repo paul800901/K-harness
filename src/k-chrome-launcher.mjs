@@ -7,6 +7,7 @@ import {aborted} from 'node:util';
 
 const script = fileURLToPath(new URL('../scripts/start-k-chrome-minimized.ps1', import.meta.url));
 let starting = null;
+const waiting = new Set();
 
 // A running Chrome keeps `lockfile` in its user data directory open; a file left
 // behind by a crash or power loss opens normally and does not mean it is running.
@@ -38,19 +39,27 @@ export async function startKChrome({
   // A stopped request never starts Chrome, and stops waiting for a start that
   // another room still needs without cancelling it.
   signal?.throwIfAborted();
-  starting ??= (async () => {
-    if (await chromeRunning(userDataDir)) return;
-    const powershell = path.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    await new Promise((resolve, reject) =>
-      execFileImpl(
-        powershell,
-        ['-NoProfile', '-NonInteractive', '-File', script, '-Chrome', chromeExecutable, '-UserDataDir', userDataDir],
-        {windowsHide: true, timeout: 30000},
-        error => (error ? reject(Error('無法開啟 K 專用 Chrome。', {cause: error})) : resolve())
-      )
-    );
-  })().finally(() => (starting = null));
-  await (signal ? Promise.race([starting, aborted(signal, starting)]) : starting);
+  const waiter = {signal};
+  waiting.add(waiter);
+  try {
+    starting ??= (async () => {
+      if (await chromeRunning(userDataDir)) return;
+      // Every request that wanted this start may have been stopped meanwhile.
+      if (![...waiting].some(other => !other.signal?.aborted)) return;
+      const powershell = path.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+      await new Promise((resolve, reject) =>
+        execFileImpl(
+          powershell,
+          ['-NoProfile', '-NonInteractive', '-File', script, '-Chrome', chromeExecutable, '-UserDataDir', userDataDir],
+          {windowsHide: true, timeout: 30000},
+          error => (error ? reject(Error('無法開啟 K 專用 Chrome。', {cause: error})) : resolve())
+        )
+      );
+    })().finally(() => (starting = null));
+    await (signal ? Promise.race([starting, aborted(signal, starting)]) : starting);
+  } finally {
+    waiting.delete(waiter);
+  }
   signal?.throwIfAborted();
   for (const deadline = Date.now() + timeoutMs; ; ) {
     const profiles = await listProfiles();
@@ -58,5 +67,5 @@ export async function startKChrome({
     if (Date.now() >= deadline) break;
     await delay(intervalMs, undefined, {signal});
   }
-  throw Error(`K 專用 Chrome 已開啟，但瀏覽器助手沒有在 ${Math.round(timeoutMs / 1000)} 秒內連上；請確認擴充已啟用。`);
+  throw Error(`瀏覽器助手沒有在 ${Math.round(timeoutMs / 1000)} 秒內連上；請確認 K 專用 Chrome 已開啟並啟用擴充。`);
 }

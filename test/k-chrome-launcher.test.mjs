@@ -163,6 +163,26 @@ test('a request stopped before Chrome starts never starts it', async () => {
   assert.equal(runs, 0);
 });
 
+test('a request stopped while K checks whether Chrome runs does not start it', async () => {
+  const userDataDir = await profileDir();
+  let runs = 0;
+  const abort = new AbortController();
+  const pending = startKChrome({
+    chromeExecutable: 'C:\\fake\\chrome.exe',
+    userDataDir,
+    signal: abort.signal,
+    listProfiles: async () => connected,
+    execFileImpl: (file, args, options, done) => {
+      runs++;
+      done(null);
+    }
+  });
+  abort.abort();
+  await assert.rejects(pending, {name: 'AbortError'});
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(runs, 0);
+});
+
 test('a stopped request stops waiting at once while the start another room needs continues', async () => {
   const userDataDir = await profileDir();
   let runs = 0,
