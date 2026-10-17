@@ -97,7 +97,7 @@ test('aborting a running tool call closes the browser session and reports recove
   }
 });
 
-test('a model cancellation through the outer gateway ends the call and releases busy at once', async () => {
+async function outerFixture(onLaunch = () => {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'k-outer-cancel-'));
   const directory = path.join(root, 'out'),
     profile = path.join(root, 'profiles');
@@ -106,8 +106,10 @@ test('a model cancellation through the outer gateway ends the call and releases 
   const gateway = await createExternalBrowserGateway({
     directory,
     profile,
-    launchExternalContext: ({profile, width, height}) =>
-      chromium.launchPersistentContext(profile, {channel: 'msedge', headless: true, viewport: {width, height}})
+    launchExternalContext: ({profile, width, height}) => {
+      onLaunch();
+      return chromium.launchPersistentContext(profile, {channel: 'msedge', headless: true, viewport: {width, height}});
+    }
   });
   const send = message =>
     fetch(gateway.aiMcpServer.url, {
@@ -119,15 +121,16 @@ test('a model cancellation through the outer gateway ends the call and releases 
       },
       body: JSON.stringify(message)
     });
+  const cancel = requestId => send({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId}});
+  const selectRegular = id =>
+    send({jsonrpc: '2.0', id, method: 'tools/call', params: {name: 'browser_session', arguments: {mode: 'regular'}}});
+  return {gateway, send, cancel, selectRegular};
+}
+
+test('a model cancellation through the outer gateway ends the call and releases busy at once', async () => {
+  const {gateway, send, cancel, selectRegular} = await outerFixture();
   try {
-    await body(
-      await send({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'tools/call',
-        params: {name: 'browser_session', arguments: {mode: 'regular'}}
-      })
-    );
+    await body(await selectRegular(1));
     const pending = send({
       jsonrpc: '2.0',
       id: 2,
@@ -137,14 +140,33 @@ test('a model cancellation through the outer gateway ends the call and releases 
     pending.catch(() => {});
     await waitFor(gateway.getState, state => state.busy);
     const started = Date.now();
-    assert.equal(
-      (await send({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: 2}})).status,
-      202
-    );
+    assert.equal((await cancel(2)).status, 202);
     await assert.rejects(pending, 'the cancelled call has no response, so its stream is ended');
     const final = await waitFor(gateway.getState, state => !state.busy);
     assert(Date.now() - started < 10000, 'busy is released without waiting for the tool timeout');
     assert.equal(final.recoveryRequired, true);
+  } finally {
+    await gateway.close();
+  }
+});
+
+test('cancelling browser_session during its warm-up does not hold later requests', async () => {
+  let launching;
+  const launched = new Promise(resolve => (launching = resolve));
+  const {gateway, send, cancel, selectRegular} = await outerFixture(() => launching());
+  try {
+    const selecting = selectRegular(1).then(
+      response => response.text(),
+      () => 'ended'
+    );
+    await launched;
+    assert.equal((await cancel(1)).status, 202);
+    await selecting;
+    const started = Date.now();
+    const pong = await body(await send({jsonrpc: '2.0', id: 2, method: 'ping'}));
+    assert.deepEqual(pong.result, {});
+    assert(Date.now() - started < 10000, 'the queue is not held by the cancelled warm-up');
+    assert.equal((await gateway.getState()).selectedMode, null, 'a cancelled selection selects nothing');
   } finally {
     await gateway.close();
   }

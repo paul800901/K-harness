@@ -206,9 +206,12 @@ test('a request ID that is still pending is refused rather than run twice', asyn
     await f.call(1, 'browser_session', {mode: 'regular'});
     const pending = f.call(2, 'hold');
     await new Promise(resolve => setTimeout(resolve, 25));
-    const duplicate = await f.send({jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'browser_navigate'}});
-    assert.equal(duplicate.status, 409);
+    for (let n = 0; n < 2; n++) {
+      const duplicate = await f.send({jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'browser_navigate'}});
+      assert.equal(duplicate.status, 409, 'a refused duplicate does not free the ID for the next one');
+    }
     assert.match(JSON.stringify(await pending), /finished/);
+    assert.equal((await f.gateway.getState()).busy, false);
     assert.match(JSON.stringify(await f.call(2, 'browser_navigate')), /regular:browser_navigate/, 'the ID is free again');
   } finally {
     await closeFixture(f);

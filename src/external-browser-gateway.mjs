@@ -172,7 +172,6 @@ export async function createExternalBrowserGateway({
       if (reqMessage.method === 'tools/call' && reqMessage.id === undefined)
         throw Error('Tool calls require a request ID.');
       if (reqMessage.method === 'tools/call') {
-        registered = true;
         activeCalls.set(reqMessage.id, controller);
         res.once('close', cancel);
         timer = setTimeout(() => {
@@ -384,11 +383,13 @@ export async function createExternalBrowserGateway({
     } finally {
       clearTimeout(timer);
       res.off('close', cancel);
-      if (reqMessage?.id !== undefined) {
+      // Only the request that claimed the ID releases it; a refused duplicate
+      // must not free the ID of the call still running.
+      if (registered) {
         pendingIds.delete(reqMessage.id);
-        if (activeCalls.get(reqMessage.id) === controller) activeCalls.delete(reqMessage.id);
+        activeCalls.delete(reqMessage.id);
+        controller.abort();
       }
-      if (registered) controller.abort();
     }
   });
   async function forward(gateway, message, signal, onDone) {
