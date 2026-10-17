@@ -11,6 +11,7 @@
 5. 前端 `App`（`main.jsx` 約 1,740 行）：先拆設定視窗，再拆右側呈現；跨聊天室的非同步防護（`navigationId`、`previewRequest`、來源 threadId、逐房操作鎖）不合併。
 
 另列待本人決定：切換供應商的阻擋條件是 `settled:false` 或 `running／starting／pending`，`unresolved` 本身不在其中；`unresolved` 搭配 `settled:false` 仍會擋，差別只在 `settled` 不是 `false` 的紀錄。分支與移動工作區的同類判斷則有列 `unresolved`。補上會改變行為（這類舊工單可能擋住切換），未在本批處理。
+10-17 更正：本人指出聊天室本來就綁定供應商、不能切換。查證：這段只在打開聊天室時決定啟動哪一家引擎，而 `conversation-controller` 每次打開都建立新的空白引擎（同一聊天室重開也是同一家），碰不到工人；此項取消，不改。
 
 ## 第一批：工人狀態共用、移除重複的工作區包裝
 
