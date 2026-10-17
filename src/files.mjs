@@ -1,6 +1,6 @@
-import { lstat, realpath } from 'node:fs/promises';
+import {lstat, realpath} from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {fileURLToPath} from 'node:url';
 
 const credentialFile = fileURLToPath(new URL('../.env.local', import.meta.url));
 
@@ -14,7 +14,7 @@ export async function checkedPath(root, name, isOutput) {
     throw new Error('File names must be workspace-relative paths.');
   }
   const parts = name.split(/[\\/]/u);
-  if (parts.some((part) => !part || part === '.' || part === '..')) {
+  if (parts.some(part => !part || part === '.' || part === '..')) {
     throw new Error('Empty path segments and dot segments are not allowed.');
   }
   const target = path.resolve(root, ...parts);

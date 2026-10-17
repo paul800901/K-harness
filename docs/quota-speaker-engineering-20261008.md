@@ -50,3 +50,18 @@
 不宣稱節省訂閱百分比：減少的是已知零期間重複查詢／切換；官方 usage 查詢本身不是模型生成。無新相依／安裝、全域設定或計費變更，東區不動。GitHub 目前公開而既有發布授權針對私人儲存庫；本批不 push，不以別批公開推送同意擴張本批。
 
 固定程式 SHA、乾淨候選、最後 Opus、正式部署與讀回收據於完成後追加；截至本段記錄只完成來源實作及上述驗證，正式仍 a693ba4。
+
+## 完成：固定候選與南區正式讀回（取代上方未部署階段）
+
+- 固定程式 **f5e9e266b677dbb9d4d330729fbc66fa9d674e53**，由該 SHA 的 git archive 展開到本次全新候選 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\prepare-quota-speaker-20261008`。只實體複製正式既有 node_modules，沒有安裝／升級或指向退版位置的 junction。
+- UI、既有 Chrome 擴充、Windows launcher 建置成功；乾淨固定候選完整 **1061/1061**，0 fail/cancel/skip（167722.1ms）。固定候選 built UI 桌面／手機各三主題、長文、三家／同家模型及一般對話通過；Astra 再看候選手機實圖，細線／粗姓名與正文清楚，沒有染色正文或大片卡底。
+- 候選固定來源 **603/603** Git 檔案逐位元一致；與前批相同，擴充建置唯一將 extension-protocol.cjs 的 CRLF 轉 LF，先核對 UTF-8 正規化內容相同，再只在新候選恢復 archive 原位元。完整測試／UI 後再次核對603檔差異0，不將生成換行差異當未提交產品變更。
+- 首次建置 helper 被 PowerShell 對 native stderr 的 Stop 處理中止；Vite 本身已成功、只有既有 chunk-size 警告。查明後只接續未執行的擴充／launcher／讀回／測試，不重建來源或安裝、不改產品。原 build.log 與 helper 留存。
+- 本人追加「可以直接更新 K，因為 K 關掉了」。部署前 47831 無服務、K launcher／node／electron／native 程序0，正式仍 a693ba4，候選／trusted-runtime／releases 實體絕對路徑均在指定 K 根內。
+- 第一次交換在 incoming prepared rename 發生 **EPERM**。既有 transaction 已把舊 runtime 還原；實查 prepared 與原 trusted-runtime 均在、正式 SHA／settings 未变、無 K 程序，失敗收據保留。沒有強制結束他人程序、改 ACL 或新增產品 retry。確認上述回復狀態後一次受控交換成功；鎖定來源未確認，不假稱根因是網路或某程序。
+- 南區正式程式現在 **f5e9e266b677dbb9d4d330729fbc66fa9d674e53**。可退回原 a693ba4 的程式／launcher／entry／settings 位於 **D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1791455757636**。首次失敗保留 before-1791455672118 收据，不冒稱該空 runtime 備份為完整退版。
+- 交換前後65個既有帳號清單／projects／main session headers／Codex config／selected-cores 差異0，語音／node 等設定不变。對話、原生登入家目錄、Chrome profiles 原位保留；程式備份不是對話還原快照。沒有換帳號、恢復／重送未知任務、改模型權限／全域設定或計費。
+- 正常由原 Start-K-Desktop.ps1 重啟；**2026-10-08 10:36:08 UTC** health200、deployment:native、原 private-state 讀回。兩個 live JS/CSS HTTP200／SHA256 與正式 disk 一致，JS 包含原三模式、討論整理新標頭／結尾姓名與新的全組零額度說明。未登入 `/`／`/api/state` 仍403，没有借用會話或繞過登入。
+- 正式讀回範圍為程式、啟動、live assets 與原權限；未在正式新增模型工作或實測真五帳號自然耗盡／reset。Android 實機未重測，手機為真瀏覽器窄 viewport。相關限制仍依前節，不把候選協定假資料成功當線上帳號到期事件。
+- 建置／完整測試、603檔读回、失敗及受控交換、65檔保留與 formal-live-readback.json 全部在 `D:\K-harness\.runtime\quota-speaker-build-20261008`；UI 圖片與結果隨候選移到正式 `trusted-runtime\.runtime\quota-speaker-evidence`。最後 Opus 原封包另留 quota-discussion-20261008。
+- **本批已完成南區更新、重啟及上述讀回。未 push、未打 tag、未更新東區。** 本篇收尾文件另提交，不把文件較新的 SHA 当程式重部署，不再重啟或延伸功能；依本人要求停止工程工作。

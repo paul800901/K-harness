@@ -1,10 +1,13 @@
-param(
- [Parameter(Mandatory=$true)][ValidateSet('current','capture','activate','prepareLogin','assertIdle')][string]$Operation,
+﻿param(
+ [Parameter(Mandatory=$true)][ValidateSet('current','capture','activate','prepareLogin','assertIdle','queryQuota')][string]$Operation,
  [Parameter(Mandatory=$true)][ValidatePattern('(?i)^[a-f0-9]{32,64}$')][string]$Namespace,
  [Parameter(Mandatory=$false)][ValidatePattern('(?i)^[a-f0-9]{32}$')][string]$AccountId,
- [Parameter(Mandatory=$false)][switch]$SkipCaptureCurrent
+ [Parameter(Mandatory=$false)][switch]$SkipCaptureCurrent,
+ [Parameter(Mandatory=$false)][string]$Executable,
+ [Parameter(Mandatory=$false)][switch]$RefreshAccessToken
 )
 $ErrorActionPreference='Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 # agy 1.2.16 uses go-keyring: service:user target and UTF-8 secret bytes.
 $liveTarget='gemini:antigravity'
 
@@ -70,6 +73,21 @@ function Get-Email($Record){
 function Get-AccountId([string]$Email){$sha=[Security.Cryptography.SHA256]::Create();try{$hash=$sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($Email.ToLowerInvariant()));return ([BitConverter]::ToString($hash).Replace('-','').Substring(0,32).ToLowerInvariant())}finally{$sha.Dispose()}}
 function Get-ManagedTarget([string]$Id){return "K-Harness.Antigravity.$($Namespace.ToLowerInvariant()).$Id"}
 function Get-Public($Record){$email=Get-Email $Record;return @{accountId=(Get-AccountId $email);email=$email}}
+function Save-CurrentManaged($Record,[string]$Target){
+ $saved=[KGeminiCredentialNative]::Read($Target)
+ try{
+  if($null -ne $saved){
+   $old=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($saved.Blob).TrimEnd([char]0))
+   $live=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($Record.Blob).TrimEnd([char]0))
+   # Same native sign-in, but the quota helper refreshed its managed token.
+   # Never replace it with the older live copy, including refresh-token rotation.
+   if($old.id_token -eq $live.id_token -and [DateTimeOffset]$old.token.expiry -ge [DateTimeOffset]$live.token.expiry){return}
+  }
+  [KGeminiCredentialNative]::Write($Target,$Record,2)
+  $verify=[KGeminiCredentialNative]::Read($Target)
+  try{if($null -eq $verify -or -not [KGeminiCredentialNative]::EqualBytes($Record.Blob,$verify.Blob)){throw 'CREDENTIAL:Saved credential readback mismatch.'}}finally{[KGeminiCredentialNative]::ClearRecord($verify)}
+ }finally{[KGeminiCredentialNative]::ClearRecord($saved)}
+}
 function Assert-Idle {$running=Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @('agy','Antigravity','Antigravity.exe') };if($running){throw 'BUSY:Antigravity is running.'}}
 
 $records=New-Object 'System.Collections.Generic.List[object]'
@@ -77,23 +95,49 @@ $exitCode=0
 $nativeLoaded=$false
 try {
  if($SkipCaptureCurrent -and $Operation -ne 'activate'){throw 'CREDENTIAL:SkipCaptureCurrent is only valid for activation.'}
+ if($RefreshAccessToken -and $Operation -ne 'queryQuota'){throw 'CREDENTIAL:RefreshAccessToken is only valid for quota query.'}
  Add-Type -TypeDefinition $native -ErrorAction Stop
  $nativeLoaded=$true
  switch($Operation){
+  'queryQuota' {
+   if(-not $AccountId){throw 'IDENTITY:Account required.'}
+   . (Join-Path $PSScriptRoot 'gemini-quota.ps1')
+   $target=Get-ManagedTarget $AccountId.ToLowerInvariant()
+   $record=[KGeminiCredentialNative]::Read($target);if($null -eq $record){throw 'QUOTA_AUTH:Saved login missing.'};$records.Add($record)
+   $public=Get-Public $record;if($public.accountId -ne $AccountId.ToLowerInvariant()){throw 'IDENTITY:Saved account mismatch.'}
+   $saveRefresh={param($updated)
+    $latest=[KGeminiCredentialNative]::Read($target);if($null -eq $latest){throw 'IDENTITY:Saved account removed.'};$records.Add($latest)
+    if(-not [KGeminiCredentialNative]::EqualBytes($record.Blob,$latest.Blob)){throw 'QUOTA_TEMPORARY:Saved login changed during query.'}
+    $replacement=[Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject $updated -Compress -Depth 20))
+    if($replacement.Length -gt 2560){throw 'QUOTA_SCHEMA:Native credential exceeds Windows size limit.'}
+    [Array]::Clear($record.Blob,0,$record.Blob.Length);$record.Blob=$replacement
+    [KGeminiCredentialNative]::Write($target,$record,$record.Persist)
+    $verify=[KGeminiCredentialNative]::Read($target);$records.Add($verify)
+    if($null -eq $verify -or -not [KGeminiCredentialNative]::EqualBytes($record.Blob,$verify.Blob)){throw 'CREDENTIAL:Refreshed credential readback mismatch.'}
+   }
+   $quota=Get-ManagedGeminiQuota $record $Executable $saveRefresh $RefreshAccessToken.IsPresent
+   $live=[KGeminiCredentialNative]::Read($liveTarget);$requiresActivation=$false
+   if($null -ne $live){$records.Add($live);try{if((Get-Public $live).accountId -eq $public.accountId){$liveData=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($live.Blob).TrimEnd([char]0));$requiresActivation=$liveData.token.refresh_token -ne $quota.updatedData.token.refresh_token}}catch{
+    # A bad live identity must not discard valid independent quota evidence.
+    # Do not infer that its token is usable: require idle synchronization, whose
+    # own identity read still refuses an invalid or externally changed login.
+    $requiresActivation=$true
+   }}
+   Write-SafeJson @{accountId=$public.accountId;email=$public.email;checkedAt=[DateTimeOffset]::UtcNow.ToString('o');windows=$quota.windows;refreshed=$quota.refreshed;requiresActivation=$requiresActivation};break
+  }
   'assertIdle' {Assert-Idle;Write-SafeJson @{idle=$true};break}
   'current' {$record=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $record){Write-SafeJson $null}else{$records.Add($record);Write-SafeJson (Get-Public $record)};break}
   'capture' {
    Assert-Idle;$record=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $record){throw 'CREDENTIAL:No live credential.'};$records.Add($record)
    $public=Get-Public $record;$target=Get-ManagedTarget $public.accountId
-   [KGeminiCredentialNative]::Write($target,$record,2)
+   Save-CurrentManaged $record $target
    $verify=[KGeminiCredentialNative]::Read($target);if($null -eq $verify){throw 'CREDENTIAL:Managed credential readback missing.'};$records.Add($verify)
-   if(-not [KGeminiCredentialNative]::EqualBytes($record.Blob,$verify.Blob)){throw 'CREDENTIAL:Managed credential readback mismatch.'}
    if((Get-Public $verify).accountId -ne $public.accountId){throw 'CREDENTIAL:Managed credential identity mismatch.'}
    Write-SafeJson $public;break
   }
  'activate' {
    Assert-Idle;if(-not $AccountId){throw 'CREDENTIAL:Account id is required.'}
-   $live=[KGeminiCredentialNative]::Read($liveTarget);if($null -ne $live){$records.Add($live);if(-not $SkipCaptureCurrent){$livePublic=Get-Public $live;$liveTargetName=Get-ManagedTarget $livePublic.accountId;[KGeminiCredentialNative]::Write($liveTargetName,$live,2)}}
+   $live=[KGeminiCredentialNative]::Read($liveTarget);if($null -ne $live){$records.Add($live);if(-not $SkipCaptureCurrent){$livePublic=Get-Public $live;$liveTargetName=Get-ManagedTarget $livePublic.accountId;Save-CurrentManaged $live $liveTargetName}}
    $record=[KGeminiCredentialNative]::Read((Get-ManagedTarget $AccountId.ToLowerInvariant()));if($null -eq $record){throw 'CREDENTIAL:Managed credential not found.'};$records.Add($record)
    $public=Get-Public $record;if($public.accountId -ne $AccountId.ToLowerInvariant()){throw 'CREDENTIAL:Managed credential identity mismatch.'}
    $metadata=if($null -ne $live){$live}else{$record};$replacement=[KGeminiCredentialNative+Record]::new();$replacement.Flags=$metadata.Flags;$replacement.Type=$metadata.Type;$replacement.Comment=$metadata.Comment;$replacement.LastWritten=$metadata.LastWritten;$replacement.Persist=$metadata.Persist;$replacement.Attributes=$metadata.Attributes;$replacement.TargetAlias=$metadata.TargetAlias;$replacement.UserName=$metadata.UserName;$replacement.Blob=[byte[]]$record.Blob
@@ -105,9 +149,8 @@ try {
   }
   'prepareLogin' {
    Assert-Idle;$record=[KGeminiCredentialNative]::Read($liveTarget);$previous=$null
-   if($null -ne $record){$records.Add($record);$public=Get-Public $record;$previous=$public.accountId;[KGeminiCredentialNative]::Write((Get-ManagedTarget $previous),$record,2)
+   if($null -ne $record){$records.Add($record);$public=Get-Public $record;$previous=$public.accountId;Save-CurrentManaged $record (Get-ManagedTarget $previous)
     $verify=[KGeminiCredentialNative]::Read((Get-ManagedTarget $previous));if($null -eq $verify){throw 'CREDENTIAL:Managed credential readback missing.'};$records.Add($verify)
-    if(-not [KGeminiCredentialNative]::EqualBytes($record.Blob,$verify.Blob)){throw 'CREDENTIAL:Managed credential readback mismatch.'}
     if((Get-Public $verify).accountId -ne $previous){throw 'CREDENTIAL:Managed credential identity mismatch.'}
     [void][KGeminiCredentialNative]::Delete($liveTarget);$stillLive=[KGeminiCredentialNative]::Read($liveTarget);if($null -ne $stillLive){$records.Add($stillLive);throw 'CREDENTIAL:Live credential removal readback failed.'}
    }
@@ -116,8 +159,8 @@ try {
  }
 } catch {
  $message=$_.Exception.Message
- if($message -match '^(BUSY|IDENTITY|CREDENTIAL):'){$code=$Matches[1].ToLowerInvariant()}else{$code='credential'}
- Write-SafeJson @{errorCode=$code}
+ if($message -match '^(BUSY|IDENTITY|CREDENTIAL|QUOTA_AUTH|QUOTA_TEMPORARY|QUOTA_CLIENT|QUOTA_SCHEMA):'){$code=$Matches[1].ToLowerInvariant()}else{$code='credential'}
+ Write-SafeJson @{errorCode=$code;errorLine=$_.InvocationInfo.ScriptLineNumber;errorType=$_.Exception.GetType().Name}
  [Console]::Error.WriteLine('Gemini credential operation failed; no credential data was emitted.')
  $exitCode=1
 } finally {

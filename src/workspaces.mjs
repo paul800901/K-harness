@@ -1,7 +1,6 @@
-import { lstat, readdir, realpath } from 'node:fs/promises';
+import {lstat, readdir, realpath} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-
 
 function samePath(left, right) {
   return path.normalize(left).toLowerCase() === path.normalize(right).toLowerCase();
@@ -39,7 +38,7 @@ export function normalizeWorkspacePath(candidate) {
  * Validate one selected workspace and return its canonical absolute path.
  * This reads only filesystem metadata; it does not enumerate or inspect files.
  */
-export async function validateWorkspace(candidate, { defaultWorkspace } = {}) {
+export async function validateWorkspace(candidate, {defaultWorkspace} = {}) {
   const requested = candidate === undefined ? defaultWorkspace : candidate;
   const normalized = normalizeWorkspacePath(requested);
   let canonical;
@@ -71,9 +70,9 @@ export async function listWorkspaceDirectories(parent) {
     if (error?.message === '瀏覽位置必須是資料夾。') throw error;
     throw new Error('瀏覽位置不存在或無法讀取。');
   }
-  const entries = await readdir(base, { withFileTypes: true });
+  const entries = await readdir(base, {withFileTypes: true});
   return entries
     .filter(entry => entry.isDirectory() && !entry.isSymbolicLink())
-    .map(entry => ({ name: entry.name, path: path.join(base, entry.name) }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));
+    .map(entry => ({name: entry.name, path: path.join(base, entry.name)}))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, {sensitivity: 'base'}));
 }

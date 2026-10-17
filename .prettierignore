@@ -1,0 +1,16 @@
+# Only K's own JavaScript is formatted; everything else is left as-is.
+*
+!src/
+!src/**/*.mjs
+!src/**/*.cjs
+!frontend/
+!frontend/*.jsx
+!frontend/*.mjs
+!shared/
+!shared/*.mjs
+!scripts/
+!scripts/*.mjs
+!test/
+!test/*.mjs
+!test/fixtures/
+!test/fixtures/*.mjs
