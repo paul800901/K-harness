@@ -105,4 +105,25 @@ for (const mode of ['regular', 'incognito']) {
     assert.deepEqual(calls.windowsCreated, [{incognito: mode === 'incognito', url: 'about:blank', state: 'minimized'}]);
     assert.equal(calls.permissionChecks, mode === 'incognito' ? 1 : 0);
   });
+
+  test(`${mode} work tab reports a window Chrome refused or opened without a usable tab`, async () => {
+    const {PlaywrightExtension} = await backgroundModule();
+    const {chrome} = harness([], mode);
+    chrome.windows.create = async () => {
+      throw new Error('Incognito mode is disabled.');
+    };
+    await withChrome(chrome, async () => {
+      await assert.rejects(
+        backgroundFor(PlaywrightExtension, mode)._connectToNewTab(7, 'client', mode),
+        new RegExp(mode === 'incognito' ? 'K 無法自動開啟無痕視窗' : 'K 無法自動開啟一般 Chrome 視窗')
+      );
+    });
+    chrome.windows.create = async () => ({});
+    await withChrome(chrome, async () => {
+      await assert.rejects(
+        backgroundFor(PlaywrightExtension, mode)._connectToNewTab(7, 'client', mode),
+        /未建立符合所選模式的新分頁/
+      );
+    });
+  });
 }

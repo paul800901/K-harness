@@ -101,7 +101,8 @@ export class NativeConnection {
 
       // Keep the selector page in a regular window for both modes; the background
       // worker opens the actual target window when needed. With no regular window
-      // open, the selector gets its own minimized window, which closes with it.
+      // open, the selector gets its own minimized window: a regular request then
+      // works in that window, an incognito one leaves it to close with the selector.
       if (regularWindow?.id === undefined)
         await this._chrome.windows.create({ url: target.url, state: 'minimized' });
       else

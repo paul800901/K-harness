@@ -174,6 +174,22 @@ for (const mode of ['regular', 'incognito']) {
   });
 }
 
+test('native handoff reports a window Chrome refused to open without echoing its error', async () => {
+  const {NativeConnection} = await nativeConnectionModule();
+  const mock = mockChrome({windows: []});
+  mock.chrome.windows.create = async () => {
+    throw new Error('internal Chrome detail');
+  };
+  new NativeConnection(mock.chrome);
+  mock.port.onMessage.emit({id: 'req-refused', type: 'openConnectPage', url: connectUrl()});
+  await waitFor(() => mock.port.messages.length === 1);
+  assert.deepEqual(mock.port.messages[0], {
+    id: 'req-refused',
+    ok: false,
+    error: 'K could not open the validated background connection page.'
+  });
+});
+
 test('native handoff rejects non-K, non-loopback, malformed, and unauthorized incognito requests', async () => {
   const {NativeConnection} = await nativeConnectionModule();
   const mock = mockChrome({windows: [{id: 8, incognito: false}], incognitoAllowed: false});

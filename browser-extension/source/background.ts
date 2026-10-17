@@ -144,7 +144,11 @@ class PlaywrightExtension {
     // With no window of this mode open, open one minimized instead of asking the
     // owner to (owner decision 2026-10-18); its blank tab becomes the work tab.
     const tab = targetWindow?.id === undefined
-      ? (await chrome.windows.create({ incognito: mode === 'incognito', url: 'about:blank', state: 'minimized' }))?.tabs?.[0]
+      ? (await chrome.windows.create({ incognito: mode === 'incognito', url: 'about:blank', state: 'minimized' }).catch(() => {
+          throw new Error(mode === 'incognito'
+            ? 'K 無法自動開啟無痕視窗；請確認 Chrome 沒有停用無痕模式。'
+            : 'K 無法自動開啟一般 Chrome 視窗。');
+        }))?.tabs?.[0]
       : await chrome.tabs.create({ url: 'about:blank', windowId: targetWindow.id, active: false });
     if (!tab || tab.id === undefined || tab.incognito !== (mode === 'incognito'))
       throw new Error('Chrome 未建立符合所選模式的新分頁。');
