@@ -3374,6 +3374,37 @@ test('native background Bash remains unsettled after the main reply until its ow
   }
 });
 
+test('a background command stopped through Claude Code settles from its explicit stop result only', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    const emit = f.hostOptions.onMessage;
+    for (const id of ['bg-a', 'bg-b', 'bg-c'])
+      emit({type: 'system', subtype: 'task_started', task_type: 'local_bash', task_id: id, tool_use_id: `tool-${id}`});
+    const stop = (toolId, taskId, result, extra = {}) => {
+      emit({type: 'assistant', message: {content: [{type: 'tool_use', id: toolId, name: 'TaskStop', input: {task_id: taskId}}]}});
+      emit({type: 'user', message: {content: [{type: 'tool_result', tool_use_id: toolId, ...result}]}, ...extra});
+    };
+    // Claude Code sends no task_notification for a stopped task, only this result.
+    stop(
+      'stop-a',
+      'bg-a',
+      {content: '{"message":"Successfully stopped task: bg-a (sleep 600)"}'},
+      {tool_use_result: {message: 'Successfully stopped task: bg-a (sleep 600)', task_id: 'bg-a', task_type: 'local_bash'}}
+    );
+    stop('stop-b', 'bg-b', {content: '{"message":"Successfully stopped task: bg-b (sleep 600)","task_id":"bg-b"}'});
+    stop('stop-c', 'bg-c', {is_error: true, content: 'No task found with ID: bg-c'});
+    const byId = Object.fromEntries((await f.controller.workers()).map(worker => [worker.nativeTaskId, worker]));
+    assert.equal(byId['bg-a'].settled, true);
+    assert.equal(byId['bg-a'].status, 'stopped');
+    assert.equal(byId['bg-b'].settled, true, 'the stop result text names the task');
+    assert.equal(byId['bg-c'].settled, false, 'a failed stop leaves the command running');
+    assert.equal(byId['bg-c'].status, 'running');
+  } finally {
+    await f.controller.close();
+  }
+});
+
 test('native Claude goals set, read back, clear on stop and persist without fake messages', async () => {
   let nativeGoal = null;
   const operations = [];

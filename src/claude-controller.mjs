@@ -1177,6 +1177,21 @@ export function createClaudeController({
             }
           }
         }
+        // Stopping a background task is reported only in this tool result, never
+        // as a task notification, so Claude Code's explicit stop result settles it.
+        const stoppedId = tool.details?.task_id ?? tool.details?.shell_id;
+        if (
+          !block.is_error &&
+          /^(TaskStop|KillShell|KillBash)$/i.test(tool.name ?? '') &&
+          typeof stoppedId === 'string' &&
+          ((toolResults.length === 1 && nativeAgentOutput?.task_id === stoppedId) ||
+            tool.output.includes(`stopped task: ${stoppedId}`))
+        ) {
+          const worker = state.workers.find(
+            item => item.provider === 'claude-native' && item.nativeTaskId === stoppedId && !item.settled
+          );
+          if (worker) Object.assign(worker, {status: 'stopped', settled: true, endedAt: new Date().toISOString()});
+        }
         if (!block.is_error && /^(Write|Edit|NotebookEdit|MultiEdit)$/i.test(tool.name ?? '')) {
           const candidate = tool.details?.file_path ?? tool.details?.path ?? tool.details?.notebook_path;
           if (typeof candidate === 'string') {
