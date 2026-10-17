@@ -20,4 +20,6 @@
 
 - GPT-6.1 Sol 驗收（`ddfd8cc`）：「不同意」，兩項 P2——文字比對用 `includes`，回覆寫 `bg-ab` 會誤結案 `bg-a`；背景清單先移除再收到停止成功時，殘留「尚未收到完成結果」錯誤。其餘（多個工具回覆、原生 Agent、舊工具名、前後到達的 task_notification、晚到事件、host 關閉）通過；隔離槽 `npm test` 1748/1748。認為結構化與文字兩種證據並存不算過度。已修（`a966386`）。
 - Fable 5.1 唯讀第二審（`ddfd8cc`）：無 P1／P2。從本機 Claude Code 2.1.285 的實作核對：成功文字固定為「Successfully stopped task: <id> (<command>)」，`KillShell`／`KillBash` 是同一工具別名；輸入 id 不精確命中時走代理名稱解析而非前綴，失敗回錯誤；工作已結束時回「Task <id> had already ended (...)」且 `task_id` 仍等於輸入。採納：P3 結構化證據會把「早就結束」標成 stopped、測試未真正驗到結構化路徑、補測試缺口、id 邊界。主代理據此簡化為只認成功文字（`e67adc1`）：工具回覆的內容就是完整的結構化結果，另一條判斷沒有增加證據，反而會誤標。另記：`local_bash` 的 `task_started` 沒有 `isReplay` 防護（`local_agent` 分支有），目前看不出會被重播，不在本批處理。
-- 完整 `npm test` 1748/1748（`e67adc1`，建置介面後）。待 Sol 複驗簡化後版本；與 K 自行開啟 Chrome 批次一起部署。
+- 完整 `npm test` 1748/1748（`e67adc1`，建置介面後）。
+- Sol 複驗（`e67adc1`）：「同意」合回 main。兩項 P2 通過（`bg-ab` 不再誤結案 `bg-a`；停止成功後清除 backgroundMissing／error）；同意移除結構化 id 判斷（id 相同無法區分成功停止與早已結束），JSON 字串與文字區塊格式的成功訊息都能正確結案；K host 把 stream-json 訊息原樣交給 controller。隔離槽補充案例 18/18、`npm test` 1748/1748、`build:ui` 成功。未驗：真實 Claude Code TaskStop 流程、`test:ui`、正式 K。
+- 部署：與 [K 自行開啟 Chrome](k-chrome-auto-open-20261018.md) 一起，由本人在 K 外更新。
