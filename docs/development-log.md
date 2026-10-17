@@ -341,6 +341,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Google 營運
 
+- 10-17 [Gemini 試算表單列寫入](sheets-write-row-20261017.md)：本人核准分頁／識別欄、依表頭寫入、appendCells、原始值讀回驗收；Sol 覆核必修已修，完整 1739/1739、真正 Flash 假表實測通過，待 Codex Sol 部署。
 - 10-16 [Gemini 工作區 Google 試算表唯讀接線](gemini-sheets-read-20261016.md)：沿用既有授權工具、限定試算表與唯讀 MCP；修正 no-output 原因判讀，原生查詢與部署狀態見紀錄。
 
 - 10-04 [Google 商家營運 API 接入](google-ops-connect-20261004.md)
