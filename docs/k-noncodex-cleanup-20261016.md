@@ -54,3 +54,20 @@
 ## 部署狀態
 
 - 第一、二批已隨他房的正式更新上線：南區 `.local/runtime.json` 於 10-17 為 `c815753`，之後再更新到 `a81475f`；兩者都包含 `2941297`、`d20503f`（以 `git merge-base --is-ancestor` 核對）。本批沒有另外部署。
+
+## 10-17 本人決定（原話）
+
+- 前端拆分：「做」。
+- 瀏覽器兩層合一：「這是小事 你額度夠是100美金的」、「這塊模仿CODEX APP或是CLAUDE CODE或是其他開源不就好了?」。
+- 瀏覽器需求：「我所知道的瀏覽器控制,就只是AI直接控制Crop,然後是在背景控制的,所以它不會影響到我做其他事情……我觀察它在做什麼,我做別的事,就是把瀏覽器縮小,我也可以做我自己的事。這才是我最需要的功能,而Computer Use,直接介入電腦,然後前端,然後控制我的滑鼠,那又是另外的功能,其實這兩個功能最好都有……只有Crop也是暫時是沒有問題……我並沒有要那麼複雜,我其實控制瀏覽器的,控制Crop的功能,只要像Codex App或是Cloud Code這樣就行。」（「Crop」為語音聽寫，指 Chrome。）
+- 據此，瀏覽器整理以「AI 在背景控制 K Chrome、不搶滑鼠」為準；舊的人類接手／交還機制（內嵌瀏覽器時代留下，目前畫面沒有任何入口，只有測試與驗證腳本呼叫）在兩層合一時移除，不重做。Computer Use 列為之後的新功能，不在本項。本人隨後補充：「這個好像是computer use的功能。因為computer use是AI接手整個電腦。那我按ESC才會跳出讓AI不要再去控制電腦。所以我說的這個應該是computer use的功能,而不是控制Chrome的功能。」因此 Chrome 控制不另加 Esc 停手；Esc 停手屬於日後 Computer Use 的需求。本人再確認：「控制Chrome好像不需要什麼我接手還是AI接手之類的,全程AI接手就行啊,因為它是在背景控制,所以人是可以在控制別的東西的,所以如果我想要叫AI停,或是換我接手,那我直接在那個聊天室直接跟AI搶不就好了。」設計定案：Chrome 全程由 AI 在背景控制；要 AI 停手，用聊天室的停止鍵或直接傳訊息，停止會經 MCP 標準取消送到瀏覽器動作；人要自己用 Chrome 隨時可以直接操作，不設人類接手模式。
+
+## 第三批：設定視窗拆出 `main.jsx`
+
+### 修改
+- 新增 `frontend/settings-dialog.jsx`：設定視窗原樣搬出（帳號連接、核心更新、介面外觀、討論 API、可讀性、已封存、附件說明、停止後端／遠端登出）。
+- `frontend/main.jsx`：改用 `<SettingsDialog>`；開啟額度、封存管理、遠端登出、停止後端這些會離開視窗或改變 App 狀態的動作，仍在 App 內以 callback 傳入。移除只剩設定視窗使用的 4 個 import 與 3 個圖示（`main.jsx` 2,640 → 約 2,553 行）。
+- 不改畫面文字、按鈕、順序或行為。
+
+### 驗證
+- `npm run build:ui` 成功；`npm test` 1739 項全過。`npm run test:ui` 47/48：`long-user-text-ui-probe`（長訊息收合後焦點位置）在整輪中失敗一次，單獨重跑 2 次皆通過；該 probe 不開設定視窗，判斷為整輪負載下的時序偶發，與本批無關，列為待觀察。會實際打開設定視窗的 probe（core-updates、gemini-accounts、discussion-api-settings、mobile-remote、modal-focus、completion-attention 等）全過。
