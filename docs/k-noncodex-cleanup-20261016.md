@@ -75,3 +75,38 @@
 ### 複查與部署
 - GPT-6.1 Sol 驗收「同意」（提交 `36cc5f1`）：人工比對並把新元件的 props／callback 代回原 JSX 做結構比對，文字、順序、className、aria、條件分支一致；封存先清空訊息、遠端登出後導頁、停止後端後關閉並標記離線都保留；沒有遺失或多餘的 import。它在自己的工作槽建置候選版與拆分前的 `9bc0d74`，6 支會開設定視窗的 probe 全過；`long-user-text-ui-probe` 候選版與拆分前各重跑 5 次全過，同意「偶發、無本批回歸證據」，但整輪負載是原因尚未證實。
 - 部署：與後續批次一起，由本人在 K 外更新。
+
+## 第四批：瀏覽器兩層合一、移除人類接手
+
+依上方 10-17 本人決定：Chrome 全程由 AI 在背景控制，要停用聊天室，人要用 Chrome 直接操作，不設接手模式。
+
+### 修改
+- 兩層合一：模型連的外層 `external-browser-gateway`（loopback HTTP＋Bearer）原本再用 HTTP 轉送給同一程序內的子 gateway，子 gateway 自己又開一個 loopback listener、token 與 `live.json`。現在 `createBrowserOwnerGateway` 只回傳 `{request, getState, close}`，外層直接呼叫 `request(message, signal)`，交給 SDK 的 `WebStandardStreamableHTTPServerTransport.handleRequest`；第二個 listener、token、`live.json` 都不再存在。
+- 移除人類接手：`browser-live-session` 刪掉 human／ai 模式、人類點擊鍵入、`/frame` 截圖、`/download`、`onControlChange`、分頁標題與瀏覽紀錄（約 440 → 230 行）；保留下載落地（UUID 資料夾、Zone.Identifier）、`reloadPageAtIndex`、`openDataPage`、AI 呼叫計數與 fail-closed。這些都是內嵌瀏覽器時代留下的，畫面早已沒有入口。
+- `desktop-server` 只留 `/api/browser/state`（右側面板顯示一般／無痕、「AI 正在操作 Chrome」與錯誤），刪除 frame／download／action 路由與遠端白名單的 download；`owner-browser-registry` 只接受 `/state`。刪除 `src/browser-live-proxy.mjs`、`shared/browser-downloads.mjs`。
+- 換工作區與閒置釋放：原本要「瀏覽器在 AI 模式且閒置」，改為「瀏覽器閒置」；錯誤文字「瀏覽器接手」改為「瀏覽器操作」。
+- 模型看到的工具說明：拿掉 resize／evaluate／tabs 描述裡「右側檢視」「K 面板分頁」的補述；拒絕原因改為 `browser session is unavailable.`。
+- 分頁標題修補（用面板記錄的標題改寫 `browser_tabs` 清單）的資料來源已隨面板移除，變成不做事的程式，連同兩項假件測試刪除；模型看到 Playwright MCP 原生的分頁標題。未使用的 `BROWSER_LIVE_VIEWPORT` 匯出一併刪除。
+- 測試：browser-live-session、browser-owner-gateway（真 Edge）、external-browser-gateway 等改寫；只測人類接手、截圖、下載路由與標題修補的測試移除；`scripts/verify-k-browser-assistant.mjs` 拿掉接手步驟。
+
+### 取消（Fable、Sol 都指出的退化，已修）
+- 舊拓樸裡，模型取消時外層中止 HTTP 請求，內層串流隨即結束。合一後第一版只把 MCP 取消通知交給 SDK；被取消的呼叫不會有回應，SDK 串流不結束，外層要等 120 秒工具逾時才放開「忙碌」，期間也不能切換一般／無痕。
+- 修正：子 gateway 在中止時只送一次 `notifications/cancelled`，並立即讓回傳的資料流以錯誤結束，外層隨即釋放。SDK 在 `handleRequest` 回傳前就已把訊息交給伺服器，所以回傳後才掛的取消一定找得到那個呼叫。
+- Sol 另外實測出：`browser_session` 啟動中被取消（或逾時、斷線）時，外層排程佇列被卡住，之後連 `ping` 都不回。原因相同，同一修正解決。
+- 新增端對端測試（真 Edge）：經外層送取消後，原請求立刻結束、忙碌在 10 秒內放開並標示需重新連線；`browser_session` 啟動中被取消後，下一個 `ping` 在 10 秒內回應、沒有選定任何模式。把子 gateway 換回修正前版本時，這兩項與子 gateway 的中止測試都卡到逾時；修正後通過。
+- 取消後的既有設計不變：Playwright 工具可能不理會取消，所以 K 關閉整個瀏覽器連線後才放開；之後要重新開啟對話才再連線，先前操作不會重送。
+
+### 重複請求 ID（Sol 指出的退化，已修）
+- 外層收到「同一 ID 仍在執行」的重複請求時回 409，但它的收尾仍把該 ID 從佔用清單移除，第三次同 ID 就會被放行、與原請求同時執行（Sol 實測新版 200／409／200，父版 200／409／409）。父版是靠舊的內層 HTTP gateway 自己的 ID 檢查擋住；合一後只剩外層。
+- 修正：只有實際登記該 ID 的請求能在結束時釋放它（`3d88c93`）。測試補「進行中連送兩次同 ID 都回 409、原請求正常完成且不再忙碌、結束後 ID 可再用」；在修正前程式上第二次回 200 而失敗。
+
+### 驗證
+- 受影響的瀏覽器測試檔全過；`3d88c93` 上 `npm run build:ui` 成功、`npm test` 1732 項全過。
+- `npm run test:ui` 第一輪 46/48：`discussion-ui-probe`（討論結束後下一輪回到一般對話）與 `notice-lifecycle-ui-probe` 失敗。查得當時 Sol 在隔離槽同時跑整套 UI probe（UI probe 用固定連接埠、不能並行，`notice-lifecycle` 固定 5194 埠）；等 Sol 那輪結束後單獨重跑兩支皆通過，兩支都不碰瀏覽器程式，判斷為兩套同時執行互相干擾。
+- 確認沒有其他 probe 在跑之後單獨整輪：47/48，`mobile-remote-ui-probe` 失敗一次（整輪只留第一行 `The expression evaluated to a falsy value`，看不到是哪個斷言）。隨後單獨跑 1 次、連跑 6 次，7/7 通過。該 probe 的聊天室沒有啟用瀏覽器，本批改的閒置／移動前瀏覽器檢查只在啟用瀏覽器時執行，遠端白名單只少了已刪除的 download 路由；判斷為偶發、與本批無關，未改測試，列為待觀察（同 `long-user-text-ui-probe`、Sol 首輪的 `model-picker`，整輪偶發的根因都尚未確定）。
+
+### 複查與部署
+- Fable 5.1 唯讀第二審（`7a04aa8`）：P2 取消退化（上述）；P3 取消通知可能送兩次、標題修補失效、`BROWSER_LIVE_VIEWPORT` 未使用、缺 409 與「取消中」測試。全部採納，修在 `30e6ef6`（rebase 到 `14dc1fc` 後；原 `7a04aa8` 變為 `12ed059`）。
+- GPT-6.1 Sol 驗收（`7a04aa8`）：「不同意」合併，兩項 P1——取消不結束回應串流（含啟動中取消卡住佇列）、重複 ID 覆寫執行中的請求；並指出原取消測試拿掉了「回應要結束」的斷言、重複 ID 測試被刪，所以整輪測試沒抓到。它在隔離工作槽跑 `7a04aa8`：`npm test` 1731／1731、`test:ui` 48／48，並與父版對照重現兩項問題；也核對 scripts、手機／遠端入口、三家控制器沒有使用被刪介面的呼叫，工具過濾、檔案路徑限制、下載位置、UUID 資料夾、Zone 標記、`run_code_unsafe` 拒絕都還在。兩項都採納，修在 `30e6ef6`、`3d88c93`。
+- Sol 複驗（`3d88c93`）：「同意」合回 main。用上次的重現腳本重跑：取消後回應結束、busy 解除；啟動中取消／逾時／斷線後下一個 ping 都完成；同 ID 三連送 200／409／409，與父版 `14dc1fc` 一致。補查：正常讀完後再 abort 不誤取消；消費端取消加 abort 只送一次取消通知；`initialize`、`tools/list` 被中止不會誤關瀏覽器；內部暖啟動 ID 會正確取消；串流讀取錯誤會傳回呼叫端。`ended`、`registered` 都必要，刪掉身分比對與標題修補合理，沒有要再加的防護。SDK 取消後在 `_requestToStreamMapping` 留 1 筆，隨該 gateway 存活、不卡串流或佇列，不為此操作 SDK 私有欄位。它的隔離槽：`npm run build:ui` 通過、`npm test` 1732／1732；`test:ui` 首輪 45／48（兩支啟動時固定埠被佔用，與我這邊同時跑有關；一支 `model-picker` 手機尺寸未找到主模型選單，候選版與 `14dc1fc` 單跑都通過 6 種尺寸 102 項檢查，根因未確定），第二輪完整 48／48。未驗：正式 K、實際 Chrome 擴充與三家原生停止入口整條路徑、永久不返回的啟動／關閉、長期記憶體壓力。報告在 `D:\scratch\general\jobs\20261017-091803_d42ab1c6\logs\sol-browser-reacceptance.md`。
+- 部署：與第三批一起，由本人在 K 外更新；合回 main 不等於正式 K 已更新。更新後請本人實測一次：叫 AI 用瀏覽器做事，中途按停止，確認停下且右側不再顯示「AI 正在操作 Chrome」。
