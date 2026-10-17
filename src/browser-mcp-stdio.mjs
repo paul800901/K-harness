@@ -23,12 +23,11 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
   const dataNavigations = new Set();
   const pendingDataNavigations = new Set();
   const pendingReloads = new Set();
-  const tabListings = new Set();
   const internalTabLists = new Map();
   const suppressedInternalTabLists = new Set();
   const releaseCall = id => {
     if (activeCalls.delete(id)) liveSession?.endAiCall();
-    if (!pendingDataNavigations.has(id) && !pendingReloads.has(id) && !tabListings.has(id)) cancelledCalls.delete(id);
+    if (!pendingDataNavigations.has(id) && !pendingReloads.has(id)) cancelledCalls.delete(id);
   };
   const deny = message => {
     if (activeCalls.delete(message.id)) liveSession?.endAiCall();
@@ -83,7 +82,6 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
               return await deny({...message, reason: 'arbitrary browser code is not enabled in K.'});
             if (['browser_file_upload', 'browser_drop'].includes(name) && args.paths !== undefined)
               await validateBrowserFiles(directory, args.paths);
-            if (name === 'browser_tabs' && args.action === 'list') tabListings.add(message.id);
             if (name === 'browser_reload' && liveSession?.reloadPageAtIndex) {
               pendingReloads.add(message.id);
               try {
@@ -234,43 +232,11 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
             ]
           }
         };
-      if (
-        message.result?.content?.some(
-          item => item.type === 'text' && /^\- \d+: (?:\(current\) )?\[/m.test(item.text)
-        ) &&
-        liveSession?.getState
-      ) {
-        const state = await liveSession.getState();
-        const pages = state.pages ?? [];
-        message = {
-          ...message,
-          result: {
-            ...message.result,
-            content: message.result.content.map(item => {
-              if (item.type !== 'text' || typeof item.text !== 'string') return item;
-              const text = item.text
-                .split('\n')
-                .map(line => {
-                  const row = /^(- (\d+):)( \(current\))? \[(.*)\]\((.*)\)( \[crashed\])?$/.exec(line);
-                  if (!row) return line;
-                  const page = pages[Number(row[2])];
-                  if (!page || page.url !== row[5] || typeof page.title !== 'string') return line;
-                  const title = page.title.replaceAll('\\', '\\\\').replaceAll('[', '\\[').replaceAll(']', '\\]');
-                  return `${row[1]}${row[3] ?? ''} [${title}](${row[5]})${row[6] ?? ''}`;
-                })
-                .join('\n');
-              return {...item, text};
-            })
-          }
-        };
-      }
       if (cancelledCalls.has(message.id)) {
-        tabListings.delete(message.id);
         if (!activeCalls.has(message.id)) cancelledCalls.delete(message.id);
         return;
       }
       if (activeCalls.has(message.id)) releaseCall(message.id);
-      tabListings.delete(message.id);
       return raw.send(message);
     },
     async close() {

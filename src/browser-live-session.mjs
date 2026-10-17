@@ -233,5 +233,3 @@ export async function createBrowserLiveSession(profile, {launchContext, download
     }
   };
 }
-
-export {VIEWPORT as BROWSER_LIVE_VIEWPORT};

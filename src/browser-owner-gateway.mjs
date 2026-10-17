@@ -33,59 +33,64 @@ export async function createBrowserOwnerGateway({directory, profile, launchConte
   /**
    * Handle one JSON-RPC message and return the SDK's response. Aborting `signal`
    * before the response body ends cancels a running tool call the same way an
-   * MCP client would; an abort after the body ended is not a cancellation.
+   * MCP client would and errors the body at once: a cancelled call gets no
+   * response, so waiting for one would hold the caller until its timeout.
+   * An abort after the body ended is not a cancellation.
    */
   async function request(message, signal) {
     if (closing) throw new Error('Browser session is closing.');
     signal?.throwIfAborted();
-    let ended = false;
-    const cancel = () => {
-      if (!ended && message?.method === 'tools/call')
-        raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});
-    };
-    signal?.addEventListener('abort', cancel, {once: true});
+    // The SDK dispatches the message before returning, so a later cancellation
+    // always finds the call it names.
+    const response = await raw.handleRequest(
+      new Request('http://k-browser.invalid/mcp', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'},
+        body: JSON.stringify(message)
+      })
+    );
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    let ended = false,
+      output;
     const end = () => {
       ended = true;
-      signal?.removeEventListener('abort', cancel);
+      signal?.removeEventListener('abort', abort);
     };
-    let response;
-    try {
-      response = await raw.handleRequest(
-        new Request('http://k-browser.invalid/mcp', {
-          method: 'POST',
-          headers: {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'},
-          body: JSON.stringify(message)
-        })
-      );
-    } catch (error) {
-      cancel();
+    const cancel = reason => {
+      if (ended) return;
       end();
-      throw error;
+      if (message?.method === 'tools/call')
+        raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});
+      return reader.cancel(reason).catch(() => {});
+    };
+    function abort() {
+      if (ended) return;
+      output.error(signal.reason);
+      void cancel(signal.reason);
     }
-    if (!response.body) {
-      end();
-      return response;
-    }
-    const reader = response.body.getReader();
     const body = new ReadableStream({
+      start(controller) {
+        output = controller;
+      },
       async pull(controller) {
         try {
           const item = await reader.read();
+          if (ended) return;
           if (item.done) {
             end();
             controller.close();
           } else controller.enqueue(item.value);
         } catch (error) {
+          if (ended) return;
           end();
           controller.error(error);
         }
       },
-      async cancel(reason) {
-        cancel();
-        end();
-        await reader.cancel(reason);
-      }
+      cancel
     });
+    if (signal?.aborted) abort();
+    else signal?.addEventListener('abort', abort, {once: true});
     return new Response(body, {status: response.status, statusText: response.statusText, headers: response.headers});
   }
   async function close() {

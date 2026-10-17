@@ -6,6 +6,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {chromium} from 'playwright';
 import {createBrowserOwnerGateway} from '../src/browser-owner-gateway.mjs';
+import {createExternalBrowserGateway} from '../src/external-browser-gateway.mjs';
 
 async function fixture(options = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'k-owner-browser-'));
@@ -87,11 +88,65 @@ test('aborting a running tool call closes the browser session and reports recove
     pending.catch(() => {});
     await waitFor(f.gateway.getState, state => state.busy);
     abort.abort();
+    await assert.rejects(pending, 'a cancelled call ends its body instead of waiting for a response');
     const final = await waitFor(f.gateway.getState, state => state.recoveryRequired && !state.busy);
     assert.equal(final.available, false);
     assert.match(JSON.stringify(await f.call(6, 'browser_snapshot')), /unavailable/);
   } finally {
     await f.gateway.close();
+  }
+});
+
+test('a model cancellation through the outer gateway ends the call and releases busy at once', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'k-outer-cancel-'));
+  const directory = path.join(root, 'out'),
+    profile = path.join(root, 'profiles');
+  await mkdir(directory);
+  await mkdir(profile);
+  const gateway = await createExternalBrowserGateway({
+    directory,
+    profile,
+    launchExternalContext: ({profile, width, height}) =>
+      chromium.launchPersistentContext(profile, {channel: 'msedge', headless: true, viewport: {width, height}})
+  });
+  const send = message =>
+    fetch(gateway.aiMcpServer.url, {
+      method: 'POST',
+      headers: {
+        ...gateway.aiMcpServer.headers,
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify(message)
+    });
+  try {
+    await body(
+      await send({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'tools/call',
+        params: {name: 'browser_session', arguments: {mode: 'regular'}}
+      })
+    );
+    const pending = send({
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'tools/call',
+      params: {name: 'browser_wait_for', arguments: {time: 30}}
+    }).then(response => response.text());
+    pending.catch(() => {});
+    await waitFor(gateway.getState, state => state.busy);
+    const started = Date.now();
+    assert.equal(
+      (await send({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: 2}})).status,
+      202
+    );
+    await assert.rejects(pending, 'the cancelled call has no response, so its stream is ended');
+    const final = await waitFor(gateway.getState, state => !state.busy);
+    assert(Date.now() - started < 10000, 'busy is released without waiting for the tool timeout');
+    assert.equal(final.recoveryRequired, true);
+  } finally {
+    await gateway.close();
   }
 });
 

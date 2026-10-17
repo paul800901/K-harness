@@ -200,6 +200,21 @@ test('mode changes are refused during calls, and close shuts down each opened ch
   );
 });
 
+test('a request ID that is still pending is refused rather than run twice', async () => {
+  const f = await fixture();
+  try {
+    await f.call(1, 'browser_session', {mode: 'regular'});
+    const pending = f.call(2, 'hold');
+    await new Promise(resolve => setTimeout(resolve, 25));
+    const duplicate = await f.send({jsonrpc: '2.0', id: 2, method: 'tools/call', params: {name: 'browser_navigate'}});
+    assert.equal(duplicate.status, 409);
+    assert.match(JSON.stringify(await pending), /finished/);
+    assert.match(JSON.stringify(await f.call(2, 'browser_navigate')), /regular:browser_navigate/, 'the ID is free again');
+  } finally {
+    await closeFixture(f);
+  }
+});
+
 test('browser state reports the external mode before and after selection', async () => {
   const f = await fixture();
   try {
