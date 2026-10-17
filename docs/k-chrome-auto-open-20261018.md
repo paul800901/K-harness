@@ -53,7 +53,7 @@
 - Fable 5.1 唯讀第二審（擴充 `de6ef29`）：無 P1。查證無問題：無痕不建分頁群組、一般模式建群組已帶 windowId，新視窗唯一分頁當工作分頁不會被搬走；連線結束只解除群組、留下的縮小視窗下次同模式會重用、不會累積；本人關掉該視窗會斷線、下次自動重連；連線頁放新縮小視窗不影響其他連線；權限檢查在建窗前。採納：P2 部署後實測要涵蓋 `nativeConnection` 新路徑（見下方實測清單）；P2 `background.ts` 一般模式自開視窗在 K 流程幾乎不可達（連線頁一定在一般視窗），列為已知未在真 Chrome 驗證；P3 開窗被拒時 Chrome 英文例外改為中文說明；P3 補三個錯誤分支測試（建窗被拒、建窗無分頁、原生連線建窗被拒不回傳 Chrome 錯誤）；P3 文件與註解改正：一般請求時連線頁的縮小視窗會成為工作視窗，只有無痕請求時隨連線頁關閉；P3 `browser-extension/README.md` 拿掉早已不存在的「允許並開啟新分頁」按鈕與「候選、未安裝」說法。不採納：P3 建窗成功但後續失敗留下一個空白縮小視窗（下次同模式重用、不累積）。這些修改在 Sol 最終驗收之後，限於錯誤訊息文字、測試與文件，未再送 Sol；最終 `npm test` 1747/1747。
 - 部署後實測清單（在 K 裡由 AI 執行）：1. 關掉 K 專用 Chrome，叫 AI 用一般模式開網頁（K 縮小開 Chrome）；2. 接著用無痕模式（擴充縮小開無痕視窗）；3. 只留無痕視窗、關掉一般視窗，再分別要一般與無痕（走 `nativeConnection` 自開連線頁視窗）；4. 確認擴充版本 0.1.4、右側狀態與焦點沒有被搶。
 - 已合回 main 並 push（遠端讀回 `c993e95`）：程式 `5d0a6b0`、`453e9ad`、`8a2138d`、`de6ef29`、`d7b4ddb`、`3ba604e`；紀錄 `536ebb9`、`84f2bd4`、`8da0be9`、`c993e95`。原定部署 `3ba604e`；之後同日併入 [TaskStop 修正](claude-taskstop-settle-20261018.md)，兩批一起部署的固定程式版本為 `e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`（包含本批全部程式）。
-- 部署（擴充有變更）：K 外 `Update-K.ps1` 之後，執行 `scripts/Setup-K-Browser.ps1`（以正式 trusted-runtime 建置的擴充更新 `installed/k-browser-assistant`，先備份；重套同一 K native host 登記），再讓 K 專用 Chrome 載入 0.1.4（關閉 K 專用 Chrome 後重開，或在擴充頁按重新載入），並讀回擴充版本。
+- 部署（擴充有變更）：K 外 `Update-K.ps1` 之後，執行 `scripts/Setup-K-Browser.ps1`（以正式 trusted-runtime 建置的擴充更新 `installed/k-browser-assistant`，先備份；重套同一 K native host 登記），再在擴充頁按一次「重新載入」（或由擴充頁面呼叫 `chrome.runtime.reload()`），並讀回擴充版本與實際行為。部署後實測證實：只重開 Chrome 不夠，見下方「部署後實測」。
 - 部署已完成，兩批共用的正式讀回與待實測界線見下方「部署狀態」。
 
 ## 部署狀態
@@ -69,5 +69,13 @@
 - **Chrome 與 native host**：`vault/k-browser-assistant.json` 的 chromeExecutable 仍是 `C:\Program Files\Google\Chrome\Application\chrome.exe`。HKCU 仍只登記同一 `com.k_harness.browser_assistant`，stdio 類型與允許的 K 擴充身分不變。但依指定腳本，登記位置由 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\k-browser-native-host\com.k_harness.browser_assistant.json` 改為 `D:\K-harness\installed\k-browser-assistant\com.k_harness.browser_assistant.json`，host.bat 也改到同一 installed 目錄；新 host.mjs 匯入目前 trusted-runtime 的 host。這是同一 K host 的新固定入口，**不是登記路徑未變**；舊登記備份保留。
 - **正式啟動**：只正常執行一次 `Start-K-Desktop.ps1`，01:49（臺灣時間）讀回 `http://127.0.0.1:47831/health` 為 **HTTP 200、deployment=native**。未手動開 K 專用 Chrome，當時亦無該 profile 的 Chrome 程序，不宣稱 Chrome 已載入 0.1.4。
 - **待實測**：由 K 裡的 Claude 執行上節瀏覽器實測清單，包括自動縮小開啟、無痕及只剩無痕視窗時的連線；本次不代測。真實 Claude Code TaskStop 流程仍未於本次部署驗證。其他電腦未更新。
+- **部署後實測（2026-10-18 01:52–01:56，K 內 Claude，真 K 專用 Chrome）**：
+  1. Chrome 關著時 `browser_session regular`：K 自動開 Chrome 並縮小，選好後 `browser_navigate example.com` 成功。前景記錄（20ms 抽樣、只記變化）：K 專用 Chrome 在前景 0.19 秒即回到 K（electron）。
+  2. 第一次 `browser_session incognito` 逾時（Claude 端 MCP 等待上限）。查證：Chrome 從 `installed/k-browser-assistant` 載入、`chrome.runtime.getManifest().version` 為 0.1.4、允許無痕，但連線頁顯示的是舊版才有的「請先開啟無痕 Chrome 視窗…K 不會自動彈出視窗」，安裝目錄所有檔案都已無此字串——**Chrome 重開後仍沿用之前存下的舊版擴充背景程式（service worker），只換了 manifest 與頁面檔**。由擴充狀態頁呼叫 `chrome.runtime.reload()`（等同擴充頁「重新載入」）後恢復正常。部署說明已改為必須重新載入。
+  3. 重新載入使舊連線中斷，再選 `regular` 即自動建立新連線（新空白分頁、未重做先前動作），驗證停止／斷線後自動重連。
+  4. 新版擴充下 `browser_session incognito`：擴充自開縮小的無痕視窗，`browser_navigate` 成功；兩個視窗皆縮小，前景記錄沒有任何 Chrome 進到前景。
+  5. 只剩無痕視窗（關閉 K 專用 Chrome 後以 `--incognito` 縮小啟動，該次啟動閃 0.15 秒）：`browser_session incognito` 經 Chrome 重開後自動重連成功、navigate 成功；再要 `regular`，擴充把連線頁放進自開的縮小一般視窗並在其中工作，navigate 成功；兩視窗皆縮小、未進前景。`nativeConnection` 與 `background.ts` 的新路徑都在真 Chrome 走過。
+  6. TaskStop：背景指令以 `TaskStop` 停止，原生回覆為 `{"message":"Successfully stopped task: b2298lrmw (...)","task_id":"b2298lrmw",...}`，符合修正的判斷；畫面上的子代理數待本人目視確認。
+  前景記錄與腳本：`.runtime/archive/k-chrome-auto-open-20261018/fg-postdeploy.log`、`fg-sampler.ps1`、`start-incognito-only.ps1`。
 - **本機證據**：`.runtime/archive/k-chrome-auto-open-20261018/deploy-preflight.json`、`deploy-updater.log`、`deploy-runtime-readback.json`、`deploy-browser-setup.log`、`deploy-browser-readback.json`、`deploy-start.json`、`deploy-health.json`；只保留於 Git 排除的本機目錄，不提交。
 - **文件發布**：本次只另提交本文件、TaskStop 文件的部署連結與 development-log 目前狀態；部署程式 SHA 不隨文件提交改變。提交、秘密檢查與 push 後遠端讀回另存本機 `deploy-publish.json`，不以文件提交當作再次部署。
