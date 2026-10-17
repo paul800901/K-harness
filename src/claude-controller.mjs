@@ -1178,14 +1178,14 @@ export function createClaudeController({
           }
         }
         // Stopping a background task is reported only in this tool result, never
-        // as a task notification, so Claude Code's explicit stop result settles it.
+        // as a task notification. Claude Code's fixed success text names the task;
+        // "had already ended" and failures are not stops.
         const stoppedId = tool.details?.task_id ?? tool.details?.shell_id;
         if (
           !block.is_error &&
           /^(TaskStop|KillShell|KillBash)$/i.test(tool.name ?? '') &&
           typeof stoppedId === 'string' &&
-          ((toolResults.length === 1 && nativeAgentOutput?.task_id === stoppedId) ||
-            /stopped task: ([\w-]+)/.exec(tool.output)?.[1] === stoppedId)
+          /Successfully stopped task: ([\w-]+)/.exec(tool.output)?.[1] === stoppedId
         ) {
           const worker = state.workers.find(
             item => item.provider === 'claude-native' && item.nativeTaskId === stoppedId && !item.settled

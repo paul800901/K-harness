@@ -3379,7 +3379,7 @@ test('a background command stopped through Claude Code settles from its explicit
   try {
     await f.controller.open({});
     const emit = f.hostOptions.onMessage;
-    for (const id of ['bg-a', 'bg-b', 'bg-c', 'bg-d', 'bg-e'])
+    for (const id of ['bg-a', 'bg-b', 'bg-c', 'bg-d', 'bg-e', 'bg-f', 'bg-1', 'bg-10'])
       emit({type: 'system', subtype: 'task_started', task_type: 'local_bash', task_id: id, tool_use_id: `tool-${id}`});
     const stop = (toolId, taskId, result, extra = {}) => {
       emit({type: 'assistant', message: {content: [{type: 'tool_use', id: toolId, name: 'TaskStop', input: {task_id: taskId}}]}});
@@ -3389,15 +3389,23 @@ test('a background command stopped through Claude Code settles from its explicit
     emit({type: 'system', subtype: 'background_tasks_changed', tasks: [{task_id: 'bg-e'}]});
     emit({type: 'system', subtype: 'background_tasks_changed', tasks: []});
     // Claude Code sends no task_notification for a stopped task, only this result.
-    stop('stop-a', 'bg-a', {content: 'done'}, {tool_use_result: {task_id: 'bg-a', task_type: 'local_bash'}});
+    emit({type: 'system', subtype: 'task_notification', task_id: 'bg-f', status: 'completed', summary: 'exit 0'});
+    stop(
+      'stop-a',
+      'bg-a',
+      {content: '{"message":"Task bg-a had already ended (completed)","task_id":"bg-a"}'},
+      {tool_use_result: {message: 'Task bg-a had already ended (completed)', task_id: 'bg-a'}}
+    );
     stop('stop-b', 'bg-b', {content: '{"message":"Successfully stopped task: bg-b (sleep 600)","task_id":"bg-b"}'});
     stop('stop-c', 'bg-c', {is_error: true, content: 'No task found with ID: bg-c'});
     stop('stop-d', 'bg-d', {content: '{"message":"Successfully stopped task: bg-de (sleep 600)"}'});
     stop('stop-e', 'bg-e', {content: '{"message":"Successfully stopped task: bg-e (sleep 600)"}'});
+    stop('stop-f', 'bg-f', {content: '{"message":"Successfully stopped task: bg-f (sleep 600)"}'});
+    stop('stop-1', 'bg-1', {content: '{"message":"Successfully stopped task: bg-1 (sleep 600)"}'});
     const byId = Object.fromEntries((await f.controller.workers()).map(worker => [worker.nativeTaskId, worker]));
-    assert.equal(byId['bg-a'].settled, true, 'the structured result names the task');
-    assert.equal(byId['bg-a'].status, 'stopped');
+    assert.equal(byId['bg-a'].settled, false, 'an "already ended" reply is not a stop; its notification settles it');
     assert.equal(byId['bg-b'].settled, true, 'the stop result text names the task');
+    assert.equal(byId['bg-b'].status, 'stopped');
     assert.equal(byId['bg-c'].settled, false, 'a failed stop leaves the command running');
     assert.equal(byId['bg-c'].status, 'running');
     assert.equal(byId['bg-d'].settled, false, 'a result naming another task with the same prefix is not evidence');
@@ -3405,6 +3413,9 @@ test('a background command stopped through Claude Code settles from its explicit
     assert.equal(byId['bg-e'].status, 'stopped');
     assert.equal(byId['bg-e'].error, undefined, 'the stop clears the earlier missing-from-list error');
     assert.equal(byId['bg-e'].backgroundMissing, undefined);
+    assert.equal(byId['bg-f'].status, 'completed', 'an already settled command is not rewritten');
+    assert.equal(byId['bg-1'].settled, true);
+    assert.equal(byId['bg-10'].settled, false, 'stopping bg-1 leaves bg-10 alone');
   } finally {
     await f.controller.close();
   }
