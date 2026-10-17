@@ -93,18 +93,16 @@ for (const mode of ['regular', 'incognito']) {
 }
 
 for (const mode of ['regular', 'incognito']) {
-  test(`${mode} work-tab request fails clearly without an existing matching-mode window`, async () => {
+  test(`${mode} work tab without a matching-mode window opens that window minimized and uses its blank tab`, async () => {
     const {PlaywrightExtension} = await backgroundModule();
     const mismatchedOnly = [{id: 33, incognito: mode !== 'incognito'}];
     const {chrome, calls} = harness(mismatchedOnly, mode);
     await withChrome(chrome, async () => {
-      await assert.rejects(
-        backgroundFor(PlaywrightExtension, mode)._connectToNewTab(7, 'client', mode),
-        new RegExp(mode === 'incognito' ? '請先開啟無痕 Chrome 視窗' : '請先開啟一般 Chrome 視窗')
-      );
+      const tab = await backgroundFor(PlaywrightExtension, mode)._connectToNewTab(7, 'client', mode);
+      assert.deepEqual(tab, {id: 500, incognito: mode === 'incognito'});
     });
     assert.deepEqual(calls.tabs, []);
-    assert.deepEqual(calls.windowsCreated, []);
+    assert.deepEqual(calls.windowsCreated, [{incognito: mode === 'incognito', url: 'about:blank', state: 'minimized'}]);
     assert.equal(calls.permissionChecks, mode === 'incognito' ? 1 : 0);
   });
 }

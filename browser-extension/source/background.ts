@@ -141,11 +141,11 @@ class PlaywrightExtension {
       throw new Error('請先在 Chrome 的 K 瀏覽器助手擴充功能詳細資料中允許無痕模式。');
     const windows = await chrome.windows.getAll({ windowTypes: ['normal'] });
     const targetWindow = windows.find(window => window.incognito === (mode === 'incognito') && Number.isInteger(window.id));
-    if (targetWindow?.id === undefined)
-      throw new Error(mode === 'incognito'
-        ? '請先開啟無痕 Chrome 視窗，再由 K 重試；K 不會自動彈出視窗。'
-        : '請先開啟一般 Chrome 視窗，再由 K 重試；K 不會自動彈出視窗。');
-    const tab = await chrome.tabs.create({ url: 'about:blank', windowId: targetWindow.id, active: false });
+    // With no window of this mode open, open one minimized instead of asking the
+    // owner to (owner decision 2026-10-18); its blank tab becomes the work tab.
+    const tab = targetWindow?.id === undefined
+      ? (await chrome.windows.create({ incognito: mode === 'incognito', url: 'about:blank', state: 'minimized' }))?.tabs?.[0]
+      : await chrome.tabs.create({ url: 'about:blank', windowId: targetWindow.id, active: false });
     if (!tab || tab.id === undefined || tab.incognito !== (mode === 'incognito'))
       throw new Error('Chrome 未建立符合所選模式的新分頁。');
     return tab as chrome.tabs.Tab & { id: number };

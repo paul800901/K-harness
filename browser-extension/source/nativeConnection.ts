@@ -27,6 +27,7 @@ type ChromeApi = {
   extension: { isAllowedIncognitoAccess(): Promise<boolean> };
   windows: {
     getAll(options: { windowTypes: string[] }): Promise<Array<{ id?: number; incognito?: boolean }>>;
+    create(options: { url: string; state: 'minimized' }): Promise<unknown>;
   };
   tabs: {
     create(options: { url: string; active: boolean; windowId: number }): Promise<unknown>;
@@ -95,14 +96,16 @@ export class NativeConnection {
       const target = this._validateConnectUrl(request.url);
       const normalWindows = await this._chrome.windows.getAll({ windowTypes: ['normal'] });
       const regularWindow = normalWindows.find(window => !window.incognito && Number.isInteger(window.id));
-      if (regularWindow?.id === undefined)
-        throw new Error('no existing regular Chrome window');
       if (target.mode === 'incognito' && !await this._chrome.extension.isAllowedIncognitoAccess())
         throw new Error('incognito permission denied');
 
-      // Keep the selector page in an existing regular window for both modes;
-      // the background worker creates the actual target window when needed.
-      await this._chrome.tabs.create({ url: target.url, active: false, windowId: regularWindow.id });
+      // Keep the selector page in a regular window for both modes; the background
+      // worker opens the actual target window when needed. With no regular window
+      // open, the selector gets its own minimized window, which closes with it.
+      if (regularWindow?.id === undefined)
+        await this._chrome.windows.create({ url: target.url, state: 'minimized' });
+      else
+        await this._chrome.tabs.create({ url: target.url, active: false, windowId: regularWindow.id });
       this._reply(port, { id: request.id, ok: true });
     } catch {
       // Never echo a URL, relay path, nonce, or Chrome exception text to host.

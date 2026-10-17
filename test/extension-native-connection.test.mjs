@@ -160,37 +160,19 @@ test('native incognito handoff checks permission and opens an inactive selector 
   assert.deepEqual(mock.port.messages[0], {id: 'req-incognito', ok: true});
 });
 
-test('native regular handoff refuses to create the first normal window', async () => {
-  const {NativeConnection} = await nativeConnectionModule();
-  const mock = mockChrome({windows: []});
-  new NativeConnection(mock.chrome);
-  mock.port.onMessage.emit({id: 'req-no-window', type: 'openConnectPage', url: connectUrl()});
-  await waitFor(() => mock.port.messages.length === 1);
+for (const mode of ['regular', 'incognito']) {
+  test(`native ${mode} handoff with no regular window opens the selector in its own minimized window`, async () => {
+    const {NativeConnection} = await nativeConnectionModule();
+    const mock = mockChrome({windows: mode === 'incognito' ? [{id: 7, incognito: true}] : [], incognitoAllowed: true});
+    new NativeConnection(mock.chrome);
+    mock.port.onMessage.emit({id: `req-${mode}`, type: 'openConnectPage', url: connectUrl({mode})});
+    await waitFor(() => mock.port.messages.length === 1);
 
-  assert.deepEqual(mock.calls.tabs, []);
-  assert.deepEqual(mock.calls.windows, []);
-  assert.deepEqual(mock.port.messages[0], {
-    id: 'req-no-window',
-    ok: false,
-    error: 'K could not open the validated background connection page.'
+    assert.deepEqual(mock.calls.tabs, []);
+    assert.deepEqual(mock.calls.windows, [{url: connectUrl({mode}), state: 'minimized'}]);
+    assert.deepEqual(mock.port.messages[0], {id: `req-${mode}`, ok: true});
   });
-});
-
-test('native incognito handoff also requires an existing normal Chrome window', async () => {
-  const {NativeConnection} = await nativeConnectionModule();
-  const mock = mockChrome({windows: [{id: 7, incognito: true}], incognitoAllowed: true});
-  new NativeConnection(mock.chrome);
-  mock.port.onMessage.emit({
-    id: 'req-incognito-no-window',
-    type: 'openConnectPage',
-    url: connectUrl({mode: 'incognito'})
-  });
-  await waitFor(() => mock.port.messages.length === 1);
-
-  assert.deepEqual(mock.calls.tabs, []);
-  assert.deepEqual(mock.calls.windows, []);
-  assert.equal(mock.port.messages[0].ok, false);
-});
+}
 
 test('native handoff rejects non-K, non-loopback, malformed, and unauthorized incognito requests', async () => {
   const {NativeConnection} = await nativeConnectionModule();
