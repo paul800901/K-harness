@@ -84,4 +84,4 @@ K 工單 `sheets-write-row-review-20261017`（gpt-6.1-sol high，唯讀，覆核
 - 另開 **read-only** 聊天室，讀回原生 `settings.json`：沒有 writer／`k_sheets/*`／全部 MCP 的 allow，保留寫檔與命令 deny。這是正式權限設定讀回，**未呼叫 writer 測試原生拒絕**，不宣稱做過真實拒絕測試。兩個新聊天室均保留。
 - **正式試算表零呼叫、零寫入**，沒有讀資料列或重播口述。10/17 三筆仍留給本人在 Flash 聊天室交代，登錄前須依工作區規則查核既有結果。
 - 本批部署與讀回證據在原工作樹 `.runtime/archive/sheets-write-20261017/deploy-*`，包含完整測試、更新器原始紀錄、原設定、runtime／設定／health／原生定義與工具事件；不提交 Git。其他電腦未更新。
-- 已完成待發布四個提交的新增內容與秘密模式檢查；GitHub push 與遠端 SHA 讀回待本筆部署文件提交後執行。
+- 已檢查全部待發布提交的新增內容與秘密模式；首次 GitHub push 成功，`git ls-remote origin refs/heads/main` 讀回 **`90a0846c2b802f16f8ec6887297288e611821978`**，與本機完全相同。後續僅本節與工程索引收尾，仍會 push 並把最終遠端 SHA 存入本機 `deploy-remote-final.json`；不重啟 K，正式程式版本維持 `a81475f345319c22413cb30040db90925fe65c1b`。
