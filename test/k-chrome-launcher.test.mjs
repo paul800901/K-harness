@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {spawn} from 'node:child_process';
 import {mkdir, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {scratchBase} from './scratch.mjs';
@@ -11,27 +12,60 @@ async function profileDir() {
   await mkdir(dir, {recursive: true});
   return dir;
 }
+// Holds the file the way a running Chrome does (no sharing) until released.
+async function holdLock(file) {
+  const holder = spawn(
+    'powershell.exe',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      "$f = [IO.File]::Open($env:K_LOCK, 'OpenOrCreate', 'ReadWrite', 'None'); 'locked'; [Console]::In.ReadLine() | Out-Null; $f.Close()"
+    ],
+    {env: {...process.env, K_LOCK: file}, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore']}
+  );
+  await new Promise((resolve, reject) => {
+    holder.stdout.on('data', data => String(data).includes('locked') && resolve());
+    holder.on('error', reject);
+    holder.on('exit', () => reject(Error('lock holder exited')));
+  });
+  return () => new Promise(resolve => (holder.on('exit', resolve), holder.stdin.end('\n')));
+}
 const connected = [{profileId: 'a'.repeat(32), connected: true, modes: ['regular']}],
   waiting = [{profileId: 'a'.repeat(32), connected: false, modes: []}];
 
 test('a running K Chrome is never started again, only waited for', async () => {
   const userDataDir = await profileDir();
-  await writeFile(path.join(userDataDir, 'lockfile'), '');
+  const release = await holdLock(path.join(userDataDir, 'lockfile'));
   let runs = 0,
     lists = 0;
-  const options = {
+  const options = {chromeExecutable: 'C:\\fake\\chrome.exe', userDataDir, intervalMs: 1, execFileImpl: () => runs++};
+  try {
+    assert.deepEqual(await startKChrome({...options, listProfiles: async () => (++lists < 2 ? waiting : connected)}), connected);
+    await assert.rejects(
+      startKChrome({...options, timeoutMs: 10, listProfiles: async () => waiting}),
+      /瀏覽器助手沒有在 0 秒內連上/
+    );
+  } finally {
+    await release();
+  }
+  assert.equal(runs, 0);
+});
+
+test('a lockfile left behind by a crash does not stop K from starting Chrome', async () => {
+  const userDataDir = await profileDir();
+  await writeFile(path.join(userDataDir, 'lockfile'), '');
+  let runs = 0;
+  await startKChrome({
     chromeExecutable: 'C:\\fake\\chrome.exe',
     userDataDir,
-    mode: 'regular',
-    intervalMs: 1,
-    execFileImpl: () => runs++
-  };
-  assert.deepEqual(await startKChrome({...options, listProfiles: async () => (++lists < 2 ? waiting : connected)}), connected);
-  await assert.rejects(
-    startKChrome({...options, timeoutMs: 10, listProfiles: async () => waiting}),
-    /瀏覽器助手沒有在 0 秒內連上/
-  );
-  assert.equal(runs, 0);
+    listProfiles: async () => connected,
+    execFileImpl: (file, args, options, done) => {
+      runs++;
+      done(null);
+    }
+  });
+  assert.equal(runs, 1);
 });
 
 test('requests from several rooms share one Chrome start', async () => {
@@ -41,7 +75,6 @@ test('requests from several rooms share one Chrome start', async () => {
   const options = {
     chromeExecutable: 'C:\\fake\\chrome.exe',
     userDataDir,
-    mode: 'regular',
     listProfiles: async () => connected,
     execFileImpl: (file, args, opts, done) => {
       runs++;
@@ -63,7 +96,6 @@ test('K Chrome starts through the minimizing script, then waits for the assistan
   const profiles = await startKChrome({
     chromeExecutable: 'C:\\fake\\chrome.exe',
     userDataDir,
-    mode: 'incognito',
     env: {SystemRoot: 'C:\\Windows'},
     intervalMs: 1,
     listProfiles: async () => (++lists < 3 ? waiting : connected),
@@ -79,21 +111,8 @@ test('K Chrome starts through the minimizing script, then waits for the assistan
   assert.match(runs[0].args[runs[0].args.indexOf('-File') + 1], /start-k-chrome-minimized\.ps1$/);
   assert.equal(runs[0].args[runs[0].args.indexOf('-Chrome') + 1], 'C:\\fake\\chrome.exe');
   assert.equal(runs[0].args[runs[0].args.indexOf('-UserDataDir') + 1], userDataDir);
-  assert.equal(runs[0].args.at(-1), '-Incognito');
+  assert.equal(runs[0].args.at(-1), userDataDir, 'Chrome always starts with a regular window');
   assert.equal(runs[0].options.windowsHide, true);
-
-  const regular = [];
-  await startKChrome({
-    chromeExecutable: 'C:\\fake\\chrome.exe',
-    userDataDir,
-    mode: 'regular',
-    listProfiles: async () => connected,
-    execFileImpl: (file, args, options, done) => {
-      regular.push(args);
-      done(null);
-    }
-  });
-  assert.equal(regular[0].includes('-Incognito'), false);
 });
 
 test('a failed start or an assistant that never connects is reported, not retried', async () => {
@@ -103,8 +122,7 @@ test('a failed start or an assistant that never connects is reported, not retrie
     startKChrome({
       chromeExecutable: 'C:\\fake\\chrome.exe',
       userDataDir,
-      mode: 'regular',
-      listProfiles: async () => connected,
+        listProfiles: async () => connected,
       execFileImpl: (file, args, options, done) => {
         runs++;
         done(Error('spawn failed'));
@@ -116,8 +134,7 @@ test('a failed start or an assistant that never connects is reported, not retrie
     startKChrome({
       chromeExecutable: 'C:\\fake\\chrome.exe',
       userDataDir,
-      mode: 'regular',
-      timeoutMs: 20,
+        timeoutMs: 20,
       intervalMs: 5,
       listProfiles: async () => waiting,
       execFileImpl: (file, args, options, done) => {
@@ -137,8 +154,7 @@ test('a request stopped before Chrome starts never starts it', async () => {
     startKChrome({
       chromeExecutable: 'C:\\fake\\chrome.exe',
       userDataDir,
-      mode: 'regular',
-      signal: AbortSignal.abort(),
+        signal: AbortSignal.abort(),
       listProfiles: async () => connected,
       execFileImpl: () => runs++
     }),
@@ -154,7 +170,6 @@ test('a stopped request stops waiting at once while the start another room needs
   const options = {
     chromeExecutable: 'C:\\fake\\chrome.exe',
     userDataDir,
-    mode: 'regular',
     listProfiles: async () => connected,
     execFileImpl: (file, args, opts, done) => {
       runs++;
@@ -178,7 +193,6 @@ test('cancelling the request stops waiting for the assistant', async () => {
   const pending = startKChrome({
     chromeExecutable: 'C:\\fake\\chrome.exe',
     userDataDir,
-    mode: 'regular',
     signal: abort.signal,
     intervalMs: 10000,
     listProfiles: async () => waiting,

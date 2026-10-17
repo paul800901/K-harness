@@ -305,15 +305,15 @@ test('with no connected profile, browser_session starts K Chrome once and select
   const starts = [];
   const f = await fixture({
     profiles,
-    startExternalBrowser: async ({mode, signal}) => {
-      starts.push({mode, signal: signal instanceof AbortSignal});
+    startExternalBrowser: async ({signal}) => {
+      starts.push(signal instanceof AbortSignal);
       return [{profileId: id, connected: true, modes: ['regular', 'incognito']}];
     }
   });
   try {
     const selected = await f.call(1, 'browser_session', {mode: 'incognito'});
     assert.match(selected.result.content[0].text, new RegExp(`incognito mode\\. profileId=${id}`));
-    assert.deepEqual(starts, [{mode: 'incognito', signal: true}]);
+    assert.deepEqual(starts, [true]);
     profiles[0] = {profileId: id, connected: true, modes: ['regular', 'incognito']};
     await f.call(2, 'browser_session', {mode: 'regular'});
     assert.equal(starts.length, 1, 'a connected Chrome is not started again');

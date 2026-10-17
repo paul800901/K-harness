@@ -106,7 +106,7 @@ export async function createExternalBrowserGateway({
       // A stopped or closed browser is replaced by a fresh connection when it is
       // selected again; nothing that was interrupted is replayed.
       if (!(await existing.getState()).recoveryRequired) return existing;
-      if (children.get(key) === existing) children.delete(key);
+      children.delete(key);
       await existing.close().catch(() => {});
     }
     const opening = (async () => {
@@ -292,7 +292,7 @@ export async function createExternalBrowserGateway({
               // Nothing connected means K Chrome is not running: start it minimized
               // rather than asking the owner to open it (owner decision 2026-10-18).
               if (startExternalBrowser && !profiles.some(p => p.connected))
-                profiles = await startExternalBrowser({mode, signal: controller.signal});
+                profiles = await startExternalBrowser({signal: controller.signal});
               const online = profiles.filter(p => p.connected);
               if (!targetProfileId) {
                 if (online.length !== 1)

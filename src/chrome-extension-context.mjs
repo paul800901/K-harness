@@ -151,7 +151,7 @@ export async function createChromeExtensionContext({
     connectUrl.searchParams.set('mode', mode);
     connectUrl.searchParams.set('newTab', 'true');
     if (openConnectPage) await openConnectPage(connectUrl.toString());
-    else throw Error('K 需要瀏覽器助手的背景連線；不會以命令列啟動 Chrome 或切換前景。');
+    else throw Error('K 需要瀏覽器助手的背景連線開啟連線頁；不改用命令列開啟連線頁。');
     await ready;
     browser = await connectBrowser(`ws://${host}/cdp/${nonce}`, {
       headers: {Authorization: `Bearer ${cdpToken}`},

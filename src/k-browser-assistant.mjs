@@ -39,14 +39,8 @@ export async function loadKBrowserAssistant({vault}) {
     createExternalBrowserGateway({
       ...options,
       listExternalProfiles,
-      startExternalBrowser: ({mode, signal}) =>
-        startKChrome({
-          chromeExecutable: config.chromeExecutable,
-          userDataDir,
-          mode,
-          signal,
-          listProfiles: listExternalProfiles
-        }),
+      startExternalBrowser: ({signal}) =>
+        startKChrome({chromeExecutable: config.chromeExecutable, userDataDir, signal, listProfiles: listExternalProfiles}),
       launchExternalContext: async ({mode, profileId}) => {
         // Snapshot one native instance for this context. A different worker starting
         // later cannot silently retarget an already selected session.

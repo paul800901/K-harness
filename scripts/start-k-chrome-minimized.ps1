@@ -2,32 +2,35 @@
 # window. Chrome ignores minimized start-up settings, so the window is asked to
 # minimize itself (the same command as its minimize button) once it has finished
 # showing, and focus goes back to the window the owner was using. A brief flash
-# is accepted by the owner (2026-10-18). The caller checks that this Chrome
-# profile is not already running: a running Chrome would open the new window
-# itself, in front, and this script could not minimize it.
+# is accepted by the owner (2026-10-18). It always opens a regular window: the
+# browser assistant opens its connection page in one for both modes. The caller
+# checks that this Chrome profile is not already running: a running Chrome would
+# open the new window itself, in front, and this script could not minimize it.
 param(
   [Parameter(Mandatory = $true)][string]$Chrome,
-  [Parameter(Mandatory = $true)][string]$UserDataDir,
-  [switch]$Incognito
+  [Parameter(Mandatory = $true)][string]$UserDataDir
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -Namespace KChrome -Name Win -MemberDefinition @'
 [DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint pid);
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);
 [DllImport("user32.dll")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);
 '@
 $arguments = @(('"--user-data-dir=' + $UserDataDir + '"'), '--enable-features=CDPScreenshotNewSurface', '--new-window', 'about:blank')
-if ($Incognito) { $arguments += '--incognito' }
 $browser = Start-Process -FilePath $Chrome -ArgumentList $arguments -PassThru
 $deadline = [DateTime]::UtcNow.AddSeconds(15)
 $previous = [IntPtr]::Zero
 while ([DateTime]::UtcNow -lt $deadline) {
   $browser.Refresh()
-  if ($browser.HasExited) { exit 0 }
+  if ($browser.HasExited) { exit 1 }
   if ($browser.MainWindowHandle -eq [IntPtr]::Zero) {
-    # The window the owner is using right before Chrome appears.
-    $previous = [KChrome.Win]::GetForegroundWindow()
+    # The window the owner is using right before Chrome appears (never Chrome's own).
+    $foreground = [KChrome.Win]::GetForegroundWindow()
+    $owner = [uint32]0
+    [void][KChrome.Win]::GetWindowThreadProcessId($foreground, [ref]$owner)
+    if ($owner -ne $browser.Id) { $previous = $foreground }
     Start-Sleep -Milliseconds 20
     continue
   }
@@ -43,4 +46,4 @@ while ([DateTime]::UtcNow -lt $deadline) {
   }
   exit 0
 }
-exit 0
+exit 1
