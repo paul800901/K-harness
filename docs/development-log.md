@@ -222,6 +222,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 瀏覽器與連接器
 
+- 10-18 [K 自行縮小開啟 K 專用 Chrome、停止或 Chrome 重開後自動重連](k-chrome-auto-open-20261018.md)
 - 09-27 [K 瀏覽器助手](k-browser-assistant-20260927.md)
 - 09-27 [縮放分頁截圖畫布修復](browser-screenshot-zoom-canvas-fix-20260927.md)
 - 09-27 [瀏覽器接線研究：Claude Code、Codex、VS Code 與開源方案](browser-reference-research-20260927.md)
