@@ -23,8 +23,8 @@
 
 ## 修改
 
-- 新增 `scripts/start-k-chrome-minimized.ps1`：以 K 專用 `--user-data-dir` 開 Chrome（一般或 `--incognito`），記下 Chrome 出現前的前景視窗；視窗出現 150ms 後送縮小命令，100ms 後若前景不是原視窗就交還焦點。腳本跑完就結束，Chrome 不留在 K 的程序樹（K 強制結束時不會連帶關掉 Chrome）。
-- 新增 `src/k-chrome-launcher.mjs` 的 `startKChrome`：`lockfile` 存在（Chrome 已在執行）就不再開，只等助手連上；否則以 `powershell.exe -NoProfile -NonInteractive -File` 執行上面的腳本（`windowsHide`）。多個聊天室同時要求時共用同一次開啟。之後每 0.5 秒查一次連線，20 秒內沒連上就回報；可被取消。開啟失敗或沒連上都如實回報，不重試、不換其他瀏覽器。
+- 新增 `scripts/start-k-chrome-minimized.ps1`：以 K 專用 `--user-data-dir` 開 Chrome，一律開一般視窗（瀏覽器助手兩種模式的連線頁都開在一般視窗）；記下 Chrome 出現前的前景視窗（排除 Chrome 自己的視窗）；視窗出現 150ms 後送縮小命令，100ms 後若前景不是原視窗就交還焦點。Chrome 立刻結束或 15 秒沒出現視窗時回報失敗。腳本跑完就結束，Chrome 不留在 K 的程序樹（K 強制結束時不會連帶關掉 Chrome）。
+- 新增 `src/k-chrome-launcher.mjs` 的 `startKChrome`：Chrome 執行中會一直開著 `lockfile`，所以以「能否開啟 lockfile」判斷：開不了（EBUSY 等）表示在執行，只等助手連上、不再開；不存在或能開（當機、停電留下的殘檔）就以 `powershell.exe -NoProfile -NonInteractive -File` 執行上面的腳本（`windowsHide`）。多個聊天室同時要求時共用同一次開啟。已被停止的請求不開 Chrome；等待中被停止就立即放手，別的聊天室需要的那次開啟照常進行。之後每 0.5 秒查一次連線，20 秒內沒連上就回報。開啟失敗或沒連上都如實回報，不重試、不換其他瀏覽器。
 - `src/k-browser-assistant.mjs`：把 `startExternalBrowser` 接給瀏覽器閘道。
 - `src/external-browser-gateway.mjs`：
   - `browser_session` 發現沒有任何已連線的設定檔時，呼叫 `startExternalBrowser` 後再選；選不到維持原本的「無後備」錯誤。
@@ -32,15 +32,17 @@
   - `browser_session`／`browser_profiles` 的工具說明補上「沒開會自己縮小開」「斷線後再選一次即可重連、不重做」。
 - 文字：右側狀態改為「瀏覽器連線已中止；AI 下次使用瀏覽器時會重新連線，先前操作不會自動重送。」；拒絕操作時提示模型呼叫 `browser_session` 重連；`chrome-native-connection.mjs` 拿掉「K 不會自動跳出／不會搶前景」等已不成立的說法。
 - `AGENTS.md` 第九節改為新規則。
-- 未改：開啟的是 K 專用 Chrome 最近使用的設定檔（Profile 2）；AI 指定其他設定檔時仍回報。Chrome 已開著但只有一般視窗時要無痕，仍依擴充設計回報沒有對應視窗（未改擴充，免去本人重新載入）。聊天室重開時的舊恢復流程（`desktop-controller`、`conversation-controller` 的 `recoveryRequired` 重建 host）保留，屬第 7 項 Codex 主控範圍。
+- 未改：開啟的是 K 專用 Chrome 最近使用的設定檔（Profile 2）；AI 指定其他設定檔時仍回報。沒有無痕視窗時要用無痕，擴充只在自己的連線頁顯示錯誤、不回報給 K，K 要等 90 秒連線逾時才回報（既有行為；真機實測 90,026ms）。這在自動開 Chrome 後更容易遇到；根本解法是擴充在缺少該模式視窗時自己以縮小狀態開一個（Fable 建議），需改擴充並在部署時重新安裝、重開 K Chrome，另待本人決定。聊天室重開時的舊恢復流程（`desktop-controller`、`conversation-controller` 的 `recoveryRequired` 重建 host）保留，屬第 7 項 Codex 主控範圍。`Open-K-Browser.ps1`（本人手動開、要看得到視窗）與新腳本（AI 用、立即縮小）行為不同，不合併。
 
 ## 驗證
 
-- 新測試：`test/k-chrome-launcher.test.mjs`（已執行不重開只等待、等不到回報、兩個聊天室共用一次開啟、腳本參數與一般／無痕、開啟失敗不重試、取消停止等待）；`test/external-browser-gateway.test.mjs` 補「斷線後再選建立新連線、只跑就緒檢查不重做」「仍有操作在跑時不換連線」「沒連線時只開一次並選到連上的設定檔」「開啟失敗如實回報、不選任何模式」；原「斷線回報需重新開啟」測試改為新行為。
-- 真機端對端（`run-start.mjs` 直接呼叫 `startKChrome`＋真 `listChromeProfiles`）：一般、無痕各 1 次與交還焦點後 2 次，約 1.9 秒助手連上；Chrome 已開著時直接回報、不重開。
-- 完整 `npm test`、Sol 驗收、Fable 第二審：見下。
+- 新測試：`test/k-chrome-launcher.test.mjs`（以另一程式獨佔 lockfile 模擬執行中的 Chrome：不重開只等待、等不到回報；殘留 lockfile 照常開；兩個聊天室共用一次開啟；一律開一般視窗、腳本參數；開啟失敗不重試；已停止的請求不開；等待中被停止立即放手而別房的開啟照常；取消停止等待）；`test/external-browser-gateway.test.mjs` 補「斷線後再選建立新連線、只跑就緒檢查不重做」「仍有操作在跑時不換連線」「沒連線時只開一次並選到連上的設定檔」「開啟失敗如實回報、不選任何模式」；原「斷線回報需重新開啟」測試改為新行為。兩項停止測試在修正前的程式上都卡到逾時。
+- 真機端對端（`run-start.mjs` 直接呼叫 `startKChrome`＋真 `listChromeProfiles`）：一般、無痕各 1 次與交還焦點後 2 次，約 1.9 秒助手連上；Chrome 已開著時不重開。之後以分支的真瀏覽器閘道（`gateway-e2e.mjs`，接本人 K 專用 Chrome 與擴充）：Chrome 關著時 `browser_session regular` 2,148ms 選好（閃約 0.19 秒、焦點回原視窗），`browser_navigate example.com` 成功；接著 `browser_session incognito` 90,026ms 逾時（上述既有限制）。
+- 完整 `npm test`：最終 1743/1743（建置介面後）。介面原始碼未改，未跑 `test:ui`。
 
 ## 複查與部署
 
-- 待 Sol 驗收、Fable 第二審。
+- GPT-6.1 Sol 驗收（`5d0a6b0`）：「不同意」，P2 必修——已被停止的請求仍會開 Chrome，等待共用開啟時被停止也不放手（它在隔離槽重現）。其餘通過：重連只建立新連線、只跑就緒檢查，不重做；共用開啟沒有競態；PowerShell 5.1 解析與 `Add-Type` 通過；拋棄式 Chrome 實測縮小與焦點交還成功、正常關閉後 lockfile 移除；隔離槽 `npm test` 1740/1740。殘餘風險：本人若剛好在約 250ms 內切到別的視窗，可能被拉回原視窗（屬已接受的短暫干擾）。已修（`453e9ad`）。
+- Fable 5.1 唯讀第二審（`5d0a6b0`）：無 P1。採納：P2 殘留 lockfile 會讓 K 永遠不開 Chrome（改為以能否開啟判斷，`8a2138d`）；P2 冷啟動只開無痕視窗時另一模式被擴充拒絕——查證後更嚴重：連線頁一律開在一般視窗，只有無痕視窗時兩種模式都連不上，改為一律開一般視窗（`8a2138d`），擴充自開缺少模式視窗另待決定；P3 腳本一律回成功（改為 Chrome 立刻結束或沒出現視窗時回報失敗）；P3 `$previous` 可能抓到 Chrome 自己的視窗（排除）；P3 `chrome-extension-context.mjs` 舊說法（更新）；P3 `children.get(key) === existing` 在佇列序列化下恆真（刪除）。不採納：手動開啟腳本與新腳本合併（行為不同）。P3「`await starting` 期間取消不生效」已由 `453e9ad` 修正。P3「本人在非 K 視窗時焦點交還可能失敗」：前幾輪本人在日常 Chrome 時，焦點都由系統正確交還，未需交還步驟；列為殘餘風險。
+- 待 Sol 複驗 `453e9ad`、`8a2138d`。
 - 部署：待合回 main 後由本人在 K 外更新（同前，交給 Codex App 的 Sol 執行）。更新後可實測：關掉 K 專用 Chrome，再叫 AI 用瀏覽器。
