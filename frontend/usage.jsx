@@ -13,6 +13,8 @@ const windowName = w =>
         : w.key === 'primary'
           ? '短期額度'
           : '長期額度';
+const creditBalance = b =>
+  b == null ? '—' : Number.isFinite(Number(b)) ? Number(b).toLocaleString('zh-TW', {maximumFractionDigits: 20}) : b;
 const refreshUsage = async force => {
   const response = await fetch(`/api/usage${force ? '?refresh=1' : ''}`, {cache: 'no-store'});
   if (!response.ok) throw Error('額度查詢失敗；請確認電腦連線後再試。');
@@ -261,6 +263,20 @@ export function UsageDetails({state, online}) {
             <span>額度暫時無法取得</span>
           )}
         </div>
+        {(quota?.credits || quota?.resetCredits) && (
+          <div className="quota-line">
+            {quota.credits && (
+              <span>
+                剩餘點數 <b>{quota.credits.unlimited ? '不限' : creditBalance(quota.credits.balance)}</b>
+              </span>
+            )}
+            {quota.resetCredits && (
+              <span>
+                可用重置 <b>{quota.resetCredits.availableCount}</b>
+              </span>
+            )}
+          </div>
+        )}
         {(!online || quota?.status === 'stale') && <p className="usage-note">舊資料，等待更新。</p>}
         <details className="usage-more">
           <summary>查詢與重設時間</summary>
@@ -277,6 +293,15 @@ export function UsageDetails({state, online}) {
                   {windowName(w)}重設：{new Date(w.resetsAt * 1000).toLocaleString('zh-TW')}
                 </span>
               ))}
+            {(quota?.resetCredits?.items ?? []).map((c, i) => (
+              <span key={i}>
+                {c.title || '重置'}到期：
+                {c.expiresAt ? new Date(c.expiresAt * 1000).toLocaleString('zh-TW') : '不會到期'}
+              </span>
+            ))}
+            {quota?.resetCredits?.availableCount > 0 && !quota.resetCredits.items && (
+              <span>重置到期時間：官方未提供</span>
+            )}
           </div>
           <p className="usage-note">約每分鐘更新；額度歸零時等待官方重設，人工更新可重查。</p>
         </details>

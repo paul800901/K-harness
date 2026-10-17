@@ -633,6 +633,7 @@ test('quota refresh is a coalesced read, accepts account events without thread I
   f.host.request = async (method, p) => {
     if (method === 'account/rateLimits/read') {
       reads++;
+      assert.equal(p.excludeResetCreditDetails, false, 'every read asks for reset-credit details');
       if (failed) throw Error('offline');
       return {rateLimits: {primary: {usedPercent: 34, windowDurationMins: 10080}}};
     }

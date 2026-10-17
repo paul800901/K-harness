@@ -1081,7 +1081,7 @@ export function createDesktopController({
           }
           const result = await reader.request(
             'account/rateLimits/read',
-            {excludeResetCreditDetails: true, supportsLunaReserve: false},
+            {excludeResetCreditDetails: false, supportsLunaReserve: false},
             15000
           );
           if (host === active) {
