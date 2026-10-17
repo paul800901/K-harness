@@ -54,6 +54,14 @@
 ## 部署狀態
 
 - 第一、二批已隨他房的正式更新上線：南區 `.local/runtime.json` 於 10-17 為 `c815753`，之後再更新到 `a81475f`；兩者都包含 `2941297`、`d20503f`（以 `git merge-base --is-ancestor` 核對）。本批沒有另外部署。
+- 第三、四批 2026-10-17 南區部署（本人停止 K 後，由 Codex App 的 GPT-6.1 Sol 在 K 外執行，設定視窗讀回與本段由 Claude 接手）：
+  - 更新前 19:48：47831 拒絕連線、正式原生程序 0、啟動器未占用；四個私有目錄的建立時間更新前後一致；`installed/k-browser-assistant` 20 檔雜湊未變（本次不需重新載入 Chrome 擴充）。
+  - 在 K 外執行一次 `Update-K.ps1 -Ref 3d88c934511e2a0ad88665bd743ebafcabd808e0`：介面／擴充／啟動器建置成功，更新器完整測試 1732/1732，0 失敗／取消／略過，71.8 秒，19:50 正常套用，未重試。
+  - 讀回：`.local/runtime.json` version 為上述 SHA，previous 為 `releases/before-1792237842840`，退版保留三份（`before-1792237842840`、`before-1792222347302`、`before-1792212137211`）；`frontend/settings-dialog.jsx` 與三個瀏覽器檔和固定版本一致；Node／語音設定未變，帳號 home、vault、workspace、browser-output 留在原處、內容未讀。
+  - 正常啟動 K 一次，19:51 `/health` HTTP 200、deployment=native。
+  - 設定視窗：Sol 嘗試讀回時 K 視窗為最小化，它停止操作、沒有搶前景，未改任何設定、沒有登入或按核心更新。Claude 改為核對正式 `trusted-runtime/dist-ui` 的介面檔，確認包含核心更新、介面外觀、可讀性、已封存、附件說明、停止後端等區塊；同一份原始碼在開發工作樹會實際打開設定視窗的 UI probe 都通過。正式畫面目視待本人確認。
+  - 待本人實測：叫 AI 用瀏覽器做事，中途按停止，確認停下且右側不再顯示「AI 正在操作 Chrome」。
+  - 證據在 `.runtime/archive/k-noncodex-batch3-4-deploy/`（preflight、update.log、runtime／目錄／health／設定讀回），不提交 Git。程式與紀錄分開提交；正式程式版本為 `3d88c93`，main 之後只有文件提交。其他電腦未更新。
 
 ## 10-17 本人決定（原話）
 
