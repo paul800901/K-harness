@@ -148,6 +148,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 子代理、工人與模型分工
 
+- 10-18 [Claude 停止背景指令後 K 仍顯示子代理工作中](claude-taskstop-settle-20261018.md)
 - 10-15 [Gemini 工人成果收據：已審核並合回 main，南區已部署](discussion-skill-gemini-outputs-20261015.md)
 - 常設 [K HARNESS Worker MCP：操作者派工與失敗處理指南](operator-guide.md)
 - 常設 [限定程式工人](coding-worker.md)
