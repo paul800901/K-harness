@@ -667,7 +667,6 @@ export function createConversationController({
       const browser = await read(browserRequest(root, s, s.threadId, '/state'));
       const notStarted = browser?.external === true && browser.browserMode === null;
       if (
-        browser?.mode !== 'ai' ||
         browser?.busy !== false ||
         (!notStarted && browser?.available !== true) ||
         browser?.recoveryRequired === true
@@ -1012,7 +1011,7 @@ export function createConversationController({
         locked.add(controller);
         noDiscussion(controller);
         if (!(await safelyIdle(controller, true)))
-          throw Error('聊天室仍有工作、待送訊息或瀏覽器接手，請先結束再移動。');
+          throw Error('聊天室仍有工作、待送訊息或瀏覽器操作，請先結束再移動。');
         const result = await controller.moveWorkspace(data);
         active = controller;
         openedOrder.set(controller, ++openSequence);

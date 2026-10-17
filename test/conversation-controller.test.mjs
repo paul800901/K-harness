@@ -13,7 +13,7 @@ const codexModel = 'gpt-6-astra',
   claudeModel = 'claude-opus-5-5';
 async function fixture({
   beforeOpen = async () => {},
-  browserRequest = async () => ({available: true, mode: 'ai', busy: false}),
+  browserRequest = async () => ({available: true, busy: false}),
   closeFailure = () => false,
   onStateChange = () => {}
 } = {}) {
@@ -817,14 +817,12 @@ test('idle room release keeps four recent rooms and reopens older history on its
   }
 });
 
-test('idle release refuses rooms with pending approvals, queues, unfinished workers, or human browser control', async () => {
+test('idle release refuses rooms with pending approvals, queues, unfinished workers, or an active browser operation', async () => {
   const probed = [];
   const f = await fixture({
       browserRequest: async (_root, state) => {
         probed.push({threadId: state.threadId, activeThreadId: c.state.threadId});
-        return state.browserAccess?.mode === 'human'
-          ? {available: true, mode: 'human', busy: false}
-          : {available: true, mode: 'ai', busy: false};
+        return {available: true, busy: state.browserAccess?.busy === true};
       }
     }),
     c = f.controller;
@@ -834,7 +832,7 @@ test('idle release refuses rooms with pending approvals, queues, unfinished work
       const room = await c.open({model: codexModel});
       opened.push(room);
       const native = f.room(room.threadId);
-      if (i === 0) native.state.browserAccess = {enabled: true, mode: 'human'};
+      if (i === 0) native.state.browserAccess = {enabled: true, busy: true};
       if (i === 1) native.state.questions = [{id: 'approval'}];
       if (i === 2) {
         await c.send({...room, text: 'first'});
@@ -1109,7 +1107,7 @@ for (const model of [codexModel, claudeModel, 'gemini-3.8-flash'])
     }
   });
 test('workspace movement refuses running work, pending approvals, queue and native browser handoff without closing them', async () => {
-  let browser = {available: true, mode: 'ai', busy: false};
+  let browser = {available: true, busy: false};
   const f = await fixture({browserRequest: async () => browser}),
     c = f.controller;
   try {
@@ -1135,9 +1133,9 @@ test('workspace movement refuses running work, pending approvals, queue and nati
     await assert.rejects(c.moveWorkspace({...a, workspace: dest}), /工作/);
     room.state.workers = [];
     room.state.browserAccess = {enabled: true};
-    browser.mode = 'human';
-    await assert.rejects(c.moveWorkspace({...a, workspace: dest}), /接手/);
-    browser.mode = 'ai';
+    browser.busy = true;
+    await assert.rejects(c.moveWorkspace({...a, workspace: dest}), /瀏覽器/);
+    browser.busy = false;
     assert.equal(room.state.workspace, f.root);
     assert.equal(room.closed, closes);
     await assert.rejects(c.moveWorkspace({...a, workspace: path.join(dest, 'missing')}), /./);
@@ -1195,7 +1193,7 @@ test('failed but settled conversation can move without retrying its failed turn'
 test('a real external browser gateway before first use does not block workspace movement', async () => {
   const {createExternalBrowserGateway} = await import('../src/external-browser-gateway.mjs');
   let gateway;
-  const f = await fixture({browserRequest: async () => await (await gateway.humanRequest('/state')).json()}),
+  const f = await fixture({browserRequest: async () => await gateway.getState()}),
     c = f.controller;
   try {
     const profile = path.join(f.root, 'profile'),
@@ -1211,7 +1209,7 @@ test('a real external browser gateway before first use does not block workspace 
     });
     const room = await c.open({model: codexModel});
     f.room(room.threadId).state.browserAccess = {enabled: true};
-    const browser = await (await gateway.humanRequest('/state')).json();
+    const browser = await gateway.getState();
     assert.equal(browser.available, false);
     assert.equal(browser.browserMode, null);
     await c.moveWorkspace({...room, workspace: dest});

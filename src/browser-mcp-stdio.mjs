@@ -52,7 +52,7 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
             if (activeCalls.has(requestId) && liveSession) {
               // Cancellation is only a request to stop. Playwright tools may
               // ignore their abort signal, so close the whole browser session
-              // before releasing the AI-call lock or allowing takeover.
+              // before releasing the AI-call lock.
               cancelledCalls.add(requestId);
               for (const [internalId, request] of internalTabLists) {
                 if (request.parentId !== requestId) continue;
@@ -75,7 +75,7 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
             const name = message.params?.name,
               args = message.params?.arguments ?? {};
             if (liveSession && !liveSession.beginAiCall())
-              return await deny({...message, reason: 'browser is in human-control mode or unavailable.'});
+              return await deny({...message, reason: 'browser session is unavailable.'});
             if (liveSession) activeCalls.add(message.id);
             // Upstream explicitly exempts code-origin file accesses from its
             // workspace guard; do not expose that escape hatch in K.
@@ -194,27 +194,6 @@ export function restrictedBrowserTransport(raw, directory, liveSession = null) {
               ...message.result.tools
                 .filter(t => t.name !== 'browser_run_code_unsafe')
                 .map(t => {
-                  if (t.name === 'browser_resize')
-                    return {
-                      ...t,
-                      description:
-                        t.description +
-                        ' K automatically fits the right-side browser view to its panel. Choose the task viewport here; users do not need to adjust technical display settings.'
-                    };
-                  if (t.name === 'browser_evaluate')
-                    return {
-                      ...t,
-                      description:
-                        t.description +
-                        ' For task-specific page layout zoom, use document.documentElement.style.zoom (for example "0.8", or "1" to reset). This is current-document CSS zoom, not saved browser preferences; navigation may reset it. Reinspect the page after changing zoom. Human takeover blocks this tool like all other browser tools.'
-                    };
-                  if (t.name === 'browser_tabs')
-                    return {
-                      ...t,
-                      description:
-                        t.description +
-                        ' K panel tabs are previews, not the AI active-tab selector. Always select the intended AI tab explicitly before acting; do not assume a human preview-tab switch changed your target.'
-                    };
                   if (t.name === 'browser_navigate')
                     return {
                       ...t,

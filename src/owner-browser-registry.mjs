@@ -1,7 +1,6 @@
 import path from 'node:path';
 import {mkdir, realpath} from 'node:fs/promises';
 import {identifyBrowserServer} from './browser-mcp-config.mjs';
-import {consumeBrowserResponse} from './browser-live-proxy.mjs';
 
 // Only the trusted K process constructs this registry. Its human methods and
 // owner profile paths never enter a provider MCP configuration.
@@ -9,8 +8,7 @@ export function createOwnerBrowserRegistry({
   vault,
   outputRoot,
   gatewayFactory,
-  testOnly = true,
-  onControlChange = () => {}
+  testOnly = true
 }) {
   if (!path.isAbsolute(vault ?? '') || !path.isAbsolute(outputRoot ?? ''))
     throw Error('Absolute owner browser directories are required.');
@@ -58,8 +56,7 @@ export function createOwnerBrowserRegistry({
           entry.opening = (async () => {
             entry.gateway = await gatewayFactory({
               profile: await childDirectory(vault, entry.key),
-              directory: await childDirectory(outputRoot, entry.key),
-              onControlChange
+              directory: await childDirectory(outputRoot, entry.key)
             });
             const ai = entry.gateway.aiMcpServer;
             return identifyBrowserServer(
@@ -106,25 +103,27 @@ export function createOwnerBrowserRegistry({
     };
     return controller;
   }
-  async function request(_root, state, threadId, route, body) {
+  // Only the browser state is readable from K's UI; the AI drives the browser through MCP.
+  async function request(_root, state, threadId, route) {
+    if (route !== '/state') throw Error('Unsupported browser route.');
     if (!threadId || threadId !== state.threadId) throw Error('對話已切換，請重新開啟瀏覽器分頁。');
     const key = state.browserAccess?.sessionKey;
     if (!state.browserAccess?.enabled || !key)
-      return {available: false, busy: false, mode: 'ai', error: '此對話尚未啟用瀏覽器。'};
+      return {available: false, busy: false, error: '此對話尚未啟用瀏覽器。'};
     const entry = entries.get(key);
     if (!entry?.gateway)
       return {
         available: false,
         busy: false,
-        mode: 'ai',
         recoveryRequired: true,
         error: '瀏覽器連線已結束，請重新開啟原對話。'
       };
-    const response = await entry.gateway.humanRequest(route, body);
+    const result = await entry.gateway.getState();
     if (entries.get(key) !== entry) throw Error('瀏覽器連線已變更，結果已捨棄。');
-    const result = await consumeBrowserResponse(response, state, threadId, key, route);
+    if (state.threadId !== threadId || state.browserAccess?.sessionKey !== key || !state.browserAccess?.enabled)
+      throw Error('對話已切換，結果已捨棄。');
     // This UI label is selected by the trusted owner, never by an AI tool.
-    return route === '/state' || route === '/action' ? {...result, testOnly: testOnly !== false} : result;
+    return {...result, testOnly: testOnly !== false};
   }
   return {
     session,

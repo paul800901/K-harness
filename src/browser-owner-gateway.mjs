@@ -1,32 +1,20 @@
-import {createServer} from 'node:http';
-import {randomBytes} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
-import {Readable} from 'node:stream';
-import {pipeline} from 'node:stream/promises';
 import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {WebStandardStreamableHTTPServerTransport} from '@modelcontextprotocol/server';
 import {createConnection} from '@playwright/mcp';
 import {createBrowserLiveSession} from './browser-live-session.mjs';
 import {restrictedBrowserTransport} from './browser-mcp-stdio.mjs';
-import {admitMcpRequest, readLimitedBody} from './mcp-http-guard.mjs';
 
 /**
- * Owner-side pilot: the CLI receives only AI MCP authority. Browser lifetime,
- * human control and takeover state belong to the caller, not its MCP clients.
- * This is NOT OS isolation: protect the caller, its code and its profile with
- * a verified OS boundary before connecting a model shell.
+ * One browser profile driven through the official Playwright MCP server, called
+ * in-process by the external browser gateway. Only that gateway's loopback
+ * endpoint reaches a model; this object and its profile path stay in K.
+ * This is NOT OS isolation.
  */
-export async function createBrowserOwnerGateway({
-  directory,
-  profile,
-  launchContext,
-  toolTimeoutMs = 120000,
-  onControlChange = () => {}
-}) {
+export async function createBrowserOwnerGateway({directory, profile, launchContext}) {
   if (!path.isAbsolute(directory ?? '') || !path.isAbsolute(profile ?? ''))
     throw new Error('Absolute browser directories are required.');
-  if (!Number.isInteger(toolTimeoutMs) || toolTimeoutMs < 1) throw new Error('A positive tool timeout is required.');
   const root = await realpath(directory),
     profileRoot = await realpath(profile);
   const relative = path.relative(root, profileRoot);
@@ -34,88 +22,77 @@ export async function createBrowserOwnerGateway({
     throw new Error('The browser profile must be outside AI browser files.');
   const live = await createBrowserLiveSession(profileRoot, {
     launchContext,
-    downloadDirectory: path.join(root, 'downloads'),
-    onControlChange
+    downloadDirectory: path.join(root, 'downloads')
   });
-  const aiToken = randomBytes(32).toString('hex');
   let mcp,
     closing = false,
-    closePromise,
-    host;
+    closePromise;
   const raw = new WebStandardStreamableHTTPServerTransport({sessionIdGenerator: undefined});
   const transport = restrictedBrowserTransport(raw, root, live);
-  // One owner-side connection survives CLI reconnects. Guard duplicate IDs
-  // before the SDK's shared HTTP response map can be overwritten by a client.
-  const pendingIds = new Set();
-  const http = createServer(async (req, res) => {
-    if (closing) {
-      res.writeHead(503).end();
-      return;
-    }
-    if (!admitMcpRequest(req, res, {host, token: aiToken})) return;
-    let message,
-      timer,
-      registered = false,
-      finished = false;
+
+  /**
+   * Handle one JSON-RPC message and return the SDK's response. Aborting `signal`
+   * before the response body ends cancels a running tool call the same way an
+   * MCP client would; an abort after the body ended is not a cancellation.
+   */
+  async function request(message, signal) {
+    if (closing) throw new Error('Browser session is closing.');
+    signal?.throwIfAborted();
+    let ended = false;
     const cancel = () => {
-      // 'close' fires before `finished` is set after a completed pipeline; a fully written response is not
-      // a cancellation.
-      if (finished || res.writableFinished || message?.method !== 'tools/call') return;
-      // HTTP disconnects/timeouts are not necessarily SDK cancellations.
-      // Reuse the same close-before-unlock path as the stdio integration.
-      raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});
+      if (!ended && message?.method === 'tools/call')
+        raw.onmessage?.({jsonrpc: '2.0', method: 'notifications/cancelled', params: {requestId: message.id}});
     };
+    signal?.addEventListener('abort', cancel, {once: true});
+    const end = () => {
+      ended = true;
+      signal?.removeEventListener('abort', cancel);
+    };
+    let response;
     try {
-      const body = await readLimitedBody(req);
-      message = JSON.parse(body);
-      // Do not accept batches: each HTTP lifetime owns exactly one request ID.
-      if (!message || Array.isArray(message) || message.jsonrpc !== '2.0' || typeof message.method !== 'string')
-        throw new Error('Invalid request.');
-      if (message.id !== undefined) {
-        if (!['string', 'number'].includes(typeof message.id)) throw new Error('Invalid request ID.');
-        if (pendingIds.has(message.id)) {
-          res.writeHead(409).end();
-          return;
-        }
-        pendingIds.add(message.id);
-        registered = true;
-      }
-      if (message.method === 'tools/call') {
-        if (message.id === undefined) throw new Error('Tool calls require a request ID.');
-        res.once('close', cancel);
-        timer = setTimeout(() => {
-          cancel();
-          res.destroy();
-        }, toolTimeoutMs);
-      }
-      const response = await raw.handleRequest(
-        new Request(`http://${host}/mcp`, {method: 'POST', headers: req.headers, body, duplex: 'half'})
+      response = await raw.handleRequest(
+        new Request('http://k-browser.invalid/mcp', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'},
+          body: JSON.stringify(message)
+        })
       );
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      res.flushHeaders();
-      if (response.body) await pipeline(Readable.fromWeb(response.body), res);
-      else res.end();
-      finished = true;
-    } catch {
+    } catch (error) {
       cancel();
-      if (!res.headersSent)
-        res
-          .writeHead(400, {'Content-Type': 'application/json'})
-          .end(JSON.stringify({error: 'Invalid browser MCP request.'}));
-      else res.destroy();
-    } finally {
-      clearTimeout(timer);
-      res.off('close', cancel);
-      if (registered) pendingIds.delete(message.id);
+      end();
+      throw error;
     }
-  });
+    if (!response.body) {
+      end();
+      return response;
+    }
+    const reader = response.body.getReader();
+    const body = new ReadableStream({
+      async pull(controller) {
+        try {
+          const item = await reader.read();
+          if (item.done) {
+            end();
+            controller.close();
+          } else controller.enqueue(item.value);
+        } catch (error) {
+          end();
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        cancel();
+        end();
+        await reader.cancel(reason);
+      }
+    });
+    return new Response(body, {status: response.status, statusText: response.statusText, headers: response.headers});
+  }
   async function close() {
     if (!closePromise)
       closePromise = (async () => {
         closing = true;
         await live.close();
-        http.closeAllConnections();
-        await new Promise(resolve => http.close(() => resolve()));
         await mcp?.close();
       })();
     return closePromise;
@@ -127,30 +104,9 @@ export async function createBrowserOwnerGateway({
     );
     mcp.listRoots = async () => ({roots: [{uri: pathToFileURL(root).href, name: 'K browser files'}]});
     await mcp.connect(transport);
-    await new Promise((resolve, reject) => {
-      http.once('error', reject);
-      http.listen(0, '127.0.0.1', resolve);
-    });
-    host = `127.0.0.1:${http.address().port}`;
   } catch (error) {
     await close();
     throw error;
   }
-  return {
-    // Only this field may be passed to a provider; never serialize the owner
-    // object into model state or put the human capability in MCP configuration.
-    aiMcpServer: {type: 'http', url: `http://${host}/mcp`, headers: {Authorization: `Bearer ${aiToken}`}},
-    humanRequest(route, body) {
-      if (
-        !/^\/(?:state|frame)(?:\?pageId=[A-Za-z0-9-]+)?$/.test(route) &&
-        !/^\/download\?id=[a-f0-9-]{36}$/.test(route) &&
-        route !== '/action'
-      )
-        throw new Error('Invalid human browser route.');
-      return live.humanRequest(route, body);
-    },
-    getState: live.getState,
-    getControlSnapshot: live.getControlSnapshot,
-    close
-  };
+  return {request, getState: live.getState, close};
 }

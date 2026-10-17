@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createServer} from 'node:http';
 import {mkdir, mkdtemp} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -17,7 +16,7 @@ test('browser operations continue without automatic human-yield hooks', async ()
         JSON.stringify(await f.call(id, 'browser_navigate', {url: `https://example.invalid/${id}`})),
         /regular:browser_navigate/
       );
-    assert.equal((await f.gateway.getState()).mode, 'ai');
+    assert.equal('mode' in (await f.gateway.getState()), false, 'there is no human/AI control mode');
   } finally {
     await f.gateway.close();
   }
@@ -39,24 +38,16 @@ async function fixture(settings = {}) {
     profile = path.join(root, 'profiles');
   await mkdir(directory);
   await mkdir(profile);
-  const servers = [],
-    created = [],
+  const created = [],
     launched = [];
   async function childFactory(childOptions) {
     const childName = path.basename(childOptions.profile).replace('external-', ''),
       mode = childName.split('-')[0];
-    created.push({mode, options: childOptions});
-    let human = false,
-      busy = false;
-    const secret = `child-secret-${mode}`;
-    const server = createServer(async (req, res) => {
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const m = JSON.parse(Buffer.concat(chunks));
-      const reply = message => {
-        res.writeHead(200, {'Content-Type': 'application/json'});
-        res.end(JSON.stringify(message));
-      };
+    const record = {mode, options: childOptions};
+    created.push(record);
+    let busy = false;
+    const reply = message => Response.json(message);
+    const request = async (m, signal) => {
       if (m.method === 'initialize')
         return reply({
           jsonrpc: '2.0',
@@ -73,12 +64,7 @@ async function fixture(settings = {}) {
           id: m.id,
           result: {
             tools: [
-              {
-                name: 'browser_snapshot',
-                description:
-                  'Snapshot. K automatically fits the right-side browser view to its panel. Choose the task viewport here; users do not need to adjust technical display settings.',
-                inputSchema: {type: 'object', properties: {}}
-              },
+              {name: 'browser_snapshot', description: 'Snapshot.', inputSchema: {type: 'object', properties: {}}},
               {name: 'browser_navigate', description: 'Navigate.', inputSchema: {type: 'object', properties: {}}}
             ]
           }
@@ -86,7 +72,7 @@ async function fixture(settings = {}) {
       if (m.method === 'tools/call' && m.params.name === 'browser_snapshot') {
         await childOptions.launchContext?.(childOptions.profile, {width: 800, height: 600});
         if (settings.warmDelayMs) await new Promise(resolve => setTimeout(resolve, settings.warmDelayMs));
-        if (res.destroyed) return;
+        signal?.throwIfAborted();
         return reply(
           settings.failWarmMode === mode
             ? {jsonrpc: '2.0', id: m.id, error: {code: -32000, message: 'Chrome startup refused by test'}}
@@ -106,33 +92,17 @@ async function fixture(settings = {}) {
           result: {content: [{type: 'text', text: `${childName}:${m.params.name}`}]}
         });
       return reply({jsonrpc: '2.0', id: m.id, result: {}});
-    });
-    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-    servers.push(server);
-    const port = server.address().port;
+    };
     const gateway = {
-      aiMcpServer: {type: 'http', url: `http://127.0.0.1:${port}/mcp`, headers: {Authorization: `Bearer ${secret}`}},
+      request,
       async getState() {
-        return {available: true, busy, mode: human ? 'human' : 'ai'};
-      },
-      getControlSnapshot() {
-        return {available: true, busy, mode: human ? 'human' : 'ai'};
-      },
-      async humanRequest() {
-        return new Response('{}');
-      },
-      async ownerPresentation() {
-        return {};
+        return {available: true, busy};
       },
       async close() {
-        created.at(-1).gatewayClosed = true;
-        await new Promise(resolve => server.close(resolve));
-      },
-      setHuman(value) {
-        human = value;
+        record.gatewayClosed = true;
       }
     };
-    created.at(-1).gateway = gateway;
+    record.gateway = gateway;
     return gateway;
   }
   const gateway = await createExternalBrowserGateway({
@@ -157,7 +127,7 @@ async function fixture(settings = {}) {
     });
   const call = (id, name, args = {}) =>
     send({jsonrpc: '2.0', id, method: 'tools/call', params: {name, arguments: args}}).then(read);
-  return {root, directory, profile, gateway, servers, created, launched, send, call};
+  return {root, directory, profile, gateway, created, launched, send, call};
 }
 async function closeFixture(f) {
   await f.gateway.close();
@@ -177,7 +147,6 @@ test('tool schemas are discoverable before mode selection without opening a brow
       listed.result.tools.map(tool => tool.name),
       ['browser_snapshot', 'browser_navigate', 'browser_session']
     );
-    assert.doesNotMatch(listed.result.tools[0].description, /automatically fits|right-side browser view/);
     assert.equal(f.created.length, 1, 'schema discovery creates only a dormant child');
     assert.equal(f.launched.length, 0, 'schema discovery must not open external Chrome');
     assert.equal((await f.gateway.getState()).selectedMode, null);
@@ -209,7 +178,7 @@ test('tool schemas are discoverable before mode selection without opening a brow
   }
 });
 
-test('mode changes are refused during calls and human control, and close shuts down each opened child', async () => {
+test('mode changes are refused during calls, and close shuts down each opened child', async () => {
   const f = await fixture();
   try {
     await f.call(1, 'browser_session', {mode: 'regular'});
@@ -219,49 +188,33 @@ test('mode changes are refused during calls and human control, and close shuts d
     assert.match(JSON.stringify(rejected), /operation is active/);
     assert.equal(f.created.length, 1);
     await pending;
-    f.created[0].gateway.setHuman(true);
-    const rejectedHuman = await f.call(4, 'browser_session', {mode: 'regular'});
-    assert.match(JSON.stringify(rejectedHuman), /human control/);
-    assert.equal(
-      (await f.gateway.getState()).browserMode,
-      'regular',
-      'a refused repeat selection preserves the active mode'
-    );
-    f.created[0].gateway.setHuman(false);
+    assert.equal((await f.gateway.getState()).browserMode, 'regular', 'a refused selection preserves the active mode');
     await f.call(5, 'browser_session', {mode: 'incognito'});
     assert.equal(f.created.length, 2);
   } finally {
     await closeFixture(f);
   }
   assert.equal(
-    f.servers.every(server => !server.listening),
+    f.created.every(item => item.gatewayClosed),
     true
   );
 });
 
-test('owner human state/action responses include external mode and empty state works before selection', async () => {
+test('browser state reports the external mode before and after selection', async () => {
   const f = await fixture();
   try {
-    const empty = await f.gateway.humanRequest('/state');
-    assert.deepEqual(await empty.json(), {
+    assert.deepEqual(await f.gateway.getState(), {
       available: false,
       busy: false,
-      mode: 'ai',
       external: true,
+      selectedMode: null,
       browserMode: null
     });
-    const noSelectionAction = await f.gateway.humanRequest('/action', {type: 'takeover'});
-    assert.equal(noSelectionAction.status, 409);
-    assert.equal((await noSelectionAction.json()).external, true);
     await f.call(1, 'browser_session', {mode: 'regular'});
-    f.created[0].gateway.humanRequest = async route =>
-      Response.json(route === '/state' ? {available: true, busy: false, mode: 'human'} : {available: true, mode: 'ai'});
-    for (const route of ['/state', '/action']) {
-      const response = await f.gateway.humanRequest(route, {});
-      const state = await response.json();
-      assert.equal(state.external, true);
-      assert.equal(state.browserMode, 'regular');
-    }
+    const state = await f.gateway.getState();
+    assert.equal(state.external, true);
+    assert.equal(state.browserMode, 'regular');
+    assert.equal(state.available, true);
   } finally {
     await closeFixture(f);
   }
@@ -295,14 +248,13 @@ test('MCP cancellation reaches a browser_session while its warm-up is queued', a
   }
 });
 
-test('disconnected browser selection reports recovery rather than human takeover', async () => {
+test('disconnected browser selection reports recovery', async () => {
   const f = await fixture();
   try {
     await f.call(1, 'browser_session', {mode: 'regular'});
     f.created[0].gateway.getState = async () => ({
       available: false,
       busy: false,
-      mode: 'human',
       recoveryRequired: true
     });
     const reply = await f.call(2, 'browser_session', {mode: 'regular'});

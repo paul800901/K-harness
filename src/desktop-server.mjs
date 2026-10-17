@@ -407,35 +407,12 @@ export async function startDesktop({
         return record ? json(200, {[kind]: record}) : json(404, {error: '這筆紀錄目前無法讀取；未重開或重送工作。'});
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return json(200, publicState());
-      if (
-        req.method === 'GET' &&
-        ['/api/browser/state', '/api/browser/frame', '/api/browser/download'].includes(url.pathname)
-      ) {
-        const pageId = url.searchParams.get('pageId'),
-          download = url.pathname === '/api/browser/download',
-          downloadId = url.searchParams.get('id');
-        if (download && !/^[a-f0-9-]{36}$/.test(downloadId ?? '')) throw new Error('下載識別無效。');
-        if (pageId && !/^[A-Za-z0-9-]+$/.test(pageId)) throw new Error('瀏覽器分頁識別無效。');
+      if (req.method === 'GET' && url.pathname === '/api/browser/state') {
         const threadId = url.searchParams.get('threadId'),
           session = controller.state.browserAccess?.sessionKey;
-        const result = await browserRequest(
-          root,
-          controller.state,
-          threadId,
-          url.pathname.replace('/api/browser', '') +
-            (download ? `?id=${downloadId}` : pageId ? `?pageId=${pageId}` : '')
-        );
+        const result = await browserRequest(root, controller.state, threadId, '/state');
         if (threadId !== controller.state.threadId || session !== controller.state.browserAccess?.sessionKey)
           throw new Error('對話已切換。');
-        if (result.bytes) {
-          res.setHeader('Content-Type', download ? 'application/octet-stream' : 'image/jpeg');
-          if (download)
-            res.setHeader(
-              'Content-Disposition',
-              `attachment; filename*=UTF-8''${encodeURIComponent(result.downloadName)}`
-            );
-          return res.end(result.bytes);
-        }
         return json(200, result);
       }
       if (req.method === 'GET' && url.pathname === '/api/usage') {
@@ -565,8 +542,6 @@ export async function startDesktop({
           req.off('aborted', disconnected);
         }
       }
-      if (url.pathname === '/api/browser/action')
-        return json(200, await browserRequest(root, controller.state, data.threadId, '/action', data));
       if (url.pathname === '/api/codex/login') return json(200, await codexLogin.start());
       if (url.pathname.startsWith('/api/gemini/accounts/')) {
         const operation = {

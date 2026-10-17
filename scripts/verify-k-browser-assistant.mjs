@@ -117,10 +117,7 @@ try {
   await call('browser_navigate', {url: origin});
   let result = await call('browser_evaluate', {function: '() => localStorage.getItem("fake-login")'});
   assert(JSON.stringify(result).includes('FAKE_REGULAR'));
-  await gateway.humanRequest('/action', {type: 'takeover'});
-  assert.equal((await rpc('tools/call', {name: 'browser_snapshot', arguments: {}})).isError, true);
-  await gateway.humanRequest('/action', {type: 'release'});
-  record.checks.push('regular mode preserves fake login; human takeover blocks AI tools');
+  record.checks.push('regular mode preserves fake login');
   await call('browser_session', {mode: 'incognito'});
   await call('browser_navigate', {url: origin});
   await call('browser_take_screenshot');

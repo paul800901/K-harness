@@ -128,7 +128,7 @@ test('data page creation exception returns a tool error and releases the AI call
   assert.deepEqual(calls, ['end']);
 });
 
-test('human-control rejection does not attempt to open a data page', async () => {
+test('an unavailable browser session does not attempt to open a data page', async () => {
   let openCalls = 0;
   let endCalls = 0;
   const h = harness({
@@ -147,7 +147,7 @@ test('human-control rejection does not attempt to open a data page', async () =>
   assert.equal(openCalls, 0);
   assert.equal(endCalls, 0);
   assert.equal(h.sent[0].result.isError, true);
-  assert.match(h.sent[0].result.content[0].text, /human-control mode/);
+  assert.match(h.sent[0].result.content[0].text, /unavailable/);
 });
 
 test('cancellation during data-page creation must not continue with tab selection', async () => {

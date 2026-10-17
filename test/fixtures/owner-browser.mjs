@@ -13,8 +13,8 @@ export async function fixtureBrowser(root, state = {available: true, busy: false
     outputRoot,
     gatewayFactory: async () => ({
       aiMcpServer: {url: 'http://127.0.0.1:45678/mcp', headers: {Authorization: 'Bearer fixture'}},
-      async humanRequest() {
-        return Response.json(state);
+      async getState() {
+        return state;
       },
       async close() {}
     })

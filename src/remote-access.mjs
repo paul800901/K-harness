@@ -247,8 +247,7 @@ const reads = new Set([
   '/api/artifact',
   '/api/attachment',
   '/api/message-file',
-  '/api/browser/state',
-  '/api/browser/download'
+  '/api/browser/state'
 ]);
 const writes = new Set([
   '/api/discussion/message',

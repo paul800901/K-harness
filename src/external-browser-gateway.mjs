@@ -50,19 +50,6 @@ function pack(response, message) {
     headers: {'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache'}
   });
 }
-function cleanDescription(description = '') {
-  return description
-    .replace(
-      /\s*K automatically fits the right-side browser view to its panel\. Choose the task viewport here; users do not need to adjust technical display settings\./gu,
-      ''
-    )
-    .replace(
-      /\s*For task-specific page layout zoom, use document\.documentElement\.style\.zoom[\s\S]*?Human takeover blocks this tool like all other browser tools\./gu,
-      ''
-    )
-    .replace(/\s*K panel tabs are previews[\s\S]*?changed your target\./gu, '')
-    .trim();
-}
 async function makeDir(parent, name) {
   const root = await realpath(parent),
     target = path.join(root, name);
@@ -77,12 +64,11 @@ async function makeDir(parent, name) {
 /**
  * Routes browser MCP calls to a deliberately selected, isolated external
  * Chrome context. The provider sees only this gateway's loopback token; child
- * owner tokens and profile paths remain inside the trusted K process.
+ * gateways are called in-process and their profile paths stay inside K.
  */
 export async function createExternalBrowserGateway({
   directory,
   profile,
-  onControlChange = () => {},
   launchExternalContext,
   listExternalProfiles,
   childGatewayFactory = createBrowserOwnerGateway,
@@ -121,7 +107,6 @@ export async function createExternalBrowserGateway({
       const gateway = await childGatewayFactory({
         directory: childDirectory,
         profile: childProfile,
-        onControlChange: (...args) => onControlChange(...args),
         ...(launchExternalContext
           ? {
               launchContext: (...args) =>
@@ -146,13 +131,7 @@ export async function createExternalBrowserGateway({
   }
   async function childInitialize(gateway, signal) {
     if (!outerInitialized || initializedChildren.has(gateway)) return;
-    const config = gateway.aiMcpServer;
-    const response = await fetch(config.url, {
-      method: 'POST',
-      headers: {...config.headers, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'},
-      body: JSON.stringify(outerInitialized),
-      ...(signal ? {signal} : {})
-    });
+    const response = await gateway.request(outerInitialized, signal);
     await response.arrayBuffer();
     if (!response.ok) throw Error('Browser child initialization failed.');
     initializedChildren.add(gateway);
@@ -237,10 +216,6 @@ export async function createExternalBrowserGateway({
           const proxied = await forward(gateway, reqMessage, controller.signal);
           const message = unpack(await proxied.text());
           if (message.result?.tools) {
-            message.result.tools = message.result.tools.map(tool => ({
-              ...tool,
-              description: cleanDescription(tool.description)
-            }));
             if (!message.result.tools.some(tool => tool.name === 'browser_session'))
               message.result.tools.push(browserSessionTool);
             if (listExternalProfiles) message.result.tools.push(browserProfilesTool);
@@ -288,10 +263,6 @@ export async function createExternalBrowserGateway({
             if (inFlight || state.busy)
               return jsonResponse(
                 toolError(reqMessage.id, 'Cannot switch browser mode while a browser operation is active.')
-              );
-            if (state.mode === 'human')
-              return jsonResponse(
-                toolError(reqMessage.id, 'Cannot switch browser mode while human control is enabled.')
               );
             if (mode === selected && targetProfileId === selectedProfileId)
               return jsonResponse({
@@ -366,11 +337,6 @@ export async function createExternalBrowserGateway({
           }
           selected = mode;
           selectedProfileId = targetProfileId;
-          onControlChange({
-            type: 'external-browser-mode',
-            mode,
-            ...(selectedProfileId ? {profileId: selectedProfileId} : {})
-          });
           return jsonResponse({
             jsonrpc: '2.0',
             id: reqMessage.id,
@@ -426,15 +392,9 @@ export async function createExternalBrowserGateway({
     }
   });
   async function forward(gateway, message, signal, onDone) {
-    const config = gateway.aiMcpServer;
     let response;
     try {
-      response = await fetch(config.url, {
-        method: 'POST',
-        headers: {...config.headers, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream'},
-        body: JSON.stringify(message),
-        signal
-      });
+      response = await gateway.request(message, signal);
     } catch (error) {
       onDone?.();
       throw error;
@@ -497,73 +457,11 @@ export async function createExternalBrowserGateway({
   host = `127.0.0.1:${http.address().port}`;
   return {
     aiMcpServer: {type: 'http', url: `http://${host}/mcp`, headers: {Authorization: `Bearer ${token}`}},
-    async humanRequest(route, body) {
-      const gateway = current();
-      if (!gateway) {
-        if (route === '/state')
-          return Response.json({available: false, busy: false, mode: 'ai', external: true, browserMode: null});
-        if (route === '/action')
-          return Response.json(
-            {
-              available: false,
-              busy: false,
-              mode: 'ai',
-              external: true,
-              browserMode: null,
-              error: 'Select an external browser mode first.'
-            },
-            {status: 409}
-          );
-        throw Error('Select an external browser mode first.');
-      }
-      const response = await gateway.humanRequest(route, body);
-      if (
-        (route !== '/state' && route !== '/action') ||
-        !response.headers.get('content-type')?.includes('application/json')
-      )
-        return response;
-      const state = await response.clone().json(),
-        headers = new Headers(response.headers);
-      headers.delete('content-length');
-      headers.set('content-type', 'application/json; charset=utf-8');
-      return Response.json(
-        {...state, external: true, browserMode: selected, ...(selectedProfileId ? {profileId: selectedProfileId} : {})},
-        {status: response.status, headers}
-      );
-    },
     async getState() {
       const gateway = current();
       if (!gateway)
-        return {
-          available: false,
-          busy: inFlight > 0,
-          mode: 'ai',
-          external: true,
-          selectedMode: null,
-          browserMode: null
-        };
+        return {available: false, busy: inFlight > 0, external: true, selectedMode: null, browserMode: null};
       const state = await gateway.getState();
-      return {
-        ...state,
-        busy: state.busy || inFlight > 0,
-        external: true,
-        selectedMode: selected,
-        browserMode: selected,
-        ...(selectedProfileId ? {profileId: selectedProfileId} : {})
-      };
-    },
-    getControlSnapshot() {
-      const gateway = current();
-      if (!gateway)
-        return {
-          available: false,
-          busy: inFlight > 0,
-          mode: 'ai',
-          external: true,
-          selectedMode: null,
-          browserMode: null
-        };
-      const state = gateway.getControlSnapshot();
       return {
         ...state,
         busy: state.busy || inFlight > 0,

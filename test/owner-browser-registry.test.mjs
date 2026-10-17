@@ -57,9 +57,8 @@ async function fixture(options = {}) {
           url: `http://127.0.0.1:${40000 + id}/mcp`,
           headers: {Authorization: `Bearer AI-${id}`}
         },
-        async humanRequest(route, body) {
-          call.request?.(route, body);
-          return call.response ?? new Response(JSON.stringify({available: true, mode: 'human', id}));
+        async getState() {
+          return call.response ?? {available: true, id};
         },
         async close() {
           call.closed++;
@@ -81,8 +80,8 @@ test('owner selects the test-only notice without exposing owner authority to the
       const server = await config(session, 'conversation-a');
       assert.equal(server.testOnly, undefined);
       const state = {threadId: 'thread-a', browserAccess: {enabled: true, sessionKey: 'conversation-a'}};
-      for (const route of ['/state', '/action'])
-        assert.equal((await f.registry.request({}, state, 'thread-a', route)).testOnly, options.testOnly !== false);
+      assert.equal((await f.registry.request({}, state, 'thread-a', '/state')).testOnly, options.testOnly !== false);
+      await assert.rejects(f.registry.request({}, state, 'thread-a', '/action'), /Unsupported browser route/);
     } finally {
       await session.close();
       await f.registry.close();
@@ -171,7 +170,7 @@ test('a delayed browser response is discarded after its connection is replaced',
     const pending = f.registry.request({}, state, 'thread-a', '/state');
     await new Promise(resolve => setTimeout(resolve, 0));
     await config(session, 'conversation-a');
-    finish(new Response(JSON.stringify({available: true, mode: 'human'})));
+    finish({available: true});
     await assert.rejects(pending, /連線已變更/);
     assert.equal(f.calls[0].closed, 1);
     assert.equal(f.calls.length, 2);

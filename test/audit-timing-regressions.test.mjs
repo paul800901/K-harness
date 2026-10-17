@@ -8,7 +8,6 @@ import path from 'node:path';
 import {mkdtemp, mkdir, rm} from 'node:fs/promises';
 import {createGeminiAccounts} from '../src/gemini-accounts.mjs';
 import {createLunaBridge} from '../src/luna-bridge.mjs';
-import {createBrowserLiveSession} from '../src/browser-live-session.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {scratchBase} from './scratch.mjs';
 
@@ -176,40 +175,6 @@ test('a settled worker whose last save failed recovers once the disk is healthy'
   assert.equal((await bridge.wait({requestId: 'job', timeoutMs: 0})).status, 'completed');
   assert.equal((await bridge.wait({requestId: 'job', timeoutMs: 0})).status, 'completed');
   await bridge.close();
-});
-
-test('a tab stuck in alert() does not hang browser state or human actions', async () => {
-  const makePage = (url, hang = false) => ({
-    url: () => url,
-    isClosed: () => false,
-    on() {},
-    evaluate: () => (hang ? new Promise(() => {}) : Promise.resolve('title of ' + url)),
-    reload: async () => {},
-    close: async () => {},
-    viewportSize: () => ({width: 1024, height: 768})
-  });
-  const pages = [makePage('https://a.example/'), makePage('https://b.example/alert', true)];
-  const context = {
-    pages: () => pages,
-    on() {},
-    newPage: async () => {
-      const page = makePage('about:blank');
-      pages.push(page);
-      return page;
-    },
-    newCDPSession: async () => ({send: async () => ({currentIndex: 0, entries: [{}]}), detach: async () => {}}),
-    close: async () => {}
-  };
-  const dir = await mkdtemp(path.join(scratchBase, 'audit-browser-'));
-  const live = await createBrowserLiveSession(dir, {
-    launchContext: async () => context,
-    downloadDirectory: path.join(dir, 'dl')
-  });
-  await live.contextGetter();
-  const within = (promise, ms) => Promise.race([promise.then(() => true), sleep(ms).then(() => false)]);
-  assert.equal(await within(live.humanRequest('/state'), 4000), true, 'state read must not hang');
-  assert.equal(await within(live.humanRequest('/action', {type: 'newPage'}), 4000), true, 'actions must not hang');
-  await live.close?.();
 });
 
 test('a new event-stream client does not swallow a change other screens have not received yet', async () => {
