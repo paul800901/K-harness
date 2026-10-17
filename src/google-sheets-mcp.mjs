@@ -26,7 +26,6 @@ const schemas = {
     spreadsheetId: id,
     sheet: label,
     mode: z.enum(['append', 'update']),
-    idField: label,
     row: z.number().int().min(2).max(1000000).optional(),
     fields: z
       .record(
@@ -40,7 +39,10 @@ const schemas = {
           z.boolean()
         ])
       )
-      .refine(value => Object.keys(value).length > 0 && Object.keys(value).every(key => key && key.length <= 200), '欄位名稱')
+      .refine(
+        value => Object.keys(value).length > 0 && Object.keys(value).every(key => key && key.length <= 200),
+        '欄位名稱'
+      )
   })
 };
 
@@ -62,15 +64,19 @@ async function runCli(cli, command, {execImpl = exec, env = process.env, signal}
       /^(SystemRoot|WINDIR|PATH|TEMP|TMP|USERPROFILE|APPDATA|LOCALAPPDATA|HOMEDRIVE|HOMEPATH)$/iu.test(key)
     )
   );
-  const {stdout} = await execImpl(process.env.K_ISOLATED_PARENT_NODE_EXECUTABLE ?? process.execPath, [cli, ...command], {
-    cwd: path.dirname(cli),
-    env: childEnv,
-    windowsHide: true,
-    shell: false,
-    timeout: 100000,
-    maxBuffer: 4 * 1024 * 1024,
-    signal
-  });
+  const {stdout} = await execImpl(
+    process.env.K_ISOLATED_PARENT_NODE_EXECUTABLE ?? process.execPath,
+    [cli, ...command],
+    {
+      cwd: path.dirname(cli),
+      env: childEnv,
+      windowsHide: true,
+      shell: false,
+      timeout: 100000,
+      maxBuffer: 4 * 1024 * 1024,
+      signal
+    }
+  );
   return JSON.parse(stdout);
 }
 
@@ -92,14 +98,20 @@ export async function callGoogleSheets(cli, spreadsheetIds, name, args, options 
 }
 
 // Writes cells by header name so a missing or extra field cannot shift a row.
-// Business values stay with the workspace rules; K only locks position and identity.
+// The owner binding names writable tabs and their identity column; business
+// values stay with the workspace rules. Checks use userEnteredValue, not results.
 export async function writeGoogleSheetRow(cli, spreadsheetIds, args, options = {}) {
-  const {spreadsheetId, sheet, mode, idField, fields, ...input} = approve(cli, spreadsheetIds, 'sheets_write_row', args);
-  const read = async range =>
-    (await runCli(cli, ['get', spreadsheetId, range, '--render', 'UNFORMATTED_VALUE'], options)).values ?? [];
+  const {spreadsheetId, sheet, mode, fields, row: requested} = approve(cli, spreadsheetIds, 'sheets_write_row', args);
+  const idField = options.writable?.[spreadsheetId]?.[sheet];
+  if (!idField) throw new RowError(`分頁「${sheet}」未經本人核准寫入。`);
+  const tab = quote(sheet),
+    readHeaders = async () =>
+      ((await runCli(cli, ['get', spreadsheetId, `${tab}!1:1`, '--render', 'UNFORMATTED_VALUE'], options)).values ?? [
+        []
+      ])[0];
   const target = (await runCli(cli, ['meta', spreadsheetId], options)).sheets.find(s => s.title === sheet);
   if (!target) throw new RowError(`找不到分頁「${sheet}」；請依 metadata 的分頁名稱。`);
-  const headers = (await read(`${quote(sheet)}!1:1`))[0] ?? [],
+  const headers = await readHeaders(),
     columns = new Map(),
     duplicated = new Set();
   headers.forEach((header, index) => {
@@ -109,69 +121,113 @@ export async function writeGoogleSheetRow(cli, spreadsheetIds, args, options = {
   });
   const unknown = Object.keys(fields).filter(field => !columns.has(field) || duplicated.has(field));
   if (unknown.length) throw new RowError(`欄位不在第 1 列表頭或表頭重複：${unknown.join('、')}。`);
-  if (!columns.has(idField) || blank(fields[idField]))
-    throw new RowError(`idField「${idField}」須為表頭欄位，且 fields 要帶它的值。`);
-  const idValue = String(fields[idField]),
-    rowRange = row => `${quote(sheet)}!A${row}:${column(headers.length - 1)}${row}`;
-  let row = input.row,
-    before = [];
+  if (!columns.has(idField) || duplicated.has(idField)) throw new RowError(`表頭缺少識別欄 ${idField}。`);
+  if (blank(fields[idField])) throw new RowError(`fields 須帶識別欄 ${idField} 的值。`);
+
+  const idColumn = column(columns.get(idField)),
+    last = column(headers.length - 1),
+    typed = value =>
+      typeof value === 'number'
+        ? {numberValue: value}
+        : typeof value === 'boolean'
+          ? {boolValue: value}
+          : {stringValue: value},
+    want = value => (blank(value) ? {} : typed(value)),
+    same = (a = {}, b = {}) =>
+      (Object.values(a).every(blank) && Object.values(b).every(blank)) || JSON.stringify(a) === JSON.stringify(b),
+    rawRow = async row => {
+      const cells = await runCli(cli, ['cells', spreadsheetId, `${tab}!A${row}:${last}${row}`], options);
+      return headers.map((_, index) => cells[`${sheet}!${column(index)}${row}`] ?? {});
+    },
+    rowsWithId = async () =>
+      (
+        (
+          await runCli(
+            cli,
+            ['get', spreadsheetId, `${tab}!${idColumn}2:${idColumn}`, '--render', 'UNFORMATTED_VALUE'],
+            options
+          )
+        ).values ?? []
+      ).flatMap((cells, index) => (String(cells?.[0] ?? '') === String(fields[idField]) ? [index + 2] : []));
+  let row = requested,
+    before = headers.map(() => ({})),
+    requests,
+    expected;
   if (mode === 'append') {
-    if (row !== undefined) throw new RowError('append 不指定 row；K 依識別欄最後一筆的下一列寫入。');
-    const ids = await read(`${quote(sheet)}!${column(columns.get(idField))}2:${column(columns.get(idField))}`);
-    if (ids.some(cells => String(cells?.[0] ?? '') === idValue))
-      throw new RowError(`${idField}「${idValue}」已存在；新增前先讀回確認，修正舊列請用 update。`);
-    row = ids.length + 2;
-    if (row <= target.rowCount) before = (await read(rowRange(row)))[0] ?? [];
-    if (before.some(value => !blank(value))) throw new RowError(`第 ${row} 列不是空白列；請先讀回確認表格狀態。`);
+    if (row !== undefined) throw new RowError('append 不指定 row；由 Google 接在最後一列資料之後。');
+    if ((await rowsWithId()).length)
+      throw new RowError(`${idField}「${fields[idField]}」已存在；新增前先讀回確認，修正舊列請用 update。`);
+    // appendCells picks the row inside Google, so parallel appends cannot overwrite each other.
+    expected = headers.map(header => want(fields[header]));
+    requests = [
+      {
+        appendCells: {
+          sheetId: target.sheetId,
+          rows: [{values: expected.map(raw => (Object.keys(raw).length ? {userEnteredValue: raw} : {}))}],
+          fields: 'userEnteredValue'
+        }
+      }
+    ];
   } else {
     if (row === undefined || row > target.rowCount) throw new RowError('update 需要表格內既有列的 row。');
-    before = (await read(rowRange(row)))[0] ?? [];
-    if (String(before[columns.get(idField)] ?? '') !== idValue)
-      throw new RowError(`第 ${row} 列的 ${idField} 不是「${idValue}」；識別碼不可在此修改。`);
-  }
-
-  const requests = [];
-  if (row > target.rowCount)
-    requests.push({appendDimension: {sheetId: target.sheetId, dimension: 'ROWS', length: row - target.rowCount}});
-  for (const [field, value] of Object.entries(fields)) {
-    if (mode === 'append' && blank(value)) continue;
-    const typed =
-      typeof value === 'number' ? {numberValue: value} : typeof value === 'boolean' ? {boolValue: value} : {stringValue: value};
-    requests.push({
+    before = await rawRow(row);
+    if (!same(before[columns.get(idField)], want(fields[idField])))
+      throw new RowError(`第 ${row} 列的 ${idField} 不是「${fields[idField]}」；識別碼不可在此修改。`);
+    const changes = Object.entries(fields).filter(([field]) => field !== idField);
+    if (!changes.length) throw new RowError('沒有要修改的欄位。');
+    expected = headers.map((header, index) => (Object.hasOwn(fields, header) ? want(fields[header]) : before[index]));
+    requests = changes.map(([field, value]) => ({
       updateCells: {
         start: {sheetId: target.sheetId, rowIndex: row - 1, columnIndex: columns.get(field)},
-        rows: [{values: [blank(value) ? {} : {userEnteredValue: typed}]}],
+        rows: [{values: [blank(value) ? {} : {userEnteredValue: want(value)}]}],
         fields: 'userEnteredValue'
       }
-    });
+    }));
   }
+
   const temp = await mkdtemp(path.join(os.tmpdir(), 'k-sheets-'));
   try {
     const file = path.join(temp, 'batch.json');
     await writeFile(file, JSON.stringify({requests}), 'utf8');
-    await runCli(cli, ['batch', spreadsheetId, file], options);
-  } catch (error) {
-    // batchUpdate is all-or-nothing; only an HTTP rejection proves nothing was applied.
-    error.kMessage = /sheets_http_4\d\d/u.test(String(error.stderr ?? ''))
-      ? 'Google 拒絕這次寫入，整批未套用；請依 metadata 與表頭重新確認後再決定。'
-      : `寫入結果未知：先用 sheets_read_values 讀回第 ${row} 列確認，不要直接重送。`;
-    throw error;
+    try {
+      await runCli(cli, ['batch', spreadsheetId, file], options);
+    } catch (error) {
+      // batchUpdate is all-or-nothing; only an HTTP rejection proves nothing was applied.
+      error.kMessage = /sheets_http_4\d\d/u.test(String(error.stderr ?? ''))
+        ? 'Google 拒絕這次寫入，整批未套用；請依 metadata 與表頭重新確認後再決定。'
+        : `寫入結果未知：先用 sheets_read_values 讀回 ${idField}「${fields[idField]}」確認，不要直接重送。`;
+      throw error;
+    }
   } finally {
-    await rm(temp, {recursive: true, force: true});
+    await rm(temp, {recursive: true, force: true}).catch(() => {});
   }
 
-  let after;
+  let after, headersAfter;
   try {
-    after = (await read(rowRange(row)))[0] ?? [];
+    if (mode === 'append') {
+      const found = await rowsWithId();
+      if (found.length !== 1)
+        throw Object.assign(Error('append not found'), {
+          kMessage: `已送出新增，但讀回找到 ${found.length} 列 ${idField}「${fields[idField]}」；先讀回確認，不要重送。`
+        });
+      row = found[0];
+    }
+    [after, headersAfter] = [await rawRow(row), await readHeaders()];
   } catch (error) {
-    error.kMessage = `已送出寫入但讀回失敗：先用 sheets_read_values 讀回第 ${row} 列確認，不要重送。`;
+    error.kMessage ??= `已送出寫入但讀回失敗：先用 sheets_read_values 讀回 ${idField}「${fields[idField]}」確認，不要重送。`;
     throw error;
   }
-  const named = cells =>
-    Object.fromEntries(headers.flatMap((header, index) => (blank(header) || blank(cells[index]) ? [] : [[header, cells[index]]])));
-  const mismatches = Object.entries(fields)
-    .filter(([field, value]) => (blank(value) ? !blank(after[columns.get(field)]) : after[columns.get(field)] !== value))
-    .map(([field]) => field);
+  const value = raw => Object.values(raw ?? {})[0],
+    named = cells =>
+      Object.fromEntries(
+        headers.flatMap((header, index) =>
+          blank(header) || blank(value(cells[index])) ? [] : [[header, value(cells[index])]]
+        )
+      );
+  const mismatches = headers.flatMap((header, index) =>
+    blank(header) || same(after[index], expected[index]) ? [] : [header]
+  );
+  if (JSON.stringify(headersAfter) !== JSON.stringify(headers)) mismatches.push('第 1 列表頭在寫入期間改變');
   return {
     fetchedAt: new Date().toISOString(),
     sheet,
@@ -184,10 +240,17 @@ export async function writeGoogleSheetRow(cli, spreadsheetIds, args, options = {
   };
 }
 
-export function createGoogleSheetsServer({cli, spreadsheetIds, call = callGoogleSheets}) {
+// writable: owner-approved {spreadsheetId: {tab: identity column}}; empty keeps the server read-only.
+export function createGoogleSheetsServer({cli, spreadsheetIds, writable = {}, call = callGoogleSheets}) {
   if (!path.isAbsolute(cli) || !Array.isArray(spreadsheetIds) || !spreadsheetIds.length)
     throw Error('Google Sheets 需要本人核准的工具路徑與試算表清單。');
   spreadsheetIds.forEach(value => id.parse(value));
+  z.record(id, z.record(label, label)).parse(writable);
+  if (Object.keys(writable).some(sheetId => !spreadsheetIds.includes(sheetId)))
+    throw Error('可寫試算表必須在核准清單內。');
+  const tabs = Object.entries(writable).flatMap(([sheetId, map]) =>
+    Object.entries(map).map(([tab, idField]) => `${sheetId}「${tab}」（識別欄 ${idField}）`)
+  );
   const server = new McpServer({name: 'k-google-sheets', version: '0.2.0'}, {capabilities: {tools: {}}});
   const read = {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true};
   const tools = {
@@ -201,13 +264,15 @@ export function createGoogleSheetsServer({cli, spreadsheetIds, call = callGoogle
     ],
     sheets_write_row: [
       '依第 1 列表頭欄名寫入一列，只用於本人要求新增或修正的資料；寫入前先依工作區規則決定識別碼與欄位值。' +
-        'append：新增一筆，不指定 row，K 寫在 idField 欄最後一筆的下一列，要求該列空白且識別碼不重複。' +
-        'update：修改既有列的指定欄位，需給 row，且該列 idField 現值須等於 fields[idField]（識別碼不可改）；空字串代表清空。' +
-        'fields 的鍵須與表頭完全相同；金額等數字用 JSON 數字，不可用公式。整批單次寫入，完成後自動讀回並回傳 before、after、verified。' +
-        '回報結果未知時先讀回，不要重送；不刪列、不改分頁、格式或分享。',
+        `可寫分頁：${tabs.join('、')}。fields 一律帶識別欄的值。` +
+        'append：新增一筆，不指定 row，Google 接在最後一列資料之後；識別碼不得已存在。' +
+        'update：修改既有列的指定欄位，需給 row，且該列識別欄現值須等於 fields 中的識別碼（識別碼不可改）；空字串代表清空。' +
+        'fields 的鍵須與第 1 列表頭完全相同；金額等數字用 JSON 數字，不可用公式。整批單次寫入，完成後自動讀回原始輸入值並回傳 row、before、after、verified、mismatches。' +
+        'verified 不是 true 或結果未知時先讀回，不要重送；不刪列、不改分頁、格式或分享。',
       {readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true}
     ]
   };
+  if (!tabs.length) delete tools.sheets_write_row;
   for (const [name, [description, annotations]] of Object.entries(tools)) {
     server.registerTool(
       name,
@@ -225,7 +290,10 @@ export function createGoogleSheetsServer({cli, spreadsheetIds, call = callGoogle
         try {
           return {
             content: [
-              {type: 'text', text: JSON.stringify(await call(cli, spreadsheetIds, name, args, {signal: extra.signal}))}
+              {
+                type: 'text',
+                text: JSON.stringify(await call(cli, spreadsheetIds, name, args, {signal: extra.signal, writable}))
+              }
             ]
           };
         } catch (error) {
@@ -256,7 +324,12 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) &&
   process.argv[2] === '--serve'
 ) {
-  await createGoogleSheetsServer({cli: process.argv[3], spreadsheetIds: process.argv.slice(4)}).connect(
-    new StdioServerTransport()
-  );
+  // --serve <cli> <spreadsheetId>... [--write '{"<spreadsheetId>":{"<tab>":"<identity column>"}}']
+  const rest = process.argv.slice(4),
+    flag = rest.indexOf('--write');
+  await createGoogleSheetsServer({
+    cli: process.argv[3],
+    spreadsheetIds: flag < 0 ? rest : rest.slice(0, flag),
+    writable: flag < 0 ? {} : JSON.parse(rest[flag + 1])
+  }).connect(new StdioServerTransport());
 }
