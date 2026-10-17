@@ -24,3 +24,4 @@
 - Sol 複驗（`e67adc1`）：「同意」合回 main。兩項 P2 通過（`bg-ab` 不再誤結案 `bg-a`；停止成功後清除 backgroundMissing／error）；同意移除結構化 id 判斷（id 相同無法區分成功停止與早已結束），JSON 字串與文字區塊格式的成功訊息都能正確結案；K host 把 stream-json 訊息原樣交給 controller。隔離槽補充案例 18/18、`npm test` 1748/1748、`build:ui` 成功。未驗：真實 Claude Code TaskStop 流程、`test:ui`、正式 K。
 - 已合回 main 並 push（遠端讀回 `ecdfe44`）：程式 `ddfd8cc`、`a966386`、`e67adc1`；紀錄 `bf25a4f`、`dd0c8b0`、`ecdfe44`。
 - 部署：與 [K 自行開啟 Chrome](k-chrome-auto-open-20261018.md) 一起，固定程式版本 `e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`，由本人在 K 外更新。
+- 2026-10-18 已於 K 外與瀏覽器批次一起部署；更新器 1748/1748、health 200／native，退版與完整讀回見 [共同部署狀態](k-chrome-auto-open-20261018.md#部署狀態)。本次未代測真實 Claude Code TaskStop 流程。

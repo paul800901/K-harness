@@ -54,4 +54,20 @@
 - 部署後實測清單（在 K 裡由 AI 執行）：1. 關掉 K 專用 Chrome，叫 AI 用一般模式開網頁（K 縮小開 Chrome）；2. 接著用無痕模式（擴充縮小開無痕視窗）；3. 只留無痕視窗、關掉一般視窗，再分別要一般與無痕（走 `nativeConnection` 自開連線頁視窗）；4. 確認擴充版本 0.1.4、右側狀態與焦點沒有被搶。
 - 已合回 main 並 push（遠端讀回 `c993e95`）：程式 `5d0a6b0`、`453e9ad`、`8a2138d`、`de6ef29`、`d7b4ddb`、`3ba604e`；紀錄 `536ebb9`、`84f2bd4`、`8da0be9`、`c993e95`。原定部署 `3ba604e`；之後同日併入 [TaskStop 修正](claude-taskstop-settle-20261018.md)，兩批一起部署的固定程式版本為 `e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`（包含本批全部程式）。
 - 部署（擴充有變更）：K 外 `Update-K.ps1` 之後，執行 `scripts/Setup-K-Browser.ps1`（以正式 trusted-runtime 建置的擴充更新 `installed/k-browser-assistant`，先備份；重套同一 K native host 登記），再讓 K 專用 Chrome 載入 0.1.4（關閉 K 專用 Chrome 後重開，或在擴充頁按重新載入），並讀回擴充版本。
-- 部署：待合回 main 後由本人在 K 外更新（同前，交給 Codex App 的 Sol 執行）。更新後可實測：關掉 K 專用 Chrome，再叫 AI 用瀏覽器。
+- 部署已完成，兩批共用的正式讀回與待實測界線見下方「部署狀態」。
+
+## 部署狀態
+
+2026-10-18 於 K 外依本人本輪指定部署本批與 [Claude TaskStop 修正](claude-taskstop-settle-20261018.md)，未修改程式。兩批既有 Sol 驗收與 Fable 第二審處理見各自上節；本次只執行固定版本部署、瀏覽器設定與文件收尾，不另宣稱新增模型複查或功能實測。
+
+- **部署前**：`D:\K-harness` 工作樹乾淨、目前分支 main，本機 main、origin/main 與遠端實查均為 `78396f3c3a5f55f422ec511e8c85bbf5a89153bf`；指定 commit 讀回 `e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`。正式版本原為 `3d88c934511e2a0ad88665bd743ebafcabd808e0`。47831 拒絕連線；未發現 K 正式程序、K 原生核心或 K 專用 Chrome；啟動器 mutex 不存在、執行檔可獨佔讀取。未強制結束任何程序。
+- **更新器**：只執行一次 `Update-K.ps1 -Ref e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`，成功套用。依 lockfile 準備候選、介面／擴充／啟動器建置成功，完整 `npm test` **1748/1748**，失敗／取消／略過均為 0；未另跑 `test:ui`。建置仍有 Vite 大區塊與 outDir 警告，未為本次部署改程式。沒有重試或自行退版。
+- **版本與退版**：`.local/runtime.json` 的 version 已讀回上述完整 SHA；previous 為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1792259230876`，其 runtime 存在。退版保留最新三份：`before-1792222347302`、`before-1792237842840`、`before-1792259230876`。最舊的 `before-1792212137211` 已由更新器移入資源回收筒，原路徑消失且回收筒同原路徑項目讀回成功。這些只供程式退版，不是對話備份。
+- **資料位置**：同層 agent-home、vault、workspace、browser-output 都留在原路徑，四個目錄建立時間與更新前相同；未讀取帳號憑證、token 或瀏覽器登入資料。初次核對因 PowerShell 將 JSON 日期自動轉成 DateTime，與字串比較而誤報；改以 UTC 日期值比較後四者均吻合，未因此重跑更新器。
+- **擴充安裝**：只執行一次 `scripts/Setup-K-Browser.ps1`，成功。`installed/k-browser-assistant/manifest.json` 為 **0.1.4**；trusted-runtime 的 `browser-extension/dist` 共 15 個檔案，與安裝位置逐檔 SHA-256 全部相同。設定備份為 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\k-browser-assistant-backups\setup-20261018-014800-352`，含舊擴充 0.1.3、設定與登記備份。
+- **擴充目錄差異如實保留**：安裝目錄另有腳本建立的三個 native host 入口檔，並保留五個更新前既有資產（`lib/authToken.css`、`lib/authToken.js`、`lib/connect.css`、`lib/tabItem.css`、`lib/tabItem.js`）。五檔與更新前備份內容相同，新版建置沒有引用它們；未擅自刪除。因此「新建置檔全部相同」成立，但不宣稱整個目錄的檔案集合完全相同。
+- **Chrome 與 native host**：`vault/k-browser-assistant.json` 的 chromeExecutable 仍是 `C:\Program Files\Google\Chrome\Application\chrome.exe`。HKCU 仍只登記同一 `com.k_harness.browser_assistant`，stdio 類型與允許的 K 擴充身分不變。但依指定腳本，登記位置由 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\k-browser-native-host\com.k_harness.browser_assistant.json` 改為 `D:\K-harness\installed\k-browser-assistant\com.k_harness.browser_assistant.json`，host.bat 也改到同一 installed 目錄；新 host.mjs 匯入目前 trusted-runtime 的 host。這是同一 K host 的新固定入口，**不是登記路徑未變**；舊登記備份保留。
+- **正式啟動**：只正常執行一次 `Start-K-Desktop.ps1`，01:49（臺灣時間）讀回 `http://127.0.0.1:47831/health` 為 **HTTP 200、deployment=native**。未手動開 K 專用 Chrome，當時亦無該 profile 的 Chrome 程序，不宣稱 Chrome 已載入 0.1.4。
+- **待實測**：由 K 裡的 Claude 執行上節瀏覽器實測清單，包括自動縮小開啟、無痕及只剩無痕視窗時的連線；本次不代測。真實 Claude Code TaskStop 流程仍未於本次部署驗證。其他電腦未更新。
+- **本機證據**：`.runtime/archive/k-chrome-auto-open-20261018/deploy-preflight.json`、`deploy-updater.log`、`deploy-runtime-readback.json`、`deploy-browser-setup.log`、`deploy-browser-readback.json`、`deploy-start.json`、`deploy-health.json`；只保留於 Git 排除的本機目錄，不提交。
+- **文件發布**：本次只另提交本文件、TaskStop 文件的部署連結與 development-log 目前狀態；部署程式 SHA 不隨文件提交改變。提交、秘密檢查與 push 後遠端讀回另存本機 `deploy-publish.json`，不以文件提交當作再次部署。
