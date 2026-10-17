@@ -3,6 +3,7 @@ import {access} from 'node:fs/promises';
 import path from 'node:path';
 import {setTimeout as delay} from 'node:timers/promises';
 import {fileURLToPath} from 'node:url';
+import {aborted} from 'node:util';
 
 const script = fileURLToPath(new URL('../scripts/start-k-chrome-minimized.ps1', import.meta.url));
 let starting = null;
@@ -25,6 +26,9 @@ export async function startKChrome({
   timeoutMs = 20000,
   intervalMs = 500
 }) {
+  // A stopped request never starts Chrome, and stops waiting for a start that
+  // another room still needs without cancelling it.
+  signal?.throwIfAborted();
   starting ??= (async () => {
     if (await access(path.join(userDataDir, 'lockfile')).then(() => true, () => false)) return;
     const powershell = path.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
@@ -36,7 +40,8 @@ export async function startKChrome({
       )
     );
   })().finally(() => (starting = null));
-  await starting;
+  await (signal ? Promise.race([starting, aborted(signal, starting)]) : starting);
+  signal?.throwIfAborted();
   for (const deadline = Date.now() + timeoutMs; ; ) {
     const profiles = await listProfiles();
     if (profiles.some(profile => profile.connected)) return profiles;

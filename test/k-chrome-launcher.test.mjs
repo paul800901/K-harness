@@ -130,6 +130,48 @@ test('a failed start or an assistant that never connects is reported, not retrie
   assert.equal(runs, 2, 'each request starts Chrome at most once');
 });
 
+test('a request stopped before Chrome starts never starts it', async () => {
+  const userDataDir = await profileDir();
+  let runs = 0;
+  await assert.rejects(
+    startKChrome({
+      chromeExecutable: 'C:\\fake\\chrome.exe',
+      userDataDir,
+      mode: 'regular',
+      signal: AbortSignal.abort(),
+      listProfiles: async () => connected,
+      execFileImpl: () => runs++
+    }),
+    {name: 'AbortError'}
+  );
+  assert.equal(runs, 0);
+});
+
+test('a stopped request stops waiting at once while the start another room needs continues', async () => {
+  const userDataDir = await profileDir();
+  let runs = 0,
+    finish;
+  const options = {
+    chromeExecutable: 'C:\\fake\\chrome.exe',
+    userDataDir,
+    mode: 'regular',
+    listProfiles: async () => connected,
+    execFileImpl: (file, args, opts, done) => {
+      runs++;
+      finish = done;
+    }
+  };
+  const abort = new AbortController();
+  const stopped = startKChrome({...options, signal: abort.signal}),
+    other = startKChrome(options);
+  while (!finish) await new Promise(resolve => setTimeout(resolve, 1));
+  abort.abort();
+  await assert.rejects(stopped, {name: 'AbortError'});
+  finish(null);
+  assert.deepEqual(await other, connected);
+  assert.equal(runs, 1);
+});
+
 test('cancelling the request stops waiting for the assistant', async () => {
   const userDataDir = await profileDir();
   const abort = new AbortController();
