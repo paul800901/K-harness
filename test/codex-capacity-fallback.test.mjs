@@ -23,6 +23,7 @@ async function fixture({
   serviceTier = 'default',
   immediateFailure = false,
   startAck = null,
+  onStartAckWait = null,
   flash = false
 } = {}) {
   await mkdir('.runtime/tests', {recursive: true});
@@ -88,7 +89,10 @@ async function fixture({
           emit('turn/started', {turn: {id}});
           emit('item/completed', {turnId: id, item});
           if (immediateFailure || (flash && p.toolOutput)) finish(overload, id);
-          if (startAck && p.model === LUNA) await startAck;
+          if (startAck && p.model === LUNA) {
+            onStartAckWait?.();
+            await startAck;
+          }
           return {turn: {id}};
         }
         if (method === 'turn/interrupt' && turns.find(t => t.id === p.turnId)?.status !== 'inProgress')
@@ -324,11 +328,16 @@ test('native terminal failure before start acknowledgement never starts another 
   }
 });
 test('stop before send acknowledgement does not interrupt the already failed turn or revive it', async () => {
-  let release;
-  const f = await fixture({immediateFailure: true, startAck: new Promise(r => (release = r))});
+  let release, started;
+  const startWaiting = new Promise(r => (started = r));
+  const f = await fixture({
+    immediateFailure: true,
+    startAck: new Promise(r => (release = r)),
+    onStartAckWait: started
+  });
   try {
     const sending = f.c.send({text: 'x'});
-    await new Promise(r => setTimeout(r, 20));
+    await startWaiting;
     const stopping = f.c.stop();
     release();
     await sending;
