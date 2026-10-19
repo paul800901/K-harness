@@ -111,8 +111,8 @@ export function gemmaResponseEvents(aliases) {
   };
 }
 
-export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
-  const requests = new Set();
+export async function openGemmaResponses(baseUrl, {fetchImpl = fetch, expectedModel, acquireModel} = {}) {
+  const requests = new Map();
   const token = randomBytes(32).toString('base64url');
   let expectedHost;
   const server = createServer(async (request, response) => {
@@ -129,8 +129,17 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
       return;
     }
     const abort = new AbortController();
-    requests.add(abort);
+    let complete;
+    requests.set(
+      abort,
+      new Promise(resolve => {
+        complete = resolve;
+      })
+    );
     response.on('close', () => abort.abort());
+    let lease,
+      upstreamStarted = false,
+      settled = false;
     try {
       let translated;
       try {
@@ -142,6 +151,25 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
         return;
       }
       const {body, aliases} = translated;
+      if (expectedModel !== undefined && body.model !== expectedModel) {
+        response
+          .writeHead(400, {'content-type': 'application/json'})
+          .end(JSON.stringify({error: {message: '自架模型與此聊天室連線不符；未送出推論。'}}));
+        return;
+      }
+      if (acquireModel) {
+        try {
+          lease = await acquireModel({signal: abort.signal});
+        } catch (error) {
+          response
+            .writeHead(503, {'content-type': 'application/json'})
+            .end(JSON.stringify({error: {message: error.message}}));
+          return;
+        }
+        body.model = lease.model;
+      }
+      abort.signal.throwIfAborted();
+      upstreamStarted = true;
       const upstream = await fetchImpl(`${baseUrl}/responses`, {
         method: 'POST',
         headers: {'content-type': 'application/json'},
@@ -152,11 +180,14 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
       const contentType = upstream.headers.get('content-type') ?? 'application/json';
       response.writeHead(upstream.status, {'content-type': contentType});
       if (!upstream.ok) {
-        response.end(await upstream.text());
+        const errorBody = await upstream.text();
+        settled = true;
+        response.end(errorBody);
         return;
       }
       if (!body.stream) {
         const result = await upstream.json();
+        settled = true;
         response.end(JSON.stringify({...result, output: result.output?.map(item => nativeItem(item, aliases))}));
         return;
       }
@@ -171,10 +202,13 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
           .join('\n');
         if (!data) return;
         if (data === '[DONE]') {
+          settled = true;
           response.write('data: [DONE]\n\n');
           return;
         }
-        for (const event of translate(JSON.parse(data)))
+        const nativeEvent = JSON.parse(data);
+        if (['response.completed', 'response.failed', 'response.incomplete'].includes(nativeEvent.type)) settled = true;
+        for (const event of translate(nativeEvent))
           response.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
       };
       for await (const chunk of upstream.body) {
@@ -195,7 +229,18 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
           .end(JSON.stringify({error: {message: 'Gemma 協定轉換或連線失敗；未改用其他模型。'}}));
       else response.destroy(error);
     } finally {
-      requests.delete(abort);
+      try {
+        await lease?.finish({
+          settled: !upstreamStarted || settled,
+          ...(!settled && upstreamStarted && abort.signal.aborted ? {cancelled: true} : {})
+        });
+      } catch {
+        // The runtime retains an uncertain cancellation/unload result. Do not
+        // interrupt K shutdown or retry a possibly completed operation.
+      } finally {
+        requests.delete(abort);
+        complete();
+      }
     }
   });
   await new Promise((resolve, reject) => {
@@ -207,9 +252,10 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch} = {}) {
     baseUrl: `http://${expectedHost}/v1`,
     headers: {Authorization: `Bearer ${token}`},
     async close() {
-      for (const abort of requests) abort.abort();
+      for (const abort of requests.keys()) abort.abort();
       server.closeAllConnections();
       await new Promise((resolve, reject) => server.close(error => (error ? reject(error) : resolve())));
+      await Promise.all(requests.values());
     }
   };
 }

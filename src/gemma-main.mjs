@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {openGemmaResponses} from './gemma-responses.mjs';
+import {createLocalModelRuntime} from './local-model-runtime.mjs';
 
 const defaults = {
   local: {baseUrl: 'http://127.0.0.1:1234/v1', model: 'gemma-4-12b-it-qat', contextWindow: 32768},
@@ -11,9 +12,12 @@ const locationNames = {local: '本機', cloud: '雲端'};
 
 // Self-hosted inference, not an OpenAI API billing route. Cloud uses an owner-managed
 // SSH tunnel; K neither rents a server nor stores/transfers a provider credential.
-export async function loadGemmaConnections(root, {fetchImpl = fetch} = {}) {
+export async function loadGemmaConnections(
+  root,
+  {fetchImpl = fetch, localRuntimeFactory = createLocalModelRuntime} = {}
+) {
   try {
-    return await readConnections(root, fetchImpl);
+    return await readConnections(root, fetchImpl, localRuntimeFactory);
   } catch {
     // A bad optional Gemma file cannot take the existing three providers offline.
     return Object.entries(defaults).map(([slot, config]) => ({
@@ -38,7 +42,7 @@ export async function loadGemmaConnections(root, {fetchImpl = fetch} = {}) {
     }));
   }
 }
-async function readConnections(root, fetchImpl) {
+async function readConnections(root, fetchImpl, localRuntimeFactory) {
   let settings = {};
   try {
     settings = JSON.parse(await readFile(path.join(root, '.runtime', 'gemma-main.json'), 'utf8'));
@@ -47,6 +51,15 @@ async function readConnections(root, fetchImpl) {
   }
   const extra = settings.selfHosted ?? [];
   if (!Array.isArray(extra)) throw new Error('自架模型清單無效。');
+  // Opt in with the owner's installed CLI, never install an engine or change cloud
+  // billing. All managed local connections share one memory/inference owner.
+  let localRuntime;
+  if (settings.localRuntime !== undefined) {
+    const executable = settings.localRuntime?.executable;
+    if (typeof executable !== 'string' || !path.isAbsolute(executable))
+      throw new Error('本機模型需要已安裝的原生 lms 完整路徑。');
+    localRuntime = localRuntimeFactory({executable, fetchImpl});
+  }
   const ids = new Set();
   return [
     ...Object.entries(defaults).map(([slot, fallback]) =>
@@ -55,6 +68,7 @@ async function readConnections(root, fetchImpl) {
         prefix: `gemma-${slot}`,
         location: slot,
         displayName: gemmaNames[slot],
+        localRuntime,
         config: {...fallback, ...settings[slot]}
       })
     ),
@@ -77,6 +91,7 @@ async function readConnections(root, fetchImpl) {
         prefix,
         location: entry.location,
         displayName: `${entry.label.trim()} · ${locationNames[entry.location]}`,
+        localRuntime,
         config: {
           baseUrl: entry.baseUrl ?? defaults[entry.location].baseUrl,
           model: entry.model,
@@ -86,7 +101,7 @@ async function readConnections(root, fetchImpl) {
     })
   ];
 }
-function connection(root, fetchImpl, {slot, prefix, location, displayName, config}) {
+function connection(root, fetchImpl, {slot, prefix, location, displayName, config, localRuntime}) {
   const url = new URL(config.baseUrl);
   if (
     url.protocol !== 'http:' ||
@@ -108,6 +123,9 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
   )
     throw new Error('自架模型 ID 或上下文設定無效。');
   const baseUrl = url.href.replace(/\/$/u, '');
+  // The installed CLI controls the owner's local :1234 backend only. Other local
+  // servers and owner-managed cloud tunnels retain their existing wire protocol.
+  const managed = location === 'local' && url.port === '1234' ? localRuntime : null;
   const model = `${prefix}/${config.model}`;
   const home = path.join(root, '.runtime', `${prefix}-home`);
   const catalogFile = path.join(home, 'model-catalog.json');
@@ -133,6 +151,21 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
     },
     async models({signal} = {}) {
       try {
+        if (managed) {
+          const result = await managed.catalog({signal});
+          const offered = result.models.some(entry => entry.type === 'llm' && entry.key === config.model);
+          return {
+            models: [
+              {
+                ...row,
+                available: offered,
+                description: offered
+                  ? `${config.model}；工作時由 K 在背景套用載入設定，無須另開模型介面。尚未完成推論驗證。`
+                  : `本機尚未提供模型 ${config.model}。`
+              }
+            ]
+          };
+        }
         const timeout = AbortSignal.timeout(3000);
         const response = await fetchImpl(`${baseUrl}/models`, {
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -224,7 +257,21 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
             ]
           })
         );
-        transport = await openGemmaResponses(baseUrl, {fetchImpl});
+        transport = await openGemmaResponses(baseUrl, {
+          fetchImpl,
+          expectedModel: config.model,
+          ...(managed
+            ? {
+                acquireModel: ({signal}) =>
+                  managed.acquire({
+                    model: config.model,
+                    instanceId: `k-${prefix}`,
+                    contextWindow: config.contextWindow,
+                    signal
+                  })
+              }
+            : {})
+        });
       })().catch(error => {
         prepared = null;
         throw error;
@@ -235,6 +282,7 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
       await transport?.close();
       transport = null;
       prepared = null;
+      await managed?.close?.().catch(() => {});
     },
     configOverrides() {
       if (!transport) throw new Error('自架模型連線尚未準備完成；未繞過工具格式轉換。');

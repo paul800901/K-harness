@@ -10,6 +10,159 @@ const tools = [
     tools: [{type: 'function', name: 'conversation_context', parameters: {type: 'object'}}]
   }
 ];
+
+test('stop during model preparation finishes preparation but sends no inference', async () => {
+  let entered, release, finished;
+  const preparing = new Promise(resolve => {
+    entered = resolve;
+  });
+  const prepared = new Promise(resolve => {
+    release = resolve;
+  });
+  const finishing = new Promise(resolve => {
+    finished = resolve;
+  });
+  const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
+    expectedModel: 'qwen',
+    acquireModel: async ({signal}) => {
+      entered(signal);
+      await prepared;
+      return {model: 'k-qwen', finish: value => finished(value)};
+    },
+    fetchImpl: async () => assert.fail('cancelled work must never infer')
+  });
+  const abort = new AbortController();
+  const result = fetch(`${bridge.baseUrl}/responses`, {
+    method: 'POST',
+    headers: bridge.headers,
+    body: JSON.stringify({model: 'qwen'}),
+    signal: abort.signal
+  }).catch(error => error);
+  try {
+    const nativeSignal = await preparing;
+    abort.abort();
+    await result;
+    const closed = bridge.close();
+    assert.equal(nativeSignal.aborted, true);
+    release();
+    assert.deepEqual(await finishing, {settled: true});
+    await closed;
+  } finally {
+    release();
+  }
+});
+
+test('client cancellation is forwarded and bridge shutdown waits for exact owned-request cleanup', async () => {
+  let finishCleanup;
+  const cleanup = new Promise(resolve => {
+    finishCleanup = resolve;
+  });
+  let finished;
+  const finishing = new Promise(resolve => {
+    finished = resolve;
+  });
+  let receivedSignal;
+  let closeStarted = false;
+  const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
+    expectedModel: 'qwen',
+    acquireModel: async () => ({
+      model: 'k-qwen',
+      async finish(value) {
+        finished(value);
+        await cleanup;
+      }
+    }),
+    fetchImpl: async (_url, {signal}) => {
+      receivedSignal = signal;
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('data: {"type":"response.created"}\n\n'));
+            signal.addEventListener('abort', () => controller.error(signal.reason), {once: true});
+          }
+        }),
+        {headers: {'content-type': 'text/event-stream'}}
+      );
+    }
+  });
+  try {
+    const result = await fetch(`${bridge.baseUrl}/responses`, {
+      method: 'POST',
+      headers: bridge.headers,
+      body: JSON.stringify({model: 'qwen', stream: true})
+    });
+    const reader = result.body.getReader();
+    await reader.read();
+    await reader.cancel();
+    assert.deepEqual(await finishing, {settled: false, cancelled: true});
+    assert.equal(receivedSignal.aborted, true);
+    let closed = false;
+    closeStarted = true;
+    const closing = bridge.close().then(() => {
+      closed = true;
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(closed, false);
+    finishCleanup();
+    await closing;
+  } finally {
+    finishCleanup();
+    if (!closeStarted) await bridge.close();
+  }
+});
+
+test('local model preparation failure never sends inference or retries and preserves its explanation', async () => {
+  let acquired = 0;
+  const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
+    expectedModel: 'qwen',
+    fetchImpl: async () => assert.fail('must not send inference'),
+    acquireModel: async () => {
+      acquired++;
+      throw Error('本機模型仍在工作；未停止或改用其他模型。');
+    }
+  });
+  try {
+    const result = await fetch(`${bridge.baseUrl}/responses`, {
+      method: 'POST',
+      headers: bridge.headers,
+      body: JSON.stringify({model: 'qwen'})
+    });
+    assert.equal(result.status, 503);
+    assert.match((await result.json()).error.message, /仍在工作/);
+    assert.equal(acquired, 1);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test('local lease treats broken or unterminated streams as unknown, and terminal streams as settled', async () => {
+  for (const terminal of [false, true, 'network-error']) {
+    const finishes = [];
+    const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
+      expectedModel: 'qwen',
+      acquireModel: async () => ({model: 'k-qwen', finish: value => finishes.push(value)}),
+      fetchImpl: async (_url, options) => {
+        assert.equal(JSON.parse(options.body).model, 'k-qwen');
+        if (terminal === 'network-error') throw Error('synthetic disconnect');
+        const text = terminal
+          ? 'data: {"type":"response.completed","response":{"output":[]}}\n\n'
+          : 'data: {"type":"response.created"}\n\n';
+        return new Response(text, {headers: {'content-type': 'text/event-stream'}});
+      }
+    });
+    try {
+      const result = await fetch(`${bridge.baseUrl}/responses`, {
+        method: 'POST',
+        headers: bridge.headers,
+        body: JSON.stringify({model: 'qwen', stream: true})
+      });
+      await result.text();
+      assert.deepEqual(finishes, [{settled: terminal === true}]);
+    } finally {
+      await bridge.close();
+    }
+  }
+});
 test('Gemma tool normalization preserves all native tools and replays custom/namespaced history as functions', () => {
   const result = gemmaRequest({
     model: 'gemma',

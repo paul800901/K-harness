@@ -7,6 +7,93 @@ import {loadGemmaConnections} from '../src/gemma-main.mjs';
 import {modelProvider, gemmaConnection, usesCodexCore} from '../shared/model-provider.mjs';
 import {availableWorkerModels} from '../src/worker-policy.mjs';
 
+test('K manages local loading only on an inference request, shares one runtime, and keeps cloud unmanaged', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'managed-local-'));
+  await mkdir(path.join(root, '.runtime'));
+  await writeFile(
+    path.join(root, '.runtime/gemma-main.json'),
+    JSON.stringify({
+      localRuntime: {executable: path.resolve('lms-test.exe')},
+      selfHosted: [{id: 'qwen', label: 'Qwen', location: 'local', model: 'qwen', contextWindow: 32768}]
+    })
+  );
+  const leases = [],
+    calls = [];
+  let factories = 0;
+  const connections = await loadGemmaConnections(root, {
+    localRuntimeFactory({executable}) {
+      factories++;
+      assert.equal(executable, path.resolve('lms-test.exe'));
+      return {
+        async close() {
+          throw Error('synthetic local engine shutdown failure');
+        },
+        async catalog() {
+          return {
+            models: [
+              {type: 'llm', key: 'gemma-4-12b-it-qat'},
+              {type: 'llm', key: 'qwen'}
+            ]
+          };
+        },
+        async acquire(options) {
+          const lease = {
+            options,
+            model: options.instanceId,
+            finish(result) {
+              lease.finished = result;
+            }
+          };
+          leases.push(lease);
+          return lease;
+        }
+      };
+    },
+    fetchImpl: async (url, options) => {
+      calls.push({url, options});
+      if (url.endsWith('/models')) return Response.json({data: [{id: 'gemma-4-12b-qat-bf16'}]});
+      return Response.json({output: [{type: 'message', content: []}]});
+    }
+  });
+  const [local, cloud, qwen] = connections;
+  assert.equal(factories, 1);
+  assert.equal((await local.models()).models[0].available, true);
+  assert.equal((await qwen.models()).models[0].available, true);
+  assert.equal((await cloud.models()).models[0].available, true);
+  await Promise.all(connections.map(c => c.prepare()));
+  assert.equal(leases.length, 0, 'listing and opening rooms must not load a model');
+  const request = async (connection, model) => {
+    const config = connection.configOverrides().find(value => value.startsWith('model_providers.k_gemma='));
+    return fetch(`${JSON.parse(config.match(/base_url=("[^"]+")/u)[1])}/responses`, {
+      method: 'POST',
+      headers: {Authorization: JSON.parse(config.match(/Authorization=("[^"]+")/u)[1])},
+      body: JSON.stringify({model, input: 'synthetic test', stream: false})
+    });
+  };
+  try {
+    const wrong = await request(qwen, 'other');
+    assert.equal(wrong.status, 400);
+    await wrong.text();
+    assert.equal(leases.length, 0);
+    for (const connection of [qwen, local, qwen, cloud]) {
+      const model = connection.nativeModel(connection.model);
+      const response = await request(connection, model);
+      assert.equal(response.status, 200);
+      await response.json();
+    }
+    assert.equal(leases.length, 3, 'each local response acquires the selected model, including an existing room');
+    assert.deepEqual(
+      leases.map(l => l.options.model),
+      ['qwen', 'gemma-4-12b-it-qat', 'qwen']
+    );
+    assert(leases.every(l => l.options.contextWindow === 32768 && l.finished.settled === true));
+    assert.equal(JSON.parse(calls.find(c => c.url.endsWith('/responses')).options.body).model, 'k-selfhost-qwen');
+    assert.equal(JSON.parse(calls.at(-1).options.body).model, 'gemma-4-12b-qat-bf16');
+  } finally {
+    await Promise.all(connections.map(c => c.close()));
+  }
+});
+
 test('two main Gemma endpoints have distinct native homes, honest availability and no fabricated GPT capabilities', async () => {
   const root = await mkdtemp(path.join(scratchBase, 'gemma-'));
   const urls = [];
