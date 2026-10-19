@@ -4,7 +4,7 @@
 
 本人要求：下載社群明確標示 uncensored／abliterated（或次選低拒答）的 Qwen 27B、Qwen 35B-A3B 與同級非 Qwen 模型，接成 K 的自架主代理；不是工人，不加小說白名單或特殊工具禁用。執行者為真正 Claude Opus 5.5、effort high（Claude Code 2.1.301、claude.ai 訂閱、apiProvider firstParty，身分核對檔在桌面比較資料夾），由父代理（GPT 主代理）分派、獨立驗收與正式收尾。
 
-**目前狀態：程式與設定準備完成，未部署、未合併、未 push；正式 K 未改。模型實測由本人親自進行，本批沒有任何模型推論驗收。** 本人中途覆寫「下載完、接線完後要親自測試；先別跑模型」，父代理已停止執行中的直接測試並卸載模型、停止 LM Studio 服務；被停止的嘗試不作驗收（見〈已停止的嘗試〉）。
+**目前狀態：四個 GGUF 均下載完成，主代理獨立核對大小與完整 SHA256 相符；程式已合回 main、正式程式與私有接線設定已套用。K 依本人已關閉狀態保持關閉，未進行啟動後的 live 介面讀回。模型實測由本人親自進行，本批沒有任何模型推論驗收。** 本人中途覆寫「下載完、接線完後要親自測試；先別跑模型」，父代理已停止執行中的直接測試並卸載模型、停止 LM Studio 服務；被停止的嘗試不作驗收（見〈已停止的嘗試〉）。
 
 ## 最小接法與差異
 
@@ -22,22 +22,22 @@
 
 父代理以一次性 Python 批次（`k-local-model-download-20261019.py`，固定 revision、公開 HF、只下 GGUF、不執行模型卡程式）下載到 LM Studio 既有儲存根 `D:\Qwen3.5-9B Abliterated\models`（舊目錄名不搬）。清單、模型卡與狀態在桌面 `本機無審查模型比較-20261019\模型下載與驗證.json`。皆 Q4_K_M，合計約 69.1GB。
 
-| 模型 | revision | 大小（bytes） | SHA256 | 狀態（本文件提交時） |
+| 模型 | revision | 大小（bytes） | SHA256 | 最終下載驗收狀態 |
 | --- | --- | --- | --- | --- |
-| windowsxp811203/Qwen3.8-27B-Abliterated-GGUF `Qwen3.8-27B-Abliterated-Q4_K_M.gguf` | `efb07ba…` | 16810715008 | `a57423a5…0e412` | 下載腳本驗證通過；執行者另以 Python 獨立重算 SHA256 相符、大小相符；`lms ls` 辨識為 `qwen3.8-27b-abliterated`（arch qwen35） |
-| wangzhang/Qwen3.6-35B-A3B-abliterated-GGUF `Qwen3.6-35B-A3B-abliterated-Q4_K_M.gguf` | `8709e4d…` | 21166757728 | `b1995222…44abb` | 下載腳本驗證通過；執行者獨立重算 SHA256 與大小相符；`lms ls` 辨識為 `qwen3.6-35b-a3b-abliterated`（arch qwen35moe） |
-| bartowski/cognitivecomputations_Dolphin-Mistral-24B-Venice-Edition-GGUF（原模型 dphn/Dolphin-Mistral-24B-Venice-Edition，以 uncensored 為訓練目標） | `708d0be…` | 14333909376 | `2740d59c…27392` | 下載中 |
-| wangzhang/gemma-4-26B-A4B-it-abliterix-GGUF `gemma4-26b-a4b-abliterix-Q4_K_M.gguf` | `20fd410…` | 16796015008 | `d1fd7777…9b832` | 下載中 |
+| windowsxp811203/Qwen3.8-27B-Abliterated-GGUF `Qwen3.8-27B-Abliterated-Q4_K_M.gguf` | `efb07ba…` | 16810715008 | `a57423a5…0e412` | 下載完成；主代理獨立核對大小／SHA256 相符；實際鍵 `qwen3.8-27b-abliterated` |
+| wangzhang/Qwen3.6-35B-A3B-abliterated-GGUF `Qwen3.6-35B-A3B-abliterated-Q4_K_M.gguf` | `8709e4d…` | 21166757728 | `b1995222…44abb` | 下載完成；主代理獨立核對大小／SHA256 相符；實際鍵 `qwen3.6-35b-a3b-abliterated` |
+| bartowski/cognitivecomputations_Dolphin-Mistral-24B-Venice-Edition-GGUF（原模型 dphn/Dolphin-Mistral-24B-Venice-Edition，以 uncensored 為訓練目標） | `708d0be…` | 14333909376 | `2740d59c…27392` | 下載完成；主代理獨立核對大小／SHA256 相符；實際鍵 `cognitivecomputations_dolphin-mistral-24b-venice-edition` |
+| wangzhang/gemma-4-26B-A4B-it-abliterix-GGUF `gemma4-26b-a4b-abliterix-Q4_K_M.gguf` | `20fd410…` | 16796015008 | `d1fd7777…9b832` | 下載完成；主代理獨立核對大小／SHA256 相符；實際鍵 `gemma-4-26b-a4b-it-abliterix` |
 
-模型卡的拒答／能力數字是作者自報，不是本人翻譯驗收；「無審查」名稱也不保證任何輸入都不拒答。尚在下載的兩個檔案，完成後須核對大小與 SHA256（下載腳本已在寫入時逐塊計算，並在不符時保留失敗狀態），並以 `lms ls` 讀回實際模型鍵。
+模型卡的拒答／能力數字是作者自報，不是本人翻譯驗收；「無審查」名稱也不保證任何輸入都不拒答。四個檔案均由下載腳本逐塊計算 SHA256，主代理再獨立讀檔重算相符，並以 `lms ls --json` 讀回實際模型鍵；桌面 `主代理下載驗收.json`、`本機模型目錄.json` 保存讀回。
 
-## 正式 K 需要的設定（待父代理套用）
+## 正式 K 私有接線設定（已套用）
 
-正式私有狀態根目錄是 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\private-state`。目前 `.runtime\gemma-main.json` **不存在**（兩個 Gemma 用程式預設），所以只需新建一個檔，不改其他設定、訂閱、憑證、權限或舊聊天室：
+正式私有狀態根目錄是 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\private-state`。原本 `.runtime\gemma-main.json` 不存在（兩個 Gemma 用程式預設），本次只新建此檔並讀回，不改其他設定、訂閱、憑證、權限或舊聊天室：
 
 `D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\vault\private-state\.runtime\gemma-main.json`
 
-內容即桌面 `本機無審查模型比較-20261019\K正式私有設定-gemma-main.json-待主代理套用.json`：
+已套用內容亦保存於桌面 `本機無審查模型比較-20261019\K正式私有設定-gemma-main.json-待主代理套用.json`：
 
 ```json
 {
@@ -45,18 +45,18 @@
     {"id": "qwen3.8-27b-abliterated", "label": "Qwen3.8 27B Abliterated Q4_K_M", "location": "local", "model": "qwen3.8-27b-abliterated", "contextWindow": 32768},
     {"id": "qwen3.6-35b-a3b-abliterated", "label": "Qwen3.6 35B-A3B Abliterated Q4_K_M", "location": "local", "model": "qwen3.6-35b-a3b-abliterated", "contextWindow": 32768},
     {"id": "dolphin-mistral-24b-venice", "label": "Dolphin Mistral 24B Venice Edition Q4_K_M", "location": "local", "model": "cognitivecomputations_dolphin-mistral-24b-venice-edition", "contextWindow": 32768},
-    {"id": "gemma4-26b-a4b-abliterix", "label": "Gemma 4 26B-A4B Abliterix Q4_K_M", "location": "local", "model": "gemma4-26b-a4b-abliterix", "contextWindow": 32768}
+    {"id": "gemma4-26b-a4b-abliterix", "label": "Gemma 4 26B-A4B Abliterix Q4_K_M", "location": "local", "model": "gemma-4-26b-a4b-it-abliterix", "contextWindow": 32768}
   ]
 }
 ```
 
-- 兩個 Qwen 的 `model` 已由 `lms ls` 讀回；Dolphin 與 Gemma abliterix 是依同一命名規則推定，**下載完成後須以 `lms ls` 核對並修正 `model` 欄**。不符時 K 只會把該模型列為「端點未提供模型」，不會改用其他模型。`id` 一旦用於聊天室就不要改（改了舊聊天室找不到連線）；移除某筆後，該模型的舊聊天室同樣無法開啟，但歷史仍保留在其 home。
+- 四個 `model` 均由 `lms ls --json` 讀回；Gemma 實際鍵與先前依檔名推定不同，已修正為 `gemma-4-26b-a4b-it-abliterix`。不符時 K 只會把該模型列為「端點未提供模型」，不會改用其他模型。`id` 一旦用於聊天室就不要改（改了舊聊天室找不到連線）；移除某筆後，該模型的舊聊天室同樣無法開啟，但歷史仍保留在其 home。
 - 以 mock 端點載入此檔確認：6 條連線（2 個 Gemma＋4 個自架）各自 ID 與 home，名稱為實際模型 · 本機。
 - 設定在 K 下次完整重開時讀取；正式部署需先部署本分支程式，否則舊程式會忽略 `selfHosted`。
 
 ### 本人使用方式
 
-1. 在 LM Studio 一次只載入一個模型，**context 至少與設定的 `contextWindow`（32768）相同**，並開啟本機服務（:1234）。RTX 4060 8GB 只能部分卸載到 GPU，其餘在系統記憶體，速度會明顯慢於全 GPU；不要宣稱全 GPU。若靠 LM Studio 的 JIT 自動載入，可能用較小的預設 context，Codex 原生指令與工具定義會超出而失敗。
+1. 目前僅 LM Studio 本機服務已開啟供模型清單讀回，沒有載入模型。本人測試時在 LM Studio 一次只載入一個模型，**context 至少與設定的 `contextWindow`（32768）相同**，並開啟本機服務（:1234）。RTX 4060 8GB 只能部分卸載到 GPU，其餘在系統記憶體，速度會明顯慢於全 GPU；不要宣稱全 GPU。若靠 LM Studio 的 JIT 自動載入，可能用較小的預設 context，Codex 原生指令與工具定義會超出而失敗。
 2. K 新對話 → 提供者「自架」→ 選模型。端點未列出該模型時選單會顯示不可用及原因。
 3. 每個模型的聊天室各自保存原生歷史；換模型請開新對話或明確交接，不會偷偷延續或改導向。
 4. 雲端高精度：租機與 SSH 轉送由本人管理；再加一筆 `location: "cloud"`（預設 `:18080`）並填實際模型 ID。K 不自動租機、付款或建立轉送。
@@ -79,12 +79,17 @@
 
 ## 未驗證／待本人實測
 
-- 四個模型在 LM Studio 實際載入、推論速度、Responses 文字／函式呼叫／工具結果／多輪、串流工具事件：**全部未驗證**。
+- 四個模型推論速度、Responses 文字／函式呼叫／工具結果／多輪、串流工具事件：**全部未完成驗證**；曾載入 Qwen 27B 的中止嘗試見上，不作本批模型驗收。
 - K 原生真正工具往返（寫檔核准、讀檔、取消、重開）：**未驗證**；上一批只在 Gemma 12B 驗證過同一鏈路，不能代表這四個模型的工具能力或協定相容性（例如 Qwen 思考輸出、Mistral 工具格式）。不支援時應如實標示，不加 fallback 或另造代理迴圈。
 - 翻譯品質與拒答行為：由本人親自看，執行者不讀、不評。
 - 雲端高精度：未租機、未驗證。
-- 程式複查：本批作者即真正 Opus 5.5（high），已對自己的 diff 做複查並修正兩項（見上）；這是作者自查，獨立第二審由父代理安排。
+- 程式複查：真正 Opus 5.5（high）負責實作及複查，修正上述兩項；GPT 主代理另獨立閱讀完整功能 diff、修正與測試證據，重跑接線／路由測試 **22/22**。不宣稱另有一位 Opus 盲審。
 
 ## 部署狀態
 
-未部署、未合併 main、未 push；正式 `.local/runtime.json` 仍為 `e67adc1e2ddf17fedfaa0a25a6d3dd838d9a3c1c`，正式私有設定未建立。部署與設定套用由父代理驗收後處理。
+- 正式程式版本：`1a9a44f054d10714af12da6f8a871723ad0c0aef`（程式 commit `10bb983b409b8cebda8223e1bc83759fea2fd393`，其後為文件 commit）。`.local/runtime.json` 已讀回；退版為 `releases/before-1792387053965`，不含對話還原。
+- 第一次候選完整測試 1748/1749，既有 `browser-owner-gateway` 取消測試等候狀態逾時；未改任何測試／程式或放寬期限。原候選單項 **7/7**，原候選完整複驗 **1749/1749** 後，才以既有 `activateRuntime` 套用同一候選，沒有重送任何使用者工作。此一次未重現的測試逾時不能宣稱已修復瀏覽器根因。
+- 主代理核對正式候選與已驗收版本的重要來源檔相符；正式 `loadGemmaConnections` 以正式設定讀回實際本機 `/v1/models`，四個新模型均列出且 ID 正確（僅清單、不推論）。既有 Gemma 本機可連，雲端未連；沒有租機、登入或費用變更。
+- `lms ps` 最終讀回：沒有任何模型載入；只保留本機清單服務。K 依本人已關閉狀態保持關閉，不為驗收搶前景。正式程式／設定讀回不等於 live UI 或實際模型推論成功。
+- 證據：`.runtime/archive/selfhost-community-20261019/activation.json`、`candidate-npm-test-recheck.log`、`model-connections-readback.json`。桌面資料夾另有大小／SHA256 與完整本機模型目錄讀回。
+- Git 遠端狀態以主代理最後 `ls-remote` 實際讀回為準，不把本機提交當成已 push。

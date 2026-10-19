@@ -185,7 +185,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 三家原生核心接入
 
-- 10-19 [自架社群模型主代理（Qwen／Mistral／Gemma abliterated）接線與設定準備；未部署、模型待本人實測](selfhost-community-models-20261019.md)
+- 10-19 [自架社群模型主代理（Qwen／Mistral／Gemma abliterated）下載完成、接線已部署；K 保持關閉、模型待本人實測](selfhost-community-models-20261019.md)
 - 10-14 [Gemini 核心更新與 Gemini 4 可用性](gemini4-core-20261014.md)
 - 10-12 [原生合法 Unicode 被錯切，造成聊天室載入逾時](native-jsonl-framing-20261012.md)
 - 10-09 [原生只傳圖片實測](image-only-native-probe-20261009.md)
