@@ -86,7 +86,7 @@ export function workerPolicyConfig(
     provider === 'codex'
       ? `For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`
       : provider === 'gemma'
-        ? `For K-selected workers of every provider use ${gateway}. GPT workers use K's existing subscription home through this gateway, never the Gemma inference endpoint or native spawn_agent. Gemma is a main-agent option, not a K worker choice.`
+        ? `For K-selected workers of every provider use ${gateway}. GPT workers use K's existing subscription home through this gateway, never the self-hosted inference endpoint or native spawn_agent. Self-hosted models are main-agent options, not K worker choices.`
         : `For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
     `目前官方可派模型與推理程度：${choices.map(m => `${m.model}: ${(m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).join(', ') || 'native default (null)'}`).join('; ')}。`,
     'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',

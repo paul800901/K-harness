@@ -253,7 +253,7 @@ export function BranchDialog({modal, state, onClose, onFork}) {
   return (
     <Modal title="分支到新對話" onClose={onClose}>
       <p className="modal-description">
-        原對話保持不變。GPT 與 Gemma 使用 Codex 核心，可從指定結論原生分支；Claude 同供應商只支援最新結論，Gemini
+        原對話保持不變。GPT 與自架模型使用 Codex 核心，可從指定結論原生分支；Claude 同供應商只支援最新結論，Gemini
         尚未接入同供應商原生分支。跨供應商使用 K 的結論交接，不移轉原生歷史。
       </p>
       <label className="setting-row">
@@ -269,7 +269,7 @@ export function BranchDialog({modal, state, onClose, onFork}) {
           }}
         >
           <option value="codex">GPT / Codex 訂閱</option>
-          <option value="gemma">Gemma</option>
+          <option value="gemma">自架</option>
           <option value="claude" disabled={!modal.isLatestConclusion && modal.sourceProvider === 'claude'}>
             Claude 訂閱
           </option>
@@ -326,7 +326,7 @@ export function BranchDialog({modal, state, onClose, onFork}) {
         {!accessMode && <small>請明確選擇權限</small>}
       </div>
       {differentGemmaConnection ? (
-        <p className="modal-description">本機與雲端 Gemma 使用不同原生歷史，會建立交接新對話；請明確選擇新對話權限。</p>
+        <p className="modal-description">不同自架模型連線使用各自原生歷史，會建立交接新對話；請明確選擇新對話權限。</p>
       ) : targetProvider !== modal.sourceProvider ? (
         <p className="modal-description">跨供應商沒有真正等價的權限模式，不會自動映射；請明確選擇新對話權限。</p>
       ) : (

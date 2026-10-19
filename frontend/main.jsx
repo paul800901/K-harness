@@ -971,7 +971,7 @@ function App() {
           : provider === 'gemini'
             ? 'Antigravity 訂閱'
             : provider === 'gemma'
-              ? 'Gemma'
+              ? '自架'
               : 'Codex 訂閱';
       return `${name} · ${source}`;
     },

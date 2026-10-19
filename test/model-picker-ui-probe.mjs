@@ -48,6 +48,14 @@ models.push(
     description: '雲端模型服務尚未連通。',
     supportedReasoningEfforts: [],
     inputModalities: ['text']
+  },
+  {
+    model: 'selfhost-qwen38-27b-abliterated/qwen3.8-27b-abliterated',
+    displayName: 'Qwen3.8 27B Abliterated Q4_K_M · 本機',
+    provider: 'gemma',
+    available: true,
+    supportedReasoningEfforts: [],
+    inputModalities: ['text']
   }
 );
 const state = {
@@ -153,10 +161,16 @@ try {
     'English catalog description should not be displayed'
   );
   await provider.getByRole('button', {name: 'GPT', exact: true}).click();
-  await provider.getByRole('button', {name: 'Gemma', exact: true}).click();
+  assert.equal(await provider.getByRole('button', {name: 'Gemma', exact: true}).count(), 0);
+  await provider.getByRole('button', {name: '自架', exact: true}).click();
   await picker.click();
   await menu.waitFor({state: 'visible'});
-  assert.equal(await menu.getByRole('menuitemradio').count(), 2);
+  assert.equal(await menu.getByRole('menuitemradio').count(), 3);
+  assert.equal(
+    await menu.getByRole('group', {name: 'Qwen'}).getByRole('menuitemradio', {name: /^Qwen3\.8 27B/}).count(),
+    1,
+    'self-hosted Qwen keeps its real name and family'
+  );
   const cloud = menu.getByRole('menuitemradio', {name: /雲端高精度版/});
   assert.equal(await cloud.isDisabled(), true);
   await menu.getByRole('menuitemradio', {name: 'Gemma 4 · 本機量化版', exact: true}).click();

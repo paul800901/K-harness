@@ -52,7 +52,7 @@ export function GoalDialog({state, Modal, request, onClose}) {
   return (
     <Modal title="目標模式" onClose={onClose}>
       <p className="modal-description">
-        此聊天室使用 {{codex: 'Codex', claude: 'Claude', gemini: 'Gemini', gemma: 'Gemma'}[provider] ?? provider}{' '}
+        此聊天室使用 {{codex: 'Codex', claude: 'Claude', gemini: 'Gemini', gemma: '自架模型'}[provider] ?? provider}{' '}
         原生目標模式，沿用目前模型與操作權限。你可直接設定，不必先請 AI 設定。
       </p>
       {!supported ? (

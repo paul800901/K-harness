@@ -64,3 +64,68 @@ test('Gemma missing model is unavailable; cloud ID may include a namespace and c
   });
   await assert.rejects(cancelled[0].models({signal: AbortSignal.abort()}), /abort/i);
 });
+
+test('self-hosted community models get stable IDs, own homes and real names while Gemma defaults stay unchanged', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'selfhost-'));
+  await mkdir(path.join(root, '.runtime'));
+  await writeFile(
+    path.join(root, '.runtime/gemma-main.json'),
+    JSON.stringify({
+      selfHosted: [
+        {id: 'qwen-a', label: 'Qwen3.8 27B Abliterated', location: 'local', model: 'qwen3.8-27b-abliterated'},
+        {id: 'mistral-b', label: 'Dolphin Mistral 24B', location: 'local', model: 'dolphin', contextWindow: 16384}
+      ]
+    })
+  );
+  const connections = await loadGemmaConnections(root, {
+    fetchImpl: async () => ({ok: true, json: async () => ({data: [{id: 'qwen3.8-27b-abliterated'}]})})
+  });
+  const [local, cloud, qwen, mistral] = connections;
+  assert.equal(local.model, 'gemma-local/gemma-4-12b-it-qat');
+  assert.equal(local.home, path.join(root, '.runtime', 'gemma-local-home'));
+  assert.equal(cloud.model, 'gemma-cloud/gemma-4-12b-qat-bf16');
+  assert.equal(qwen.model, 'selfhost-qwen-a/qwen3.8-27b-abliterated');
+  assert.equal(qwen.home, path.join(root, '.runtime', 'selfhost-qwen-a-home'));
+  assert.equal(new Set(connections.map(c => c.home)).size, 4);
+  assert.equal(new Set(connections.map(c => c.slot)).size, 4);
+  assert.deepEqual(
+    connections.map(c => gemmaConnection(c.model)),
+    connections.map(c => c.slot)
+  );
+  assert.equal(modelProvider(qwen.model), 'gemma');
+  assert.throws(() => qwen.nativeModel(mistral.model), /不符/);
+  assert.equal(qwen.nativeModel(qwen.model), 'qwen3.8-27b-abliterated');
+  const qwenRow = (await qwen.models()).models[0];
+  assert.equal(qwenRow.displayName, 'Qwen3.8 27B Abliterated · 本機');
+  assert.equal(qwenRow.available, true);
+  assert.doesNotMatch(qwenRow.displayName, /Gemma/);
+  assert.equal((await mistral.models()).models[0].available, false);
+  assert.equal(availableWorkerModels([qwenRow]).length, 0);
+  await Promise.all([qwen.prepare(), mistral.prepare()]);
+  const entry = JSON.parse(await readFile(path.join(mistral.home, 'model-catalog.json'), 'utf8')).models[0];
+  assert.equal(entry.slug, 'dolphin');
+  assert.equal(entry.display_name, 'Dolphin Mistral 24B · 本機');
+  assert.equal(entry.context_window, 16384);
+  const route = c => c.configOverrides().find(x => x.startsWith('model_providers.k_gemma='));
+  assert.notEqual(route(qwen), route(mistral));
+  assert(qwen.configOverrides().includes('model="qwen3.8-27b-abliterated"'));
+  await Promise.all([qwen.close(), mistral.close()]);
+  for (const selfHosted of [
+    [
+      {id: 'dup', label: 'A', location: 'local', model: 'a'},
+      {id: 'dup', label: 'B', location: 'local', model: 'b'}
+    ],
+    [{id: 'x', label: 'X', location: 'mars', model: 'x'}],
+    [{id: 'Bad ID', label: 'X', location: 'local', model: 'x'}],
+    [{id: 'x', label: 'X', location: 'cloud', model: 'x', baseUrl: 'https://example.com/v1'}],
+    [{id: 'x', location: 'local', model: 'x'}]
+  ]) {
+    await writeFile(path.join(root, '.runtime/gemma-main.json'), JSON.stringify({selfHosted}));
+    const fallback = await loadGemmaConnections(root, {fetchImpl: async () => assert.fail('no request')});
+    assert.deepEqual(
+      fallback.map(c => c.slot),
+      ['local', 'cloud']
+    );
+    assert.equal((await fallback[0].models()).models[0].available, false);
+  }
+});

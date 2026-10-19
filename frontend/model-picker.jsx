@@ -11,7 +11,7 @@ export {effortName};
 const remoteClient = document.documentElement.dataset.kRemote === 'true';
 const displayModel = model => model?.displayName || model?.model || '選擇模型';
 const modelProvider = model => model?.provider ?? providerOf(model?.model);
-const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: 'Gemma'})[provider];
+const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: '自架'})[provider];
 const providerDefaultPermission = provider => (provider === 'claude' ? 'claude-manual' : 'workspace-write');
 const billingNote = model =>
   /requires (?:extra )?usage credits|requires extra usage|extra usage required/i.test(model?.description ?? '')
@@ -29,12 +29,12 @@ function ModelMenu({models, selected, disabled, isAvailable, onChange}) {
       : modelProvider(selected) === 'gemini'
         ? ['Flash', 'Pro']
         : modelProvider(selected) === 'gemma'
-          ? ['Gemma 4']
+          ? ['Gemma', 'Qwen', 'Mistral']
           : ['Sol', 'Astra', 'Luna', 'Terra'];
   const grouped = new Map([...families, '其他'].map(name => [name, []]));
   for (const item of models) {
     const family =
-      families.find(name => new RegExp(`\\b${name}\\b`, 'i').test(`${item.model} ${displayModel(item)}`)) ?? '其他';
+      families.find(name => new RegExp(`\\b${name}(?![a-z])`, 'i').test(`${item.model} ${displayModel(item)}`)) ?? '其他';
     grouped.get(family).push(item);
   }
   const version = item => (displayModel(item).match(/\d+(?:[.-]\d+)*/)?.[0] ?? '').split(/[.-]/).map(Number);

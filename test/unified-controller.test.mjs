@@ -15,14 +15,16 @@ const TEST_ROOT = scratchBase;
 test('Gemma main routes stay distinct, survive unavailable subscription catalogs, and reuse native actions without becoming workers', async () => {
   const root = await mkdtemp(path.join(scratchBase, 'gemma-routing-'));
   const made = new Map();
-  const connections = ['local', 'cloud'].map(slot => ({
+  const connections = ['local', 'cloud', 'selfhost-qwen'].map(slot => ({
     slot,
-    model: `gemma-${slot}/model`,
+    model: slot.startsWith('selfhost-') ? `${slot}/model` : `gemma-${slot}/model`,
     nativeModel(model) {
       assert.equal(model, this.model);
       return 'model';
     },
-    models: async () => ({models: [{model: `gemma-${slot}/model`, available: slot === 'local'}]})
+    async models() {
+      return {models: [{model: this.model, available: slot !== 'cloud'}]};
+    }
   }));
   const c = createUnifiedController({
     root,
@@ -42,16 +44,21 @@ test('Gemma main routes stay distinct, survive unavailable subscription catalogs
   });
   try {
     const catalog = await c.models();
-    assert.equal(catalog.models.filter(x => x.provider === 'gemma').length, 2);
+    assert.equal(catalog.models.filter(x => x.provider === 'gemma').length, 3);
     await c.open({model: connections[0].model});
     assert.equal(c.state.provider, 'gemma');
     assert.equal(made.has('cloud'), false);
     assert.deepEqual(await c.review({confirmed: true}), {started: true});
     assert.equal((await c.fuzzyFileSearch({query: 'main'})).files[0].path, 'src/main.mjs');
-    await assert.rejects(c.selectModel({model: connections[1].model}), /不同原生歷史/);
+    await assert.rejects(c.selectModel({model: connections[1].model}), /各自原生歷史/);
     await saveMainSession(root, {threadId: 'local-saved', model: connections[0].model, workspace: root});
     await c.open({threadId: 'local-saved', model: connections[0].model});
     assert.equal(made.get('local').calls.findLast(x => x.method === 'open').data.threadId, 'local-saved');
+    // Same local endpoint, different self-hosted model: its own controller, no history redirect.
+    await c.open({model: connections[2].model});
+    assert.notEqual(made.get('selfhost-qwen'), made.get('local'));
+    assert.equal(made.get('selfhost-qwen').calls.findLast(x => x.method === 'open').data.threadId, undefined);
+    await assert.rejects(c.selectModel({model: connections[0].model}), /各自原生歷史/);
   } finally {
     await c.close();
   }

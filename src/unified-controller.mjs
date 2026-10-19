@@ -52,7 +52,7 @@ export function createUnifiedController(options) {
   const getGemma = model => {
     const slot = gemmaConnection(model);
     const connection = gemmaConnections.find(item => item.slot === slot);
-    if (!connection) throw new Error('Gemma 連線尚未設定。');
+    if (!connection) throw new Error('自架模型連線尚未設定；未轉送歷史或改用其他模型。');
     connection.nativeModel(model);
     if (!gemma.has(slot)) {
       const controller = codexFactory({
@@ -270,7 +270,7 @@ export function createUnifiedController(options) {
     },
     async selectModel(data) {
       if (api.state.provider === 'gemma' && gemmaConnection(data.model) !== gemmaConnection(active.state.model))
-        throw new Error('本機與雲端 Gemma 使用不同原生歷史，請建立新對話或明確交接。');
+        throw new Error('不同自架模型連線使用各自原生歷史，請建立新對話或明確交接。');
       if (modelProvider(data.model) !== api.state.provider)
         throw new Error('跨供應商請建立新工作；不會轉送舊對話歷史。');
       if (data.serviceTier !== undefined && !usesCodexCore(api.state.provider))
