@@ -166,9 +166,18 @@ Opus 最後亦指出行為對提示敏感，應停止無根據地堆提示；建
 
 還原分開處理：程式可用上一份程式退版；舊 Dolphin 專屬模板則可把本次新增的 per-model 設定檔移入資源回收筒，回到 GGUF 內嵌原始模板。1.2 權重保留，不擅自刪除。
 
+## 正式建置的測試時序阻擋
+
+第一次 Update-K 指向 af1b969583281ebe89916552228c54e79ea41d9c，建置成功、完整測試 1791/1792，因此更新器拒絕啟用；runtime.json 讀回仍為 97ad9c90db462dc48479dca7e1841128d9b26dd9。沒有略過測試、強制切換或重送工作，失敗候選保留於 prepare-1792438853003。
+
+唯一失敗是既有 test/codex-capacity-fallback.test.mjs 的 stop before send acknowledgement：測試睡 20ms 假設 send 已到原生確認等待，但 send 前有非同步檔案操作，負載下該前提未被保證；finally.close 的 finished turn 錯誤又蓋住當時斷言。最小修正只在假 host 到達 startAck 等待點發出測試事件，測試等此事件後才 stop；四項斷言不變，沒有改正式控制器、sleep、skip、retry 或放寬行為。
+
+測試同步 commit b21bfb0（上一版只加該測試差異），focused 19/19、固定 commit 完整 npm test 1792/1792，0 fail/skip，72.71 秒。真正 Opus 5.5 high 實讀 diff 與失敗紀錄後放行，仍須 updater 正常完整重建與正式合成讀寫驗證。其非阻擋建議是再加測試 send 提早結束的防掛等待；未觀察該問題，不為此擴張本次修正。
+
+非 Dolphin 的鄰近未確認風險另記：第一次失敗可能碰到 stop 早於原生 turn/start 的時序，之後控制器仍握有 finished turnId，close 嘗試中斷時失敗。只有這次堆疊，原斷言被 finally 蓋住，不能直接斷言正式程式 bug 或宣稱已修；與本次 Dolphin 差異無關，沒有順手改控制器。
 ## 狀態與限制
 
-模板已在本機 Dolphin 專屬設定生效，等待程式仍是分支候選，沒有部署 K。原小說工作與目標保持停止／暫停，不重播。其他電腦沒有套用本機設定。
+模板已在本機 Dolphin 專屬設定生效，等待程式已固定版本；第一次正式更新被完整測試擋下、未啟用，修正測試同步後待再次正常建置驗證。原小說工作與目標保持停止／暫停，不重播。其他電腦沒有套用本機設定。
 
 本機工程證據保留於 `D:\K-harness\.runtime\archive\selfhost-tools-20261020`；不提交原生對話、模型紀錄、私人設定或測試暫存。此文件不把測試／模型狀態擴稱為正式 GUI 全流程驗收。
 
