@@ -50,6 +50,23 @@ test('time passing and status reads never masquerade as fresh native activity', 
   f.activity.clear();
   assert.match(workStatus(f.state, true, f.now).text, /工作狀態待確認/);
 });
+test('a self-hosted turn stays in preparation wording until real model output, without claiming a load', () => {
+  const f = fixture();
+  f.state.provider = 'gemma';
+  codexWorkActivity(f.activity, {method: 'turn/started', params: {turn: {id: 't'}}}, {selfHosted: true});
+  assert.equal(f.state.activity.phase, 'starting');
+  const waiting = workStatus(f.state, true, f.now).text;
+  assert.match(waiting, /^正在準備自架模型或等待回覆 · /);
+  assert.doesNotMatch(waiting, /已載入|正在載入|執行中/);
+  codexWorkActivity(f.activity, {method: 'item/agentMessage/delta', params: {delta: '你好'}}, {selfHosted: true});
+  assert.match(workStatus(f.state, true, f.now).text, /^執行中 · /);
+  // GPT and other Codex turns keep their existing wording and phase.
+  const g = fixture();
+  codexWorkActivity(g.activity, {method: 'turn/started', params: {turn: {id: 't'}}});
+  assert.equal(g.state.activity.phase, 'active');
+  assert.equal(workStatus({...g.state, provider: 'codex', activity: {...g.state.activity, phase: 'starting'}}, true, g.now).text.split(' · ')[0], '等待核心回報');
+});
+
 test('overlapping tools retain the original wait until all pending tools finish', () => {
   const f = fixture(),
     emit = (id, done, kind) => {

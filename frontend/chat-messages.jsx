@@ -118,6 +118,7 @@ export function UserMessageText({children}) {
   const [expanded, setExpanded] = useState(false),
     [long, setLong] = useState(false),
     contentRef = useRef(null),
+    textRef = useRef(null),
     buttonRef = useRef(null),
     restoreFocus = useRef(false),
     contentId = useId();
@@ -133,12 +134,24 @@ export function UserMessageText({children}) {
   useLayoutEffect(() => {
     if (expanded || !restoreFocus.current) return;
     restoreFocus.current = false;
-    buttonRef.current?.focus({preventScroll: true});
-    buttonRef.current?.scrollIntoView({block: 'nearest', behavior: 'instant'});
+    const button = buttonRef.current,
+      reveal = () => button?.scrollIntoView({block: 'nearest', behavior: 'instant'});
+    button?.focus({preventScroll: true});
+    reveal();
+    // The thread viewport reacts to this same collapse in its own content
+    // observers (e.g. following new output to the bottom), after this effect.
+    // An observer created now is notified after those in that frame, so the
+    // collapsed control is revealed last. One notification, then disconnected.
+    const observer = new ResizeObserver(() => {
+      observer.disconnect();
+      reveal();
+    });
+    observer.observe(textRef.current);
+    return () => observer.disconnect();
   }, [expanded]);
   return (
     <>
-      <div id={contentId} className="user-message-text" data-expanded={expanded}>
+      <div ref={textRef} id={contentId} className="user-message-text" data-expanded={expanded}>
         <div ref={contentRef}>{children}</div>
       </div>
       {long && (

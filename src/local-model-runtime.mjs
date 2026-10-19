@@ -5,6 +5,34 @@ const execFile = promisify(execFileCallback);
 const BASE_URL = 'http://127.0.0.1:1234';
 const CATALOG_TIMEOUT_MS = 2_000;
 const MAX_BUFFER = 10 * 1024 * 1024;
+const DIAGNOSTIC_LIMIT = 8000;
+const PAUSED =
+  '未送出推論。K 已暫停本機模型的載入、卸載與推論，不會自動重試或重送；請先查明本機模型實際狀態，再重新啟動 K。';
+
+// The bridge maps these codes to one non-retryable reply. Messages are for the
+// owner; the untranslated native CLI result stays in `diagnostic`.
+function failure(code, message, {diagnostic} = {}) {
+  const error = new Error(message);
+  error.code = code;
+  if (diagnostic) error.diagnostic = diagnostic;
+  return error;
+}
+
+function clip(value) {
+  const text = typeof value === 'string' ? value : Buffer.isBuffer(value) ? value.toString('utf8') : '';
+  return text.length > DIAGNOSTIC_LIMIT ? '…' + text.slice(-DIAGNOSTIC_LIMIT) : text;
+}
+
+function cliDiagnostic(args, error) {
+  return {
+    command: ['lms', ...args].join(' '),
+    exitCode: typeof error?.code === 'number' ? error.code : null,
+    signal: error?.signal ?? null,
+    error: typeof error?.code === 'number' ? null : String(error?.message ?? error),
+    stdout: clip(error?.stdout),
+    stderr: clip(error?.stderr)
+  };
+}
 
 function abortError() {
   return new DOMException('The operation was aborted', 'AbortError');
@@ -52,7 +80,14 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
 
   const owned = new Map();
   let busy = false;
-  let uncertain = false;
+  // The first unconfirmed load/unload/inference result. It is kept until K
+  // restarts; nothing here clears it, retries or replays the work.
+  let uncertain = null;
+  const unknown = (reason, diagnostic, code = 'k_selfhost_state_unknown') => {
+    uncertain ??= {reason, ...(diagnostic ? {diagnostic} : {})};
+    return failure(code, `${reason}；${PAUSED}`, {diagnostic});
+  };
+  const errorText = error => String(error?.message ?? error);
 
   async function getCatalog({signal} = {}) {
     throwIfAborted(signal);
@@ -108,17 +143,18 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
     const initial = await serviceModels(signal);
     if (initial) return initial;
     throwIfAborted(signal);
-    try {
-      await run(['daemon', 'up'], {signal});
-    } catch {
-      throwIfAborted(signal);
-      throw new Error('無法啟動 LM Studio 本機 daemon');
-    }
-    try {
-      await run(['server', 'start', '--port', '1234', '--bind', '127.0.0.1'], {signal});
-    } catch {
-      throwIfAborted(signal);
-      throw new Error('無法啟動本機 LM Studio 服務');
+    for (const [args, message] of [
+      [['daemon', 'up'], '無法啟動 LM Studio 本機背景服務'],
+      [['server', 'start', '--port', '1234', '--bind', '127.0.0.1'], '無法啟動本機 LM Studio 服務']
+    ]) {
+      try {
+        await run(args, {signal});
+      } catch (error) {
+        throwIfAborted(signal);
+        throw failure('k_selfhost_prepare_failed', `${message}；未載入模型、未送出推論。`, {
+          diagnostic: cliDiagnostic(args, error)
+        });
+      }
     }
     try {
       return await getCatalog({signal});
@@ -134,7 +170,9 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
       for (const instance of loadedInstances(model)) {
         const id = instance?.id;
         if (!id || owned.get(id) !== keyOf(model))
-          throw new Error(`發現非本管理器載入的 LLM instance（${id ?? '未知識別碼'}），為避免卸載外部模型已停止操作`);
+          throw new Error(
+            `發現非 K 載入的語言模型執行個體（${id ?? '未知識別碼'}）；為避免卸載外部模型，已停止操作，未送出推論。`
+          );
       }
     }
   }
@@ -159,20 +197,15 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
         if (!response.ok) throw new Error(`LM Studio 卸載失敗（HTTP ${response.status}）`);
       });
     } catch (error) {
-      uncertain = true;
-      throw new Error(`卸載結果不明；已停止後續載入，請先由外部釐清：${error.message}`, {cause: error});
+      throw unknown('卸載結果不明', {error: errorText(error)});
     }
     let models;
     try {
       models = await getCatalog({signal});
     } catch (error) {
-      uncertain = true;
-      throw new Error(`卸載後讀回失敗；已停止後續載入，請先由外部釐清：${error.message}`, {cause: error});
+      throw unknown('卸載後讀回失敗', {error: errorText(error)});
     }
-    if (findInstance(models, instanceId)) {
-      uncertain = true;
-      throw new Error('卸載命令後 instance 仍存在；已停止後續載入，請先由外部釐清');
-    }
+    if (findInstance(models, instanceId)) throw unknown(`卸載命令後模型執行個體 ${instanceId} 仍存在`);
     owned.delete(instanceId);
     return models;
   }
@@ -193,7 +226,7 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
         let models = await getCatalog();
         for (const [id, key] of owned) {
           const existing = findInstance(models, id);
-          if (existing && keyOf(existing.model) !== key) throw new Error('本機 instance 已被外部替換；未卸載任何模型');
+          if (existing && keyOf(existing.model) !== key) throw new Error('本機模型執行個體已被外部替換；未卸載任何模型');
         }
         reconcileOwned(models);
         for (const [id] of owned) models = await unloadOwned(id);
@@ -213,8 +246,15 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
     },
 
     async acquire({model, instanceId, contextWindow, signal} = {}) {
-      if (uncertain) throw new Error('本機模型狀態不明；請先由外部釐清，暫停載入、卸載與推論');
-      if (busy) throw new Error('本機模型目前忙碌中，未建立佇列；請待目前工作結束後再試');
+      if (uncertain)
+        throw failure('k_selfhost_state_unknown', `本機模型狀態不明（先前：${uncertain.reason}）；${PAUSED}`, {
+          diagnostic: uncertain.diagnostic
+        });
+      if (busy)
+        throw failure(
+          'k_selfhost_busy',
+          '本機模型目前忙碌中，未建立佇列、未送出推論；請待目前工作結束後再送出。'
+        );
       busy = true;
       let leaseActive = false;
       try {
@@ -228,11 +268,11 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
         assertNoForeignLlm(models);
         reconcileOwned(models);
         const entry = models.find(item => keyOf(item) === model);
-        if (!entry) throw new Error(`本機模型目錄中找不到確切模型 key：${model}`);
-        if (!isGgufLlm(entry)) throw new Error(`模型 ${model} 不是 GGUF LLM`);
+        if (!entry) throw new Error(`本機模型目錄中找不到確切的模型識別碼：${model}；未送出推論。`);
+        if (!isGgufLlm(entry)) throw new Error(`模型 ${model} 不是 GGUF 語言模型；未送出推論。`);
         if (!Number.isSafeInteger(entry.max_context_length) || contextWindow > entry.max_context_length) {
           throw new Error(
-            `模型 ${model} 的最大 context 為 ${entry.max_context_length ?? '未知'}，不允許 ${contextWindow}`
+            `模型 ${model} 的最大上下文長度為 ${entry.max_context_length ?? '未知'}，不能設為 ${contextWindow}；未送出推論。`
           );
         }
 
@@ -255,39 +295,41 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
             models = await unloadOwned(ownedId, signal);
             assertNoForeignLlm(models);
           }
+          // Only options that apply to GGUF/llama.cpp loads. Engine config files
+          // are vLLM-only: LM Studio rejected a GGUF load given
+          // --no-engine-config-file. Draft/MTP flags stay at native defaults.
+          const args = [
+            'load',
+            model,
+            '--port',
+            '1234',
+            '--identifier',
+            instanceId,
+            '--context-length',
+            String(contextWindow),
+            '--parallel',
+            '1',
+            '--yes'
+          ];
           try {
-            await run(
-              [
-                'load',
-                model,
-                '--port',
-                '1234',
-                '--identifier',
-                instanceId,
-                '--context-length',
-                String(contextWindow),
-                '--parallel',
-                '1',
-                '--no-engine-config-file',
-                '--no-speculative-draft-mtp',
-                '--yes'
-              ],
-              // Let this one native load finish and read it back even if the
-              // caller stops. The bridge checks cancellation before inference.
-              // Killing the CLI would not prove that engine loading stopped.
-              {}
-            );
-          } catch {
-            uncertain = true;
-            throw new Error('載入命令結果不明；已停止後續載入，請先由外部釐清');
+            // Let this one native load finish and read it back even if the
+            // caller stops. The bridge checks cancellation before inference.
+            // Killing the CLI would not prove that engine loading stopped.
+            await run(args, {});
+          } catch (error) {
+            // An exit code proves only that the CLI reported failure, not that
+            // the engine will never finish; keep the state unknown either way.
+            const diagnostic = cliDiagnostic(args, error);
+            throw diagnostic.exitCode === null
+              ? unknown('載入命令結果不明', diagnostic)
+              : unknown(`LM Studio 回報無法載入模型 ${model}（原始原因見詳細內容）`, diagnostic, 'k_selfhost_load_failed');
           }
           // A completed CLI call makes this instance manager-owned, but lease is withheld until exact readback.
           owned.set(instanceId, model);
           try {
             models = await getCatalog();
           } catch (error) {
-            uncertain = true;
-            throw new Error(`載入後讀回失敗；已停止後續載入，請先由外部釐清：${error.message}`, {cause: error});
+            throw unknown('載入後讀回失敗', {error: errorText(error)});
           }
           loaded = findInstance(models, instanceId);
         }
@@ -296,10 +338,10 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
           keyOf(loaded.model) === model &&
           loaded.instance.config?.context_length === contextWindow &&
           loaded.instance.config?.parallel === 1;
-        if (!goodReadback) {
-          uncertain = true;
-          throw new Error(`LM Studio 讀回的 instance ${instanceId} 與要求不符，已停止後續載入與推論`);
-        }
+        if (!goodReadback)
+          throw unknown(`LM Studio 讀回的模型執行個體 ${instanceId} 與要求不符`, {
+            readback: loaded ? {model: keyOf(loaded.model), instance: loaded.instance} : null
+          });
 
         leaseActive = true;
         let finished = false;
@@ -313,7 +355,7 @@ export function createLocalModelRuntime({executable, fetchImpl = fetch, runImpl}
               // exact instance and confirm removal; aborting HTTP alone does not
               // prove that the engine stopped. Never do this for an upstream fault.
               if (!settled && cancelled) await unloadOwned(instanceId);
-              else if (!settled) uncertain = true;
+              else if (!settled) uncertain ??= {reason: '上一次推論結果未確認'};
             } finally {
               leaseActive = false;
               busy = false;

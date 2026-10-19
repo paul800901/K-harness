@@ -1,3 +1,5 @@
+import {selfHostBridgeError} from '../shared/selfhost-error.mjs';
+
 const hiddenEngineeringKinds = new Set([
   'status',
   'deprecationNotice',
@@ -78,6 +80,17 @@ export function codexErrorKind(error) {
 
 // Presentation only: native records stay unchanged; unknown wording stays intact.
 export function localizeNativeNotice(message, provider, error) {
+  if (provider === 'gemma' && typeof message === 'string') {
+    const bridge = selfHostBridgeError({message, additionalDetails: error?.additionalDetails});
+    if (bridge) return bridge.message;
+    // Only a native error record is summarized; K's own text and any other
+    // content stay as written. The raw record remains in the expandable details.
+    if (error?.message === message)
+      return codexErrorKind(error) === 'stream'
+        ? '自架模型回覆在完成前中斷，本輪未完成；原始錯誤保留在詳細內容。接續前請先核對已保存成果。'
+        : '自架模型這一輪失敗，未完成；原始錯誤保留在詳細內容。';
+    return message;
+  }
   if (provider === 'codex' && typeof message === 'string') {
     const kind = codexErrorKind(error?.message === message ? error : {message});
     if (kind === 'capacity') return '模型服務容量不足，與剩餘額度不同。請稍後再試，或自行選擇其他模型。';

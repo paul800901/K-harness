@@ -1,6 +1,11 @@
+import {selfHostBridgeError, selfHostPreparationCodes} from '../shared/selfhost-error.mjs';
+
 // Classifies a native Codex turn error for goal recovery: proven hard limits, ordinary rate limits, or other.
 export function recoveryErrorClass(error) {
   if (typeof error?.message !== 'string') return 'unknown';
+  // K's own self-host refusal (busy, failed/unknown load) arrives as codexErrorInfo
+  // "other"; recovery would only repeat it, or replay work whose result is unknown.
+  if (selfHostPreparationCodes.has(selfHostBridgeError(error)?.code)) return 'hard';
   const info = error.codexErrorInfo,
     details = error.additionalDetails,
     codes = typeof info === 'string' ? [info] : info && typeof info === 'object' ? Object.keys(info) : [];

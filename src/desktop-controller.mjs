@@ -645,7 +645,7 @@ export function createDesktopController({
       !stopping &&
       (e.method === 'turn/started' || (state.busy && (!p.turnId || !turnId || p.turnId === turnId)))
     )
-      codexWorkActivity(activity, e);
+      codexWorkActivity(activity, e, {selfHosted: !!selfHosted});
     // Model output confirms this turn's stream resumed; background tool output does not.
     if (
       ['item/agentMessage/delta', 'item/reasoning/summaryTextDelta', 'item/reasoning/textDelta'].includes(e.method) &&

@@ -182,13 +182,68 @@ test('first acquire lazily starts localhost service, loads with exact conservati
         '32768',
         '--parallel',
         '1',
-        '--no-engine-config-file',
-        '--no-speculative-draft-mtp',
         '--yes'
       ]
     ]
   );
   assert.ok(calls.every(call => !call.args.includes('--gpu') && !call.args.includes('--auto')));
+  // vLLM-only engine config options made LM Studio reject the GGUF load.
+  assert.ok(calls.every(call => !call.args.some(arg => /engine-config|speculative|draft/u.test(arg))));
+  await lease.finish();
+});
+
+test('native load refusal keeps the raw CLI result, is never retried and stays unknown', async () => {
+  const stderr =
+    'Error: Engine configuration files and CWD are currently supported only by vLLM.\n    at loadModel (C:/Users/x/.lmstudio/bin/lms.exe)';
+  let loads = 0;
+  const env = setup({
+    runImpl: async args => {
+      if (args[0] !== 'load') return {stdout: ''};
+      loads++;
+      throw Object.assign(new Error('Command failed: lms load'), {code: 1, signal: null, stdout: 'Loading…', stderr});
+    }
+  });
+  const first = await env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}).catch(error => error);
+  assert.equal(first.code, 'k_selfhost_load_failed');
+  assert.match(first.message, /LM Studio 回報無法載入模型 publisher\/model\.gguf/);
+  assert.match(first.message, /不會自動重試/);
+  assert.doesNotMatch(first.message, /Engine configuration|vLLM/);
+  assert.equal(first.diagnostic.stderr, stderr);
+  assert.equal(first.diagnostic.stdout, 'Loading…');
+  assert.equal(first.diagnostic.exitCode, 1);
+  assert.match(first.diagnostic.command, /^lms load publisher\/model\.gguf /);
+  const second = await env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}).catch(error => error);
+  assert.equal(second.code, 'k_selfhost_state_unknown');
+  assert.match(second.message, /狀態不明（先前：LM Studio 回報無法載入模型/);
+  assert.equal(second.diagnostic.stderr, stderr);
+  assert.equal(loads, 1);
+  assert.equal(
+    env.calls.some(call => call.url?.endsWith('/unload')),
+    false
+  );
+});
+
+test('a load command without a native exit result is unknown, with its raw error kept', async () => {
+  const env = setup({
+    runImpl: async args => {
+      if (args[0] === 'load') throw Object.assign(new Error('spawn lms.exe ENOENT'), {code: 'ENOENT'});
+      return {stdout: ''};
+    }
+  });
+  const error = await env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}).catch(e => e);
+  assert.equal(error.code, 'k_selfhost_state_unknown');
+  assert.match(error.message, /^載入命令結果不明；未送出推論/);
+  assert.equal(error.diagnostic.exitCode, null);
+  assert.equal(error.diagnostic.error, 'spawn lms.exe ENOENT');
+});
+
+test('busy is a coded refusal without queueing or loading', async () => {
+  const env = setup();
+  const lease = await env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768});
+  const error = await env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}).catch(e => e);
+  assert.equal(error.code, 'k_selfhost_busy');
+  assert.match(error.message, /忙碌中，未建立佇列、未送出推論/);
+  assert.equal(env.calls.filter(call => call.args?.[0] === 'load').length, 1);
   await lease.finish();
 });
 
@@ -240,7 +295,7 @@ test('same owned instance id appearing under another model is treated as externa
   await first.finish();
   env.models = [row(modelKey), row(secondKey, {loaded_instances: [loaded(instanceId)]})];
   const priorLoads = env.calls.filter(call => call.kind === 'cli' && call.args[0] === 'load').length;
-  await assert.rejects(env.runtime.acquire({model: secondKey, instanceId, contextWindow: 32768}), /非本管理器載入/);
+  await assert.rejects(env.runtime.acquire({model: secondKey, instanceId, contextWindow: 32768}), /非 K 載入/);
   assert.equal(env.calls.filter(call => call.kind === 'cli' && call.args[0] === 'load').length, priorLoads);
   assert.equal(
     env.calls.some(call => call.url?.endsWith('/unload')),
@@ -250,7 +305,7 @@ test('same owned instance id appearing under another model is treated as externa
 
 test('foreign loaded LLM blocks acquisition without unload or CLI load', async () => {
   const env = setup({models: [row(modelKey, {loaded_instances: [loaded('someone-else', 8192)]})]});
-  await assert.rejects(env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}), /非本管理器載入/);
+  await assert.rejects(env.runtime.acquire({model: modelKey, instanceId, contextWindow: 32768}), /非 K 載入/);
   assert.equal(
     env.calls.some(call => call.url?.endsWith('/unload') || call.args?.[0] === 'load'),
     false
@@ -330,10 +385,10 @@ test('stopping during load waits for the one native result; confirmed idle owner
 
 test('rejects absent key, non-GGUF/non-LLM metadata and context above model maximum', async t => {
   for (const [models, context, expected] of [
-    [[row('publisher/different.gguf')], 32768, /找不到確切模型 key/],
-    [[row(modelKey, {format: 'mlx'})], 32768, /不是 GGUF LLM/],
-    [[row(modelKey, {type: 'embedding'})], 32768, /不是 GGUF LLM/],
-    [[row(modelKey, {max_context_length: 16384})], 32768, /最大 context/]
+    [[row('publisher/different.gguf')], 32768, /找不到確切的模型識別碼/],
+    [[row(modelKey, {format: 'mlx'})], 32768, /不是 GGUF 語言模型/],
+    [[row(modelKey, {type: 'embedding'})], 32768, /不是 GGUF 語言模型/],
+    [[row(modelKey, {max_context_length: 16384})], 32768, /最大上下文長度為 16384/]
   ]) {
     await t.test(expected.source, async () => {
       const env = setup({models});

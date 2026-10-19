@@ -286,6 +286,48 @@ test('the exact native remote compaction stream wrapper keeps its phase and raw 
   );
 });
 
+// Observed with installed Codex 0.163.0 against a loopback HTTP 400 (mock native,
+// no model load or inference): one call, no retry, turn failed with this record.
+const observedSelfHostLoadFailure = {
+  message:
+    '{"error":{"message":"本機模型載入失敗；未送出推論。","code":"k_selfhost_load_failed","diagnostic":{"stderr":"Synthetic native load error; no model engine invoked."}}}',
+  codexErrorInfo: 'other',
+  additionalDetails: null
+};
+
+test('self-host failures show K Chinese text first and keep the raw native record unchanged', () => {
+  const error = structuredClone(observedSelfHostLoadFailure),
+    {message} = error,
+    before = structuredClone(error);
+  assert.equal(nativeNotices.localizeNativeNotice(message, 'gemma', error), '本機模型載入失敗；未送出推論。');
+  assert.equal(nativeNotices.localizeNativeNotice(message, 'gemma'), '本機模型載入失敗；未送出推論。');
+  assert.equal(nativeNotices.nativeNoticeText({message, error}, 'gemma'), '本機模型載入失敗；未送出推論。');
+  assert.deepEqual(error, before);
+  // Other providers' presentation is unchanged.
+  for (const provider of ['codex', 'claude', 'gemini'])
+    assert.equal(nativeNotices.localizeNativeNotice(message, provider, error), message);
+  const busy = {error: {message: '本機模型目前忙碌中，未建立佇列、未送出推論；請待目前工作結束後再送出。', code: 'k_selfhost_busy'}};
+  assert.equal(
+    nativeNotices.localizeNativeNotice('Bad Request', 'gemma', {message: 'Bad Request', additionalDetails: busy}),
+    busy.error.message
+  );
+  // Only K's own coded reply is trusted as the main notice text.
+  const forged = JSON.stringify({error: {message: 'not from K', code: 'other'}});
+  assert.equal(
+    nativeNotices.localizeNativeNotice(forged, 'gemma', {message: forged}),
+    '自架模型這一輪失敗，未完成；原始錯誤保留在詳細內容。'
+  );
+  const stream = 'stream disconnected before completion: error decoding response body';
+  const streamText = nativeNotices.localizeNativeNotice(stream, 'gemma', {message: stream, codexErrorInfo: 'other'});
+  assert.match(streamText, /^自架模型回覆在完成前中斷，本輪未完成/);
+  // No claim about native retries or resends that this layer cannot see.
+  for (const text of [streamText, nativeNotices.localizeNativeNotice(forged, 'gemma', {message: forged})])
+    assert.doesNotMatch(text, /重送|重試/);
+  // Without a native error record, K's own text and other content are not rewritten.
+  assert.equal(nativeNotices.localizeNativeNotice('Native request failed', 'gemma'), 'Native request failed');
+  assert.equal(nativeNotices.localizeNativeNotice('送出結果未確認，未自動重送。', 'gemma'), '送出結果未確認，未自動重送。');
+});
+
 test('only precisely resolved native terminal attention is hidden and all raw notices remain intact', () => {
   const terminal = {threadId: 'child', turnId: 'child-turn', status: 'completed'},
     message = '同文未確認';

@@ -9,9 +9,9 @@ export function gemmaRequest(body) {
   const aliases = new Map();
   const tools = [];
   const add = (tool, namespace) => {
-    if (!['function', 'custom'].includes(tool.type)) throw Error(`Gemma 尚未支援工具格式：${tool.type}`);
+    if (!['function', 'custom'].includes(tool.type)) throw Error(`自架模型尚未支援工具格式：${tool.type}`);
     const name = namespace ? `${namespace}__${tool.name}` : tool.name;
-    if (aliases.has(name)) throw Error('Gemma 工具名稱衝突；未送出推論。');
+    if (aliases.has(name)) throw Error('自架模型工具名稱衝突；未送出推論。');
     aliases.set(name, {name: tool.name, namespace, custom: tool.type === 'custom'});
     tools.push(
       tool.type === 'custom'
@@ -147,23 +147,41 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch, expectedMo
       } catch {
         response
           .writeHead(400, {'content-type': 'application/json'})
-          .end(JSON.stringify({error: {message: 'Gemma 請求或工具格式無效；未送出推論。'}}));
+          .end(
+            JSON.stringify({error: {message: '自架模型請求或工具格式無效；未送出推論。', code: 'k_selfhost_request_invalid'}})
+          );
         return;
       }
       const {body, aliases} = translated;
       if (expectedModel !== undefined && body.model !== expectedModel) {
         response
           .writeHead(400, {'content-type': 'application/json'})
-          .end(JSON.stringify({error: {message: '自架模型與此聊天室連線不符；未送出推論。'}}));
+          .end(
+            JSON.stringify({error: {message: '自架模型與此聊天室連線不符；未送出推論。', code: 'k_selfhost_model_mismatch'}})
+          );
         return;
       }
       if (acquireModel) {
         try {
           lease = await acquireModel({signal: abort.signal});
         } catch (error) {
-          response
-            .writeHead(503, {'content-type': 'application/json'})
-            .end(JSON.stringify({error: {message: error.message}}));
+          // Busy, refused and unknown preparation are not transient. Codex
+          // retries 5xx, which only repeats the same refusal; 400 ends this turn
+          // once. The untranslated native CLI result stays in diagnostic.
+          const code = /^k_selfhost_/u.test(error?.code ?? '') ? error.code : 'k_selfhost_prepare_failed',
+            text = String(error?.message ?? error),
+            // Unwrapped native exceptions (e.g. timeouts) are diagnostics, not the notice.
+            native = !/\p{Script=Han}/u.test(text),
+            diagnostic = error?.diagnostic ?? (native ? {error: text} : undefined);
+          response.writeHead(400, {'content-type': 'application/json'}).end(
+            JSON.stringify({
+              error: {
+                message: native ? '本機模型準備失敗；未送出推論。原始原因見詳細內容。' : text,
+                code,
+                ...(diagnostic ? {diagnostic} : {})
+              }
+            })
+          );
           return;
         }
         body.model = lease.model;
@@ -226,7 +244,11 @@ export async function openGemmaResponses(baseUrl, {fetchImpl = fetch, expectedMo
       if (!response.headersSent)
         response
           .writeHead(502, {'content-type': 'application/json'})
-          .end(JSON.stringify({error: {message: 'Gemma 協定轉換或連線失敗；未改用其他模型。'}}));
+          .end(
+            JSON.stringify({
+              error: {message: '自架模型協定轉換或連線失敗；未改用其他模型。', code: 'k_selfhost_upstream_failed'}
+            })
+          );
       else response.destroy(error);
     } finally {
       try {

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {gemmaRequest, gemmaResponseEvents, openGemmaResponses} from '../src/gemma-responses.mjs';
+import {createLocalModelRuntime} from '../src/local-model-runtime.mjs';
 const tools = [
   {type: 'function', name: 'exec_command', parameters: {type: 'object'}},
   {type: 'custom', name: 'apply_patch', description: 'Full patch syntax'},
@@ -111,25 +112,94 @@ test('client cancellation is forwarded and bridge shutdown waits for exact owned
   }
 });
 
-test('local model preparation failure never sends inference or retries and preserves its explanation', async () => {
-  let acquired = 0;
+test('local model preparation failure is one non-retryable 400 that keeps the native diagnostic', async () => {
+  const diagnostic = {command: 'lms load x', exitCode: 1, stderr: 'Error: supported only by vLLM.'};
+  const cases = [
+    [Object.assign(Error('本機模型仍在工作；未停止或改用其他模型。'), {code: 'k_selfhost_busy'}), 'k_selfhost_busy'],
+    [
+      Object.assign(Error('LM Studio 回報無法載入模型 x；未送出推論。'), {code: 'k_selfhost_load_failed', diagnostic}),
+      'k_selfhost_load_failed'
+    ],
+    [Object.assign(Error('本機模型狀態不明；未送出推論。'), {code: 'k_selfhost_state_unknown'}), 'k_selfhost_state_unknown'],
+    [Error('本機模型目錄中找不到確切的模型識別碼：x；未送出推論。'), 'k_selfhost_prepare_failed'],
+    [new DOMException('LM Studio metadata request timed out', 'TimeoutError'), 'k_selfhost_prepare_failed']
+  ];
+  for (const [failure, code] of cases) {
+    let acquired = 0;
+    const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
+      expectedModel: 'qwen',
+      fetchImpl: async () => assert.fail('must not send inference'),
+      acquireModel: async () => {
+        acquired++;
+        throw failure;
+      }
+    });
+    try {
+      const result = await fetch(`${bridge.baseUrl}/responses`, {
+        method: 'POST',
+        headers: bridge.headers,
+        body: JSON.stringify({model: 'qwen'})
+      });
+      // Codex retries 5xx; a refused, busy or unknown preparation must not be repeated.
+      assert.equal(result.status, 400);
+      const {error} = await result.json();
+      assert.equal(error.code, code);
+      assert.match(error.message, /\p{Script=Han}/u);
+      if (failure.diagnostic) assert.deepEqual(error.diagnostic, diagnostic);
+      if (failure.name === 'TimeoutError') {
+        assert.equal(error.message, '本機模型準備失敗；未送出推論。原始原因見詳細內容。');
+        assert.deepEqual(error.diagnostic, {error: 'LM Studio metadata request timed out'});
+      } else assert.equal(error.message, failure.message);
+      assert.equal(acquired, 1);
+    } finally {
+      await bridge.close();
+    }
+  }
+});
+
+test('an unsettled local inference leaves later requests refused once, never reloaded or replayed', async () => {
+  const modelKey = 'publisher/model.gguf';
+  let models = [{key: modelKey, type: 'llm', format: 'gguf', max_context_length: 65536, loaded_instances: []}];
+  let loads = 0,
+    inferences = 0;
+  const runtime = createLocalModelRuntime({
+    executable: 'lms.exe',
+    fetchImpl: async url => {
+      assert.equal(url, 'http://127.0.0.1:1234/api/v1/models');
+      return new Response(JSON.stringify({models}), {headers: {'content-type': 'application/json'}});
+    },
+    runImpl: async args => {
+      assert.equal(args[0], 'load');
+      loads++;
+      models = [{...models[0], loaded_instances: [{id: 'k-qwen', config: {context_length: 32768, parallel: 1}}]}];
+    }
+  });
   const bridge = await openGemmaResponses('http://127.0.0.1:1234/v1', {
-    expectedModel: 'qwen',
-    fetchImpl: async () => assert.fail('must not send inference'),
-    acquireModel: async () => {
-      acquired++;
-      throw Error('本機模型仍在工作；未停止或改用其他模型。');
+    expectedModel: modelKey,
+    acquireModel: ({signal}) => runtime.acquire({model: modelKey, instanceId: 'k-qwen', contextWindow: 32768, signal}),
+    fetchImpl: async (_url, options) => {
+      inferences++;
+      assert.equal(JSON.parse(options.body).model, 'k-qwen');
+      return new Response('data: {"type":"response.created"}\n\n', {headers: {'content-type': 'text/event-stream'}});
     }
   });
   try {
-    const result = await fetch(`${bridge.baseUrl}/responses`, {
-      method: 'POST',
-      headers: bridge.headers,
-      body: JSON.stringify({model: 'qwen'})
-    });
-    assert.equal(result.status, 503);
-    assert.match((await result.json()).error.message, /仍在工作/);
-    assert.equal(acquired, 1);
+    const send = () =>
+      fetch(`${bridge.baseUrl}/responses`, {
+        method: 'POST',
+        headers: bridge.headers,
+        body: JSON.stringify({model: modelKey, stream: true})
+      });
+    const first = await send();
+    assert.equal(first.status, 200);
+    await first.text();
+    const second = await send();
+    assert.equal(second.status, 400);
+    const {error} = await second.json();
+    assert.equal(error.code, 'k_selfhost_state_unknown');
+    assert.match(error.message, /上一次推論結果未確認/);
+    assert.equal(loads, 1);
+    assert.equal(inferences, 1);
   } finally {
     await bridge.close();
   }

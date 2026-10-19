@@ -18,7 +18,7 @@ export const permissionModes = {
   'danger-full-access': {
     name: '完整存取權',
     Icon: ShieldAlert,
-    description: '略過 Codex 權限提示；K 的外部隔離限制仍保留。',
+    description: '略過 Codex 權限提示與命令沙箱；K 沒有另外的隔離層。',
     summary: '一般檔案與網路操作不再逐項核准'
   },
   'read-only': {
@@ -26,6 +26,18 @@ export const permissionModes = {
     Icon: LockKeyhole,
     description: '先以唯讀開始；寫入或其他額外存取仍需你核准。',
     summary: '寫入與額外存取由你核准'
+  }
+};
+
+// Self-hosted main agents run on the same native Codex core and receive the same
+// native settings. Auto-review on a self-hosted provider has not been verified.
+export const selfHostPermissionModes = {
+  ...permissionModes,
+  'auto-review': {
+    ...permissionModes['auto-review'],
+    description:
+      '沿用 Codex 原生自動審查設定；自架模型下由哪個模型審查、能否正常完成尚未驗證，額外存取可能遭拒或無法完成。',
+    summary: '額外存取交 Codex 原生自動審查（自架模型下尚未驗證）'
   }
 };
 
@@ -98,7 +110,13 @@ export function PermissionPicker({
     menu = useRef(null),
     id = useId();
   const modes =
-    provider === 'claude' ? claudePermissionModes : provider === 'gemini' ? geminiPermissionModes : permissionModes;
+    provider === 'claude'
+      ? claudePermissionModes
+      : provider === 'gemini'
+        ? geminiPermissionModes
+        : provider === 'gemma'
+          ? selfHostPermissionModes
+          : permissionModes;
   allowedModes = allowedModes.filter(mode => modes[mode]);
   const currentValue =
     provider === 'claude'
@@ -253,7 +271,9 @@ export function PermissionPicker({
                   }[pending]
                 : pending === 'danger-full-access'
                   ? '啟用完整存取權？'
-                  : '改由 Codex 代你核准？'}
+                  : provider === 'gemma'
+                    ? '改用 Codex 原生自動審查？'
+                    : '改由 Codex 代你核准？'}
             </strong>
             <p>
               {provider === 'claude'
@@ -267,8 +287,10 @@ export function PermissionPicker({
                 : provider === 'gemini'
                   ? 'Antigravity 將略過權限提示，可能執行工作區外的寫入與命令。請確認這是你要授予的權限。'
                   : pending === 'danger-full-access'
-                    ? '此對話將略過 Codex 權限提示，一般操作不再逐項詢問你。K 的外部隔離限制不會因此解除。'
-                    : '主代理仍在沙箱內工作；需要額外存取時，由 Codex 自動審查並決定是否放行。自動審查仍可能判斷錯誤。'}
+                    ? '此對話將略過 Codex 權限提示與命令沙箱，一般操作不再逐項詢問你。K 沒有另外的隔離層；請確認這是你要授予的權限。'
+                    : provider === 'gemma'
+                      ? '此對話的額外存取改交 Codex 原生自動審查。自架模型下由哪個模型審查、能否正常完成尚未驗證；審查失敗時操作可能遭拒。K 不會替你改成其他權限模式。'
+                      : '主代理仍在沙箱內工作；需要額外存取時，由 Codex 自動審查並決定是否放行。自動審查仍可能判斷錯誤。'}
             </p>
             <div className="permission-confirm-actions">
               <button type="button" onClick={close}>

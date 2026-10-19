@@ -1613,6 +1613,8 @@ function App() {
     }),
     [transcriptState, preview, modelName, models, startBranch, groups, messageIndex, userTurnIndex, openRoundtable]
   );
+  const alertRaw = error || state.error || '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
+    alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
   return (
     <TranscriptContext.Provider value={transcript}>
       <AppContext.Provider
@@ -1852,18 +1854,23 @@ function App() {
                   <span>
                     {loginRequired
                       ? '手機登入已失效（可能已登出、逾期或被電腦端撤銷）。請先複製未送出的草稿，再按「重新登入」輸入存取金鑰；不會停止或重送電腦工作。'
-                      : localizeNativeNotice(
-                          error || state.error || '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
-                          state.provider ?? providerOf(state.model),
-                          state.turnError?.error
-                        )}
+                      : alertText}
                   </span>
-                  {!error && state.turnError && state.turnError.error?.message === state.error && (
+                  {!error && state.turnError && state.turnError.error?.message === state.error ? (
                     <details>
                       <summary>查看原生錯誤詳細內容</summary>
                       <pre>{JSON.stringify(state.turnError, null, 2)}</pre>
-                      <small>未回報的 requestId／Retry-After 維持未知。</small>
+                      <small>未回報的請求識別碼與建議等待時間維持未知。</small>
                     </details>
+                  ) : (
+                    !loginRequired &&
+                    alertText !== alertRaw && (
+                      // A summarized message without a native record still keeps its original text.
+                      <details>
+                        <summary>查看原始內容</summary>
+                        <pre>{alertRaw}</pre>
+                      </details>
+                    )
                   )}
                 </div>
                 <IconButton title="關閉提示" onClick={() => setError('')}>

@@ -160,7 +160,7 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
                 ...row,
                 available: offered,
                 description: offered
-                  ? `${config.model}；工作時由 K 在背景套用載入設定，無須另開模型介面。尚未完成推論驗證。`
+                  ? `${config.model}；選取不會載入，送出工作後才由 K 在背景載入，無須另開模型介面。尚未完成推論驗證。`
                   : `本機尚未提供模型 ${config.model}。`
               }
             ]

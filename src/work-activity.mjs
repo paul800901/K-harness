@@ -48,10 +48,12 @@ export function createWorkActivity(state, now = Date.now) {
 
 // Call only after checking the owning native thread and current turn. Child
 // work, replayed history, account updates and transport pings must not refresh it.
-export function codexWorkActivity(activity, {method, params: p = {}}) {
+export function codexWorkActivity(activity, {method, params: p = {}}, {selfHosted = false} = {}) {
   if (method === 'turn/started') {
     activity.begin();
-    activity.record();
+    // A self-hosted turn has no model evidence until its first output: K may
+    // still be preparing the local model. Keep it in the existing starting phase.
+    activity.record(selfHosted ? 'starting' : 'active');
     return;
   }
   if (

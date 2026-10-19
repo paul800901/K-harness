@@ -1,5 +1,6 @@
 import {formatElapsed} from '../shared/conversation-groups.mjs';
 import {workerEnded as endedWorker} from '../src/worker-status.mjs';
+import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 
 export const QUIET_WORK_MS = 5 * 60 * 1000;
 const age = (at, now) => (Number.isFinite(at) ? Math.max(0, now - at) : null);
@@ -137,11 +138,12 @@ export function workStatus(state, online = true, now = Date.now()) {
   if (retry) return {kind: 'warning', text: `原生核心重連中 · ${freshness}`};
   const quiet = recent ?? age(a?.startedAt, now);
   const stale = quiet !== null && quiet >= QUIET_WORK_MS;
+  // Self-hosted: no evidence separates local model preparation from waiting for its reply.
+  const starting = (state.provider ?? providerOf(state.model)) === 'gemma' ? '正在準備自架模型或等待回覆' : '等待核心回報';
   const phase = !a
     ? '工作狀態待確認'
-    : ({starting: '等待核心回報', tool: '等待工具回報', worker: '等待子代理回報', compacting: '正在壓縮工作脈絡'}[
-        a.phase
-      ] ?? (stale ? '工作尚未結束' : '執行中'));
+    : ({starting, tool: '等待工具回報', worker: '等待子代理回報', compacting: '正在壓縮工作脈絡'}[a.phase] ??
+      (stale ? '工作尚未結束' : '執行中'));
   const wait = !stale && ['tool', 'worker'].includes(a?.phase) && waiting !== null ? ` ${formatElapsed(waiting)}` : '';
   const detail = stale ? `已 ${formatElapsed(quiet)}無新活動回報` : freshness;
   return {

@@ -1,4 +1,10 @@
-import {PermissionPicker, claudePermissionModes, geminiPermissionModes, permissionModes} from './permission-picker.jsx';
+import {
+  PermissionPicker,
+  claudePermissionModes,
+  geminiPermissionModes,
+  permissionModes,
+  selfHostPermissionModes
+} from './permission-picker.jsx';
 import {ShieldCheck} from 'lucide-react';
 import {effortName} from './model-picker.jsx';
 import {modelProvider as providerOf, gemmaConnection} from '../shared/model-provider.mjs';
@@ -237,7 +243,9 @@ export function BranchDialog({modal, state, onClose, onFork}) {
       ? claudePermissionModes
       : targetProvider === 'gemini'
         ? geminiPermissionModes
-        : permissionModes
+        : targetProvider === 'gemma'
+          ? selfHostPermissionModes
+          : permissionModes
   );
   const submit = () => {
     if (!model || !accessMode) return;

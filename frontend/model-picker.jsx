@@ -407,7 +407,7 @@ export function ModelPicker({
       {remoteClient && <p className="modal-description">模型沿用電腦端訂閱；需要登入時請回到電腦處理。</p>}
       {loading ? (
         <p className="modal-description" role="status">
-          正在載入模型…
+          正在讀取模型清單…
         </p>
       ) : error ? (
         <div role="alert" className="model-load-error">
@@ -458,6 +458,11 @@ export function ModelPicker({
                   {billingNote(selected) && (
                     <p className="model-billing-note" role="note">
                       {billingNote(selected)}
+                    </p>
+                  )}
+                  {provider === 'gemma' && (
+                    <p className="step-hint" role="note">
+                      選取不會載入模型；本機模型在送出工作後才由 K 在背景載入。
                     </p>
                   )}
                   {!visibleModels.length && <p className="step-hint">目前帳號未提供可用模型。</p>}
