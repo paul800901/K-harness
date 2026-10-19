@@ -1,6 +1,6 @@
 import path from 'node:path';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {openGemmaResponses} from './gemma-responses.mjs';
+import {openGemmaResponses, fetchDolphinInference} from './gemma-responses.mjs';
 import {createLocalModelRuntime} from './local-model-runtime.mjs';
 
 const defaults = {
@@ -14,10 +14,10 @@ const locationNames = {local: '本機', cloud: '雲端'};
 // SSH tunnel; K neither rents a server nor stores/transfers a provider credential.
 export async function loadGemmaConnections(
   root,
-  {fetchImpl = fetch, localRuntimeFactory = createLocalModelRuntime} = {}
+  {fetchImpl = fetch, localRuntimeFactory = createLocalModelRuntime, dolphinFetchImpl = fetchDolphinInference} = {}
 ) {
   try {
-    return await readConnections(root, fetchImpl, localRuntimeFactory);
+    return await readConnections(root, fetchImpl, localRuntimeFactory, dolphinFetchImpl);
   } catch {
     // A bad optional Gemma file cannot take the existing three providers offline.
     return Object.entries(defaults).map(([slot, config]) => ({
@@ -42,7 +42,7 @@ export async function loadGemmaConnections(
     }));
   }
 }
-async function readConnections(root, fetchImpl, localRuntimeFactory) {
+async function readConnections(root, fetchImpl, localRuntimeFactory, dolphinFetchImpl) {
   let settings = {};
   try {
     settings = JSON.parse(await readFile(path.join(root, '.runtime', 'gemma-main.json'), 'utf8'));
@@ -68,6 +68,7 @@ async function readConnections(root, fetchImpl, localRuntimeFactory) {
         prefix: `gemma-${slot}`,
         location: slot,
         displayName: gemmaNames[slot],
+        dolphinFetchImpl,
         localRuntime,
         config: {...fallback, ...settings[slot]}
       })
@@ -91,6 +92,7 @@ async function readConnections(root, fetchImpl, localRuntimeFactory) {
         prefix,
         location: entry.location,
         displayName: `${entry.label.trim()} · ${locationNames[entry.location]}`,
+        dolphinFetchImpl,
         localRuntime,
         config: {
           baseUrl: entry.baseUrl ?? defaults[entry.location].baseUrl,
@@ -101,7 +103,7 @@ async function readConnections(root, fetchImpl, localRuntimeFactory) {
     })
   ];
 }
-function connection(root, fetchImpl, {slot, prefix, location, displayName, config, localRuntime}) {
+function connection(root, fetchImpl, {slot, prefix, location, displayName, config, localRuntime, dolphinFetchImpl}) {
   const url = new URL(config.baseUrl);
   if (
     url.protocol !== 'http:' ||
@@ -126,6 +128,7 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
   // The installed CLI controls the owner's local :1234 backend only. Other local
   // servers and owner-managed cloud tunnels retain their existing wire protocol.
   const managed = location === 'local' && url.port === '1234' ? localRuntime : null;
+  const dolphin = location === 'local' && url.port === '1234' && slot === 'selfhost-dolphin-mistral-24b-venice';
   const model = `${prefix}/${config.model}`;
   const home = path.join(root, '.runtime', `${prefix}-home`);
   const catalogFile = path.join(home, 'model-catalog.json');
@@ -258,7 +261,7 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
           })
         );
         transport = await openGemmaResponses(baseUrl, {
-          fetchImpl,
+          fetchImpl: dolphin ? dolphinFetchImpl : fetchImpl,
           expectedModel: config.model,
           ...(managed
             ? {
@@ -291,7 +294,7 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
         'model_provider="k_gemma"',
         `model=${JSON.stringify(config.model)}`,
         `review_model=${JSON.stringify(config.model)}`,
-        `model_providers.k_gemma={name="K self-hosted",base_url=${JSON.stringify(transport.baseUrl)},wire_api="responses",requires_openai_auth=false,supports_websockets=false,http_headers={Authorization=${JSON.stringify(transport.headers.Authorization)}}}`,
+        `model_providers.k_gemma={name="K self-hosted",base_url=${JSON.stringify(transport.baseUrl)},wire_api="responses",requires_openai_auth=false,supports_websockets=false,${dolphin ? 'stream_idle_timeout_ms=1200000,' : ''}http_headers={Authorization=${JSON.stringify(transport.headers.Authorization)}}}`,
         'web_search="disabled"',
         // The fresh, unauthenticated self-host home has no OpenAI account plugins.
         // Avoid native startup downloading the curated marketplace. K MCP tools stay intact.

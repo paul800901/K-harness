@@ -7,6 +7,63 @@ import {loadGemmaConnections} from '../src/gemma-main.mjs';
 import {modelProvider, gemmaConnection, usesCodexCore} from '../shared/model-provider.mjs';
 import {availableWorkerModels} from '../src/worker-policy.mjs';
 
+test('only the installed local Dolphin route extends native and upstream idle waiting', async () => {
+  const root = await mkdtemp(path.join(scratchBase, 'dolphin-idle-'));
+  await mkdir(path.join(root, '.runtime'));
+  await writeFile(
+    path.join(root, '.runtime/gemma-main.json'),
+    JSON.stringify({
+      selfHosted: [
+        {id: 'dolphin-mistral-24b-venice', label: 'Dolphin', location: 'local', model: 'dolphin'},
+        {id: 'qwen', label: 'Qwen', location: 'local', model: 'qwen'},
+        {id: 'other', label: 'Other', location: 'local', model: 'other'}
+      ]
+    })
+  );
+  const calls = [];
+  const makeFetch = route => async () => {
+    calls.push(route);
+    return Response.json({output: []});
+  };
+  const connections = await loadGemmaConnections(root, {
+    fetchImpl: makeFetch('normal'),
+    dolphinFetchImpl: makeFetch('dolphin')
+  });
+  try {
+    await Promise.all(connections.map(c => c.prepare()));
+    for (const connection of connections) {
+      const config = connection.configOverrides().find(s => s.startsWith('model_providers.k_gemma='));
+      const dolphin = connection.slot === 'selfhost-dolphin-mistral-24b-venice';
+      assert.equal(config.includes('stream_idle_timeout_ms=1200000,'), dolphin);
+      assert.doesNotMatch(config, /max_retries/);
+      const response = await fetch(`${JSON.parse(config.match(/base_url=("[^"]+")/u)[1])}/responses`, {
+        method: 'POST',
+        headers: {Authorization: JSON.parse(config.match(/Authorization=("[^"]+")/u)[1])},
+        body: JSON.stringify({model: connection.nativeModel(connection.model), input: [], tools: []})
+      });
+      assert.equal(response.status, 200);
+      await response.text();
+    }
+    assert.deepEqual(calls, ['normal', 'normal', 'dolphin', 'normal', 'normal']);
+  } finally {
+    await Promise.all(connections.map(c => c.close()));
+  }
+  // The same saved ID on an owner-managed cloud tunnel must not acquire this local policy.
+  await writeFile(
+    path.join(root, '.runtime/gemma-main.json'),
+    JSON.stringify({
+      selfHosted: [{id: 'dolphin-mistral-24b-venice', label: 'Dolphin', location: 'cloud', model: 'dolphin'}]
+    })
+  );
+  const cloud = (await loadGemmaConnections(root)).at(-1);
+  try {
+    await cloud.prepare();
+    assert(!cloud.configOverrides().some(s => s.includes('stream_idle_timeout_ms')));
+  } finally {
+    await cloud.close();
+  }
+});
+
 test('K manages local loading only on an inference request, shares one runtime, and keeps cloud unmanaged', async () => {
   const root = await mkdtemp(path.join(scratchBase, 'managed-local-'));
   await mkdir(path.join(root, '.runtime'));

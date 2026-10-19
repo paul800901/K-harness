@@ -1,6 +1,35 @@
-import {createServer} from 'node:http';
+import {createServer, request as httpRequest} from 'node:http';
+import {Readable} from 'node:stream';
 import {randomBytes} from 'node:crypto';
 import {bearerMatches, readLimitedBody} from './mcp-http-guard.mjs';
+
+// This local Dolphin can stay silent longer than fetch's 300-second body idle limit.
+// Keep native cancellation and streaming, without a new dependency or any retry.
+export function fetchDolphinInference(url, {idleTimeoutMs = 1230000, ...init}) {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, {method: init.method, headers: init.headers, signal: init.signal}, upstream => {
+      if (upstream.statusCode >= 300 && upstream.statusCode < 400) {
+        upstream.resume();
+        request.destroy(new Error('本機模型推論端點不得重新導向。'));
+        return;
+      }
+      try {
+        resolve(
+          new Response([204, 205].includes(upstream.statusCode) ? null : Readable.toWeb(upstream), {
+            status: upstream.statusCode,
+            headers: upstream.headers
+          })
+        );
+      } catch (error) {
+        upstream.destroy();
+        reject(error);
+      }
+    });
+    request.once('error', reject);
+    request.setTimeout(idleTimeoutMs, () => request.destroy(new Error('本機模型回應閒置逾時。')));
+    request.end(init.body);
+  });
+}
 
 // Codex 0.163 sends namespace/custom tools; the tested LM Studio Responses endpoint
 // exposes only function tools. This translates the wire format, never executes tools,
