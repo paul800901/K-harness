@@ -118,7 +118,8 @@ test('self-hosted community models get stable IDs, own homes and real names whil
     [{id: 'x', label: 'X', location: 'mars', model: 'x'}],
     [{id: 'Bad ID', label: 'X', location: 'local', model: 'x'}],
     [{id: 'x', label: 'X', location: 'cloud', model: 'x', baseUrl: 'https://example.com/v1'}],
-    [{id: 'x', location: 'local', model: 'x'}]
+    [{id: 'x', location: 'local', model: 'x'}],
+    [{id: 'x'.repeat(64), label: 'X', location: 'local', model: 'm'.repeat(190)}]
   ]) {
     await writeFile(path.join(root, '.runtime/gemma-main.json'), JSON.stringify({selfHosted}));
     const fallback = await loadGemmaConnections(root, {fetchImpl: async () => assert.fail('no request')});

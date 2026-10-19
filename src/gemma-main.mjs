@@ -46,7 +46,7 @@ async function readConnections(root, fetchImpl) {
     if (error.code !== 'ENOENT') throw new Error('Gemma 連線設定無法讀取；未改用其他供應商。');
   }
   const extra = settings.selfHosted ?? [];
-  if (!Array.isArray(extra) || extra.length > 16) throw new Error('自架模型清單無效。');
+  if (!Array.isArray(extra)) throw new Error('自架模型清單無效。');
   const ids = new Set();
   return [
     ...Object.entries(defaults).map(([slot, fallback]) =>
@@ -67,8 +67,7 @@ async function readConnections(root, fetchImpl) {
         ids.has(entry.id) ||
         !Object.hasOwn(locationNames, entry.location) ||
         typeof entry.label !== 'string' ||
-        !entry.label.trim() ||
-        entry.label.length > 120
+        !entry.label.trim()
       )
         throw new Error('自架模型需要唯一 id、名稱與 local／cloud 地點。');
       ids.add(entry.id);
@@ -102,7 +101,8 @@ function connection(root, fetchImpl, {slot, prefix, location, displayName, confi
   if (
     typeof config.model !== 'string' ||
     !config.model.trim() ||
-    config.model.length > 220 ||
+    // The full K ID must fit the saved-conversation model limit (validMainModel).
+    `${prefix}/${config.model}`.length > 256 ||
     !Number.isInteger(config.contextWindow) ||
     config.contextWindow < 1024
   )
