@@ -48,7 +48,7 @@ export function geminiSettings(
   // agy 1.4.3 live: `unsandboxed(*)` deny also blocks sandboxed commands. workspace-write
   // commands are only allowed together with --sandbox (geminiAccessArgs); a request to
   // leave the sandbox is still auto-denied in headless mode.
-  const commands = accessMode === 'workspace-write' && geminiCommandsAllowed(accessMode, googleOpsServer);
+  const commands = geminiCommandsAllowed(accessMode, googleOpsServer);
   const settings = {
     ...(accessMode === 'danger-full-access' ? {toolPermission: 'strict'} : {}),
     permissions: {

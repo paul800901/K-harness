@@ -51,8 +51,8 @@ const quota = {status: 'unavailable', windows: [], note: '尚未取得 Antigravi
 // Native view_file verified on these catalog models; never infer a future model's support.
 const mediaModels = new Set(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro']);
 // agy 1.4.3 expands a rule's @[label](path) include (live probe), so one shared file reaches every room's HOME.
-const memoryGuidance = file =>
-  `長期記憶：本人糾正做法或要求記住時，先寫出要記的規則並取得本人同意再寫入。只適用本工作區的寫進工作區的 AGENTS.md；跨工作區都適用的寫進 ${file}（各 Gemini 聊天室都會讀到）。不要寫進本聊天室的 ~/.gemini/config，那只屬於這個聊天室。本人也可輸入 /learn。`;
+const memoryGuidance = (file, accessMode) =>
+  `長期記憶：本人糾正做法或要求記住時，先寫出要記的規則並取得本人同意再寫入。只適用本工作區的寫進工作區的 AGENTS.md；跨工作區都適用的寫進 ${file}（各 Gemini 聊天室都會讀到）。不要寫進本聊天室的 ~/.gemini/config，那只屬於這個聊天室。本人也可輸入 /learn。${accessMode === 'read-only' ? '目前唯讀，只寫出建議的規則，由本人決定是否改權限後寫入。' : ''}`;
 
 // Every choice comes from `agy models`, including its supported effort variants.
 export function geminiModelsFrom(names) {
@@ -238,6 +238,8 @@ export function createGeminiController({
     gateway = null,
     gatewayKey = null,
     gatewayServer = null,
+    gatewayThread = null,
+    stops = 0,
     workerInstructions = MODEL_ROLE_GUIDANCE,
     workerNotifications = {},
     notifying = false,
@@ -248,6 +250,7 @@ export function createGeminiController({
     workerQueue = new Map(),
     handoffJobs = new Set(),
     pending = new Map();
+  const WORKERS_RUNNING = 'K 子代理尚未結束；待工人完成後再切換對話，或變更權限、工作區、子代理設定。';
   const gatewayKeyOf = (threadId, workspace, accessMode, workerPolicy) =>
     JSON.stringify([threadId ?? null, workspace, accessMode, workerPolicy]);
   const unsettledWorkers = async () =>
@@ -403,10 +406,10 @@ export function createGeminiController({
     // The account handoff waits for this room's own K workers to end, as in the Claude entry.
     if (handoff && state.workers.some(w => w.settled !== true && w.provider !== 'gemini-native')) return;
     // A stop, close or room switch during preparation ends this delivery unsent.
-    const epoch = bridgeEpoch,
+    const stop = stops,
       thread = state.threadId,
       ends = turnEnds,
-      current = () => epoch === bridgeEpoch && thread === state.threadId;
+      current = () => stop === stops && thread === state.threadId;
     notifying = true;
     let attempted = false,
       notSent = false;
@@ -458,9 +461,24 @@ export function createGeminiController({
       if (notSent && turnEnds !== ends) scheduleWorkers();
     }
   }
+  // Rebuilding the gateway for new settings keeps pending notices; stopping (closeWorkers) drops them.
+  async function closeGateway() {
+    bridgeEpoch++;
+    if (bridgeInitPromise) await bridgeInitPromise.catch(() => {});
+    const oldGateway = gateway,
+      oldBridge = bridge;
+    gatewayKey = gatewayServer = null;
+    if (oldGateway) await oldGateway.close();
+    if (oldBridge) await oldBridge.close();
+    gateway = bridge = bridgeInstance = null;
+  }
   async function closeWorkers() {
     cancelGeminiHandoff();
+    stops++;
     bridgeEpoch++;
+    // Cleared before cancelling: a cancelled job must not return as a completion notice.
+    workerArmed.clear();
+    workerQueue.clear();
     if (bridgeInitPromise) await bridgeInitPromise.catch(() => {});
     if (bridgeInstance) {
       const active = bridgeInstance;
@@ -474,22 +492,21 @@ export function createGeminiController({
       }
     }
     clearQuestions();
-    workerArmed.clear();
-    workerQueue.clear();
-    const oldGateway = gateway,
-      oldBridge = bridge;
-    gatewayKey = gatewayServer = null;
-    if (oldGateway) await oldGateway.close();
-    if (oldBridge) await oldBridge.close();
-    gateway = bridge = bridgeInstance = null;
+    await closeGateway();
   }
   // Returns the k_luna MCP endpoint for this room's current thread, workspace, access and worker policy.
   async function configureGateway() {
     if (!bridgeFactory) return null;
     const key = gatewayKeyOf(state.threadId, state.workspace, state.accessMode, state.workerPolicy);
     if (gateway && gatewayKey === key) return gatewayServer;
-    if (await unsettledWorkers()) throw Error('K 子代理尚未結束；待工人完成後再變更權限、工作區或子代理設定。');
-    await closeWorkers();
+    if (await unsettledWorkers()) throw Error(WORKERS_RUNNING);
+    // Another conversation's pending notices never reach this one.
+    if (gatewayThread !== state.threadId) {
+      cancelGeminiHandoff();
+      workerArmed.clear();
+      workerQueue.clear();
+    }
+    await closeGateway();
     if (workerCatalog)
       workerInstructions = workerPolicyConfig(state.workerPolicy, {
         models: (await workerCatalog()).models,
@@ -572,6 +589,7 @@ export function createGeminiController({
     gateway = await factory({bridge: lazyBridge});
     bridge = lazyBridge;
     gatewayKey = key;
+    gatewayThread = parent;
     const server = gateway.mcpConfig?.mcpServers?.k_luna;
     gatewayServer = server ? {url: server.url, headers: server.headers} : null;
     return gatewayServer;
@@ -622,7 +640,7 @@ export function createGeminiController({
     await atomicWrite(path.join(home(), '.gemini/antigravity-cli/settings.json'), JSON.stringify(settings, null, 2));
     await atomicWrite(
       path.join(home(), '.gemini/config/rules/k-model-roles.md'),
-      `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
+      `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules, state.accessMode)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
     );
     state.browserAccess = {
       enabled: !!browserServer,
@@ -740,7 +758,7 @@ export function createGeminiController({
           gatewayKey !== gatewayKeyOf(saved?.threadId, workspace, mode, policy) &&
           (await unsettledWorkers())
         )
-          throw Error('K 子代理尚未結束；待工人完成後再變更權限、工作區或子代理設定。');
+          throw Error(WORKERS_RUNNING);
         await resetBrowser();
         previousBrowserClosed = true;
         selected = choice;
@@ -977,7 +995,9 @@ export function createGeminiController({
             '--log-file',
             path.join(home(), `${user.id}.log`),
             // Chat stays literal (a typed /goal is not K's goal control); only the owner's /learn expands natively.
-            ...(goalObjective || (!internal && /^\/learn(\s|$)/u.test(text)) ? [] : ['--disable-slash-commands']),
+            ...(goalObjective || (!internal && !discussionTurn && /^\/learn(\s|$)/u.test(text))
+              ? []
+              : ['--disable-slash-commands']),
             ...geminiAccessArgs(mode)
           ];
           if (record.nativeSessionId) args.push('--conversation', record.nativeSessionId);
@@ -1053,19 +1073,10 @@ export function createGeminiController({
               if (index < 0) state.tools.push(entry);
               else state.tools[index] = {...state.tools[index], ...entry};
               const target = geminiWriteTarget(step);
-              if (target) {
-                if (typeof target === 'string') {
-                  const relative = path.relative(state.workspace, path.resolve(state.workspace, target));
-                  if (
-                    relative &&
-                    relative !== '..' &&
-                    !relative.startsWith(`..${path.sep}`) &&
-                    !path.isAbsolute(relative)
-                  ) {
-                    const name = relative.replaceAll('\\', '/');
-                    if (!state.artifacts.includes(name)) state.artifacts.push(name);
-                  }
-                }
+              if (typeof target === 'string') {
+                const absolute = path.resolve(state.workspace, target),
+                  name = path.relative(state.workspace, absolute).replaceAll('\\', '/');
+                if (insideWorkspace(absolute) && !state.artifacts.includes(name)) state.artifacts.push(name);
               }
             }
             const usage = event.result?.usage ?? step?.usage;

@@ -86,6 +86,9 @@ test('user model roles reach Codex instructions without changing manual defaults
   assert.match(MODEL_ROLE_GUIDANCE, /不必要架構、重複檢查/);
   // 2026-10-21: the Gemini main entry may delegate (native subagents and K workers); who leads is the owner's call.
   assert.doesNotMatch(MODEL_ROLE_GUIDANCE, /不需要 Gemini 主代理自動派 GPT／Claude|反向派工/);
+  // Every preference stays on its own line (a removed line once glued two together).
+  assert.match(MODEL_ROLE_GUIDANCE, /不是一律照改。\n- Gemini 帳號採逐一使用/);
+  assert.equal(MODEL_ROLE_GUIDANCE.match(/。- /gu), null);
   assert.match(MODEL_ROLE_GUIDANCE, /角色不代表已有跨供應商派工能力/);
   assert.match(MODEL_ROLE_GUIDANCE, /已保存的手動模型／推理設定優先/);
   assert.match(MODEL_ROLE_GUIDANCE, /不增加工具、資料、登入、部署或發布授權/);

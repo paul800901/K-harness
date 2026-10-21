@@ -1075,8 +1075,15 @@ test('Gemini main keeps worker settings while a worker runs, relays worker appro
     assert.equal(c.state.questions.length, 0);
     assert.ok(await reply);
     await assert.rejects(c.answer({id: 'missing', accept: true}), /已失效/);
-    // Stopping the room stops its K workers, as the Claude entry does.
+    // Opening another conversation is refused before the room changes.
+    await assert.rejects(c.open({model: 'gemini-3.8-flash'}), /待工人完成後再切換對話/);
+    assert.equal(c.state.threadId, threadId);
+    assert.ok(c.state.workers.some(w => w.requestId === 'job-2'));
+    // Stopping the room stops its K workers, as the Claude entry does; the cancelled job
+    // is not announced back as a completion turn.
     await c.stop();
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(f.calls.length, 0);
     assert.ok(bridge.calls.some(([kind, id]) => kind === 'cancel' && id === 'job-2'));
     assert.ok(bridge.calls.some(([kind]) => kind === 'close'));
     assert.equal(w.gateways[0].closed, 1);
@@ -1135,6 +1142,40 @@ test('an account-ready event for another account is shown, never sent into a roo
     const notice = c.state.notices.findLast(n => n.kind === 'gemini-handoff' && !n.resolved);
     assert.equal(notice.level, 'warning');
     assert.match(notice.message, /本聊天室的原生歷史綁定原帳號，不能在新帳號接續/);
+  } finally {
+    await c.close();
+  }
+});
+
+test('stopping the room never announces the workers it cancels as a new completion turn', async () => {
+  const w = workerFixture(),
+    f = await fixture(w.options),
+    c = f.controller;
+  try {
+    await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    // The fake bridge reports the cancellation synchronously, like the real one.
+    await w.gateways[0].bridge.start({requestId: 'job-c', model: 'gpt-6.1-sol', effort: 'high', task: 'fake'});
+    await c.stop();
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(f.calls.length, 0);
+    assert.equal(w.gateways.length, 1);
+    assert.equal(
+      c.state.messages.some(m => m.kind === 'worker-completion'),
+      false
+    );
+  } finally {
+    await c.close();
+  }
+});
+
+test('a discussion turn starting with /learn stays literal; only the owner expands /learn', async () => {
+  const f = await fixture(),
+    c = f.controller;
+  try {
+    await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    await c.send({text: '/learn fake participant rule', discussionTurn: {id: 'discussion-fake', bind: async () => {}}});
+    await finish(c);
+    assert.ok(f.calls[0].args.includes('--disable-slash-commands'));
   } finally {
     await c.close();
   }
