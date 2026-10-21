@@ -191,6 +191,8 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 三家原生核心接入
 
+- 10-21 [Gemini 主聊天室提示精簡、agy 1.4.3 串流實測與持續程序候選設計](gemini-main-fit-20261021.md)
+
 - 10-20 [Dolphin 工具模板、工具結果往返與首回合等待診斷](dolphin-tool-template-20261020.md)
 
 - 10-19 [自架社群模型主代理（Qwen／Mistral／Gemma abliterated）下載完成、接線已部署；K 保持關閉、模型待本人實測](selfhost-community-models-20261019.md)
