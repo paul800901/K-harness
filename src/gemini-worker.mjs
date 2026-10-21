@@ -98,11 +98,12 @@ export function geminiEnvironment(source, home) {
   return {...env, USERPROFILE: home, HOME: home, AGY_CLI_DISABLE_AUTO_UPDATE: 'true'};
 }
 export const GEMINI_TOOL_GUIDANCE =
-  '.gsheet 只是連結；有試算表 MCP 時先讀 metadata，再讀所需範圍。查不到資料或缺少工具／權限時，回報缺少的能力與未完成範圍，不繞過拒絕、不把未查到當成零。';
+  '.gsheet 只是連結；有試算表 MCP 時先讀 metadata，再讀所需範圍。背景執行無法向本人要求核准；查不到資料或缺少工具／權限時，回報缺少的能力與未完成範圍，不繞過拒絕、不把未查到當成零。';
 export function geminiToolGuidance(accessMode) {
   const permission = {
-    'read-only': '唯讀：可用原生檔案工具讀取資料、列目錄與搜尋。',
-    'workspace-write': '工作區寫入：可用原生檔案工具讀取資料、列目錄、搜尋及編輯指定工作區內檔案。',
+    'read-only': '唯讀：可用原生檔案工具讀取資料、列目錄與搜尋；不能寫檔或執行命令。',
+    'workspace-write':
+      '工作區寫入：可用原生檔案工具讀取資料、列目錄、搜尋及編輯指定工作區內檔案；不能執行命令，工作區外的寫入會被拒絕。',
     'danger-full-access': '完整存取：可在任務授權範圍內讀寫檔案、執行命令及使用已接通的工具。'
   }[accessMode];
   return `${permission}\n${GEMINI_TOOL_GUIDANCE}${
