@@ -23,6 +23,7 @@
 | 原生子代理 | `define_subagent`／`invoke_subagent` 在 print mode＋沙盒設定可用；事件 `step_type: subagent`＋`subagent_info`（type_name、role、initial_prompt、conversation_id、log_uri）；完成以 `system_message` 回到同回合 | `f2-subagent.*` |
 | 規則引用 | 規則檔中的 `@[名稱](絕對路徑)` 會展開 HOME 外的共用檔，Flash 照共用規則回覆 | `f3-include.*` |
 | 規則上限 | 單一規則檔 24,000 bytes（超過截斷）、always-on 規則合計 20,000 tokens；K 原 `AGENTS.md` 26,628 bytes 被截 | agy 內建 `agy-customizations/docs/rules.md` |
+| 共用規則檔寫入 | 工作區外單一檔案的 `write_file(<檔案>)` allow 只開放該檔：Flash 以原生寫檔工具附加規則成功，同資料夾另一檔被 `permission check failed` 拒絕（Fable 建議補驗） | `f4-shared-write.*` |
 | 端到端 | 實際 `gemini-controller`（workspace-write）＋真 k_luna gateway＋真 Flash 工人：沙盒指令寫工作區成功、寫工作區外被拒且 Gemini 如實回報；Gemini 用 `luna_start` 派 Flash 寫 `flash.txt`、結束回合；K 待其閒置送完成通知，Gemini 讀回 `FLASH_OK` 驗收 | `gemini-full-live-20261021/live.mjs`、`live-summary.json` |
 
 ## 實作
@@ -38,7 +39,7 @@
 
 ## 驗證
 
-- 單元與整合：`npm test` **1797/1797**；`npm run build:ui` 後 `npm run test:ui` **49/49**（工作樹需連到主工作樹的 `.runtime/playwright-browsers`）。
+- 單元與整合（含兩輪審查補修）：`npm test` **1803/1803**；`npm run build:ui` 後 `npm run test:ui` **49/49**（工作樹需連到主工作樹的 `.runtime/playwright-browsers`）。中間一次完整介面測試的 `discussion-ui-probe` 失敗，單獨重跑 3/3 與再跑完整 49/49 皆通過，本批未改討論功能，判定為負載下時序不穩，未改該測試。
 - 新測試：k_luna MCP／權限／規則接線；工人完成通知只在閒置時送一次、使用者回合執行中不插隊、重複紀錄不再喚醒；工人未結束時拒絕設定變更且不取消工人、權限不被半途改掉；工人核准卡與回覆；停止聊天室停工人並關閉 gateway／bridge；原生子代理顯示與回合後 `ended`；`/learn` 才展開、`/goal` 照字面；Google 連接器工作區不開指令；`AGENTS.md` 大小。
 - 改寫的既有測試：舊斷言「workspace-write 拒絕指令」「Gemini 主代理沒有子代理設定」「規則含不能派工」是本批刻意改變的行為；改為驗證新行為，唯讀仍拒絕指令、完整存取不變、工作區外寫入仍被拒。
 
@@ -49,13 +50,16 @@
 - 沙盒不提供讀取隔離（讀得到 D 槽一般資料夾，包含其他專案）；沒有網路，裝套件、需本機連線的測試會失敗；GPU／長工作在沙盒內未驗證。
 - 指令輸出在中文 Windows 為 Big5，agy 以 UTF-8 顯示成亂碼；沙盒包裝層每次都多一行「子目錄已存在」雜訊。結束碼仍正確。
 - 原生子代理的個別結果 K 不另讀（只顯示執行中／已結束、結果未知），也不跨重開保存。
+- Gemini 聊天室的原生歷史綁定開房帳號；共用帳號因額度換掉後，原聊天室不能在新帳號接續，需開新聊天室交接（既有設計，本批改為明確提示而非送出失敗）。
 - 測試在 `D:\K-harness`、`.runtime`、`.runtime\tests` 留下 agy 能力 SID 的 `(S,X)` 穿越權限；正式使用後各工作區上層可能也會出現，未證實、未移除。
 - `AGENTS.md` 餘量約 300 bytes，日後新增規則需同時精簡或移細節到 docs。
 
 ## 審核
 
 - Opus 5.5 自查：修正兩處——關閉時先清掉 bridge 參考導致實際 bridge 沒關（測試抓到）；設定變更被拒時原本已先改權限，改為先檢查 gateway、失敗還原。另依完整測試發現 Google 連接器保護會被沙盒指令繞過，改為該類工作區不開指令。
-- GPT-6.1 Sol 最後檢查：見下節（待補）。
+- **GPT-6.1 Sol 最後檢查**（只讀，3 項以記憶體替身重現）：六項全採納，修於 `deeef88`。(1) 準備通知時停止，停止回傳後仍會送通知回合並重建 gateway → 停止／換房後已準備的通知不送。(2) 工人未結束時 `open()` 先改 workerPolicy／清工人才被拒、聊天室變 failed → 改在任何狀態改動前檢查。(3) 使用者回合搶先使通知 notSent、該回合在保存期間結束時通知卡在佇列 → 以回合結束計數補排程（競態難穩定重現，未寫測試）。(4) 換帳後就緒通知仍用聊天室綁定的舊帳號送出而失敗 → 綁定帳號不同時改顯示交接提示、不送。(5) 30,000 字元截斷未計命令列跳脫 → 改 14,000。(6) 停止確認後原生子代理仍未結束 → 確認停止時一併結束。
+- **Fable 5.1 獨立第二審**（只讀，3 項以假 bridge 探測確認）：(1) 工人執行中開另一個對話會半切換 → 已被 Sol (2) 的修正涵蓋，改正錯誤訊息並補測試。(2) **停止時取消工人會被當成完成通知、立刻再跑一回合**（Sol 的修正擋不到，因為取消回報發生在停止開始之後）→ 停止前先清待送通知與 armed；並把「重建 gateway」（保留待送通知、只換設定）與「停止工人」（取消並丟棄）拆開；不同對話的待送通知不帶到新對話。(3) 討論回合以 `/learn` 開頭也會原生展開 → 排除討論回合。雜項採納：`MODEL_ROLE_GUIDANCE` 刪行時把兩條黏在同一行（加換行與測試）、`geminiCommandsAllowed` 前的多餘判斷、成果路徑判斷改用 `insideWorkspace`、唯讀聊天室的記憶說明改為只提出建議。補驗共用規則單檔寫入（見實測表）。未改：待確認通知在準備期間被 UI 讀取而重入佇列的窗口，與 Claude 主代理相同的既有模式；上一回合失敗時通知延到下一次成功回合才送，亦與 Claude 一致。
+- 每項修正都先確認新測試在修正前的程式上失敗、修正後通過。
 
 ## 部署狀態
 
