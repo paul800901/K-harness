@@ -139,4 +139,17 @@ P2 不支持立即送入；建議仍保留 `capabilities.steer = false` 與 K �
 - 原生 write_file 寫工作區外仍被拒絕；被拒的 run_command 事件可能是 `DONE` 但輸出為 `Command failed to run`，CLI 結束碼 0 與 `SUCCESS` 都不代表操作成功。
 - 清理：Opus 讀回 `HKCU:\Software\KSandboxProbe` 不存在、無殘留 agy 程序、Git 工作樹乾淨。
 
-Opus 判讀：維持 workspace-write 禁止命令，不改權限。若日後要再評估，需先在相同 K 環境讓沙盒內的工作區命令正常執行，再取得外部寫入／讀取／網路／登錄檔受限的有效對照；放寬環境變數白名單本身也是權限與隔離變更，須本人另行決定。
+第一輪後 Opus 判讀：維持 workspace-write 禁止命令，不改權限；需先讓沙盒內命令正常執行再取得有效對照。
+
+## 補充二：沙盒根因與實際邊界（Opus 5.5 親自實測，6.1 Sol 兩次只讀檢查）
+
+本人要求可測就測：本月 Claude 額度較多，由 Opus 親自跑，6.1 Sol（high）做最後檢查。完整報告、實測程式與原始事件在 `D:\K-harness\.runtime\archive\gemini-sandbox-env-20261021\report.md`（`probe.mjs`～`probe3.mjs`，s1～s7）。只用假資料；未改 K 程式、未讀憑證或正式聊天室資料、未切換帳號。
+
+- **根因**：agy 的 Windows 沙盒（AppContainer）要在 `%LOCALAPPDATA%\Packages\sandbox.{GUID}\AC\Temp` 建暫存；`geminiEnvironment` 白名單沒有 `LOCALAPPDATA`。只補 `LOCALAPPDATA = <隔離 HOME>\AppData\Local` 即可運作（s2），同一次測試不補就失敗（s6 陰性對照）。
+- **確認擋住（UnauthorizedAccess／存取被拒）**：工作區外寫入、改寫與直接刪除；真實使用者資料夾、%TEMP%、隔離 HOME 寫入；經事先存在的 junction 往外寫；HKCU 寫入；沙盒命令的 DNS、直接 IP 與本機 loopback（主機對照可連，測試伺服器收到 0 次）；子程序繼承沙盒後的外部寫入；模型要求跳出沙盒（`permission check failed for unsandboxed`，`command(*)` allow 不涵蓋，靠 headless 預設拒絕）。
+- **沒擋（讀取）**：D 槽一般資料夾可讀（含 D 槽根目錄新建資料夾、經 junction 讀）。測過的使用者資料夾假檔讀不到，但根目錄名稱可列出。**不提供只限工作區的讀取隔離**；D 槽上其他專案資料推定可被沙盒命令讀到，未逐一實測。
+- **副作用**：工作區 W 的 ACL 執行前後相同；但測試工作區上層的 `D:\K-harness`、`.runtime`、`.runtime\tests` 各留下一條非繼承的能力 SID `S-1-15-3-1024-132000074-…:(S,X)`（只能同步與穿越），推定由 agy 沙盒加入、跑完未移除。未移除，來源與日後是否清除未證實。
+- **實用限制**：沙盒命令沒有網路（pip／npm 安裝推論會失敗，未直接測）、不能連本機服務、只能寫工作區、不能寫桌面。GPU／CUDA、長工作、正式 K 啟動路徑（MCP、project grants）未驗證。
+- Sol 第一次檢查指出刪除失敗不是明確拒絕、例外只記外層、讀取與網路結論過廣、junction 只測新建、缺陰性對照；第三輪逐項補證。第二次檢查判定主要缺口已解決，再收窄三處措辭（使用者資料夾讀取只限測過的假檔、網路只限沙盒命令、上層 ACL 只是可能）。
+
+Opus 判讀：技術上可以做出「工作區寫入＋沙盒內可跑命令」的中間模式（補 `LOCALAPPDATA` 指向隔離 HOME、加 `--sandbox`、allow `command(*)`、移除 `command(*)`／`unsandboxed(*)` deny）。取捨是：寫入、網路與登錄檔被擋，但讀取範圍會從工作區擴大到 D 槽一般資料；這是權限變更，**待本人決定，本批不實作**。若採用，上線前需在正式 K 啟動路徑重跑同一組配對，並另驗實際工作（例如 CPU 轉錄）能否在沙盒內完成。
