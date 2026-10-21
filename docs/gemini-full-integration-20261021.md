@@ -63,4 +63,10 @@
 
 ## 部署狀態
 
-未部署、未 push。與前批 `gemini-main-fit` 一起由本人在 K 外以 Codex 6.1 Sol 執行 `Update-K.ps1`（指令見交接）。
+2026-10-22 **00:23:02（臺灣時間，UTC+08:00）已部署南區正式 K**，包含前批 `gemini-main-fit` 提示精簡。部署前已確認無 K 桌面、背景伺服器及 K 帶出的 codex／claude／agy 子程序，伺服器連接埠未開啟；原始碼位於 `main`、工作樹乾淨，HEAD 與指定版本一致。
+
+- 在 K 外執行一次 `Update-K.ps1 -Ref fb2754150a52c685d5fc412d94a931e173d61c15`，結束碼 **0**；相依安裝、介面／瀏覽器擴充／啟動器建置成功，更新器完整 `npm test` **1803/1803**（fail／cancelled／skipped／todo 全為 0，75,534.9149 ms）。本輪未另跑 `test:ui`，沿用本批已驗收的 **49/49**，不冒稱更新器重跑 UI 測試。
+- `.local/runtime.json` 讀回 `version = fb2754150a52c685d5fc412d94a931e173d61c15`；`previous = D:\K-harness\.runtime\isolation-pilot\sandboxie-candidate-3b6c43ee\releases\before-1792599782594`，退版程式目錄存在，保存的前版為 `c159d253c645f16590f0242e16d97ba4edf49417`。退版共保留三份。
+- 無失敗；建置仍有大 chunk 與擴充 outDir 警告，未略過測試或強制套用。更新器原生輸出由執行工具回傳；本機讀回摘要在 `.runtime/archive/gemini-deploy-20261022/readback.json`，`updater.log` 只有 PowerShell 包裝層紀錄，不含原生建置／測試全文。
+- 推送前檢查：`origin/main..main` 既有 12 個 commit 及本輪文件變更僅含來源、測試、規則與工程紀錄；逐 commit 掃描新增內容，未發現真實金鑰／權杖／憑證、`.env` 或本機私人資料。兩處 `Authorization` 命中皆為測試替身 `Bearer fake`，已核對；高熵字串掃描無命中。
+- 部署後 K 保持關閉，由本人啟動；未做啟動後功能實測、未更新東區、未改程式碼或移動 tag。本輪另作文件 commit 後 push／讀回 GitHub；最終遠端 SHA 以 `.runtime/archive/gemini-deploy-20261022/publish-readback.json` 本機讀回為準（不提交該檔）。
