@@ -70,6 +70,7 @@ export function createUnifiedController(options) {
   const getGemini = () =>
     (gemini ??= geminiFactory({
       ...options,
+      workerCatalog,
       onChange() {
         if (active === gemini) changed();
       }

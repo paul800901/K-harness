@@ -34,7 +34,8 @@ function ModelMenu({models, selected, disabled, isAvailable, onChange}) {
   const grouped = new Map([...families, '其他'].map(name => [name, []]));
   for (const item of models) {
     const family =
-      families.find(name => new RegExp(`\\b${name}(?![a-z])`, 'i').test(`${item.model} ${displayModel(item)}`)) ?? '其他';
+      families.find(name => new RegExp(`\\b${name}(?![a-z])`, 'i').test(`${item.model} ${displayModel(item)}`)) ??
+      '其他';
     grouped.get(family).push(item);
   }
   const version = item => (displayModel(item).match(/\d+(?:[.-]\d+)*/)?.[0] ?? '').split(/[.-]/).map(Number);
@@ -320,10 +321,7 @@ export function ModelPicker({
     geminiGateway: provider === 'claude' || catalogGeminiGateway,
     claudeGateway: catalogClaudeGateway
   });
-  const invalidWorker =
-    provider !== 'gemini' &&
-    workerPolicy.model !== 'auto' &&
-    !workerModels.some(item => item.model === workerPolicy.model);
+  const invalidWorker = workerPolicy.model !== 'auto' && !workerModels.some(item => item.model === workerPolicy.model);
   const workerEfforts = workerModels.find(item => item.model === workerPolicy.model)?.supportedReasoningEfforts ?? [];
   const inheritedEffort =
     mode === 'switch' && supportedEfforts.some(item => item.reasoningEffort === currentEffort)
@@ -532,7 +530,7 @@ export function ModelPicker({
                 <p className="model-routing-note">從下一則訊息開始使用；不會立即執行工作。</p>
               )}
             </>
-          ) : provider === 'gemini' ? null : (
+          ) : (
             <details className="worker-settings">
               <summary aria-label="子代理設定">
                 <span>子代理</span>

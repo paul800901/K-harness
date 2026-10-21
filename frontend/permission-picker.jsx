@@ -84,8 +84,9 @@ export const geminiPermissionModes = {
   'workspace-write': {
     name: '工作區編輯',
     Icon: Hand,
-    description: '允許工作區內寫檔；命令與工作區外寫入直接拒絕，不會跳出核准。',
-    summary: '僅允許工作區內寫檔'
+    description:
+      '允許工作區內寫檔，命令在沙盒內執行（只能寫工作區、不能連網）；工作區外寫入直接拒絕，不會跳出核准。沙盒內命令仍可讀取工作區外的一般資料夾。',
+    summary: '工作區內寫檔與沙盒命令'
   },
   'danger-full-access': {
     name: '完整存取權',

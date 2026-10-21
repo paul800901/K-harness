@@ -1,7 +1,17 @@
 import {createWorkActivity, geminiWorkActivity} from './work-activity.mjs';
+import {workerNoticeKey, workerNoticeCurrent, workerNoticeText, workerNeedsAttention} from './worker-watch.mjs';
+import {
+  mergeGeminiHandoff,
+  consumeGeminiHandoff,
+  consumeGeminiWaitResult,
+  geminiWaitingJobs,
+  geminiHandoffText
+} from './gemini-handoff.mjs';
+import {lunaResult} from './luna-bridge.mjs';
+import {approvalRequest} from './desktop-permissions.mjs';
 import {quotaZeroUntil, quotaZeroRecheckDue} from './quota-zero.mjs';
 import path from 'node:path';
-import {readFile} from 'node:fs/promises';
+import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {geminiProjectMcp} from './gemini-project-mcp.mjs';
@@ -10,6 +20,7 @@ import {createGeminiLogin} from './gemini-login.mjs';
 import {
   geminiExecutable,
   geminiEnvironment,
+  geminiAccessArgs,
   geminiSettings,
   geminiMcpConfig,
   geminiStream,
@@ -25,7 +36,7 @@ import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {validateWorkspace, listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
 import {sessionAttachment, sessionAttachmentSource, sessionArtifact, workspaceGuidance} from './session-workspace.mjs';
-import {normalizeWorkerPolicy, GEMINI_MAIN_ROLE_GUIDANCE} from './worker-policy.mjs';
+import {normalizeWorkerPolicy, workerPolicyConfig, MODEL_ROLE_GUIDANCE} from './worker-policy.mjs';
 import {browserSessionKey} from './browser-mcp-config.mjs';
 
 const sessionId = id => typeof id === 'string' && /^gemini-[0-9a-f-]{36}$/iu.test(id);
@@ -39,6 +50,9 @@ const now = () => new Date().toISOString();
 const quota = {status: 'unavailable', windows: [], note: '尚未取得 Antigravity 官方額度。'};
 // Native view_file verified on these catalog models; never infer a future model's support.
 const mediaModels = new Set(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro']);
+// agy 1.4.3 expands a rule's @[label](path) include (live probe), so one shared file reaches every room's HOME.
+const memoryGuidance = file =>
+  `長期記憶：本人糾正做法或要求記住時，先寫出要記的規則並取得本人同意再寫入。只適用本工作區的寫進工作區的 AGENTS.md；跨工作區都適用的寫進 ${file}（各 Gemini 聊天室都會讀到）。不要寫進本聊天室的 ~/.gemini/config，那只屬於這個聊天室。本人也可輸入 /learn。`;
 
 // Every choice comes from `agy models`, including its supported effort variants.
 export function geminiModelsFrom(names) {
@@ -84,7 +98,10 @@ export function createGeminiController({
   onChange = () => {},
   timeoutMs = 0,
   browserConfig = async () => null,
-  closeBrowser = async () => {}
+  closeBrowser = async () => {},
+  bridgeFactory = null,
+  gatewayFactory,
+  workerCatalog
 } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw Error('Gemini timeoutMs 無效。');
   const login = loginFactory({cwd: root, executable, env}),
@@ -181,6 +198,8 @@ export function createGeminiController({
       previousWorkspaces: state.previousWorkspaces,
       previousArtifacts: state.previousArtifacts,
       accessMode: state.accessMode,
+      workerPolicy: state.workerPolicy,
+      workerNotifications,
       goal: state.goal,
       messages: state.messages,
       tools: state.tools,
@@ -203,6 +222,324 @@ export function createGeminiController({
   const idle = () => {
     if (state.busy || opening || unresolvedPid) throw Error('請先結束或查明目前 Gemini 工作。');
   };
+  const sharedRules = path.join(root, 'agent-home', 'gemini', 'shared', 'learned-rules.md');
+  const insideWorkspace = absolute => {
+    const relative = path.relative(state.workspace, absolute);
+    return relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+  };
+
+  // K workers (k_luna) for this room, as in the Claude main entry: the bridge owns
+  // worker execution; this room records them, delivers each notice at most once and
+  // relays worker approvals. Settings never change while a worker is unsettled.
+  let bridge = null,
+    bridgeInstance = null,
+    bridgeInitPromise = null,
+    bridgeEpoch = 0,
+    gateway = null,
+    gatewayKey = null,
+    gatewayServer = null,
+    workerInstructions = MODEL_ROLE_GUIDANCE,
+    workerNotifications = {},
+    notifying = false,
+    geminiHandoff = null,
+    geminiIntentEpoch = 0;
+  const workerArmed = new Set(),
+    workerQueue = new Map(),
+    handoffJobs = new Set(),
+    pending = new Map();
+  const unsettledWorkers = async () =>
+    !!bridgeInstance && (await bridgeInstance.list()).some(r => !r.settled && r.executionUnowned !== true);
+  const clearQuestions = matches => {
+    for (const [id, item] of pending) {
+      if (matches && !matches(item)) continue;
+      item.resolve(item.cancelValue);
+      pending.delete(id);
+      state.questions = state.questions.filter(q => q.id !== id);
+    }
+  };
+  function workerApproval(request, item) {
+    if (request.method === 'k/claude/requestApproval' && (request.params?.parentId !== state.threadId || opening))
+      return undefined;
+    const approval = approvalRequest(request, item);
+    if (!approval) return undefined;
+    const id = randomUUID();
+    return new Promise(resolve => {
+      pending.set(id, {
+        resolve,
+        cancelValue: approval.cancel?.() ?? {decision: 'cancel'},
+        approval,
+        workerRequestId: request.method === 'k/claude/requestApproval' ? request.params?.requestId : undefined
+      });
+      const {reply, cancel, ...display} = approval;
+      state.questions.push({
+        id,
+        kind: 'approval',
+        threadId: state.threadId,
+        isSubagent: true,
+        ...display,
+        provider: 'codex-luna'
+      });
+      changed();
+    });
+  }
+  const scheduleWorkers = () =>
+    queueMicrotask(() => {
+      void deliverWorkers();
+    });
+  const recordWorker = item => {
+    if (!item || item.parentId !== state.threadId) return;
+    const index = state.workers.findIndex(w => w.requestId === item.requestId);
+    if (index < 0) state.workers.push(item);
+    else state.workers[index] = item;
+    const before = state.artifacts.length;
+    for (const name of item.outputFiles ?? []) {
+      if (typeof name !== 'string') continue;
+      const absolute = path.resolve(state.workspace, name);
+      const relative = path.relative(state.workspace, absolute).replaceAll('\\', '/');
+      if (insideWorkspace(absolute) && !state.artifacts.includes(relative)) state.artifacts.push(relative);
+    }
+    if (state.artifacts.length !== before) void save().catch(() => {});
+    const queued = workerQueue.get(item.requestId);
+    if (queued && !workerNoticeCurrent(queued, item)) workerQueue.delete(item.requestId);
+    if (
+      workerArmed.has(item.requestId) &&
+      !workerNotifications[workerNoticeKey(item)] &&
+      (item.settled || workerNeedsAttention(item)) &&
+      !opening
+    ) {
+      workerQueue.set(item.requestId, structuredClone(item));
+      scheduleWorkers();
+    }
+    changed();
+  };
+  const recordGeminiHandoff = event => {
+    if (
+      !event ||
+      event.parentId !== state.threadId ||
+      opening ||
+      ['interrupted', 'offline', 'uncertain'].includes(state.status)
+    )
+      return;
+    const requestIds = (event.requestIds ?? []).filter(id => handoffJobs.has(id)),
+      queryIds = event.queryIds ?? [];
+    if (!requestIds.length && !queryIds.length) return;
+    for (const n of state.notices) if (n.kind === 'gemini-handoff') n.resolved = true;
+    geminiHandoff = mergeGeminiHandoff(geminiHandoff, {...event, requestIds, queryIds, epoch: geminiIntentEpoch});
+    if (['ready', 'blocked'].includes(event.status)) for (const id of requestIds) handoffJobs.delete(id);
+    state.notices.push({
+      id: randomUUID(),
+      kind: 'gemini-handoff',
+      level: event.status === 'blocked' ? 'warning' : 'info',
+      message:
+        event.status === 'waiting'
+          ? 'Gemini 正等待現有工作自然結束，再查核帳號額度；未重播原工單。'
+          : event.status === 'ready'
+            ? 'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。'
+            : `Gemini 帳號交接未完成：${event.reason ?? '官方額度或停止狀態未確認。'}`,
+      createdAt: now()
+    });
+    if (event.status !== 'waiting') scheduleWorkers();
+    changed();
+  };
+  const cancelGeminiHandoff = () => {
+    geminiIntentEpoch++;
+    geminiHandoff = null;
+    handoffJobs.clear();
+    bridgeInstance?.cancelGeminiHandoff?.();
+    for (const n of state.notices) if (n.kind === 'gemini-handoff') n.resolved = true;
+  };
+  // A notice is a new native turn on this conversation. It is marked before sending;
+  // a send that may have reached agy is never repeated.
+  async function deliverWorkers() {
+    const handoff =
+      ['ready', 'blocked'].includes(geminiHandoff?.status) && geminiHandoff.epoch === geminiIntentEpoch
+        ? geminiHandoff
+        : null;
+    if (
+      notifying ||
+      !record ||
+      state.busy ||
+      opening ||
+      unresolvedPid ||
+      !['completed', 'ready'].includes(state.status) ||
+      (!workerQueue.size && !handoff)
+    )
+      return;
+    for (const [id, queued] of workerQueue)
+      if (
+        !workerNoticeCurrent(
+          queued,
+          state.workers.find(w => w.requestId === id)
+        )
+      )
+        workerQueue.delete(id);
+    const waiting = geminiWaitingJobs(geminiHandoff),
+      batch = [...workerQueue.values()].filter(row => !waiting.has(row.requestId));
+    if (!batch.length && !handoff) return;
+    // The account handoff waits for this room's own K workers to end, as in the Claude entry.
+    if (handoff && state.workers.some(w => w.settled !== true && w.provider !== 'gemini-native')) return;
+    notifying = true;
+    let attempted = false,
+      notSent = false;
+    try {
+      for (const row of batch) workerQueue.delete(row.requestId);
+      for (const row of batch) if (row.settled) workerArmed.delete(row.requestId);
+      const results = await Promise.all(batch.map(lunaResult));
+      for (const row of batch) workerNotifications[workerNoticeKey(row)] = 'delivery-attempted';
+      await save();
+      const text =
+        (handoff ? geminiHandoffText(handoff) : '') +
+        (batch.length ? workerNoticeText(batch) + JSON.stringify(results) : '');
+      const summary = batch.length
+        ? `K 子代理${batch.some(row => !row.settled) ? '狀態待確認' : '工作完成'}：${batch.map(row => row.requestId).join('、')}`
+        : 'Gemini 帳號排程通知';
+      attempted = true;
+      await api.send({text}, null, {kind: 'worker-completion', summary});
+    } catch (error) {
+      notSent = !attempted || error.notSent === true;
+      if (notSent) {
+        for (const row of batch) {
+          delete workerNotifications[workerNoticeKey(row)];
+          if (
+            workerNoticeCurrent(
+              row,
+              state.workers.find(w => w.requestId === row.requestId)
+            )
+          )
+            workerQueue.set(row.requestId, row);
+        }
+        await save().catch(() => {});
+        // A user turn that won the race delivers this notice when it ends.
+        if (!state.busy) state.error = `K 子代理通知尚未送出；可用 luna_inspect 查詢原 requestId：${error.message}`;
+      } else state.error = `K 子代理通知未確認；未重送工作或通知：${error.message}`;
+    } finally {
+      if (handoff && attempted && !notSent) {
+        geminiHandoff = consumeGeminiHandoff(geminiHandoff, handoff);
+        if (geminiHandoff?.status !== 'ready')
+          for (const n of state.notices) if (n.kind === 'gemini-handoff' && n.level === 'info') n.resolved = true;
+      }
+      notifying = false;
+      changed();
+    }
+  }
+  async function closeWorkers() {
+    cancelGeminiHandoff();
+    bridgeEpoch++;
+    if (bridgeInitPromise) await bridgeInitPromise.catch(() => {});
+    if (bridgeInstance) {
+      const active = bridgeInstance;
+      for (const item of await active.list()) {
+        if (item?.settled || item?.executionUnowned === true) continue;
+        await active.cancel({requestId: item.requestId});
+        const waited = await active.wait({requestId: item.requestId, timeoutMs: 10000});
+        const verified = await active.inspect({requestId: item.requestId});
+        if (verified?.executionUnowned === true) continue;
+        if (!waited?.settled || !verified?.settled) throw Error(`子代理 ${item.requestId} 的停止狀態未確認。`);
+      }
+    }
+    clearQuestions();
+    workerArmed.clear();
+    workerQueue.clear();
+    const oldGateway = gateway,
+      oldBridge = bridge;
+    gatewayKey = gatewayServer = null;
+    if (oldGateway) await oldGateway.close();
+    if (oldBridge) await oldBridge.close();
+    gateway = bridge = bridgeInstance = null;
+  }
+  // Returns the k_luna MCP endpoint for this room's current thread, workspace, access and worker policy.
+  async function configureGateway() {
+    if (!bridgeFactory) return null;
+    const key = JSON.stringify([state.threadId, state.workspace, state.accessMode, state.workerPolicy]);
+    if (gateway && gatewayKey === key) return gatewayServer;
+    if (await unsettledWorkers()) throw Error('K 子代理尚未結束；待工人完成後再變更權限、工作區或子代理設定。');
+    await closeWorkers();
+    if (workerCatalog)
+      workerInstructions = workerPolicyConfig(state.workerPolicy, {
+        models: (await workerCatalog()).models,
+        geminiGateway: true,
+        claudeGateway: true,
+        provider: 'gemini'
+      }).developer_instructions;
+    const parent = state.threadId,
+      epoch = bridgeEpoch,
+      options = {
+        root,
+        workspace: state.workspace,
+        parentId: parent,
+        accessMode: state.accessMode,
+        workerPolicy: structuredClone(state.workerPolicy)
+      };
+    const ensureBridge = () => {
+      if (bridgeInstance) return Promise.resolve(bridgeInstance);
+      if (!bridgeInitPromise)
+        bridgeInitPromise = Promise.resolve()
+          .then(() =>
+            bridgeFactory({
+              ...options,
+              onRequest: workerApproval,
+              onChange: recordWorker,
+              onGeminiHandoff: event => {
+                if (state.threadId === parent && epoch === bridgeEpoch) recordGeminiHandoff(event);
+              }
+            })
+          )
+          .then(value => (bridgeInstance = value))
+          .finally(() => {
+            bridgeInitPromise = null;
+          });
+      return bridgeInitPromise;
+    };
+    const disarm = requestId => {
+      workerArmed.delete(requestId);
+      workerQueue.delete(requestId);
+    };
+    const lazyBridge = {
+      workerPolicy: options.workerPolicy,
+      async start(args) {
+        workerArmed.add(args.requestId);
+        handoffJobs.add(args.requestId);
+        return (await ensureBridge()).start(args);
+      },
+      inspect: args => ensureBridge().then(value => value.inspect(args)),
+      reconcile: args => ensureBridge().then(value => value.reconcile(args)),
+      wait: args => ensureBridge().then(value => value.wait(args)),
+      async cancel(args) {
+        disarm(args.requestId);
+        const result = await (await ensureBridge()).cancel(args);
+        clearQuestions(item => item.workerRequestId === args.requestId);
+        changed();
+        return result;
+      },
+      // The gateway acknowledges only after the model-facing result is prepared successfully.
+      resultReady(args, result) {
+        geminiHandoff = consumeGeminiWaitResult(geminiHandoff, args.requestId, result);
+        if (result?.settled) disarm(args.requestId);
+        else if (workerNeedsAttention(result ?? {})) {
+          workerNotifications[workerNoticeKey(result)] = 'delivery-attempted';
+          const queued = workerQueue.get(args.requestId);
+          if (queued && workerNoticeKey(queued) === workerNoticeKey(result)) workerQueue.delete(args.requestId);
+          void save().catch(() => {});
+        }
+      },
+      list: args => ensureBridge().then(value => value.list(args)),
+      accounts: () => ensureBridge().then(value => value.accounts()),
+      async close() {
+        const value = bridgeInstance ?? (bridgeInitPromise ? await bridgeInitPromise.catch(() => null) : null);
+        if (value) {
+          await value.close();
+          if (bridgeInstance === value) bridgeInstance = null;
+        }
+      }
+    };
+    const factory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
+    gateway = await factory({bridge: lazyBridge});
+    bridge = lazyBridge;
+    gatewayKey = key;
+    const server = gateway.mcpConfig?.mcpServers?.k_luna;
+    gatewayServer = server ? {url: server.url, headers: server.headers} : null;
+    return gatewayServer;
+  }
   function choose(catalog, model, effort) {
     const choice = catalog.find(item => item.model === model);
     if (!choice) throw Error('目前 agy 未提供指定 Gemini 模型；未換模。');
@@ -212,6 +549,8 @@ export function createGeminiController({
   }
   async function prepare() {
     if (!binary) throw Error('找不到 agy，請安裝 Antigravity CLI 並登入。');
+    // First, so a refused settings change (a K worker still running) touches nothing else.
+    const lunaServer = await configureGateway();
     if (browserMode !== state.accessMode) {
       await resetBrowser();
       browserServer =
@@ -230,15 +569,24 @@ export function createGeminiController({
       .map(([, value]) => value);
     const googleOps = await googleOpsMcp(state.workspace, {root});
     const projectMcp = await geminiProjectMcp(root, state.workspace, state.accessMode);
-    const settings = geminiSettings(state.workspace, state.accessMode, temps, browserServer, googleOps, projectMcp);
+    const settings = geminiSettings(state.workspace, state.accessMode, temps, browserServer, googleOps, projectMcp, {
+      writable: [sharedRules],
+      gateway: !!lunaServer
+    });
+    // The sandbox's AppContainer data lives under this HOME's LOCALAPPDATA (geminiEnvironment).
+    await mkdir(path.join(home(), 'AppData', 'Local'), {recursive: true});
+    await mkdir(path.dirname(sharedRules), {recursive: true});
+    await writeFile(sharedRules, '# K 共用學習規則（各 Gemini 聊天室共用）\n', {flag: 'wx'}).catch(error => {
+      if (error.code !== 'EEXIST') throw error;
+    });
     await atomicWrite(
       path.join(home(), '.gemini/config/mcp_config.json'),
-      JSON.stringify(geminiMcpConfig(browserServer, googleOps, projectMcp), null, 2)
+      JSON.stringify(geminiMcpConfig(browserServer, googleOps, projectMcp, lunaServer), null, 2)
     );
     await atomicWrite(path.join(home(), '.gemini/antigravity-cli/settings.json'), JSON.stringify(settings, null, 2));
     await atomicWrite(
       path.join(home(), '.gemini/config/rules/k-model-roles.md'),
-      `---\ntrigger: always_on\n---\n${GEMINI_MAIN_ROLE_GUIDANCE}\n此聊天室未開放斜線指令（如 /learn、/compact），不要建議本人使用。\n${geminiToolGuidance(state.accessMode)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}`
+      `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
     );
     state.browserAccess = {
       enabled: !!browserServer,
@@ -289,6 +637,8 @@ export function createGeminiController({
       }
     },
     async workers() {
+      if (bridgeInstance) for (const item of await bridgeInstance.list()) recordWorker(item);
+      if (geminiHandoff?.status === 'ready') scheduleWorkers();
       return structuredClone(state.workers);
     },
     async directories(parent = state.workspace) {
@@ -298,6 +648,8 @@ export function createGeminiController({
       idle();
       const workspace = await validateWorkspace(requested);
       await persist;
+      if (await unsettledWorkers()) throw Error('K 子代理尚未結束；待工人完成後再切換工作區。');
+      await closeWorkers();
       await resetBrowser();
       state.workspace = workspace;
       state.threadId = null;
@@ -313,7 +665,7 @@ export function createGeminiController({
       return {workspace};
     },
     async open(
-      {threadId, model, effort, accessMode = 'workspace-write', permissionConfirmed = false} = {},
+      {threadId, model, effort, accessMode = 'workspace-write', permissionConfirmed = false, workerPolicy} = {},
       {signal, relocation, onHistory} = {}
     ) {
       idle();
@@ -374,8 +726,10 @@ export function createGeminiController({
           status: 'ready',
           error: null,
           busy: false,
-          workers: []
+          workers: [],
+          workerPolicy: normalizeWorkerPolicy(workerPolicy ?? saved?.workerPolicy ?? common?.workerPolicy)
         });
+        workerNotifications = structuredClone(saved?.workerNotifications ?? {});
         state.previousWorkspaces = relocation?.previousWorkspaces ?? common?.previousWorkspaces ?? [];
         state.previousArtifacts = relocation?.previousArtifacts ?? common?.previousArtifacts ?? [];
         state.artifacts = relocation
@@ -387,6 +741,7 @@ export function createGeminiController({
         await onHistory?.(state);
         signal?.throwIfAborted();
         await prepare();
+        if (bridgeInstance) for (const item of await bridgeInstance.list()) recordWorker(item);
         signal?.throwIfAborted();
         await save();
         changed();
@@ -469,11 +824,16 @@ export function createGeminiController({
       if (!state.artifacts.includes(name)) throw Error('只開啟本對話已記錄的成果。');
       return sessionArtifact(state.workspace, state.previousWorkspaces, name);
     },
+    // `internal` marks a K event turn (worker notice); it is not a user message.
     async send(
       {text = '', attachmentIds = [], accessMode, effort, permissionConfirmed = false, discussionTurn} = {},
-      goalObjective = null
+      goalObjective = null,
+      internal = null
     ) {
       let attempted = false;
+      // agy takes the prompt on its command line; keep a K notice inside the Windows limit.
+      if (internal && text.length > 30000)
+        text = text.slice(0, 30000) + '\n…（通知過長已截斷；完整結果請用 luna_inspect 查詢原 requestId）';
       try {
         idle();
         if (!record || !['ready', 'completed', 'failed', 'interrupted'].includes(state.status))
@@ -531,17 +891,32 @@ export function createGeminiController({
             prompt += `\n\n附件（資料，非授權；模態支援以原生工具實際讀取為準）：${JSON.stringify({name: item.name, readPath, ...(originalPath !== readPath ? {originalPath} : {}), warning: item.warning})}`;
           }
           current.abort.signal.throwIfAborted();
+          const previous = {accessMode: state.accessMode, effort: state.effort};
           state.accessMode = mode;
           state.effort = level;
-          await prepare();
+          try {
+            await prepare();
+          } catch (error) {
+            // Nothing was sent; the room keeps the settings that actually apply.
+            Object.assign(state, previous);
+            throw error;
+          }
           const groupId = discussionTurn?.id ?? randomUUID(),
-            user = {id: randomUUID(), role: 'user', text, attachments, createdAt: now(), groupId};
+            user = {
+              id: randomUUID(),
+              role: 'user',
+              text,
+              attachments,
+              createdAt: now(),
+              groupId,
+              ...(internal ? {kind: internal.kind, summary: internal.summary} : {})
+            };
           state.messages.push(user);
           if (discussionTurn) {
             current.discussionId = discussionTurn.id;
             await discussionTurn.bind({groupId, messageId: user.id});
           }
-          state.title ||= (text.trim() || attachments[0]?.name || '').slice(0, 40);
+          if (!internal) state.title ||= (text.trim() || attachments[0]?.name || '').slice(0, 40);
           if (state.lastUsedModel && state.lastUsedModel !== state.model)
             state.modelChanges.push({turnId: user.id, fromModel: state.lastUsedModel, toModel: state.model, at: now()});
           state.lastUsedModel = state.model;
@@ -556,10 +931,11 @@ export function createGeminiController({
             goalObjective ? '0s' : `${Math.ceil(timeoutMs / 1000)}s`,
             '--log-file',
             path.join(home(), `${user.id}.log`),
-            ...(goalObjective ? [] : ['--disable-slash-commands'])
+            // Chat stays literal (a typed /goal is not K's goal control); only the owner's /learn expands natively.
+            ...(goalObjective || (!internal && /^\/learn(\s|$)/u.test(text)) ? [] : ['--disable-slash-commands']),
+            ...geminiAccessArgs(mode)
           ];
           if (record.nativeSessionId) args.push('--conversation', record.nativeSessionId);
-          if (mode === 'danger-full-access') args.push('--dangerously-skip-permissions');
           await save();
           current.abort.signal.throwIfAborted();
           let assistant = null,
@@ -595,6 +971,23 @@ export function createGeminiController({
               });
             }
             const step = event.step_update;
+            // agy 1.4.3 reports invoke_subagent with subagent_info; the subagent lives inside this turn.
+            if (step?.step_type === 'subagent')
+              for (const info of step.subagent_info?.subagents ?? []) {
+                const requestId = `gemini-native:${info.conversation_id}`;
+                if (!nativeId(info.conversation_id) || state.workers.some(w => w.requestId === requestId)) continue;
+                state.workers.push({
+                  provider: 'gemini-native',
+                  requestId,
+                  nativeConversationId: info.conversation_id,
+                  name: info.role || info.type_name || 'agy 原生子代理',
+                  task: typeof info.initial_prompt === 'string' ? info.initial_prompt.slice(0, 2000) : '',
+                  status: 'running',
+                  settled: false,
+                  startedAt: now(),
+                  turnId: user.id
+                });
+              }
             if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string') {
               const key = step.step_index;
               responses.set(key, (responses.get(key) ?? '') + step.text_delta);
@@ -703,6 +1096,13 @@ export function createGeminiController({
                 if (state.status !== 'completed') assistant.partial = true;
               }
               for (const tool of state.tools) if (tool.status === 'running') tool.status = 'interrupted';
+              // Native subagents end with the agy process; the stream does not report each result.
+              for (const worker of state.workers)
+                if (worker.provider === 'gemini-native' && worker.turnId === user.id && !worker.settled)
+                  Object.assign(
+                    worker,
+                    unresolvedPid ? {status: 'unresolved'} : {status: 'ended', settled: true, endedAt: now()}
+                  );
               try {
                 await save(assistant ? now() : undefined);
               } catch (error) {
@@ -719,6 +1119,7 @@ export function createGeminiController({
               turn = null;
               finish();
               changed();
+              scheduleWorkers();
             }
           })();
           return {sent: true};
@@ -764,6 +1165,15 @@ export function createGeminiController({
       }
       await resetBrowser();
       if (current && state.status !== 'uncertain') state.status = 'interrupted';
+      // As in the Claude entry, stopping the room also stops its K workers.
+      try {
+        await closeWorkers();
+      } catch (error) {
+        state.status = 'uncertain';
+        state.error = error.message;
+        changed();
+        throw error;
+      }
       changed();
       return {stopped: true};
     },
@@ -794,8 +1204,16 @@ export function createGeminiController({
         throw Error('請輸入完整目標（最多 32000 字元）。');
       return api.send({text: objective.trim()}, objective.trim());
     },
-    async answer() {
-      throw Error('Gemini 此接法不提供互動核准；需要核准的操作由 agy 拒絕。');
+    // Only K worker approvals reach here; agy itself denies what it cannot ask in headless mode.
+    async answer({id, accept} = {}) {
+      const item = pending.get(id);
+      if (!item) throw Error('核准請求已失效或已回答；Gemini 本身的操作不提供互動核准。');
+      if (typeof accept !== 'boolean') throw Error('核准狀態無效。');
+      pending.delete(id);
+      state.questions = state.questions.filter(q => q.id !== id);
+      item.resolve(item.approval.reply(accept));
+      changed();
+      return {answered: true};
     },
     async fork() {
       throw Error('Gemini 尚未接入原生分支；可明確交接到其他供應商的新對話。');

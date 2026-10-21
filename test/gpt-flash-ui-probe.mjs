@@ -119,7 +119,13 @@ try {
   assert.equal(await worker.locator('.step-hint').count(), 0);
   await page.evaluate(() => window.renderPicker(true, {currentModel: 'gemini-3.8-flash'}));
   await page.waitForFunction(() => document.querySelector('[aria-label="主代理模型"]')?.textContent.includes('Gemini'));
-  assert.equal(await worker.count(), 0);
+  // 2026-10-21: the Gemini main entry delegates every provider through k_luna, like the Claude entry.
+  await worker.waitFor();
+  await worker.locator('summary').click();
+  assert.deepEqual(
+    new Set(await workerModel.locator('option').evaluateAll(items => items.map(item => item.value))),
+    new Set(['auto', 'gpt-6-luna', 'gpt-6.1-sol', 'claude-opus-5-5', 'gemini-3.8-flash'])
+  );
   assert.equal(
     await page.getByText('Gemini 使用 Antigravity 原生核心；目前未接入 K 的跨供應商子代理。', {exact: true}).count(),
     0
@@ -134,7 +140,7 @@ try {
         'selected Flash policy returned without a GPT fallback',
         'false catalog flag hides Flash even when catalog model row exists',
         'saved Sol/high stays selected',
-        'Gemini has no reverse-delegation hint'
+        'Gemini main offers GPT, Claude and Gemini K workers'
       ]
     })
   );

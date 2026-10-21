@@ -5,7 +5,7 @@ export function availableWorkerModels(
   models = [],
   {provider = 'codex', geminiGateway = false, claudeGateway = false} = {}
 ) {
-  if (provider === 'gemini') return [];
+  if (provider === 'gemini') geminiGateway = claudeGateway = true;
   return models.filter(
     row =>
       row.hidden !== true &&
@@ -16,12 +16,7 @@ export function availableWorkerModels(
   );
 }
 
-// The Gemini main entry cannot delegate; keep its guidance scoped to that capability.
-export const GEMINI_MAIN_ROLE_GUIDANCE = `本聊天室不能派工。
-需要第二意見或程式審查時，由本人另開 GPT／Claude 聊天室。
-以上只供 AI 內部安排工作，不向使用者主動重述分工。`;
-
-// Shared by the Codex and Claude native main-agent entry points.
+// One user preference text shared by the three native main-agent entry points.
 export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-04）：
 以下只供 AI 內部選模與安排工作，不向使用者主動重述分工，不新增分工／審核提醒、彈窗或確認流程；原本必要的登入、核准與工作失敗訊息不變。
 這是本人的使用偏好，不是模型能力排名或硬性路由。當輪明確指定、已保存的手動模型／推理設定優先；不自行切換目前主代理，不強制派工。只使用已接通工具與官方目錄實際提供的模型、推理程度；角色不代表已有跨供應商派工能力。
@@ -35,9 +30,7 @@ export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-04）：
 - GPT-6 Luna：除非使用者明確指定，僅在小任務對規則遵守有極高要求時選用，不再當一般預設工人；模型 ID 以官方目錄為準。
 - 主代理／子代理是工作角色，不是能力高低。日常主代理可按需把有範圍的判斷、盲點及第二意見交給 Opus 等較強模型；交接保留需求、必要原文與程式證據、已知／未知和限制，不只給自己的結論。這不保證總 Token、額度或費用更少，也不強制每項工作找高階模型。
 - Opus 5.5 要複查 Astra／GPT 寫的程式是否過度工程化：找不必要架構、重複檢查、無用備援、多餘狀態或設定；採最小完整解，不把小修做成新系統。刪減需核對真實用途，保留必要原生權限、核准與防止未知工作重播。
-- GPT-6.1 Sol 寫的程式碼，最後必須由真正的 Opus 5.5 審核（正確性、錯誤處理、過度工程化）；自查、測試或其他模型不能替代。沒有可用的 Opus 5.5 審查管道時，在工程交接紀錄標示「待 Opus 5.5 審核」，保留給 Opus 聊天室的交接內容，不額外提醒使用者，不宣稱已完成審核，也不自行新增派工管道。審核必須做，意見仍依證據判斷，不是一律照改。
-- 不需要 Gemini 主代理自動派 GPT／Claude；Gemini 做完後，由使用者另開 GPT／Claude 聊天室看成果，不把反向派工列成缺口。
-- Gemini 帳號採逐一使用：除使用者明確指定外，持續使用目前帳號，不平均分散、不每項工作輪換，也不因另一帳號重置就切回。官方查詢確認目前帳號的 5 小時或每週額度已耗盡時，從目前帳號的下一個已保存位置往後循環查詢，選第一個官方確認可用帳號接後續工作（例如第四→第五→第一），不能每次從第一個重選；5 小時用完即可換，不必等週額度耗盡，也不強制等待該時段恢復。登入異常、權限拒絕、一般速率限制、網路錯誤、逾時或未知快照都不是已確認額度耗盡；成功官方回報的明確零額度，在其有效重設時間前保留為有日期的證據，不反覆查詢或選為自動派工候選。全數帳號確認耗盡後，最早有效重設到期時完整重查全部帳號一次；人工明確更新全部可例外。只用既有 K 帳號工具，不自行改原生登入檔、不使用第三方 OAuth 外掛；不同帳號不並行。切換前等全部 Gemini 工作停止並核對已有成果，只交接剩餘工作、不重播未知結果。只有全數帳號都由官方確認無可用額度，才可依使用者已明確授權的備援模型接手剩餘工作；沒有該授權就等待或回報，不換模型／計費。一般新工單省略 accountId，K 自行核對目前共用帳號；不要記住舊帳號再逐房沿用。明確傳入 accountId 仍需核對，帳號不符不會暗中派到別的帳號或切回舊帳號；K 通知就緒後核對剩餘工作再接手。gemini_accounts 回 scheduling.waiting 且 notificationRegistered 時，K 已接管等待，主代理應結束本回合或做其他工作，不輪詢或僅因等待把目標標為 blocked；queryIds 不是工單，不能用作 handoffFrom。本人在設定頁手動切換不受此順序限制。這是用量管理偏好，不保證降低官方帳號風險。
+- GPT-6.1 Sol 寫的程式碼，最後必須由真正的 Opus 5.5 審核（正確性、錯誤處理、過度工程化）；自查、測試或其他模型不能替代。沒有可用的 Opus 5.5 審查管道時，在工程交接紀錄標示「待 Opus 5.5 審核」，保留給 Opus 聊天室的交接內容，不額外提醒使用者，不宣稱已完成審核，也不自行新增派工管道。審核必須做，意見仍依證據判斷，不是一律照改。- Gemini 帳號採逐一使用：除使用者明確指定外，持續使用目前帳號，不平均分散、不每項工作輪換，也不因另一帳號重置就切回。官方查詢確認目前帳號的 5 小時或每週額度已耗盡時，從目前帳號的下一個已保存位置往後循環查詢，選第一個官方確認可用帳號接後續工作（例如第四→第五→第一），不能每次從第一個重選；5 小時用完即可換，不必等週額度耗盡，也不強制等待該時段恢復。登入異常、權限拒絕、一般速率限制、網路錯誤、逾時或未知快照都不是已確認額度耗盡；成功官方回報的明確零額度，在其有效重設時間前保留為有日期的證據，不反覆查詢或選為自動派工候選。全數帳號確認耗盡後，最早有效重設到期時完整重查全部帳號一次；人工明確更新全部可例外。只用既有 K 帳號工具，不自行改原生登入檔、不使用第三方 OAuth 外掛；不同帳號不並行。切換前等全部 Gemini 工作停止並核對已有成果，只交接剩餘工作、不重播未知結果。只有全數帳號都由官方確認無可用額度，才可依使用者已明確授權的備援模型接手剩餘工作；沒有該授權就等待或回報，不換模型／計費。一般新工單省略 accountId，K 自行核對目前共用帳號；不要記住舊帳號再逐房沿用。明確傳入 accountId 仍需核對，帳號不符不會暗中派到別的帳號或切回舊帳號；K 通知就緒後核對剩餘工作再接手。gemini_accounts 回 scheduling.waiting 且 notificationRegistered 時，K 已接管等待，主代理應結束本回合或做其他工作，不輪詢或僅因等待把目標標為 blocked；queryIds 不是工單，不能用作 handoffFrom。本人在設定頁手動切換不受此順序限制。這是用量管理偏好，不保證降低官方帳號風險。
 模型偏好不增加工具、資料、登入、部署或發布授權；失敗／額度不足不暗換模型、不改 API 計費、不重播未確認工作。Gemini 帳號接手只依既有已授權流程，先確認原工人停止並檢查成果，再由新工人接剩餘工作。`;
 
 // Preserve legacy metadata for readback; new execution validates the current policy.
@@ -79,8 +72,9 @@ export function workerPolicyConfig(
   const canUseFlash = geminiGateway;
   const choices = availableWorkerModels(models, {provider, geminiGateway, claudeGateway});
   const autoChoices = choices.map(row => row.model).join(' or ');
-  const gateway = provider === 'claude' ? 'k_luna / luna_start' : 'k_gemini / gemini_start';
-  const prefix = provider === 'claude' ? 'luna' : 'gemini';
+  const luna = provider === 'claude' || provider === 'gemini';
+  const gateway = luna ? 'k_luna / luna_start' : 'k_gemini / gemini_start';
+  const prefix = luna ? 'luna' : 'gemini';
   const instructions = [
     ...(provider === 'claude' ? [] : [MODEL_ROLE_GUIDANCE]),
     'K HARNESS delegation preferences selected by the user:',
@@ -92,7 +86,9 @@ export function workerPolicyConfig(
       ? `For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`
       : provider === 'gemma'
         ? `For K-selected workers of every provider use ${gateway}. GPT workers use K's existing subscription home through this gateway, never the self-hosted inference endpoint or native spawn_agent. Self-hosted models are main-agent options, not K worker choices.`
-        : `For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
+        : provider === 'gemini'
+          ? `For K-selected workers of any provider use ${gateway}, including its inspect/list/wait/cancel tools. Native agy subagents (define_subagent / invoke_subagent) run inside the current turn on the same Gemini account; use them for short parallel subtasks, and K workers for GPT/Claude or work that must continue after this turn. K delivers each worker completion to this conversation as a later message; after starting K workers, finish the turn instead of polling.`
+          : `For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
     `目前官方可派模型與推理程度：${choices.map(m => `${m.model}: ${(m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).join(', ') || 'native default (null)'}`).join('; ')}。`,
     'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',
     ...(canUseFlash

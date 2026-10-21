@@ -186,10 +186,16 @@ test('Gemini browser native profile exposes only k_browser endpoint and AI heade
     assert.equal(config.mcpServers.k_browser.serverUrl, 'http://127.0.0.1:45678/mcp');
     assert.deepEqual(config.mcpServers.k_browser.headers, {Authorization: 'Bearer fake-test-only-secret'});
     assert.doesNotMatch(JSON.stringify(config), /humanRequest|human-token|\/state|\/action/);
-    assert.deepEqual(settings.permissions.allow, ['read_url(*)', `write_file(${f.opts.root})`, 'mcp(k_browser/*)']);
+    assert.deepEqual(settings.permissions.allow, [
+      'read_url(*)',
+      `write_file(${f.opts.root})`,
+      `write_file(${path.join(f.opts.root, 'agent-home', 'gemini', 'shared', 'learned-rules.md')})`,
+      'command(*)',
+      'mcp(k_browser/*)'
+    ]);
     assert.ok(!settings.permissions.allow.some(rule => /^mcp\((?!k_browser\/\*)/u.test(rule)));
-    for (const rule of ['command(*)', 'unsandboxed(*)', `write_file(${f.opts.env.TEMP})`])
-      assert.ok(settings.permissions.deny.includes(rule));
+    assert.ok(!settings.permissions.allow.some(rule => rule.startsWith('unsandboxed')));
+    assert.ok(settings.permissions.deny.includes(`write_file(${f.opts.env.TEMP})`));
     assert.ok(!settings.permissions.deny.includes('mcp(*)'));
   } finally {
     await c.close();

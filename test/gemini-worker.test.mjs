@@ -9,6 +9,7 @@ import path from 'node:path';
 import {
   createGeminiWorker,
   geminiSettings,
+  geminiAccessArgs,
   geminiEnvironment,
   geminiProfile,
   geminiStream,
@@ -45,9 +46,11 @@ test('Flash prompt defines behavioral boundaries without prescribing methods or 
     assert.match(prompt, /不得重送結果未確認的工作/);
     assert.match(prompt, /保留已完成成果，只停止受阻步驟並向主代理回報/);
     assert.match(prompt, /不得擅改系統設定、終止其他工作或繞過核准/);
-    assert.equal(prompt.includes('不得執行終端機指令'), mode !== 'danger-full-access');
-    assert.equal(prompt.includes('約 30 分鐘後被取消、程序退出'), mode === 'danger-full-access');
-    assert.equal(prompt.includes('不可宣稱稍後會自動接續'), mode === 'danger-full-access');
+    assert.equal(prompt.includes('不得寫檔或執行終端機指令'), mode === 'read-only');
+    assert.equal(prompt.includes('命令只在沙盒內執行'), mode === 'workspace-write');
+    assert.equal(prompt.includes('不能連網（含本機服務）或改登錄檔'), mode === 'workspace-write');
+    assert.equal(prompt.includes('約 30 分鐘後被取消、程序退出'), mode !== 'read-only');
+    assert.equal(prompt.includes('不可宣稱稍後會自動接續'), mode !== 'read-only');
     assert.match(prompt, /\.gsheet 只是連結/);
     assert.match(prompt, /先讀 metadata，再讀所需範圍/);
     assert.match(prompt, /不繞過拒絕、不把未查到當成零/);
@@ -198,8 +201,10 @@ test('Flash browser is task-owned: parallel runs use distinct homes and only the
     const settings = JSON.parse(await readFile(path.join(home, '.gemini/antigravity-cli/settings.json')));
     assert.ok(settings.permissions.allow.includes('mcp(k_browser/*)'));
     assert.ok(!settings.permissions.deny.includes('mcp(*)'));
-    assert.ok(settings.permissions.deny.includes('command(*)'));
-    assert.ok(settings.permissions.deny.includes('unsandboxed(*)'));
+    // Commands are allowed only inside the native sandbox; leaving it is never preapproved.
+    assert.ok(settings.permissions.allow.includes('command(*)'));
+    assert.ok(!settings.permissions.allow.some(rule => rule.startsWith('unsandboxed')));
+    assert.ok(launch.args.includes('--sandbox'));
     assert.equal(launch.args.includes('--dangerously-skip-permissions'), false);
     assert.equal(browser.sessions.find(s => s.input.conversationId === id).closed, 1);
   }
@@ -314,18 +319,47 @@ test('Gemini profile hashes canonical workspace and access mode; settings keep e
   const temp = path.join(root, 'temp'),
     write = geminiSettings(workspace, 'workspace-write', [temp, temp, '']);
   assert.equal(write.toolPermission, undefined);
-  assert.deepEqual(write.permissions.allow, ['read_url(*)', `write_file(${path.resolve(workspace)})`]);
-  assert.deepEqual(write.permissions.deny, [
+  // agy 1.4.3: an `unsandboxed(*)` deny also blocks sandboxed commands, so workspace-write
+  // allows commands and relies on --sandbox (geminiAccessArgs); leaving it stays headless-denied.
+  assert.deepEqual(write.permissions.allow, ['read_url(*)', `write_file(${path.resolve(workspace)})`, 'command(*)']);
+  assert.deepEqual(write.permissions.deny, ['mcp(*)', `write_file(${path.resolve(temp)})`]);
+  assert.deepEqual(geminiSettings(workspace, 'workspace-write', [root]).permissions.deny, ['mcp(*)']);
+  assert.deepEqual(geminiAccessArgs('workspace-write'), ['--sandbox']);
+  assert.deepEqual(geminiAccessArgs('read-only'), []);
+  assert.deepEqual(geminiAccessArgs('danger-full-access'), ['--dangerously-skip-permissions']);
+  // Extra writable files and the k_luna gateway only open what they name.
+  const shared = path.join(root, 'shared', 'learned-rules.md'),
+    extended = geminiSettings(
+      workspace,
+      'workspace-write',
+      [],
+      null,
+      null,
+      {allow: []},
+      {writable: [shared], gateway: true}
+    );
+  assert.deepEqual(extended.permissions.allow, [
+    'read_url(*)',
+    `write_file(${path.resolve(workspace)})`,
+    `write_file(${shared})`,
     'command(*)',
-    'unsandboxed(*)',
-    'mcp(*)',
-    `write_file(${path.resolve(temp)})`
+    'mcp(k_luna/*)'
   ]);
-  assert.deepEqual(geminiSettings(workspace, 'workspace-write', [root]).permissions.deny, [
-    'command(*)',
-    'unsandboxed(*)',
-    'mcp(*)'
-  ]);
+  assert.deepEqual(extended.permissions.deny, []);
+  const readOnlyGateway = geminiSettings(
+    workspace,
+    'read-only',
+    [],
+    null,
+    null,
+    {allow: []},
+    {writable: [shared], gateway: true}
+  );
+  assert.deepEqual(readOnlyGateway.permissions, {
+    allow: ['read_url(*)', 'mcp(k_luna/*)'],
+    deny: ['write_file(*)', 'command(*)', 'unsandboxed(*)'],
+    ask: []
+  });
   assert.deepEqual(geminiSettings(workspace, 'danger-full-access').permissions, {
     allow: ['read_url(*)'],
     deny: ['mcp(*)'],
@@ -370,6 +404,8 @@ test('Gemini environment forwards only OS basics and the private home; removes e
     PathExt: 'private',
     USERPROFILE: 'k-home',
     HOME: 'k-home',
+    // The sandbox needs LOCALAPPDATA; it points inside the private home, never the caller's value.
+    LOCALAPPDATA: path.join('k-home', 'AppData', 'Local'),
     AGY_CLI_DISABLE_AUTO_UPDATE: 'true'
   });
   assert.equal(source.AGY_CLI_DISABLE_AUTO_UPDATE, 'false'); // K child only; never alter the caller/global environment.
@@ -419,14 +455,15 @@ for (const effort of ['low', 'medium', 'high'])
     assert.equal(launch.args[launch.args.indexOf('--output-format') + 1], 'stream-json');
     assert.equal(launch.args[launch.args.indexOf('--print-timeout') + 1], '0s');
     assert.equal(launch.args.includes('--dangerously-skip-permissions'), false);
+    assert.equal(launch.args.includes('--sandbox'), false);
     assert.match(launch.args[1], /不得超過主代理的授權/);
     assert.match(launch.args[1], /不得再委派子代理、啟動背景服務/);
-    assert.match(launch.args[1], /不能跑指令/);
+    assert.match(launch.args[1], /不得寫檔或執行終端機指令/);
     assert.match(launch.args[1], /<DELEGATED_TASK>\nbounded\n<\/DELEGATED_TASK>/);
     assert.equal(launch.args[1], geminiInstruction('bounded', 'read-only'));
     assert.equal(launch.options.env.USERPROFILE, worker.home);
     assert.equal(launch.options.env.HOME, worker.home);
-    assert.equal(launch.options.env.LOCALAPPDATA, undefined);
+    assert.equal(launch.options.env.LOCALAPPDATA, path.join(worker.home, 'AppData', 'Local'));
     assert.ok(launch.args[launch.args.indexOf('--log-file') + 1].startsWith(worker.home + path.sep));
     assert.equal(launch.options.env.AGY_CLI_DISABLE_AUTO_UPDATE, 'true');
     assert.deepEqual(
@@ -436,7 +473,7 @@ for (const effort of ['low', 'medium', 'high'])
     await worker.run({task: 'different', effort});
     assert.equal(fake.calls.filter(c => c.args[0] === 'models').length, 1);
   });
-test('Gemini danger mode alone passes skip; workspace-write runs without skip under its own settings', async () => {
+test('Gemini danger mode alone passes skip; workspace-write runs sandboxed without skip under its own settings', async () => {
   const fake = fakeSpawn(),
     result = await make(fake, {accessMode: 'danger-full-access', executable: path.join(root, 'agy.exe')}).run({
       task: 'fake',
@@ -444,12 +481,14 @@ test('Gemini danger mode alone passes skip; workspace-write runs without skip un
     });
   assert.equal(result.status, 'completed');
   assert.ok(fake.calls[1].args.includes('--dangerously-skip-permissions'));
-  assert.doesNotMatch(fake.calls[1].args[1], /不能跑指令/);
+  assert.equal(fake.calls[1].args.includes('--sandbox'), false);
+  assert.doesNotMatch(fake.calls[1].args[1], /不得寫檔或執行終端機指令|命令只在沙盒內執行/);
   assert.equal(fake.calls[1].args[1], geminiInstruction('fake', 'danger-full-access'));
   const write = fakeSpawn(),
     worker = make(write, {accessMode: 'workspace-write'});
   assert.equal((await worker.run({task: 'fake', effort: 'low'})).status, 'completed');
   assert.equal(write.calls[1].args.includes('--dangerously-skip-permissions'), false);
+  assert.ok(write.calls[1].args.includes('--sandbox'));
   assert.match(write.calls[1].args[1], /只能寫入指定工作區/);
   assert.equal(write.calls[1].args[1], geminiInstruction('fake', 'workspace-write'));
   assert.deepEqual(

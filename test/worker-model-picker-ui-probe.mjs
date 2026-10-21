@@ -273,8 +273,8 @@ try {
     await provider.getByRole('button', {name: 'Gemini', exact: true}).click();
     assert.equal(
       await page.locator('.worker-settings').count(),
-      0,
-      'Gemini main-agent flow does not offer child-worker settings'
+      1,
+      'Gemini main-agent flow offers K worker settings (2026-10-21)'
     );
     await provider.getByRole('button', {name: 'GPT', exact: true}).click();
     if ((await workerDetails.getAttribute('open')) === null) await workerDetails.locator('summary').click();

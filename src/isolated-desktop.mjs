@@ -123,13 +123,30 @@ export async function startIsolatedDesktop({
               inspect,
               geminiFactory: opts => {
                 const browser = browsers.session();
-                return createGeminiController({
+                let current;
+                const lunaHostFactory = hostOptions => {
+                  const candidate = current?.state.workspace ?? selected;
+                  return codexHost(
+                    hostOptions,
+                    candidate.toLowerCase() === stateRoot.toLowerCase() ? selected : candidate
+                  );
+                };
+                current = createGeminiController({
                   ...opts,
                   env,
                   accounts: geminiAccounts,
                   browserConfig: browser.config,
-                  closeBrowser: browser.close
+                  closeBrowser: browser.close,
+                  bridgeFactory: params =>
+                    createLunaBridge({
+                      ...params,
+                      executable,
+                      hostFactory: lunaHostFactory,
+                      claudeOptions: {env, commandSpec},
+                      geminiOptions: {env, accounts: geminiAccounts, browserSession: browsers.session}
+                    })
                 });
+                return current;
               },
               codexFactory: opts => {
                 const browser = browsers.session();

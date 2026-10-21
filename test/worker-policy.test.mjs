@@ -20,6 +20,25 @@ test('Gemma routes selected GPT workers through the subscription gateway, never 
   assert.match(config.developer_instructions, /every provider use k_gemini \/ gemini_start/);
   assert.doesNotMatch(config.developer_instructions, /For GPT use native delegation/);
 });
+test('Gemini main entry delegates every provider through k_luna and may use native agy subagents in-turn', () => {
+  const config = workerPolicyConfig(undefined, {
+    provider: 'gemini',
+    geminiGateway: true,
+    claudeGateway: true,
+    models: [
+      {model: 'gpt-6.1-sol', supportedReasoningEfforts: [{reasoningEffort: 'high'}]},
+      {model: 'claude-opus-5-5', supportedReasoningEfforts: [{reasoningEffort: 'high'}]},
+      {model: 'gemini-3.8-flash', supportedReasoningEfforts: [{reasoningEffort: 'low'}]}
+    ]
+  });
+  assert.ok(config.developer_instructions.includes(MODEL_ROLE_GUIDANCE));
+  assert.match(config.developer_instructions, /any provider use k_luna \/ luna_start/);
+  assert.match(config.developer_instructions, /define_subagent \/ invoke_subagent\) run inside the current turn/);
+  assert.match(config.developer_instructions, /finish the turn instead of polling/);
+  assert.match(config.developer_instructions, /luna_list/);
+  assert.match(config.developer_instructions, /gpt-6\.1-sol: high; claude-opus-5-5: high; gemini-3\.8-flash: low/);
+  assert.doesNotMatch(config.developer_instructions, /k_gemini|native delegation/);
+});
 const gptModels = [
   {
     model: 'gpt-6.1-sol',
@@ -65,7 +84,8 @@ test('user model roles reach Codex instructions without changing manual defaults
   assert.match(MODEL_ROLE_GUIDANCE, /待 Opus 5\.5 審核/);
   assert.match(MODEL_ROLE_GUIDANCE, /不是它說了算/);
   assert.match(MODEL_ROLE_GUIDANCE, /不必要架構、重複檢查/);
-  assert.match(MODEL_ROLE_GUIDANCE, /不需要 Gemini 主代理自動派 GPT／Claude/);
+  // 2026-10-21: the Gemini main entry may delegate (native subagents and K workers); who leads is the owner's call.
+  assert.doesNotMatch(MODEL_ROLE_GUIDANCE, /不需要 Gemini 主代理自動派 GPT／Claude|反向派工/);
   assert.match(MODEL_ROLE_GUIDANCE, /角色不代表已有跨供應商派工能力/);
   assert.match(MODEL_ROLE_GUIDANCE, /已保存的手動模型／推理設定優先/);
   assert.match(MODEL_ROLE_GUIDANCE, /不增加工具、資料、登入、部署或發布授權/);
@@ -104,7 +124,8 @@ test('worker choices follow every native catalog model, route and effort rather 
     ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-future-native']
   );
   const routes = {geminiGateway: true, claudeGateway: true};
-  assert.deepEqual(availableWorkerModels(rows, {...routes, provider: 'gemini'}), []);
+  // The Gemini main entry reaches every provider through k_luna, like the Claude entry.
+  assert.deepEqual(availableWorkerModels(rows, {provider: 'gemini'}), availableWorkerModels(rows, routes));
   assert.equal(availableWorkerModels(rows, routes).length, 9);
   for (const policy of [
     {model: 'gpt-future-native', effort: 'new-effort'},

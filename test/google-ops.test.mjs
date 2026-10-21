@@ -4,7 +4,7 @@ import path from 'node:path';
 import {mkdir, mkdtemp, writeFile, readFile, symlink} from 'node:fs/promises';
 import {Client, InMemoryTransport} from '@modelcontextprotocol/client';
 import {googleOpsMcp, googleOpsTools, callGoogleOps, createGoogleOpsServer} from '../src/google-ops-mcp.mjs';
-import {geminiSettings, geminiMcpConfig} from '../src/gemini-worker.mjs';
+import {geminiSettings, geminiMcpConfig, geminiToolGuidance, geminiInstruction} from '../src/gemini-worker.mjs';
 import {createGeminiController} from '../src/gemini-controller.mjs';
 import {scratchBase} from './scratch.mjs';
 
@@ -150,7 +150,14 @@ test('Gemini Google Ops permission adds only read connector, never commands/writ
     assert.ok(settings.permissions.allow.includes('mcp(k_google_ops/*)'));
     assert.ok(!settings.permissions.deny.includes('mcp(*)'));
     assert.ok(!settings.permissions.allow.includes('mcp(*)'));
+    // The sandbox would let commands write past the connector's write_file denies, so they stay closed.
     if (access !== 'danger-full-access') assert.ok(settings.permissions.deny.includes('command(*)'));
+    assert.ok(!settings.permissions.allow.includes('command(*)'));
+    if (access === 'workspace-write') {
+      assert.match(geminiToolGuidance(access, server), /此工作區含 Google 連接器，為保護連接器程式不開放命令/);
+      assert.match(geminiInstruction('fake', access, null, server), /不得執行終端機指令/);
+      assert.match(geminiToolGuidance(access), /並在沙盒內執行命令/);
+    }
     if (access !== 'danger-full-access')
       for (const folder of ['google_ops_worker', '.venv'])
         assert.ok(settings.permissions.deny.includes(`write_file(${path.join(server.args[2], folder)})`));
