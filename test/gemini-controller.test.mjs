@@ -1055,6 +1055,10 @@ test('Gemini main keeps worker settings while a worker runs, relays worker appro
       bridge.calls.some(([kind]) => kind === 'cancel'),
       false
     );
+    // The refusal happens before the room changes: same policy, worker still listed, not failed.
+    assert.deepEqual(c.state.workerPolicy, {model: 'auto', effort: 'auto'});
+    assert.ok(c.state.workers.some(w => w.requestId === 'job-2'));
+    assert.notEqual(c.state.status, 'failed');
     // A send that would change access is refused before anything is sent, and the room keeps its mode.
     await assert.rejects(c.send({text: 'now read only', accessMode: 'read-only'}), /子代理尚未結束/);
     assert.equal(c.state.accessMode, 'workspace-write');
@@ -1078,6 +1082,116 @@ test('Gemini main keeps worker settings while a worker runs, relays worker appro
     assert.equal(w.gateways[0].closed, 1);
   } finally {
     await c.close();
+  }
+});
+
+test('a stop during notice preparation sends nothing afterwards', async () => {
+  const w = workerFixture(),
+    f = await fixture(w.options),
+    c = f.controller;
+  try {
+    await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    await w.gateways[0].bridge.start({requestId: 'job-s', model: 'gpt-6.1-sol', effort: 'high', task: 'fake'});
+    const bridge = w.bridges[0];
+    bridge.emit({...bridge.records.get('job-s'), status: 'completed', settled: true, output: 'done'});
+    await c.stop();
+    await new Promise(r => setTimeout(r, 50));
+    assert.equal(f.calls.length, 0);
+    assert.equal(
+      c.state.messages.some(m => m.kind === 'worker-completion'),
+      false
+    );
+  } finally {
+    await c.close();
+  }
+});
+
+test('an account-ready event for another account is shown, never sent into a room bound to its old account', async () => {
+  const bound = 'a'.repeat(32),
+    other = 'b'.repeat(32);
+  const accounts = {
+    acquire: async () => ({accountId: bound, release: async () => {}}),
+    inspect: async read => read(),
+    usage: async () => null
+  };
+  const w = workerFixture(),
+    f = await fixture({...w.options, accounts}),
+    c = f.controller;
+  try {
+    const {threadId} = await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    await c.send({text: 'bind the account'});
+    await finish(c);
+    await w.gateways[0].bridge.start({requestId: 'job-h', model: 'gemini-3.8-flash', effort: 'low', task: 'fake'});
+    w.bridges[0].params.onGeminiHandoff({
+      parentId: threadId,
+      status: 'ready',
+      accountId: other,
+      switched: true,
+      requestIds: ['job-h'],
+      queryIds: []
+    });
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(f.calls.length, 1);
+    const notice = c.state.notices.findLast(n => n.kind === 'gemini-handoff' && !n.resolved);
+    assert.equal(notice.level, 'warning');
+    assert.match(notice.message, /本聊天室的原生歷史綁定原帳號，不能在新帳號接續/);
+  } finally {
+    await c.close();
+  }
+});
+
+test('a K notice turn stays well inside the Windows command-line limit', async () => {
+  const f = await fixture(),
+    c = f.controller;
+  try {
+    await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    await c.send({text: '"'.repeat(20000)}, null, {kind: 'worker-completion', summary: 'fake'});
+    await finish(c);
+    const prompt = f.calls[0].args[1];
+    assert.ok(prompt.length < 14100);
+    assert.match(prompt, /通知過長已截斷；完整結果請用 luna_inspect 查詢原 requestId/);
+    assert.equal(c.state.messages[0].kind, 'worker-completion');
+  } finally {
+    await c.close();
+  }
+});
+
+test('agy native subagents left unresolved end once the stop confirms the process tree ended', async () => {
+  const sub = '55555555-5555-5555-5555-555555555555',
+    killed = [];
+  const f = await fixture({
+    killTree: async pid => killed.push(pid),
+    run: async (binary, args, params) => {
+      params.onStart(88);
+      for (const event of [
+        {event: 'init', conversation_id: '66666666-6666-6666-6666-666666666666'},
+        {
+          event: 'step_update',
+          step_update: {
+            step_type: 'subagent',
+            step_index: 2,
+            state: 'DONE',
+            subagent_info: {subagents: [{type_name: 'helper', initial_prompt: 'fake', conversation_id: sub}]}
+          }
+        }
+      ])
+        params.onChunk(Buffer.from(JSON.stringify(event) + '\n'));
+      return {code: 1, cleanupError: 'fake tree not confirmed'};
+    }
+  });
+  try {
+    await f.controller.open({model: 'gemini-3.8-flash', effort: 'low'});
+    await f.controller.send({text: 'start'});
+    await finish(f.controller);
+    assert.equal(f.controller.state.status, 'uncertain');
+    assert.equal(f.controller.state.workers[0].status, 'unresolved');
+    assert.equal(f.controller.state.workers[0].settled, false);
+    await f.controller.stop();
+    assert.deepEqual(killed, [88]);
+    assert.equal(f.controller.state.workers[0].status, 'ended');
+    assert.equal(f.controller.state.workers[0].settled, true);
+  } finally {
+    await f.controller.close();
   }
 });
 

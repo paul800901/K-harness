@@ -241,12 +241,15 @@ export function createGeminiController({
     workerInstructions = MODEL_ROLE_GUIDANCE,
     workerNotifications = {},
     notifying = false,
+    turnEnds = 0,
     geminiHandoff = null,
     geminiIntentEpoch = 0;
   const workerArmed = new Set(),
     workerQueue = new Map(),
     handoffJobs = new Set(),
     pending = new Map();
+  const gatewayKeyOf = (threadId, workspace, accessMode, workerPolicy) =>
+    JSON.stringify([threadId ?? null, workspace, accessMode, workerPolicy]);
   const unsettledWorkers = async () =>
     !!bridgeInstance && (await bridgeInstance.list()).some(r => !r.settled && r.executionUnowned !== true);
   const clearQuestions = matches => {
@@ -351,7 +354,7 @@ export function createGeminiController({
   // A notice is a new native turn on this conversation. It is marked before sending;
   // a send that may have reached agy is never repeated.
   async function deliverWorkers() {
-    const handoff =
+    let handoff =
       ['ready', 'blocked'].includes(geminiHandoff?.status) && geminiHandoff.epoch === geminiIntentEpoch
         ? geminiHandoff
         : null;
@@ -365,6 +368,27 @@ export function createGeminiController({
       (!workerQueue.size && !handoff)
     )
       return;
+    // This room's native history stays on its bound account; a ready event for another
+    // account cannot continue here, so it is shown once instead of failing a send.
+    if (
+      handoff?.status === 'ready' &&
+      record.accountId &&
+      handoff.accountId &&
+      handoff.accountId !== record.accountId
+    ) {
+      geminiHandoff = consumeGeminiHandoff(geminiHandoff, handoff);
+      for (const n of state.notices) if (n.kind === 'gemini-handoff') n.resolved = true;
+      state.notices.push({
+        id: randomUUID(),
+        kind: 'gemini-handoff',
+        level: 'warning',
+        message:
+          'Gemini 共用帳號已換成其他帳號；本聊天室的原生歷史綁定原帳號，不能在新帳號接續。剩餘工作請開新的 Gemini 聊天室交接；原工單未重播。',
+        createdAt: now()
+      });
+      handoff = null;
+      changed();
+    }
     for (const [id, queued] of workerQueue)
       if (
         !workerNoticeCurrent(
@@ -378,6 +402,11 @@ export function createGeminiController({
     if (!batch.length && !handoff) return;
     // The account handoff waits for this room's own K workers to end, as in the Claude entry.
     if (handoff && state.workers.some(w => w.settled !== true && w.provider !== 'gemini-native')) return;
+    // A stop, close or room switch during preparation ends this delivery unsent.
+    const epoch = bridgeEpoch,
+      thread = state.threadId,
+      ends = turnEnds,
+      current = () => epoch === bridgeEpoch && thread === state.threadId;
     notifying = true;
     let attempted = false,
       notSent = false;
@@ -385,8 +414,13 @@ export function createGeminiController({
       for (const row of batch) workerQueue.delete(row.requestId);
       for (const row of batch) if (row.settled) workerArmed.delete(row.requestId);
       const results = await Promise.all(batch.map(lunaResult));
+      if (!current()) return;
       for (const row of batch) workerNotifications[workerNoticeKey(row)] = 'delivery-attempted';
       await save();
+      if (!current()) {
+        for (const row of batch) delete workerNotifications[workerNoticeKey(row)];
+        return;
+      }
       const text =
         (handoff ? geminiHandoffText(handoff) : '') +
         (batch.length ? workerNoticeText(batch) + JSON.stringify(results) : '');
@@ -420,6 +454,8 @@ export function createGeminiController({
       }
       notifying = false;
       changed();
+      // A user turn that ended while this delivery held the flag could not schedule it.
+      if (notSent && turnEnds !== ends) scheduleWorkers();
     }
   }
   async function closeWorkers() {
@@ -450,7 +486,7 @@ export function createGeminiController({
   // Returns the k_luna MCP endpoint for this room's current thread, workspace, access and worker policy.
   async function configureGateway() {
     if (!bridgeFactory) return null;
-    const key = JSON.stringify([state.threadId, state.workspace, state.accessMode, state.workerPolicy]);
+    const key = gatewayKeyOf(state.threadId, state.workspace, state.accessMode, state.workerPolicy);
     if (gateway && gatewayKey === key) return gatewayServer;
     if (await unsettledWorkers()) throw Error('K 子代理尚未結束；待工人完成後再變更權限、工作區或子代理設定。');
     await closeWorkers();
@@ -697,6 +733,14 @@ export function createGeminiController({
           relocation?.workspace ?? common?.workspace ?? saved?.workspace ?? state.workspace
         );
         signal?.throwIfAborted();
+        const policy = normalizeWorkerPolicy(workerPolicy ?? saved?.workerPolicy ?? common?.workerPolicy);
+        // Refuse before touching the room: a running K worker keeps its gateway and settings.
+        if (
+          gateway &&
+          gatewayKey !== gatewayKeyOf(saved?.threadId, workspace, mode, policy) &&
+          (await unsettledWorkers())
+        )
+          throw Error('K 子代理尚未結束；待工人完成後再變更權限、工作區或子代理設定。');
         await resetBrowser();
         previousBrowserClosed = true;
         selected = choice;
@@ -727,7 +771,7 @@ export function createGeminiController({
           error: null,
           busy: false,
           workers: [],
-          workerPolicy: normalizeWorkerPolicy(workerPolicy ?? saved?.workerPolicy ?? common?.workerPolicy)
+          workerPolicy: policy
         });
         workerNotifications = structuredClone(saved?.workerNotifications ?? {});
         state.previousWorkspaces = relocation?.previousWorkspaces ?? common?.previousWorkspaces ?? [];
@@ -831,9 +875,10 @@ export function createGeminiController({
       internal = null
     ) {
       let attempted = false;
-      // agy takes the prompt on its command line; keep a K notice inside the Windows limit.
-      if (internal && text.length > 30000)
-        text = text.slice(0, 30000) + '\n…（通知過長已截斷；完整結果請用 luna_inspect 查詢原 requestId）';
+      // agy takes the prompt on its command line (32,767 chars), where quoting can double
+      // quotes and backslashes; keep a K notice well inside that limit.
+      if (internal && text.length > 14000)
+        text = text.slice(0, 14000) + '\n…（通知過長已截斷；完整結果請用 luna_inspect 查詢原 requestId）';
       try {
         idle();
         if (!record || !['ready', 'completed', 'failed', 'interrupted'].includes(state.status))
@@ -1119,6 +1164,7 @@ export function createGeminiController({
               turn = null;
               finish();
               changed();
+              turnEnds++;
               scheduleWorkers();
             }
           })();
@@ -1160,6 +1206,10 @@ export function createGeminiController({
       if (unresolvedPid) {
         await killTree(unresolvedPid);
         unresolvedPid = null;
+        // Native subagents lived inside that confirmed-ended agy process.
+        for (const worker of state.workers)
+          if (worker.provider === 'gemini-native' && !worker.settled)
+            Object.assign(worker, {status: 'ended', settled: true, endedAt: now()});
         state.status = 'interrupted';
         state.error = null;
       }
