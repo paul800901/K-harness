@@ -20,7 +20,7 @@
 
 ## 實測方式與登入邊界
 
-所有證據均在**本 worktree** 的 `.runtime/archive/gemini-main-fit-20261021/`，未提交 Git。`probe-help.mjs`、`probe-stream.mjs` 留存實際探測程式；HOME、假工作區與假檔經 `test/scratch.mjs` 建立，探測結束後依慣例回收。沒有讀取正式 `vault/private-state`、登入檔或既有聊天室 HOME。
+所有證據原在工作樹，合併時已移到主工作樹 `D:\K-harness\.runtime\archive\gemini-main-fit-20261021\`，未提交 Git。`probe-help.mjs`、`probe-stream.mjs` 留存實際探測程式；HOME、假工作區與假檔經 `test/scratch.mjs` 建立，探測結束後依慣例回收。沒有讀取正式 `vault/private-state`、登入檔或既有聊天室 HOME。
 
 先只讀來源確認：
 
