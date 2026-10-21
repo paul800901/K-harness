@@ -2,7 +2,11 @@
 
 後續使用者已將 Sol 定為取代 Astra 的日常技術中間層；最新指引、647 項回歸、Opus 複查及 `0e49308` 部署見 [2026-10-04 補充](sol-technical-lead-20261004.md)。本頁保留前批決定及原始證據，不改寫歷史。
 
-## 2026-10-21 更新：Gemini 主入口使用簡短版
+## 2026-10-21 再更新：Gemini 主入口恢復完整指引並可派工
+
+同日稍後本人決定讓 Gemini 主代理完整接上 agy 原生子代理，並透過 `k_luna` 派 GPT／Claude／Flash 兜底，下段的簡短版因此作廢。三家入口再次收到同一份 `MODEL_ROLE_GUIDANCE`；Gemini 由 `workerPolicyConfig`（provider `gemini`）附上派工說明後寫入各聊天室的 `k-model-roles.md`。`MODEL_ROLE_GUIDANCE` 移除「不需要 Gemini 主代理自動派 GPT／Claude」一行；本人指示不特地寫誰是主力。詳見 [Gemini 完整接入](gemini-full-integration-20261021.md)。
+
+## 2026-10-21 更新：Gemini 主入口使用簡短版（已被上段取代）
 
 Gemini 主聊天室不能派工，故改由 `worker-policy.mjs` 的 `GEMINI_MAIN_ROLE_GUIDANCE` 提供三行專用指引：不能派工；第二意見／程式審查由本人另開 GPT／Claude 聊天室；不向本人重述分工。仍寫入各聊天室 HOME 的 `k-model-roles.md` 原生 always_on 規則。Codex／Claude 的 `MODEL_ROLE_GUIDANCE` 本文與接線不變，Gemini 工人及討論參與者沒有收到這份完整分工長文，不另修改。
 
