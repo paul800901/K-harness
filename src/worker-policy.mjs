@@ -16,7 +16,12 @@ export function availableWorkerModels(
   );
 }
 
-// One user preference text shared by the three native main-agent entry points.
+// The Gemini main entry cannot delegate; keep its guidance scoped to that capability.
+export const GEMINI_MAIN_ROLE_GUIDANCE = `本聊天室不能派工。
+需要第二意見或程式審查時，由本人另開 GPT／Claude 聊天室。
+以上只供 AI 內部安排工作，不向使用者主動重述分工。`;
+
+// Shared by the Codex and Claude native main-agent entry points.
 export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-04）：
 以下只供 AI 內部選模與安排工作，不向使用者主動重述分工，不新增分工／審核提醒、彈窗或確認流程；原本必要的登入、核准與工作失敗訊息不變。
 這是本人的使用偏好，不是模型能力排名或硬性路由。當輪明確指定、已保存的手動模型／推理設定優先；不自行切換目前主代理，不強制派工。只使用已接通工具與官方目錄實際提供的模型、推理程度；角色不代表已有跨供應商派工能力。

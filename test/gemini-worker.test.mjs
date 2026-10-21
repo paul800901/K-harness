@@ -46,6 +46,11 @@ test('Flash prompt defines behavioral boundaries without prescribing methods or 
     assert.match(prompt, /保留已完成成果，只停止受阻步驟並向主代理回報/);
     assert.match(prompt, /不得擅改系統設定、終止其他工作或繞過核准/);
     assert.equal(prompt.includes('不得執行終端機指令'), mode !== 'danger-full-access');
+    assert.equal(prompt.includes('約 30 分鐘後被取消、程序退出'), mode === 'danger-full-access');
+    assert.equal(prompt.includes('不可宣稱稍後會自動接續'), mode === 'danger-full-access');
+    assert.match(prompt, /\.gsheet 只是連結/);
+    assert.match(prompt, /先讀 metadata，再讀所需範圍/);
+    assert.match(prompt, /不繞過拒絕、不把未查到當成零/);
     assert.match(prompt, /<DELEGATED_TASK>\nbounded task\n<\/DELEGATED_TASK>/);
   }
 });
