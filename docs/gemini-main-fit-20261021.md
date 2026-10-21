@@ -128,3 +128,15 @@ P2 不支持立即送入；建議仍保留 `capabilities.steer = false` 與 K �
 - 補修 2：共用說明加回「背景執行無法向本人要求核准」。原句來自 `e95b30a`，是 headless 的原生事實，Astra 精簡時一併刪除；「為可選暫存流程讀工作區外檔案」的特定提醒不加回。
 - 補修後聚焦測試 98/98，完整 `npm test` **1792/1792**。prettier 只格式化本次修改行。
 - 部署：K 內的 AI 無法停止或更新所在的 K；本批需本人在無工作執行時「離開並停止 K」，於 K 外執行 `Update-K.ps1 -Ref <本批合併後 main 完整 SHA>`，讀回 `.local/runtime.json` 後再 push。截至本紀錄**尚未部署、尚未 push**。
+
+## 補充：agy `--sandbox` Windows 實測（gpt-6.1-sol high，Opus 5.5 判讀）
+
+本人指示 workspace-write 是否開放受控命令「先驗證過再考慮」。Sol 只做實測、不改程式；完整報告與原始事件在 `D:\K-harness\.runtime\archive\gemini-sandbox-probe-20261021\report.md`。
+
+- 現行 `unsandboxed(*)` deny 在 agy 1.4.3 會直接封鎖所有命令（即使允許 `command(*)`、未加 `--sandbox`）；agy changelog 已將 `unsandboxed` 規則列為過時並提示遷移，但目前實際效果仍是封鎖。
+- 移除該規則、允許命令且不加 `--sandbox` 時，14 項命令全部成功：可改寫／刪除工作區外假檔、寫入真實使用者目錄下的測試子目錄、改 HKCU 測試鍵、連 example.com、以子程序寫工作區外。原生 `write_file(W)` 規則不約束命令副作用。
+- 加 `--sandbox` 後，連工作區內命令都在啟動前失敗（`The system could not find the environment option that was entered`，即找不到環境變數）。本機為 Windows build 26300，符合 changelog 的 24H2 以上支援條件；推測與 K 的 `geminiEnvironment` 環境變數白名單有關，**未驗證**。因此沙盒實際能擋什麼仍未知，不能當安全證據。
+- 原生 write_file 寫工作區外仍被拒絕；被拒的 run_command 事件可能是 `DONE` 但輸出為 `Command failed to run`，CLI 結束碼 0 與 `SUCCESS` 都不代表操作成功。
+- 清理：Opus 讀回 `HKCU:\Software\KSandboxProbe` 不存在、無殘留 agy 程序、Git 工作樹乾淨。
+
+Opus 判讀：維持 workspace-write 禁止命令，不改權限。若日後要再評估，需先在相同 K 環境讓沙盒內的工作區命令正常執行，再取得外部寫入／讀取／網路／登錄檔受限的有效對照；放寬環境變數白名單本身也是權限與隔離變更，須本人另行決定。
