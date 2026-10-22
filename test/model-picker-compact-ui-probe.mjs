@@ -513,8 +513,11 @@ try {
   await page.getByRole('button', {name: '新對話操作權限', exact: true}).click();
   const permissionMenu = page.getByRole('menu', {name: '操作權限選單', exact: true});
   assert.equal(await permissionMenu.getByRole('menuitemradio', {name: /代我核准|要求核准/}).count(), 0);
-  await permissionMenu.getByRole('menuitemradio', {name: /完整存取權/}).click();
-  await page.getByRole('button', {name: '確認選用', exact: true}).click();
+  // Full access is already the owner's default: re-choosing it neither asks again nor drops confirmation.
+  const geminiFull = permissionMenu.getByRole('menuitemradio', {name: /完整存取權/});
+  assert.equal(await geminiFull.getAttribute('aria-checked'), 'true');
+  await geminiFull.click();
+  assert.equal(await page.getByRole('button', {name: '確認選用', exact: true}).count(), 0);
   await page.screenshot({path: path.join(probeEvidenceDir('model-picker-compact'), 'three-core-picker.png')});
   await page.getByRole('button', {name: '建立對話', exact: true}).click();
   await page.waitForFunction(() => document.querySelector('[aria-label="主代理模型"]') === null);

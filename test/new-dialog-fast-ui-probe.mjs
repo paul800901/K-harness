@@ -199,8 +199,8 @@ try {
     await submit();
     assert.equal(posts[0].serviceTier, 'catalog-fast', 'uses official catalog id, not hardcoded priority');
     assert.equal(posts[0].effort, 'high');
-    assert.equal(posts[0].accessMode, 'workspace-write');
-    assert.equal(posts[0].permissionConfirmed, false);
+    assert.equal(posts[0].accessMode, 'danger-full-access');
+    assert.equal(posts[0].permissionConfirmed, true);
     assert.equal(posts[0].workerPolicy.model, 'auto');
     // Existing accelerated room must not become the next room's default.
     await open();
@@ -225,8 +225,8 @@ try {
       await submit();
       assert.equal(Object.hasOwn(posts.at(-1), 'serviceTier'), false);
       assert.equal(posts.at(-1).effort, 'high');
-      assert.equal(posts.at(-1).permissionConfirmed, false);
-      assert.equal(posts.at(-1).accessMode, provider === 'Claude' ? 'claude-manual' : 'workspace-write');
+      assert.equal(posts.at(-1).permissionConfirmed, true);
+      assert.equal(posts.at(-1).accessMode, provider === 'Claude' ? 'claude-bypassPermissions' : 'danger-full-access');
     }
     assert.equal(posts.length, 4);
     results.push({width, height, scale, remote, passed: true, posts});

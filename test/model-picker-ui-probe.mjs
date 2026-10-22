@@ -194,7 +194,9 @@ try {
   assert.equal(opened.data.model, 'gpt-future-official');
   assert.equal(opened.data.workspace, path.join(root, 'different-project'));
   assert.equal(opened.data.effort, 'high');
-  assert.equal(opened.data.accessMode, 'workspace-write');
+  // New GPT/Claude/Gemini rooms default to the highest native mode; the default counts as confirmed.
+  assert.equal(opened.data.accessMode, 'danger-full-access');
+  assert.equal(opened.data.permissionConfirmed, true);
   // A new conversation defaults its worker to AI auto-selection (AGENTS.md section 5).
   assert.deepEqual(opened.data.workerPolicy, {model: 'auto', effort: 'auto'});
   assert.deepEqual(

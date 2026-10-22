@@ -12,7 +12,12 @@ const remoteClient = document.documentElement.dataset.kRemote === 'true';
 const displayModel = model => model?.displayName || model?.model || '選擇模型';
 const modelProvider = model => model?.provider ?? providerOf(model?.model);
 const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: '自架'})[provider];
-const providerDefaultPermission = provider => (provider === 'claude' ? 'claude-manual' : 'workspace-write');
+// The owner's standing choice (2026-10-22): new GPT/Claude/Gemini rooms start at the
+// highest native mode; self-hosted keeps the native default. The default itself is the
+// owner's confirmation, so only a different elevated choice asks again.
+const providerDefaultPermission = provider =>
+  ({codex: 'danger-full-access', claude: 'claude-bypassPermissions', gemini: 'danger-full-access'})[provider] ??
+  'workspace-write';
 const billingNote = model =>
   /requires (?:extra )?usage credits|requires extra usage|extra usage required/i.test(model?.description ?? '')
     ? '需額外用量點數'
@@ -216,7 +221,7 @@ export function ModelPicker({
   const [catalogClaudeGateway, setCatalogClaudeGateway] = useState(false);
   const [catalogGeminiGateway, setCatalogGeminiGateway] = useState(geminiGateway === true);
   const [workerPolicy, setWorkerPolicy] = useState(() => normalizeWorkerPolicy(currentWorkerPolicy));
-  const [accessMode, setAccessMode] = useState('workspace-write'),
+  const [accessMode, setAccessMode] = useState(providerDefaultPermission('codex')),
     [permissionConfirmed, setPermissionConfirmed] = useState(false);
   const [serviceTier, setServiceTier] = useState('default');
   const initializedProvider = useRef(mode === 'switch' ? modelProvider({model: currentModel}) : 'codex');
@@ -642,7 +647,8 @@ export function ModelPicker({
                 ? {confirmed: hasHistory && model !== currentModel}
                 : {
                     accessMode: permissionForSubmit,
-                    permissionConfirmed,
+                    permissionConfirmed:
+                      permissionConfirmed || permissionForSubmit === providerDefaultPermission(selectedProvider),
                     workerPolicy,
                     ...(selectedProvider === 'codex' ? {serviceTier: selectedServiceTier} : {})
                   }),
