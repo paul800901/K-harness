@@ -100,12 +100,18 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
     if (!entry.backgroundResult) return;
     if (error) backgroundNotices.set(entry.scope, `${error} 未送出；原草稿保留。`);
     else if (!result.text.trim()) backgroundNotices.set(entry.scope, '沒有辨識到文字，未送出訊息。');
-    else entry.backgroundResult(remote ? {...result, send: false} : result);
+    else
+      void Promise.resolve(entry.backgroundResult(remote ? {...result, send: false} : result)).then(message => {
+        if (message) backgroundNotices.set(entry.scope, message);
+      });
   };
   // Hiding the window/page ends capture (no hidden microphone) but keeps what was said: it is
-  // transcribed into the draft without sending. A stopped transcription simply continues.
+  // transcribed into the draft without sending. A microphone still starting is canceled so a late
+  // stream never begins recording while hidden. A stopped transcription simply continues.
   const stopHiddenRecording = () => {
-    if (job.current?.session?.getState() === 'recording') void job.current.session.stop(false);
+    const state = job.current?.session?.getState();
+    if (state === 'starting') cancel();
+    else if (state === 'recording') void job.current.session.stop(false);
   };
   const hiddenRef = useRef(stopHiddenRecording);
   hiddenRef.current = stopHiddenRecording;

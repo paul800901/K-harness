@@ -30,7 +30,7 @@ test('voice selects local dictation using the actual native preload after browse
   );
 });
 
-test('trusted owner window-hidden signal is subscribed by native voice; it ends capture but never cancels', async () => {
+test('trusted owner window-hidden signal is subscribed by native voice; it ends capture, cancels only a starting microphone', async () => {
   const [preload, composer] = await Promise.all([
     readSource(new URL('../src/electron-owner-preload.cjs', import.meta.url)),
     readSource(new URL('../frontend/voice-composer.jsx', import.meta.url))
@@ -40,8 +40,10 @@ test('trusted owner window-hidden signal is subscribed by native voice; it ends 
   assert.match(preload, /return\(\)=>ipcRenderer\.removeListener\('k-native-window-hidden',listener\)/u);
   assert.match(composer, /if\(!desktop\)return/u);
   assert.match(composer, /window\.kBrowser\.onWindowHidden\(/u);
-  // Behavior (hidden while recording → draft-only; hidden while transcribing → continues) is in the UI probes.
+  // Behavior (starting → canceled, late stream stopped; recording → draft-only; transcribing → continues)
+  // is exercised in the UI probes.
   const hidden = composer.slice(composer.indexOf('const stopHiddenRecording='), composer.indexOf('const hiddenRef='));
   assert.match(hidden, /stop\(false\)/u);
-  assert.doesNotMatch(hidden, /cancel/u);
+  assert.match(hidden, /'starting'\)cancel\(\)/u);
+  assert.doesNotMatch(hidden, /transcribing/u);
 });

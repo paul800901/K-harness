@@ -379,13 +379,31 @@ const ChatView = React.memo(function ChatView({
     sessionKey: threadId,
     onActiveChange: active => reportVoiceActive('main', active),
     // Runs after this room's view was left: append to its latest saved draft and, only when the
-    // user chose send-on-completion here, submit once through this room's own send path.
+    // user chose send-on-completion here, submit once through this room's own send path. Never
+    // retried; a returned notice is shown when the user comes back to this room.
     onBackgroundResult: ({text, send}) => {
       const key = `k-draft:${threadId}`,
         existing = sessionStorage.getItem(key) ?? '',
         draft = existing + (existing && !/\s$/.test(existing) ? '\n' : '') + text;
       sessionStorage.setItem(key, draft);
-      if (send) roomAction(threadId, () => submitText(draft));
+      if (!send) return;
+      const busyNotice = '此聊天室當時另有操作進行中，聽寫完成後未送出；文字已留在草稿。';
+      if (quoteSendLock.current) return busyNotice;
+      let started = false,
+        failure = null;
+      const sending = roomAction(threadId, async () => {
+        started = true;
+        try {
+          await submitText(draft);
+        } catch (error) {
+          failure = error;
+          throw Error(`「${state.title || '來源聊天室'}」聽寫完成後送出時發生問題：${error.message}`);
+        }
+      });
+      if (!started) return busyNotice;
+      return sending.then(() =>
+        failure ? `聽寫完成後送出時發生問題：${failure.message} 文字已留在草稿。` : undefined
+      );
     },
     onResult: ({text, send}) => {
       const composer = runtime.thread.composer,

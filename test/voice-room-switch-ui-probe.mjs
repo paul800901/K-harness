@@ -28,6 +28,7 @@ const rooms = new Map(),
   calls = [],
   transcriptionPlans = [];
 let current, emit;
+let answerGate = Promise.resolve();
 function makeRoom(id, title) {
   return {
     threadId: id,
@@ -48,7 +49,7 @@ function makeRoom(id, title) {
     capabilities: {},
     accessMode: 'workspace-write',
     effort: 'low',
-    efforts: ['low'],
+    efforts: ['low', 'high'],
     inputModalities: ['text']
   };
 }
@@ -121,6 +122,13 @@ const controller = {
     for await (const chunk of stream) size += chunk.length;
     calls.push({op: 'upload', threadId, name});
     return {id: `upload-${threadId}-${name}`, name, size};
+  },
+  async answer(args) {
+    calls.push({op: 'answer', ...args});
+    await answerGate; // Holds the room's own action lock while the probe needs it.
+    current.questions = [];
+    emit();
+    return {ok: true};
   },
   async stop() {
     return {stopRequested: true};
@@ -276,6 +284,21 @@ try {
         : undefined
     });
     page.setDefaultTimeout(12000);
+    // A gate that can hold the real (fake-device) microphone stream, to deliver it after the window hid.
+    await page.addInitScript(() => {
+      const media = navigator.mediaDevices,
+        original = media.getUserMedia.bind(media);
+      window.__micGate = null;
+      window.__lateStreams = [];
+      media.getUserMedia = async constraints => {
+        const stream = await original(constraints);
+        if (window.__micGate) {
+          await window.__micGate;
+          window.__lateStreams.push(stream);
+        }
+        return stream;
+      };
+    });
     if (!viewport.mobile)
       await page.addInitScript(() => {
         const listeners = new Set();
@@ -425,6 +448,33 @@ try {
       () => document.querySelector('textarea.composer-input')?.value === 'A 錄音切房保留\n切房前說的話'
     );
     await assertNoSend();
+    // Hidden while the microphone is still starting: canceled in A; the late stream is stopped and never records.
+    await input.fill('A 啟動中隱藏');
+    const transcribesBeforeStarting = calls.filter(call => call.op === 'transcribe').length;
+    await page.evaluate(() => {
+      window.__micGate = new Promise(resolve => (window.__openMic = resolve));
+    });
+    await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
+    await page.getByText('正在啟動麥克風…', {exact: true}).waitFor();
+    await hideApp();
+    await page.evaluate(() => window.__openMic());
+    await page.waitForFunction(() => window.__lateStreams.length === 1);
+    await page.waitForTimeout(500);
+    assert.equal(
+      await page.evaluate(() => window.__lateStreams[0].getTracks().every(track => track.readyState === 'ended')),
+      true,
+      'the late microphone stream is stopped'
+    );
+    assert.equal(await page.getByRole('button', {name: '停止聽寫', exact: true}).count(), 0, 'never starts recording');
+    await showApp();
+    await page.getByRole('button', {name: '開始聽寫', exact: true}).waitFor();
+    await page.locator('.composer-note [role="status"]').filter({hasText: '已取消這段聽寫'}).waitFor({state: 'visible'});
+    assert.equal(await input.inputValue(), 'A 啟動中隱藏');
+    assert.equal(calls.filter(call => call.op === 'transcribe').length, transcribesBeforeStarting);
+    await page.evaluate(() => {
+      window.__micGate = null;
+    });
+    await assertNoSend();
     if (!viewport.mobile) {
       // Send intent survives leaving A and a hidden window past the former 120 s cutoff, and sends once to A
       // with A's own draft and attachment; B keeps its draft.
@@ -474,12 +524,91 @@ try {
       await resolvePlan(page, plan);
       await waitForSends(3);
       assert.equal(await input.inputValue(), 'B 草稿');
+      await page.getByText(/「語音測試 A」聽寫完成後送出時發生問題/u).waitFor({state: 'visible'});
       await openRoom(page, roomA);
       await page.waitForFunction(
         () => document.querySelector('textarea.composer-input')?.value === 'A 送出被拒草稿\n被拒時保留'
       );
+      await page
+        .locator('.composer-note [role="status"]')
+        .filter({hasText: '聽寫完成後送出時發生問題'})
+        .waitFor({state: 'visible'});
       await waitForSends(3);
       await input.fill('');
+      // A's own room action still in flight at completion: not sent, not retried, A says so and keeps the text.
+      roomA.questions = [{id: 'voice-approval', kind: 'approval', title: '需要操作核准', text: '假核准', canAccept: true}];
+      emit();
+      await input.fill('A 忙碌時草稿');
+      plan = deferredPlan('A 忙碌時結果');
+      transcriptionPlans.push(plan);
+      await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
+      await page.getByRole('button', {name: '停止聽寫', exact: true}).waitFor();
+      await wait(700);
+      await page.getByRole('button', {name: '轉錄完成後送出', exact: true}).click();
+      await plan.started;
+      let releaseAnswer;
+      answerGate = new Promise(resolve => (releaseAnswer = resolve));
+      await page.getByRole('button', {name: '拒絕', exact: true}).click();
+      while (!calls.some(call => call.op === 'answer')) await wait(50);
+      await openRoom(page, roomB);
+      await resolvePlan(page, plan);
+      await waitForSends(3);
+      releaseAnswer();
+      await openRoom(page, roomA);
+      await page.waitForFunction(
+        () => document.querySelector('textarea.composer-input')?.value === 'A 忙碌時草稿\nA 忙碌時結果'
+      );
+      await page
+        .locator('.composer-note [role="status"]')
+        .filter({hasText: '另有操作進行中'})
+        .waitFor({state: 'visible'});
+      await waitForSends(3);
+      // A's quote, confirmed permission and effort chosen in A ride the background send, not B's defaults.
+      await input.fill('');
+      await openRoom(page, roomB);
+      await page.evaluate(
+        threadId =>
+          sessionStorage.setItem(
+            `k-response-annotations:${encodeURIComponent(threadId)}`,
+            JSON.stringify([{id: 'voice-quote', text: 'A 的引用', annotation: 'A 的註解', sourceMessageId: null}])
+          ),
+        roomA.threadId
+      );
+      await openRoom(page, roomA);
+      await page.getByRole('button', {name: '操作權限', exact: true}).click();
+      await page.getByRole('menuitemradio').filter({hasText: '代我核准'}).click();
+      await page.getByRole('button', {name: '確認選用', exact: true}).click();
+      const reasoning = page.getByRole('button', {name: '推理程度與速度', exact: true});
+      await reasoning.click();
+      await page.getByRole('combobox', {name: '推理程度', exact: true}).selectOption('high');
+      await reasoning.click();
+      await input.fill('A 帶設定草稿');
+      plan = deferredPlan('A 帶設定結果');
+      transcriptionPlans.push(plan);
+      await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
+      await page.getByRole('button', {name: '停止聽寫', exact: true}).waitFor();
+      await wait(700);
+      await page.getByRole('button', {name: '轉錄完成後送出', exact: true}).click();
+      await plan.started;
+      await openRoom(page, roomB);
+      await resolvePlan(page, plan);
+      await waitForSends(4);
+      const configured = sends().at(-1);
+      assert.equal(configured.threadId, roomA.threadId);
+      assert.match(configured.text, /A 帶設定草稿\nA 帶設定結果/u);
+      assert.match(configured.text, /A 的引用/u);
+      assert.match(configured.text, /A 的註解/u);
+      assert.equal(configured.accessMode, 'auto-review');
+      assert.equal(configured.permissionConfirmed, true);
+      assert.equal(configured.effort, 'high');
+      assert.equal(
+        await page.evaluate(
+          threadId => JSON.parse(sessionStorage.getItem(`k-response-annotations:${encodeURIComponent(threadId)}`) ?? '[]').length,
+          roomA.threadId
+        ),
+        0,
+        'the sent quote leaves A'
+      );
       assert.equal(sends().filter(call => call.threadId === roomB.threadId).length, 0, 'B never receives A dictation');
     }
     assert.deepEqual(pageErrors, [], `${viewport.name} has no unexpected page errors`);
@@ -509,7 +638,10 @@ try {
           'hidden or room switch while recording ends capture and fills only the source draft',
           `desktop send intent survives room switch + hidden window for ${longHoldMs} ms and sends once to A with its draft and attachment`,
           'desktop send intent is shown and kept after returning before completion',
-          'rejected background send is not retried and keeps the draft',
+          'rejected background send is not retried, keeps the draft, labels the global error and notices in A',
+          'hidden while the microphone is starting cancels in A and stops the late stream before any recording',
+          'background send blocked by an in-flight A room action is not sent or retried and A says so',
+          "background send carries A's quote, confirmed permission and effort, not B's defaults",
           'stop/fill-only never sends; B never receives A dictation'
         ]
       },
