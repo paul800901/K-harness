@@ -129,3 +129,15 @@ GPT-6.1 Sol 複查初版（`c89e5ee`、`8c693ea`）後的處置：
 - Claude 換模型時寫入 `modelChanges`（後端，需另開工單），完成後 Claude 回覆即可顯示確切型號。
 - 三主題實際截圖目視（交 Sol 複查或本人看）。
 - 設定章節名稱與分組是依現有內容的判斷，可在複查時調整。
+
+## 10-22 第二批：章節標題再拉開
+
+使用者看設定頁截圖後指出：章節小標「顯示」「討論用 API 連線」是 12px，比底下 14px 的列標題小，眼睛先落在子項；「討論用 API 連線」三段說明文和標題擠在一起，重心落在說明文。本批只調數值，不改方向、結構、元件與後端。
+
+- `frontend/style.css` `.settings-section-label`：字級 `--k-text-section`（12px）→ `--k-text-md`（14px），與列標題同級並維持 700 加粗；顏色 `--k-ink-2` → `--k-ink`；字距 `.02em` → `.01em`；下方間距 `--k-space-1`（4px）→ `--k-space-2`（8px）。章節之間 `margin-top` `--k-space-4`（28px）→ `--k-space-5`（32px）。
+- `frontend/tokens.css`：新增 `--k-space-5: 32px`，只在 `:root` 定義一次，三主題共用（各主題區塊本來就不覆寫 space）。
+- `frontend/discussion-api-settings.css`：`.discussion-api-intro`、`.discussion-api-notice` 明確設 `color: var(--k-ink-3)`、`font-size: var(--k-text-sm)`（13px）、`line-height: 1.6`；原本單獨的 `.discussion-api-notice{line-height:1.5}` 併入。
+- 說明文顏色查證：三段說明文都是 `.discussion-api-intro`，顏色一路繼承外層 `.discussion-api-settings` 的 `--k-ink-3`，全前端沒有其他規則把它蓋成 ink-2 或 ink，因此沒有覆蓋來源可修；截圖看起來偏深，是因為說明文原本比 12px 標題大、又緊貼標題。本批靠標題放大加深與間距拉開解決，未加 `!important`。
+- 不動：側欄 `.project-toggle`／`.project-label`（仍為 12px 分類標頭）；`mobile.css` 沒有覆寫 `.settings-section-label`，不需對齊。
+- 驗證：`npm run build:ui` 成功（僅既有的 chunk 大小提醒）；`npm test` **1806/1806**；`npm run test:ui` **49/49**。
+- 分支 `ui-section-label-20261022`（基底 main `ce1e2c1`）。部署狀態：**未部署**，未合併、未 push。
