@@ -1,5 +1,6 @@
 .discussion-api-settings{display:grid;gap:10px;color:var(--k-ink-3);font-size:var(--k-text-sm)}
 .discussion-api-settings p{margin:0;line-height:1.6}
+.discussion-api-intro,.discussion-api-notice{color:var(--k-ink-3);font-size:var(--k-text-sm);line-height:1.6}
 .discussion-api-intro{max-width:72ch}
 .discussion-api-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
 .discussion-api-settings button,.discussion-api-settings input,.discussion-api-settings select,.discussion-api-settings textarea{font:inherit;border:1px solid var(--k-line);border-radius:8px;padding:7px 9px;background:var(--k-raised);color:var(--k-ink);min-width:0}
@@ -13,5 +14,4 @@
 .discussion-api-form label{display:grid;gap:4px}
 .discussion-api-form label span{font-size:var(--k-text-xs);color:var(--k-ink-3)}
 .discussion-api-form textarea{resize:vertical}
-.discussion-api-notice{line-height:1.5}
 @media(max-width:700px){.discussion-api-card,.discussion-api-form{padding:8px}.discussion-api-settings button{min-height:36px}}
