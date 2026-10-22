@@ -3,9 +3,9 @@
 ## 範圍與狀態
 
 - 實作與設計：真正的 Opus 5.5（Claude Code 既有 Max 訂閱），在獨立工作樹 `codex/voice-background-stability-20261022` 完成；主代理只做最後驗收與收尾。
-- 基準 `main` `b00cd36d57329e557a88a8de809982c8996c2367`；正式部署中的程式為 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`。
-- 程式 commit：`ad19b54635c24a41aa5e89a1ed3665ce345d6162`；本文件另一個 commit。
-- **尚未部署、未 push、未合回 main**，沒有停止或重啟正式 K，沒有操作真實麥克風或正式對話。
+- 基準 `main` `b00cd36d57329e557a88a8de809982c8996c2367`；本批前正式程式為 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`。
+- 原程式 commit：`ad19b54635c24a41aa5e89a1ed3665ce345d6162`；補修／正式程式 commit：`312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`，文件分開提交。
+- **南區已部署並讀回程式 `312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`，已合回 main 與 push**；詳見末節。正式 K 保持關閉，未操作真實麥克風或正式對話。
 - 只用既有本機離線 Whisper（faster-whisper large-v3、CUDA），沒有改供應商、模型、計費或把音訊送上網路。
 
 ## 本人需求（原文摘要）
@@ -94,7 +94,7 @@
 
 ## 收尾複查（Sol 提問，Opus 5.5 裁決與補修）
 
-補修程式 commit：`312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`。仍**未部署、未 push、未 merge**。
+補修程式 commit：`312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`。本節為 Opus 交付時的複查紀錄；當時未部署、未 push、未 merge，後續正式收尾見末節。
 
 1. **隱藏時麥克風仍在啟動（starting）會不會晚到後開始收音：成立，已修。**
    - 原因：`stopHiddenRecording` 只處理 recording。getUserMedia／AudioContext 晚到時，session 仍會進入 recording，造成隱藏視窗中收音；舊版 `cancelRef` 原本會取消這個階段。
@@ -128,4 +128,32 @@
 - 沒有用真人麥克風、真實長段口述，或真正的關到系統匣手勢（點視窗 X）；隱藏是由主程序直接送出同一個 IPC 並 `hide()`，Alt-Tab 失焦本來就不觸發任何取消，也沒有實測。
 - 沒有在 GPU 高負載下實測超過 120 秒的真 Whisper（只有 112～118 秒的無控制負載樣本）；超過 120 秒的端到端情境由假辨識器的 125 秒 UI 探針與 mock 時鐘單元測試涵蓋。
 - 手機實機（Android 背景化時瀏覽器是否中斷 fetch）沒有測；若被系統中斷，會顯示失敗並保留草稿，不會送出。
-- 正式 K 未部署，本人日常使用的確認待部署後進行。
+- 南區已部署並以正式產物與合成 fixture 驗證，但沒有啟動本人正式聊天室；日常實際長口述的確認仍待本人。東區未更新。
+## 正式部署與獨立讀回（2026-10-22）
+
+- 依本人「Astra 額度不足時由 GPT-6.1 Sol 高收尾」的授權交接，由 Sol 作單一驗收／部署者；額度後來重置未重播或換手。所有產品設計與程式修改仍由真正 Opus 5.5 完成。
+- Sol 獨立檢查完整範圍、送出 closure、來源房附件／引用／權限、取消及錯誤語意後，指出啟動中隱藏晚到收音與背景鎖無聲不送兩項邊界。延續同一 Claude Code session（不是另開代理或重跑原任務），Opus 確認並最小補修；Sol 再檢查新增 diff 與證據，接受現行實作。沒有修改一般房間鎖、加入重試／備援／持久音檔或新設定。
+- Opus 原工作與收尾接續均經只讀 preflight 確認 Claude.ai Max／firstParty，實際 assistant 型號為 `claude-opus-5-5`，無 fallback、無其他子代理，兩次皆正常退出、無 permission denial。CLI 的 list-price cost 欄位不是本人訂閱的實際 API 支出。
+
+### 固定版本與驗證
+
+- 原程式 `ad19b54635c24a41aa5e89a1ed3665ce345d6162`、原文件 `f87a3b71feb131807dfb94b07b69019d59c909f6`；補修程式 **`312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`**、補修文件 `38c9b9986abc6331953f0f833b23bb96940a3069`。先確認兩工作樹乾淨，再 fast-forward 合回 main；部署只指定補修程式完整 SHA，不把文件版本當程式版本。
+- Opus 補修版完整測試 **1821/1821**，先建置再跑的完整 UI **同輪 50/50**（`closeout-npm-test.log`、`closeout-build-ui.log`、`closeout-test-ui.log`）。
+- Sol 獨立重建 UI、關聯單元 **25/25**、語音 UI **2/2**：真 Whisper Electron 67.4 秒；切房探針 151.0 秒（含預設 **125 秒**延遲，未縮短），覆蓋兩按鈕意圖、切房／隱藏、晚到麥克風、附件、引用、確認權限與 high effort、取消、錯誤、同房鎖與只送一次。紀錄 `sol-build-ui.log`、`sol-target-tests.log`、`sol-voice-ui.log`。
+- `git diff --check` 通過；人工 diff 與發布差異秘密樣式檢查未發現憑證，13 檔只含預期來源、測試及文件，沒有 `.runtime`、`.local`、帳號、對話或音訊上傳。這是範圍檢查，不宣稱能識別所有秘密格式。
+
+### 南區正式套用
+
+- **22:08:42～22:10:33（臺灣時間）**，在正式 K 外執行 `Update-K.ps1 -Ref 312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`，只執行一次。事前核對無 K 相關程序、47831 無監聽；更新器再確認停止，沒有強制停止或重播任何工作。
+- 更新器候選建置、擴充／啟動器建置與完整測試 **1821/1821** 全通過，正式套用成功；完整 log 為 `sol-deploy.log`。
+- `.local/runtime.json` 讀回 `version` 完整吻合上述程式 SHA，`previous` 為 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1792678220506`（保存前版 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`）。設定差異只有 `version`、`previous`；原 Node、Python、Whisper 模型路徑未變。
+- 正式 `trusted-runtime` 的 **825 個 Git 追蹤檔**對固定程式 commit 逐檔讀回：11 個逐位元相同、814 個只差 LF／CRLF、**實質差異 0**。不是用 main 上較新的文件版本誤比程式產物。收據 `sol-production-readback-final.json`。
+- 帳號／對話／工作區／瀏覽器資料目錄保留原路徑，建立時間以同一 PowerShell DateTime ticks 讀回相同；沒有讀取憑證或把此 metadata 核對冒稱登入／全部對話內容驗收。前兩份讀回收據的時間比較混用 Node 毫秒精度及 PowerShell JSON 日期型別，造成 false negative；原始收據保留，修正比對方式後通過，沒有因此修改或回退正式程式。
+- 退版保留最新三份：`before-1792661526026`（`fb2754150a52c685d5fc412d94a931e173d61c15`）、`before-1792672749670`（`2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`）、`before-1792678220506`（前版 `47a0ae6…`）。更新器將最舊 `before-1792599782594` 移入資源回收筒；另讀回原路徑不存在且回收筒同來源目錄／名稱有一筆，確認可還原，未永久刪除。收據 `sol-release-recycle-readback.json`。
+- 在**正式產物目錄**再執行同兩項 fixture UI，**2/2 通過**：真 Whisper Electron 68.3 秒、切房探針 151.3 秒（仍含 125 秒延遲）。測試用合成音訊、隔離假房間及假送出，不操作真人麥克風、本人正式對話或供應商工作；證據 `sol-production-voice-ui.log`、`sol-production-ui/`。不是以測試 fixture 冒稱本人 live 工作已驗收。
+
+### 發布與剩餘界線
+
+- **22:15:45 前**已 push 到既有公開 `origin/main`，並以 `git ls-remote` 讀回 **`38c9b9986abc6331953f0f833b23bb96940a3069`**；收據 `sol-first-push.log`、`sol-first-remote-readback.txt`。本節為其後純文件提交，再發布並讀回的完整 SHA 記在同目錄最終收據及 Git 歷史；不因文件收尾重啟或再部署 K。
+- 證據總目錄：`D:\K-harness\.runtime\archive\voice-background-20261022`，Git 排除。正式程式版本始終為 **`312caf2da1a791bb03e57f7cd98c32cfb1e1e6d5`**，不可與後續文件 HEAD 混用。
+- 正式 K 保持關閉，未自動開啟本人工作。真人長口述、實際點 X 關到系統匣、GPU 高負載下真 Whisper 超過 120 秒、手機實機 OS 背景斷線，以及東區當地更新仍未驗證；不宣稱已重現並證實本人當時偶發事件的唯一根因。原先已列的「失敗在回房後才到達時，來源房提示下次進房才顯示」與「送出 ack 前短暫顯示文字」仍保留，不擴張本題。
