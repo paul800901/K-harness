@@ -127,7 +127,6 @@ export function DiscussionApiSettings({request, disabled = false}) {
     );
   return (
     <section className="discussion-api-settings" aria-label="討論用 API 連線">
-      <h3>討論用 API 連線</h3>
       <p className="discussion-api-intro">
         API 連線只供平行比較、交叉審查與多人討論參與者，使用 API 計費；不會加入主模型或子代理目錄。API
         討論可唯讀搜尋及讀取本次工作區，不寫入檔案、不派工。

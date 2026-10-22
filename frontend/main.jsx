@@ -1568,6 +1568,20 @@ function App() {
       if (message.role === 'user' && !index.has(message.turnId)) index.set(message.turnId, message);
     return index;
   }, [state.messages]);
+  // Which main model wrote each reply, replayed from the recorded switches. Claude keeps no switch record,
+  // so its replies stay without a model here and show only the provider.
+  const replyModels = useMemo(() => {
+    const index = new Map(),
+      changes = state.modelChanges ?? [];
+    let model = changes[0]?.fromModel ?? state.lastUsedModel ?? null;
+    for (const message of state.messages ?? []) {
+      const change =
+        message.role === 'user' && changes.find(c => c.turnId === message.turnId || c.turnId === message.id);
+      if (change) model = change.toModel;
+      else if (message.role === 'assistant' && model) index.set(message.id, model);
+    }
+    return index;
+  }, [state.messages, state.modelChanges, state.lastUsedModel]);
   // Only transcript inputs invalidate message consumers; background-room activity,
   // quota refresh, draft typing and sidebar updates are not transcript changes.
   const transcriptState = useMemo(
@@ -1609,9 +1623,21 @@ function App() {
       groups,
       messageIndex,
       userTurnIndex,
+      replyModels,
       openRoundtable
     }),
-    [transcriptState, preview, modelName, models, startBranch, groups, messageIndex, userTurnIndex, openRoundtable]
+    [
+      transcriptState,
+      preview,
+      modelName,
+      models,
+      startBranch,
+      groups,
+      messageIndex,
+      userTurnIndex,
+      replyModels,
+      openRoundtable
+    ]
   );
   const alertRaw = error || state.error || '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
     alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
@@ -1806,7 +1832,14 @@ function App() {
                     <>
                       {state.threadId && (
                         <button
-                          className="goal-header"
+                          className={`goal-header${
+                            state.goalError ||
+                            ['blocked', 'usageLimited', 'budgetLimited', 'failed'].includes(state.goal?.status)
+                              ? ' warning'
+                              : ['active', 'starting'].includes(state.goal?.status)
+                                ? ' active'
+                                : ''
+                          }`}
                           disabled={!online || busy}
                           onClick={() => setModal({type: 'goal', threadId: state.threadId})}
                         >
