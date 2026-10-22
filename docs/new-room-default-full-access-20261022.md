@@ -34,10 +34,15 @@
 
 ## 部署狀態
 
-- 未部署。本批是權限預設變更，依專案規則停在部署前交本人決定；且本次 AI 在正式 K 內執行，無法更新自己所在的 K，須 K 完全停止後在 K 外執行 `Update-K.ps1`，部署目標為上列程式 commit 完整 SHA。
-- 已 fast-forward 合回本機 `main`；未 push（依流程部署後再 push）。東區未更新。
+- 本人明確授權部署這項權限預設變更及 push。2026-10-22 **22:56:55（臺灣時間，UTC+08:00）**於 K 外完成 `Update-K.ps1 -Ref 62b7190b18f5a2970156b274904f532ec5966173`；未強制結束程序、未執行 agy 探測、未自動啟動 K。
+- 部署前：`main` 工作樹乾淨，HEAD 為文件版本 `321067e304063330a1b66d8968a9a6c72cf169ed`；指定程式 SHA 存在。未發現 K 自有路徑程序，原生更新器的 47831 停止檢查通過；部署後再次核對仍為停止、相關程序數 0。
+- 更新器依 lockfile 建置候選、介面、擴充與啟動器，完整測試 **1821/1821**（fail／cancelled／skipped 均為 0；約 72.3 秒）；未改測試。UI 同輪 **50/50**是上節部署前驗證，本次更新器不另跑 UI suite。
+- 正式讀回：`.local/runtime.json.version` 為 `62b7190b18f5a2970156b274904f532ec5966173`，`previous` 指向 `releases/before-1792681002929`，上一版 runtime 存在。正式 `trusted-runtime` 的 825 個 Git 追蹤檔與指定版本內容一致（11 個位元組完全相同、814 個只有 LF／CRLF 差異；Git `core.autocrlf=true` 匯出及擴充建置的換行差異，不是來源改動）。
+- 建置後 `dist-ui/assets/index-D9Y0qdNp.js` 讀回新對話預設：GPT／Gemini `danger-full-access`、Claude `claude-bypassPermissions`、自架 `workspace-write`。這是正式檔案／建置產物讀回，不冒稱已在正式 K 開啟新對話驗收。
+- 程式退版保留最新三份：`before-1792672749670`、`before-1792678220506`、`before-1792681002929`（目前 previous）；未移動舊 tag。退版僅為程式與啟動器，不是對話備份。
+- push 前檢查這次新增行及七個變更路徑，無憑證樣式命中，未納入帳號、登入、對話或本機執行資料。程式與原文件已 push，遠端 `main` 讀回為 `321067e304063330a1b66d8968a9a6c72cf169ed`。本次部署收尾另作純文件 commit，push 後再核對遠端等於該 commit；最終 SHA 收據存本機 `.runtime/archive/new-room-full-access-deploy-20261022/push-readback.txt`，不為補文件重部署或重啟。
+- 更新器逐項輸出保留於本機 `.runtime/archive/new-room-full-access-deploy-20261022/update-transcript.txt`。東區未更新、不在本次範圍。
 
 ## 未完成事項
 
-- 正式部署、部署後讀回與 push。
-- 本人實際開新對話確認三家預設顯示為最高權限、自架仍為要求核准。
+- 本人自行啟動 K 後，實際開新對話確認三家預設顯示為最高權限、自架仍為要求核准；本次未啟動 K、未建立正式對話。
