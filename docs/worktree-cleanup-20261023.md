@@ -1,6 +1,6 @@
 # 舊開發工作樹清理（2026-10-23）
 
-本人要求查清 `C:\Users\Paulus\.codex\worktrees\` 下留下的 K 開發工作樹與舊分支，沒問題的直接結束，並由 GPT-6.1 Sol 驗收收尾。Claude（Opus 5.5）盤點與執行；只動已合併的開發工作樹、Git 登記與分支，未動正式 K、對話或帳號資料。
+本人要求查清 `C:\Users\Paulus\.codex\worktrees\` 下留下的 K 開發工作樹與舊分支，沒問題的直接結束，並由 GPT-6.1 Sol 驗收收尾。Claude（Opus 5.5）盤點與執行；只動已合併的開發工作樹、3 個未登記的殘留資料夾、Git 登記與分支，未動正式 K、對話或帳號資料。
 
 ## 盤點結果
 
@@ -51,7 +51,7 @@ GPT-6.1 Sol（effort high，只讀）第一次驗收**不同意結案**，指出
   | `selfhost-native` | `gemma-main-agents\.runtime	ests\selfhost-native` | [自架社群模型](selfhost-community-models-20261019.md) | 整份 11 檔 |
   | `discussion-v2-tests-20261015` | `discussion-skill\.runtime	ests` 根層與 `ui-evidence` | [討論圓桌權限](discussion-roundtable-permissions-20261015.md) | 根層 37 個紀錄檔（含點名的 6 個）＋`ui-evidence` 770 檔，排除 `browser-profile`、`electron` 測試設定檔 |
 
-  其餘約 10 萬個 `tests` 檔案是測試自動產生的暫存（隨機名稱目錄、測試用家目錄與狀態），沒有被任何紀錄點名，未保存，仍在回收筒。紀錄另點名的 `run-16992-1792178049715`、`archive-recycle-proof-9uKnJp`、`gemini-main-live-bg5wUR`、`main-crash-Yvv3nD` 不在這 9 個來源內（屬其他候選或更早已清理）。
+  其餘約 10 萬個 `tests` 檔案是未發現具體引用的測試資料，包含輸出、狀態與暫存；未逐檔評估保存價值，未保存，仍留在回收筒。紀錄另點名的 `run-16992-1792178049715`、`archive-recycle-proof-9uKnJp`、`gemini-main-live-bg5wUR`、`main-crash-Yvv3nD` 不在這 9 個來源內。
 - 紀錄中 `room-lock-fix-20261010`、`steer-final-display` 等的證據：原工作樹位置已不存在，但 `archive\room-lock-fix-20261010`、`archive\steer-final-display-20261009` 及多份討論相關封存先前已保存在主工作區（初版寫「無從保存」不準確）。
 - `node_modules` 清空原因改標為疑似；刪除「未造成實際損失」的說法。修正初版一處被斷行破壞的路徑。
 
@@ -71,7 +71,7 @@ GPT-6.1 Sol（effort high，只讀）第一次驗收**不同意結案**，指出
 
 - GPT-6.1 Sol 第一次：不同意結案（漏存、措辭）。處理見上節。
 - GPT-6.1 Sol 複驗：7 份補存逐檔 SHA-256 一致；全面掃描發現 `tests` 內被點名證據漏存，已補存（見上節）；建議的措辭修正已採納。
-- （待補：Sol 最終確認）
+- GPT-6.1 Sol 最終確認：26 個點名證據檔與三份補存（852 檔）逐檔 SHA-256 一致、無憑證或 Cookies；具體引用均已涵蓋；Git 與正式檔案數成立。另提 4 處文字修正（控制字元、開頭漏述殘留資料夾、`tests` 其餘內容措辭、刪除無法查證的去向推論），已依其建議文字逐字修正，無其他意見，結案。
 
 ## 狀態
 
