@@ -66,10 +66,15 @@ try {
       },
       async close() {}
     };
-    let live = false;
+    let live = false,
+      extra = {};
     const notes = createRoomNotes({root: workspace, onChange: () => void emit().catch(e => errors.push(e.message))});
     const unified = createUnifiedController({root: workspace, roomNotes: notes, codexFactory: () => native});
-    const snapshot = () => ({...unified.state, conversationActivity: [{threadId: 'fake-target', busy: false}]});
+    const snapshot = () => ({
+      ...unified.state,
+      ...extra,
+      conversationActivity: [{threadId: 'fake-target', busy: false}]
+    });
     const emit = async () => {
       if (live)
         await page.evaluate(
@@ -155,6 +160,21 @@ try {
       const composer = page.getByRole('textbox', {name: '工作訊息', exact: true});
       assert.equal(await composer.inputValue(), '');
       const sendButton = page.getByRole('button', {name: '送出訊息', exact: true});
+      // Idle but with a paused queue: the backend refuses notes alone, so the composer does too.
+      extra = {
+        queuePaused: true,
+        queuedMessages: [
+          {id: 'q1', text: '待送', attachmentIds: [], createdAt: new Date().toISOString(), status: 'queued'}
+        ]
+      };
+      await emit();
+      await page.waitForFunction(() => document.querySelector('button[aria-label="送出訊息"]')?.disabled === true);
+      await composer.press('Enter');
+      await page.waitForTimeout(150);
+      assert(!posts.some(p => p.endpoint === '/api/send'), 'Enter sends nothing while the queue waits');
+      extra = {};
+      await emit();
+      await page.waitForFunction(() => document.querySelector('button[aria-label="送出訊息"]')?.disabled === false);
       assert(await sendButton.isEnabled(), 'pending notes alone can be sent');
       await composer.fill('收到，我先處理前端。');
       await sendButton.click();

@@ -13,7 +13,10 @@ const MAX_SEND_LENGTH = 32000,
 // once handed to the native core it is consumed and never sent again.
 export function createRoomNotes({root, onChange = () => {}}) {
   const rows = new Map(),
-    chains = new Map();
+    chains = new Map(),
+    // Claimed notes that may still be restored keep their slots until commit; memory only, so a
+    // restart frees them while consumed rows stay consumed.
+    claimed = new Map();
   const file = id => {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id ?? '')) throw Error('Invalid room note conversation.');
     return path.join(root, '.runtime/room-notes', id + '.json');
@@ -66,7 +69,7 @@ export function createRoomNotes({root, onChange = () => {}}) {
         throw Error(`協調訊息須為 1–${MAX_ROOM_NOTE_LENGTH} 字元。`);
       return locked(id, async () => {
         const list = await read(id);
-        if (list.filter(n => n.status === 'pending').length >= MAX_PENDING_ROOM_NOTES)
+        if (list.filter(n => n.status === 'pending').length + (claimed.get(id) ?? 0) >= MAX_PENDING_ROOM_NOTES)
           throw Error(`目標聊天室已有 ${MAX_PENDING_ROOM_NOTES} 則未帶入的協調訊息；未寫入，請等本人處理。`);
         const note = {
           id: randomUUID(),
@@ -123,18 +126,31 @@ export function createRoomNotes({root, onChange = () => {}}) {
           for (const note of chosen) Object.assign(note, {status: 'pending', consumedAt: null});
           throw error;
         }
+        claimed.set(id, (claimed.get(id) ?? 0) + chosen.length);
+        let open = true;
+        const settle = () => {
+          if (!open) return;
+          open = false;
+          const left = claimed.get(id) - chosen.length;
+          if (left > 0) claimed.set(id, left);
+          else claimed.delete(id);
+        };
         onChange();
         return {
           text: formatRoomNotes(text, chosen),
           count: chosen.length,
           restore: () =>
             locked(id, async () => {
+              if (!open) return;
+              settle();
               for (const note of chosen) Object.assign(note, {status: 'pending', consumedAt: null});
               await save(id);
               onChange();
             }),
           commit: messageId =>
             locked(id, async () => {
+              if (!open) return;
+              settle();
               for (const note of chosen) note.consumedMessageId = messageId ?? null;
               await save(id);
             })

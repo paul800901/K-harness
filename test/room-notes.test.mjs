@@ -188,6 +188,12 @@ for (const [provider, model] of [
       assert.equal(notes.pending(id).length, 1, 'queued text does not consume notes yet');
       native.state.busy = false;
       native.state.status = 'completed';
+      assert.equal(c.state.queuedMessages.length, 1);
+      await assert.rejects(
+        c.send({text: ''}),
+        error => error.notSent === true && /工作進行中或仍有待送訊息/.test(error.message),
+        'idle but with a waiting queue: notes alone are refused, matching the composer'
+      );
       c.queue({action: 'resume'}).catch(() => {});
       const deadline = Date.now() + 3000;
       while (!native.sends.some(s => s.text.startsWith('排隊中的訊息')) && Date.now() < deadline)
@@ -204,6 +210,173 @@ for (const [provider, model] of [
       await c.close();
     }
   });
+
+test('a claim that may still be restored keeps its slots, so restore never lifts pending past the cap', async () => {
+  const root = await tempRoot('cap');
+  const notes = createRoomNotes({root});
+  for (let i = 0; i < MAX_PENDING_ROOM_NOTES; i++) await notes.add('room-b', {...from, text: `a${i}`});
+  const claim = await notes.claim('room-b', '');
+  assert.equal(claim.count, MAX_PENDING_ROOM_NOTES);
+  assert.deepEqual(notes.pending('room-b'), []);
+  await assert.rejects(notes.add('room-b', {...from, text: 'during claim'}), /20 則/);
+  await claim.restore();
+  assert.equal(notes.pending('room-b').length, MAX_PENDING_ROOM_NOTES, 'restore keeps every note, none dropped');
+  await assert.rejects(notes.add('room-b', {...from, text: 'after restore'}), /20 則/);
+  await claim.restore();
+  assert.equal(notes.pending('room-b').length, MAX_PENDING_ROOM_NOTES, 'a second restore changes nothing');
+
+  const sent = await notes.claim('room-b', '');
+  await sent.commit('message-1');
+  await sent.restore();
+  assert.deepEqual(notes.pending('room-b'), [], 'a committed claim cannot be restored');
+  await notes.add('room-b', {...from, text: 'after commit'});
+  const held = await notes.claim('room-b', '');
+  assert.equal(held.count, 1);
+  for (let i = 1; i < MAX_PENDING_ROOM_NOTES; i++) await notes.add('room-b', {...from, text: `b${i}`});
+  await assert.rejects(notes.add('room-b', {...from, text: 'over'}), /20 則/);
+
+  const restarted = createRoomNotes({root});
+  await restarted.load('room-b');
+  assert.equal(restarted.pending('room-b').length, MAX_PENDING_ROOM_NOTES - 1, 'consumed rows stay consumed');
+  await restarted.add('room-b', {...from, text: 'restart frees the uncommitted slot'});
+  await assert.rejects(restarted.add('room-b', {...from, text: 'over'}), /20 則/);
+});
+
+const gated = notes => {
+  let release, entered;
+  const gate = new Promise(resolve => (release = resolve)),
+    waiting = new Promise(resolve => (entered = resolve));
+  return {
+    release,
+    waiting,
+    notes: {
+      ...notes,
+      async claim(...args) {
+        entered();
+        await gate;
+        return notes.claim(...args);
+      }
+    }
+  };
+};
+
+test('stopping while the Codex claim waits sends nothing and returns the notes to pending', async () => {
+  const root = await tempRoot('stop-claim');
+  const notes = createRoomNotes({root}),
+    hold = gated(notes),
+    requests = [];
+  let hooks;
+  const host = {
+    closed: new Promise(() => {}),
+    notify() {},
+    async close() {},
+    async request(method) {
+      requests.push(method);
+      if (method === 'model/list')
+        return {data: [{model: 'gpt-6.1-sol', supportedReasoningEfforts: [{reasoningEffort: 'medium'}]}]};
+      if (method === 'account/read') return {account: {type: 'chatgpt'}};
+      if (method === 'config/read') return {config: {}};
+      if (method === 'thread/start') return {thread: {id: 'parent', turns: []}};
+      if (method === 'thread/backgroundTerminals/list') return {data: []};
+      if (method === 'turn/start') {
+        hooks.onEvent({
+          method: 'turn/started',
+          params: {threadId: 'parent', turn: {id: 'turn-1', status: 'inProgress'}}
+        });
+        return {turn: {id: 'turn-1'}};
+      }
+      return {};
+    }
+  };
+  const c = createUnifiedController({
+    root,
+    roomNotes: hold.notes,
+    codexFactory: options =>
+      createDesktopController({
+        ...options,
+        hostFactory: h => {
+          if (!h.onEvent) return {...host, close: async () => {}};
+          hooks = h;
+          return host;
+        },
+        gatewayFactory: async () => ({
+          mcpConfig: {mcpServers: {k_gemini: {url: 'http://fake/mcp', headers: {Authorization: 'fake'}}}},
+          close: async () => {}
+        })
+      }),
+    claudeFactory: () => fakeNative('claude', 'claude-opus-5-5'),
+    geminiFactory: () => fakeNative('gemini', 'gemini-3.8-flash'),
+    inspect: async () => ({available: true})
+  });
+  try {
+    await c.open({model: 'gpt-6.1-sol', effort: 'medium', accessMode: 'read-only'});
+    const id = c.state.threadId;
+    await notes.add(id, {...from, text: '停止前留下'});
+    const sending = c.send({text: '本人送出'});
+    sending.catch(() => {});
+    await hold.waiting;
+    await c.stop();
+    hold.release();
+    await assert.rejects(sending, error => error.notSent === true && /已停止或切換/.test(error.message));
+    assert(!requests.includes('turn/start'), 'no native turn starts after the stop');
+    assert.equal(notes.pending(id).length, 1, 'the note returns to pending');
+    assert.equal((await saved(root, id)).notes[0].status, 'pending');
+  } finally {
+    hold.release();
+    await c.close().catch(() => {});
+  }
+});
+
+test('a queued send whose claim waits through a stop, or a send through a room change, sends nothing', async () => {
+  const root = await tempRoot('queue-claim');
+  const notes = createRoomNotes({root}),
+    native = fakeNative('codex', 'gpt-6.1-sol');
+  native.stop = async () => {
+    native.state.busy = false;
+    native.state.status = 'interrupted';
+    return {stopRequested: true};
+  };
+  let hold = gated(notes);
+  const c = createUnifiedController({
+    root,
+    roomNotes: {...notes, claim: (...args) => hold.notes.claim(...args)},
+    codexFactory: () => native
+  });
+  try {
+    await c.open({model: 'gpt-6.1-sol'});
+    const id = c.state.threadId;
+    await notes.add(id, {...from, text: '排隊時留下'});
+    native.state.busy = true;
+    await c.send({text: '排隊訊息'});
+    native.state.busy = false;
+    native.state.status = 'completed';
+    const resumed = c.queue({action: 'resume'}).catch(() => {});
+    await hold.waiting;
+    await c.stop();
+    hold.release();
+    await resumed;
+    const deadline = Date.now() + 3000;
+    while (c.state.queuedMessages[0]?.status !== 'queued' && Date.now() < deadline)
+      await new Promise(r => setTimeout(r, 20));
+    assert.deepEqual(native.sends, [], 'the stop owns the claim wait');
+    assert.equal(c.state.queuedMessages[0].status, 'queued');
+    assert.equal(c.state.queuePaused, true);
+    assert.equal(notes.pending(id).length, 1);
+
+    await c.queue({action: 'remove', id: c.state.queuedMessages[0].id}).catch(() => {});
+    hold = gated(notes);
+    const direct = c.send({text: '切換前送出'});
+    await hold.waiting;
+    native.state.threadId = 'other-room';
+    hold.release();
+    await assert.rejects(direct, error => error.notSent === true);
+    assert.deepEqual(native.sends, [], 'a room change during the claim sends nothing');
+    assert.equal(notes.pending(id).length, 1);
+  } finally {
+    hold.release();
+    await c.close();
+  }
+});
 
 test('room tools list other live rooms only and write to existing unarchived targets, never to self', async () => {
   const root = await tempRoot('tools');

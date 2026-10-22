@@ -149,6 +149,8 @@ const ChatView = React.memo(function ChatView({
   const fileInput = useRef();
   const threadId = state.threadId;
   const threadApi = (route, data = {}) => api(route, {...data, threadId});
+  // Notes alone may be sent only when the backend would hand them over now, not queue them.
+  const notesOnly = state.roomNotes?.length && !state.busy && !state.queuedMessages?.length;
   const [discussionConfig, setDiscussionConfig] = useDiscussionConfig(threadId, state.discussion?.id);
   const {models: discussionModels, setModels: discussionCatalog} = useContext(TranscriptContext);
   useEffect(() => {
@@ -252,7 +254,7 @@ const ChatView = React.memo(function ChatView({
   const submitText = async rawText => {
     const raw = typeof rawText === 'string' ? rawText : '';
     const quotes = responseQuotesRef.current.slice();
-    if (!raw.trim() && !quotes.length && !uploads.some(a => a.id) && !(state.roomNotes?.length && !state.busy)) return;
+    if (!raw.trim() && !quotes.length && !uploads.some(a => a.id) && !notesOnly) return;
     if (voiceOwnerRef.current) throw Error('請先停止目前聽寫，再送出訊息。');
     if (uploads.some(item => item.loading)) throw Error('附件仍在上傳，尚未送出；訊息與引用草稿已保留。');
     if (quoteSendLock.current) return;
@@ -323,10 +325,7 @@ const ChatView = React.memo(function ChatView({
       return;
     }
     if (
-      (!text.trim() &&
-        !responseQuotesRef.current.length &&
-        !uploads.some(a => a.id) &&
-        !(state.roomNotes?.length && !state.busy)) ||
+      (!text.trim() && !responseQuotesRef.current.length && !uploads.some(a => a.id) && !notesOnly) ||
       uploads.some(a => a.loading)
     )
       return;
@@ -838,10 +837,7 @@ const ChatView = React.memo(function ChatView({
                               blocked ||
                               uploads.some(a => a.loading) ||
                               ['connecting', 'offline', 'error', 'uncertain', 'stopping'].includes(state.status) ||
-                              (!draftText.trim() &&
-                                !responseQuotes.length &&
-                                !uploads.some(a => a.id) &&
-                                !(state.roomNotes?.length && !state.busy))
+                              (!draftText.trim() && !responseQuotes.length && !uploads.some(a => a.id) && !notesOnly)
                             }
                             aria-label="送出訊息"
                             title="送出（Enter）；換行：Shift + Enter"

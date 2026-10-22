@@ -34,7 +34,8 @@ export function createUnifiedController(options) {
   let active,
     changing = false,
     queue,
-    hostRequest = null;
+    hostRequest = null,
+    stopEpoch = 0;
   const changed = () => {
     hostRequest?.check();
     onChange();
@@ -82,7 +83,13 @@ export function createUnifiedController(options) {
   // directly and never carry coordination notes.
   const sendWithNotes = async (controller, data) => {
     const id = controller.state.threadId,
+      epoch = stopEpoch,
       claim = roomNotes && id ? await roomNotes.claim(id, data.text ?? '') : null;
+    // A stop or room switch while the claim waited owns the send: nothing reaches the core.
+    if (epoch !== stopEpoch || changing || active !== controller || controller.state.threadId !== id) {
+      await claim?.restore().catch(() => {});
+      throw Object.assign(Error('送出前已停止或切換對話；訊息未送出。'), {notSent: true});
+    }
     if (!claim) return controller.send(data);
     let result;
     try {
@@ -597,9 +604,10 @@ export function createUnifiedController(options) {
     if (changing) throw Object.assign(Error('正在切換對話。'), {notSent: true});
     if (active.state.busy || queue.state.queuedMessages.length) {
       if (!data.text?.trim() && !data.attachmentIds?.length && roomNotes?.pending(active.state.threadId).length)
-        throw Object.assign(Error('工作進行中；協調訊息會隨下一則送出帶入，請輸入文字排隊或等工作結束。'), {
-          notSent: true
-        });
+        throw Object.assign(
+          Error('工作進行中或仍有待送訊息；協調訊息會隨下一則送出帶入，請輸入文字排隊或等工作結束。'),
+          {notSent: true}
+        );
       return queue.enqueue(data);
     }
     return data.source === 'continuation' ? active.send(data) : sendWithNotes(active, data);
@@ -614,6 +622,7 @@ export function createUnifiedController(options) {
     return queue.action(data);
   };
   api.stop = async () => {
+    stopEpoch++;
     await queue.pause();
     return active.stop();
   };

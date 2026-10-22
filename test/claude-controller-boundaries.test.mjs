@@ -113,6 +113,12 @@ test("room tools reach the Claude main gateway and answer only during this room'
       ['list', id],
       ['note', id, {targetThreadId: 'room-b', text: 'hi'}]
     ]);
+    f.hosts[0].options.onMessage({type: 'result', is_error: false});
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(f.controller.state.busy, false);
+    assert.throws(() => rooms.list(), /進行中回合/);
+    assert.throws(() => rooms.note({targetThreadId: 'room-b', text: 'late'}), /進行中回合/);
+    assert.equal(calls.length, 2);
   } finally {
     await f.controller.close();
   }
