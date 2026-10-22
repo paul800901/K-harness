@@ -1569,11 +1569,13 @@ function App() {
     return index;
   }, [state.messages]);
   // Which main model wrote each reply, replayed from the recorded switches. Claude keeps no switch record,
-  // so its replies stay without a model here and show only the provider.
+  // so its replies stay without a model here and show only the provider. A branch does not carry the
+  // source room's switches and the view has no fork boundary, so its replies get a model only after a
+  // switch recorded in the branch itself; earlier ones, inherited or not, show only the provider.
   const replyModels = useMemo(() => {
     const index = new Map(),
       changes = state.modelChanges ?? [];
-    let model = changes[0]?.fromModel ?? state.lastUsedModel ?? null;
+    let model = state.parentThreadId ? null : (changes[0]?.fromModel ?? state.lastUsedModel ?? null);
     for (const message of state.messages ?? []) {
       const change =
         message.role === 'user' && changes.find(c => c.turnId === message.turnId || c.turnId === message.id);
@@ -1581,7 +1583,7 @@ function App() {
       else if (message.role === 'assistant' && model) index.set(message.id, model);
     }
     return index;
-  }, [state.messages, state.modelChanges, state.lastUsedModel]);
+  }, [state.messages, state.modelChanges, state.lastUsedModel, state.parentThreadId]);
   // Only transcript inputs invalidate message consumers; background-room activity,
   // quota refresh, draft typing and sidebar updates are not transcript changes.
   const transcriptState = useMemo(
