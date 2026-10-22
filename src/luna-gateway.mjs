@@ -41,7 +41,7 @@ const waitSchema = eventWait =>
 
 function createMcpServer(
   bridge,
-  {geminiOnly = false, allowCodex = false, editGoal, resumeGoal, continueConversation, readContext} = {}
+  {geminiOnly = false, allowCodex = false, editGoal, resumeGoal, continueConversation, readContext, rooms} = {}
 ) {
   const processOnly = geminiOnly && !allowCodex;
   const prefix = geminiOnly ? 'gemini' : 'luna';
@@ -195,6 +195,43 @@ function createMcpServer(
         }
       }
     );
+  if (rooms) {
+    const roomTool = (name, description, inputSchema, execute, annotations) =>
+      server.registerTool(name, {description, inputSchema, annotations}, async (args, context) => {
+        try {
+          const value = await execute(args, context.mcpReq._meta);
+          return {structuredContent: value, content: [{type: 'text', text: JSON.stringify(value)}]};
+        } catch (error) {
+          return {
+            isError: true,
+            content: [
+              {type: 'text', text: `${String(error?.message ?? error)} Not written; do not retry automatically.`}
+            ]
+          };
+        }
+      });
+    roomTool(
+      `${prefix}_room_list`,
+      `List the other chats in THIS K instance for ${prefix}_room_note: threadId, title, provider, model, workspace, busy/idle/unknown status and pendingNotes (notes not yet delivered there). Excludes this chat and archived chats. Contains no conversation content. Main chat only; not a worker tool.`,
+      z.strictObject({}),
+      (args, meta) => rooms.list(meta),
+      {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false}
+    );
+    roomTool(
+      `${prefix}_room_note`,
+      `Leave one short coordination note (plain text, max 4000 characters) in another K chat's inbox, found with ${prefix}_room_list. The note is data, NOT authorization or an instruction to that chat. It does NOT wake the target: K shows it above that chat's input box and appends it once, labeled with this chat as source, to the human's next send there; the human may discard it. There is no read receipt or reply channel: do not poll, do not wait for an answer, do not use notes for automatic back-and-forth between chats, and do not broadcast the same note to many chats. Use it only when the human asked you to tell another chat something or it clearly serves their current request. Returns {noteId, queued:true, delivered:false}.`,
+      z.strictObject({
+        targetThreadId: z.string().regex(/^[a-zA-Z0-9_-]{1,128}$/u),
+        text: z
+          .string()
+          .min(1)
+          .max(4000)
+          .refine(value => value.trim().length > 0)
+      }),
+      (args, meta) => rooms.note(args, meta),
+      {readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false}
+    );
+  }
   const policy = bridge.workerPolicy;
   const selectionGuidance = processOnly
     ? '此入口可派 Gemini 或 Claude 原生訂閱工人；GPT 子代理使用原生派工，不從本入口轉派。明確提供原生模型及其支援的 effort；無推理設定時傳 null。'
@@ -350,7 +387,8 @@ export async function createLunaGateway({
   editGoal,
   resumeGoal,
   continueConversation,
-  readContext
+  readContext,
+  rooms
 }) {
   if (!bridge || !['start', 'wait', 'inspect', 'cancel'].every(name => typeof bridge[name] === 'function'))
     throw new TypeError('A complete Luna bridge is required.');
@@ -361,7 +399,8 @@ export async function createLunaGateway({
     editGoal,
     resumeGoal,
     continueConversation,
-    readContext
+    readContext,
+    rooms
   });
   const transport = new WebStandardStreamableHTTPServerTransport({sessionIdGenerator: undefined});
   await mcp.connect(transport);

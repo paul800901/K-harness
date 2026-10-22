@@ -134,6 +134,7 @@ export function createClaudeController({
   bridgeFactory = createLunaBridge,
   gatewayFactory,
   workerCatalog,
+  roomTools,
   onChange = () => {},
   browserConfig = async () => null,
   closeBrowser = async () => {}
@@ -1406,7 +1407,17 @@ export function createClaudeController({
     };
     bridge = lazyBridge;
     const runtimeGatewayFactory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
-    gateway = await runtimeGatewayFactory({bridge: lazyBridge});
+    // Only this main session gets room tools; K workers run with an empty MCP configuration.
+    const mainTurn = () => {
+      if (!state.threadId || !state.busy) throw Error('只能在本主聊天室的進行中回合使用。');
+      return state.threadId;
+    };
+    gateway = await runtimeGatewayFactory({
+      bridge: lazyBridge,
+      ...(roomTools
+        ? {rooms: {list: () => roomTools.list(mainTurn()), note: args => roomTools.note(mainTurn(), args)}}
+        : {})
+    });
   }
 
   async function nativeMcpConfig(conversationId, accessMode = state.accessMode) {

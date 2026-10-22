@@ -608,6 +608,7 @@ export async function startDesktop({
         '/api/discussion/message': 'discussionMessage',
         '/api/fork': 'fork',
         '/api/queue': 'queue',
+        '/api/room-notes': 'roomNote',
         '/api/open': 'open',
         '/api/send': 'send',
         '/api/steer': 'steer',

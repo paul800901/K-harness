@@ -10,13 +10,14 @@ import {scratchBase} from './scratch.mjs';
 const TEST_ROOT = scratchBase;
 const CLAUDE_MODEL = 'claude-opus-5-5';
 
-async function fixture({bridgeFactory, gatewayFactory} = {}) {
+async function fixture({bridgeFactory, gatewayFactory, roomTools} = {}) {
   await mkdir(TEST_ROOT, {recursive: true});
   const root = await mkdtemp(path.join(TEST_ROOT, 'claude-boundaries-'));
   const hosts = [],
     bridges = [];
   const controller = createClaudeController({
     root,
+    roomTools,
     hostFactory: async options => {
       let resolveClosed;
       const host = {
@@ -82,6 +83,36 @@ test('opening Claude initializes the gateway without starting the lazy Luna brid
     assert.equal(gatewayCalls, 1);
     assert.equal(bridgeCalls, 0);
     assert.equal(f.hosts.length, 1);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test("room tools reach the Claude main gateway and answer only during this room's running turn", async () => {
+  let rooms;
+  const calls = [];
+  const f = await fixture({
+    roomTools: {
+      list: async id => calls.push(['list', id]) && {rooms: []},
+      note: async (id, args) => calls.push(['note', id, args]) && {queued: true}
+    },
+    gatewayFactory: async options => {
+      rooms = options.rooms;
+      return {mcpConfig: {mcpServers: {}}, close: async () => {}};
+    }
+  });
+  try {
+    await f.controller.open({model: CLAUDE_MODEL});
+    assert.throws(() => rooms.list(), /進行中回合/);
+    await f.controller.send({text: 'go'});
+    assert.equal(f.controller.state.busy, true);
+    await rooms.list();
+    await rooms.note({targetThreadId: 'room-b', text: 'hi'});
+    const id = f.controller.state.threadId;
+    assert.deepEqual(calls, [
+      ['list', id],
+      ['note', id, {targetThreadId: 'room-b', text: 'hi'}]
+    ]);
   } finally {
     await f.controller.close();
   }

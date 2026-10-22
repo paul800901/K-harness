@@ -28,7 +28,8 @@ export function createUnifiedController(options) {
     claudeFactory = createClaudeController,
     geminiFactory = createGeminiController,
     gemmaConnections = [],
-    inspect = inspectClaude
+    inspect = inspectClaude,
+    roomNotes
   } = options;
   let active,
     changing = false,
@@ -76,9 +77,29 @@ export function createUnifiedController(options) {
       }
     }));
   active = codex;
+  // The one point where a person's send (direct or from the queue) reaches a native core.
+  // Worker notices, discussion host turns, branch and room-move handoffs call native send
+  // directly and never carry coordination notes.
+  const sendWithNotes = async (controller, data) => {
+    const id = controller.state.threadId,
+      claim = roomNotes && id ? await roomNotes.claim(id, data.text ?? '') : null;
+    if (!claim) return controller.send(data);
+    let result;
+    try {
+      result = await controller.send({...data, text: claim.text});
+    } catch (error) {
+      // Only a send that never reached the native core returns its notes; an unknown outcome is never resent.
+      if (error.notSent === true) await claim.restore().catch(() => {});
+      throw error;
+    }
+    if (result?.sent === false) await claim.restore().catch(() => {});
+    else await claim.commit(controller.state.messages?.findLast(m => m.role === 'user')?.id).catch(() => {});
+    return result;
+  };
   queue = createInputQueue({
     root,
     getController: () => active,
+    send: sendWithNotes,
     onChange() {
       hostRequest?.check();
       onChange();
@@ -89,6 +110,7 @@ export function createUnifiedController(options) {
       return {
         ...active.state,
         ...queue.state,
+        roomNotes: roomNotes?.pending(active.state.threadId) ?? [],
         provider: active === codex ? 'codex' : active === claude ? 'claude' : active === gemini ? 'gemini' : 'gemma',
         usage: {
           ...active.state.usage,
@@ -263,6 +285,7 @@ export function createUnifiedController(options) {
           active = target;
         }
         await queue.load(active.state.threadId);
+        await roomNotes?.load(active.state.threadId);
         onChange();
         return result;
       } finally {
@@ -405,6 +428,7 @@ export function createUnifiedController(options) {
           });
         }
         await queue.load(created.threadId);
+        await roomNotes?.load(created.threadId);
         const branchRecord = base => ({
           ...base,
           threadId: created.threadId,
@@ -571,8 +595,19 @@ export function createUnifiedController(options) {
   };
   api.send = async data => {
     if (changing) throw Object.assign(Error('正在切換對話。'), {notSent: true});
-    if (active.state.busy || queue.state.queuedMessages.length) return queue.enqueue(data);
-    return active.send(data);
+    if (active.state.busy || queue.state.queuedMessages.length) {
+      if (!data.text?.trim() && !data.attachmentIds?.length && roomNotes?.pending(active.state.threadId).length)
+        throw Object.assign(Error('工作進行中；協調訊息會隨下一則送出帶入，請輸入文字排隊或等工作結束。'), {
+          notSent: true
+        });
+      return queue.enqueue(data);
+    }
+    return data.source === 'continuation' ? active.send(data) : sendWithNotes(active, data);
+  };
+  api.roomNote = async ({id, action}) => {
+    if (action !== 'discard') throw Error('未知的協調訊息操作。');
+    if (!roomNotes || !active.state.threadId) throw Error('請先開啟對話。');
+    return roomNotes.discard(active.state.threadId, id);
   };
   api.queue = async data => {
     if (changing) throw Error('正在切換對話。');

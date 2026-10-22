@@ -972,6 +972,57 @@ const until = async (check, label) => {
   assert.fail(`timed out: ${label}`);
 };
 
+test("room tools reach the Gemini main gateway and answer only during this room's running turn", async () => {
+  let release, rooms;
+  const gate = new Promise(resolve => (release = resolve)),
+    calls = [],
+    w = workerFixture();
+  const f = await fixture({
+    ...w.options,
+    gatewayFactory: async options => {
+      rooms = options.rooms;
+      return w.options.gatewayFactory(options);
+    },
+    roomTools: {
+      list: async id => calls.push(['list', id]) && {rooms: []},
+      note: async (id, args) => calls.push(['note', id, args]) && {queued: true}
+    },
+    run: async (binary, args, params) => {
+      params.onStart(56);
+      const id = randomUUID();
+      params.onChunk(Buffer.from(JSON.stringify({event: 'init', conversation_id: id}) + '\n'));
+      await gate;
+      params.onChunk(
+        Buffer.from(
+          JSON.stringify({event: 'result', result: {conversation_id: id, status: 'SUCCESS', response: 'ok'}}) + '\n'
+        )
+      );
+      return {code: 0, stderr: ''};
+    }
+  });
+  const c = f.controller;
+  try {
+    await c.open({model: 'gemini-3.8-flash', effort: 'low'});
+    assert.throws(() => rooms.list(), /進行中回合/);
+    const sent = c.send({text: 'keep working'});
+    await until(() => c.state.busy && calls.length === 0 && rooms, 'turn running');
+    await rooms.list();
+    await rooms.note({targetThreadId: 'room-b', text: 'hi'});
+    const id = c.state.threadId;
+    assert.deepEqual(calls, [
+      ['list', id],
+      ['note', id, {targetThreadId: 'room-b', text: 'hi'}]
+    ]);
+    release();
+    await sent;
+    await finish(c);
+    assert.throws(() => rooms.list(), /進行中回合/);
+  } finally {
+    release();
+    await c.close();
+  }
+});
+
 test('Gemini main reaches K workers through k_luna and receives each completion once, only when idle', async () => {
   let release, f;
   const gate = new Promise(resolve => (release = resolve)),

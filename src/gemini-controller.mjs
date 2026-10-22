@@ -101,7 +101,8 @@ export function createGeminiController({
   closeBrowser = async () => {},
   bridgeFactory = null,
   gatewayFactory,
-  workerCatalog
+  workerCatalog,
+  roomTools
 } = {}) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw Error('Gemini timeoutMs 無效。');
   const login = loginFactory({cwd: root, executable, env}),
@@ -586,7 +587,17 @@ export function createGeminiController({
       }
     };
     const factory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
-    gateway = await factory({bridge: lazyBridge});
+    // Only this main room's turn gets room tools; K workers have no K gateway.
+    const mainTurn = () => {
+      if (state.threadId !== parent || !state.busy) throw Error('只能在本主聊天室的進行中回合使用。');
+      return parent;
+    };
+    gateway = await factory({
+      bridge: lazyBridge,
+      ...(roomTools
+        ? {rooms: {list: () => roomTools.list(mainTurn()), note: args => roomTools.note(mainTurn(), args)}}
+        : {})
+    });
     bridge = lazyBridge;
     gatewayKey = key;
     gatewayThread = parent;

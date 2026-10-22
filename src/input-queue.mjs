@@ -3,7 +3,7 @@ import {randomUUID} from 'node:crypto';
 import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
 // K owns only unsent input. Once delivery is attempted the native core owns execution.
-export function createInputQueue({root, getController, onChange = () => {}}) {
+export function createInputQueue({root, getController, onChange = () => {}, send = (c, data) => c.send(data)}) {
   let threadId = null,
     rows = [],
     paused = false,
@@ -85,7 +85,7 @@ export function createInputQueue({root, getController, onChange = () => {}}) {
       const result =
         immediate && s.busy
           ? await c.steer({text: row.text, attachmentIds: row.attachmentIds ?? []})
-          : await c.send({text: row.text, attachmentIds: row.attachmentIds ?? []});
+          : await send(c, {text: row.text, attachmentIds: row.attachmentIds ?? []});
       if (result?.sent === false) {
         const error = Error('訊息未送出，請查明停止狀態。');
         error.notSent = true;

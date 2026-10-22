@@ -63,6 +63,7 @@ export function createDesktopController({
   onChange = () => {},
   onContinueConversation,
   onConversationSettled,
+  roomTools,
   browserConfig = async () => null,
   browserRequest,
   closeBrowser = async () => {}
@@ -1631,6 +1632,21 @@ export function createDesktopController({
           ? {hookSpecificOutput: {hookEventName: 'SessionStart', additionalContext: renderCompactionContext(snapshot)}}
           : snapshot;
       },
+      // Native subagents call with their own thread id and are refused here.
+      ...(roomTools
+        ? {
+            rooms: {
+              list: meta => {
+                assertMainGoalCaller(meta);
+                return roomTools.list(state.threadId);
+              },
+              note: (args, meta) => {
+                assertMainGoalCaller(meta);
+                return roomTools.note(state.threadId, args);
+              }
+            }
+          }
+        : {}),
       ...(onContinueConversation
         ? {
             continueConversation: async (args, meta) => {

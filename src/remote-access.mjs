@@ -257,6 +257,7 @@ const writes = new Set([
   '/api/send',
   '/api/steer',
   '/api/queue',
+  '/api/room-notes',
   '/api/stop',
   '/api/answer',
   '/api/upload',

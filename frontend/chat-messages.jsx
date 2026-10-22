@@ -195,21 +195,34 @@ export function UserContent({record}) {
           <div className="user-quote-prompt">{envelope.text}</div>
         </UserMessageText>
       )}
-      <details className="user-quote-context">
-        <summary>引用 {envelope.references.length} 段助理回覆</summary>
-        {envelope.references.map((item, index) => (
-          <section key={`${index}-${item.source_message_id ?? ''}`}>
-            <strong>引用段落 {index + 1}</strong>
-            <blockquote>{item.quote}</blockquote>
-            {item.annotation && (
-              <p>
-                <strong>我的註解</strong>
-                {item.annotation}
-              </p>
-            )}
-          </section>
-        ))}
-      </details>
+      {!!envelope.references.length && (
+        <details className="user-quote-context">
+          <summary>引用 {envelope.references.length} 段助理回覆</summary>
+          {envelope.references.map((item, index) => (
+            <section key={`${index}-${item.source_message_id ?? ''}`}>
+              <strong>引用段落 {index + 1}</strong>
+              <blockquote>{item.quote}</blockquote>
+              {item.annotation && (
+                <p>
+                  <strong>我的註解</strong>
+                  {item.annotation}
+                </p>
+              )}
+            </section>
+          ))}
+        </details>
+      )}
+      {!!envelope.notes?.length && (
+        <details className="user-quote-context user-room-notes">
+          <summary>協調訊息 {envelope.notes.length} 則</summary>
+          {envelope.notes.map((item, index) => (
+            <section key={item.id ?? index}>
+              <strong>來自「{item.from.title || '未命名聊天室'}」</strong>
+              <blockquote>{item.text}</blockquote>
+            </section>
+          ))}
+        </details>
+      )}
     </>
   );
 }
@@ -223,7 +236,8 @@ export function userCopyText(record) {
         ...envelope.references.map(
           (item, index) =>
             `引用段落 ${index + 1}\n${item.quote}${item.annotation ? `\n\n我的註解\n${item.annotation}` : ''}`
-        )
+        ),
+        ...(envelope.notes ?? []).map(item => `協調訊息（來自「${item.from.title || '未命名聊天室'}」）\n${item.text}`)
       ]
         .filter(Boolean)
         .join('\n\n')

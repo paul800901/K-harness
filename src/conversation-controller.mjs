@@ -14,6 +14,7 @@ import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
 import {workerEnded, workerMayBeLive} from './worker-status.mjs';
 import {usesCodexCore, modelProvider} from '../shared/model-provider.mjs';
+import {createRoomNotes} from './room-notes.mjs';
 
 const FENCE = '```';
 // The main model ends a reply with this block when the person asked it to start the armed discussion.
@@ -82,6 +83,56 @@ export function createConversationController({
     });
   };
   const attention = createCompletionAttention();
+  const roomNotes = createRoomNotes({root, onChange: () => !closing && onChange()});
+  // Main-chat tools for leaving a note in another room's inbox. The target is never woken;
+  // the note rides once with the person's next send there. Workers and discussion sessions
+  // are not created here and never receive these tools.
+  const roomTools = {
+    async list(selfId) {
+      const {sessions} = await listMainSessions(root);
+      return {
+        rooms: await Promise.all(
+          sessions
+            .filter(row => !row.archived && row.threadId !== selfId)
+            .map(async row => {
+              const controller = rooms.get(row.threadId),
+                live = controller ? projected(controller) : null;
+              return {
+                threadId: row.threadId,
+                title: live?.title || row.title || '',
+                provider: modelProvider(live?.model ?? row.model),
+                model: live?.model ?? row.model,
+                workspace: live?.workspace ?? row.workspace,
+                status: !live
+                  ? 'idle'
+                  : live.busy
+                    ? 'busy'
+                    : ['ready', 'completed', 'interrupted', 'failed'].includes(live.status)
+                      ? 'idle'
+                      : 'unknown',
+                pendingNotes: await roomNotes.count(row.threadId)
+              };
+            })
+        )
+      };
+    },
+    async note(selfId, {targetThreadId, text}) {
+      if (!selfId || targetThreadId === selfId) throw Error('不能寫給自己的聊天室。');
+      const {sessions} = await listMainSessions(root),
+        self = sessions.find(row => row.threadId === selfId);
+      if (!self) throw Error('來源聊天室不在 K 清單中。');
+      if (!sessions.some(row => row.threadId === targetThreadId && !row.archived))
+        throw Error('目標必須是本 K 現存、未封存的聊天室；請先用 room_list 確認 threadId。');
+      const live = rooms.get(selfId)?.state;
+      const note = await roomNotes.add(targetThreadId, {
+        fromThreadId: selfId,
+        fromTitle: live?.title || self.title || '',
+        fromProvider: modelProvider(live?.model ?? self.model),
+        text
+      });
+      return {noteId: note.id, queued: true, delivered: false};
+    }
+  };
   const discussions = new Map();
   const historyVersions = new WeakMap();
   const discussion = controller => discussions.get(controller.state.threadId);
@@ -149,6 +200,8 @@ export function createConversationController({
     controller = sessionFactory({
       ...options,
       root,
+      roomNotes,
+      roomTools,
       onContinueConversation: data => requestContinuation(controller, data),
       onConversationSettled: data => {
         const task = finishContinuation(controller, data);
@@ -1228,7 +1281,8 @@ export function createConversationController({
     'upload',
     'selectModel',
     'review',
-    'fuzzyFileSearch'
+    'fuzzyFileSearch',
+    'roomNote'
   ])
     api[method] = data => target(data)[method](data);
   for (const method of ['steer', 'queue', 'goal', 'selectModel', 'review']) {

@@ -1,0 +1,11 @@
+.room-notes{display:grid;gap:7px;max-height:min(300px,calc(40vh / var(--k-ui-scale,1)));overflow-y:auto;margin:0 0 9px;padding:9px 12px;border:1px solid var(--k-line);border-radius:10px;background:var(--k-sunken);font-size:var(--k-text-xs)}
+.room-notes>small{color:var(--k-ink-3)}
+.room-note{display:grid;gap:4px;padding-top:6px;border-top:1px solid var(--k-line);min-width:0}
+.room-note-head{display:flex;align-items:center;gap:8px;min-width:0}
+.room-note-head span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700}
+.room-note-head small{color:var(--k-ink-3);white-space:nowrap}
+.room-note-head button{padding:5px 8px;border:1px solid var(--k-line);border-radius:7px;background:var(--k-raised);color:inherit}
+.room-note-head button:disabled{opacity:.5}
+.room-note p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6}
+.room-note summary{cursor:pointer;overflow-wrap:anywhere;line-height:1.6}
+.room-note details p{margin-top:6px}
