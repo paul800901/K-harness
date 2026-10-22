@@ -402,6 +402,8 @@ try {
           await safeOpen(cm);
           const switchDialog = page.locator('dialog[open]:has(.model-picker)').last();
           const modelTrigger = switchDialog.getByRole('button', {name: '主代理模型', exact: true});
+          // The picker renders this button only after its catalog loads; a miss still fails as not reached.
+          await modelTrigger.waitFor({state: 'visible', timeout: 5000}).catch(() => {});
           if (await modelTrigger.count()) {
             await safeOpen(modelTrigger);
             const pop = switchDialog.locator('.model-menu:popover-open');
