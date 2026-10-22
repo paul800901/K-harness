@@ -417,6 +417,8 @@ test('unowned historical work remains unresolved but is separate from current ex
     ];
     source.notify();
     assert.deepEqual(c.state.workerActivity, {running: 1, uncertain: true, unconfirmed: 1, historicalUnconfirmed: 1});
+    // Sidebar waiting badge: owned unfinished workers only (live + unresolved), not old or ended tickets.
+    assert.equal(c.state.conversationActivity.find(row => row.threadId === a.threadId).pendingWorkers, 2);
     const old = c.state.workerDetails.find(row => row.requestId === 'old');
     assert.equal(old.executionUnowned, true);
     assert.equal(old.settled, false);
@@ -432,6 +434,7 @@ test('unowned historical work remains unresolved but is separate from current ex
     source.state.workers = source.state.workers.filter(row => row.requestId === 'old');
     source.notify();
     assert.deepEqual(c.state.workerActivity, {running: 0, uncertain: false, unconfirmed: 0});
+    assert.equal(c.state.conversationActivity.find(row => row.threadId === a.threadId).pendingWorkers, 0);
     source.state.status = 'offline';
     source.notify();
     assert.equal(c.state.workerActivity.historicalUnconfirmed, undefined);
