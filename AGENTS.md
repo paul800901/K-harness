@@ -40,7 +40,7 @@
 
 ## 四、權限
 
-- 桌面權限：要求核准／代我核准／完整存取權，進階「唯讀」。新工作預設要求核准（工作區內可修改），舊對話保留原權限；代我核准與完整存取須本人明確選用，代我核准接 Codex 原生自動審查，K 不自行一律放行。
+- 桌面權限：要求核准／代我核准／完整存取權，進階「唯讀」。新對話預設最高權限（GPT／Gemini 完整存取權、Claude 略過權限提示；本人 10-22 決定，預設即本人確認），自架維持要求核准；舊對話保留原權限。改選其他高權限仍須本人確認；代我核准接 Codex 原生自動審查，K 不自行一律放行。
 - 採原生 host／spawn 與原生權限模式：Codex 不送 `externalSandbox`，不把未授權模式改成 `danger-full-access`；Claude 保留原生 permission mode。
 - 子代理權限不得超過主對話。Claude `claude-bypassPermissions` 或 Codex `danger-full-access` 表示信任主代理，子代理核准由主代理決定、不交使用者；其他模式不變。缺少原生檔案變更內容時只能拒絕。Claude 切換權限時未結束的 Codex 子代理、Gemini 變更權限／工作區／子代理設定時未結束的 K 工人，都會阻止變更。
 - Gemini／Flash（agy）權限：read-only＝預設模式＋寫檔／指令／unsandboxed／MCP deny；workspace-write＝預設模式＋`--sandbox`＋工作區寫入與指令 allow、MCP／TEMP deny，指令只在原生沙盒（只能寫工作區、不能連網或改登錄檔，讀得到工作區外一般資料夾），含 Google 連接器的工作區不開指令；只有 danger-full-access 加 skip。沙盒需要 HOME 內的 `LOCALAPPDATA`。不得改回會忽略 allow 的 strict。agy 版本與已驗證不同時，依 `docs/antigravity-worker-20261003.md`、`docs/gemini-full-integration-20261021.md` 重跑權限 probe，FAIL 就不用。沒有 agy 或未登入時只讓 Gemini 工作失敗，其他照常。
