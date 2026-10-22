@@ -832,6 +832,58 @@ test('account changes are blocked while a Gemini task is running', async () => {
   await work;
 });
 
+test('same-account dispatch does not inspect machine-wide native processes', async () => {
+  const f = await fixture({identity: {accountId: A, email}});
+  await f.accounts.capture();
+  f.idle = false;
+  const before = f.calls.assertIdle;
+  const lease = await f.accounts.acquire();
+  const worker = await f.accounts.acquire({worker: true});
+  assert.equal(lease.accountId, A);
+  assert.equal(worker.accountId, A);
+  assert.equal(f.calls.assertIdle, before);
+  await worker.release();
+  await lease.release();
+  assert.deepEqual(f.calls.activate, []);
+  await assert.rejects(f.accounts.activate({accountId: A}), /fixture busy/u);
+  await assert.rejects(f.accounts.startLogin(), /fixture busy/u);
+});
+
+test('dispatch that must sync the login token still requires every native process to stop', async () => {
+  const f = await fixture({
+    identity: {accountId: A, email},
+    statusFor: () => ({
+      ...authStatus(),
+      auth: {status: 'authenticated', requiresActivation: true, checkedAt: '2026-10-03T11:59:30.000Z'}
+    })
+  });
+  await f.accounts.capture();
+  f.idle = false;
+  await assert.rejects(f.accounts.acquire(), /fixture busy/u);
+  assert.deepEqual(f.calls.activate, []);
+  f.idle = true;
+  const lease = await f.accounts.acquire();
+  assert.equal(lease.accountId, A);
+  assert.deepEqual(f.calls.activate, [A]);
+  await lease.release();
+});
+
+test('dispatch that names another saved account still requires every native process to stop', async () => {
+  const f = await fixture({identity: {accountId: A, email}});
+  await f.accounts.capture();
+  f.current = {accountId: B, email: 'b@example.test'};
+  await f.accounts.capture();
+  f.idle = false;
+  await assert.rejects(f.accounts.acquire({accountId: A}), /fixture busy/u);
+  assert.deepEqual(f.calls.activate, []);
+  assert.equal(f.current.accountId, B);
+  f.idle = true;
+  const lease = await f.accounts.acquire({accountId: A});
+  assert.equal(lease.accountId, A);
+  assert.deepEqual(f.calls.activate, [A]);
+  await lease.release();
+});
+
 test('same authenticated account allows another concurrent task after auth check ages past 60 seconds', async () => {
   let now = Date.parse('2026-10-03T12:00:00Z');
   const f = await fixture({identity: {accountId: A, email}, clock: () => now, statusFor: () => authStatus()});

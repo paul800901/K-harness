@@ -912,7 +912,6 @@ export function createGeminiAccounts({
         try {
           if (data.accounts.length) {
             assertEnabled();
-            if (!running) await vault.assertIdle();
             chosen = await current();
             if (unboundHistory) throw Error('此舊 Gemini 對話沒有帳號綁定，請以新對話交接；未跨帳號讀取原生歷史。');
             if (!chosen && !accountId) throw Error('目前 Antigravity 登入未加入 K，請先保存目前登入或選擇已加入帳號。');
