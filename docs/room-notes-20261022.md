@@ -1,6 +1,6 @@
 # K 聊天室協調收件匣（room notes，2026-10-22）
 
-工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）；Sol 短複查的兩個新問題補修提交 `700a320`。**Sol 最後確認（工單 room-notes-final-sol-20261022）：可合併、無新問題。** 主代理（Claude Fable 5.1）在合入 main `790e2fb` 後最終驗證：`npm test` 1821/1821、`npm run test:ui` 50/50。已合回 main，待 Codex App 與同日 UI 批次一併部署；本紀錄提交時未 push、未部署。
+工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）；Sol 短複查的兩個新問題補修提交 `700a320`。**Sol 最後確認（工單 room-notes-final-sol-20261022）：可合併、無新問題。** 主代理（Claude Fable 5.1）在合入 main `790e2fb` 後最終驗證：`npm test` 1821/1821、`npm run test:ui` 50/50。已合回 main；**2026-10-22 20:39:09（臺灣時間）南區已部署 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`，程式版已 push 並讀回**，包含 UI 第二批章節標題與第三批側欄等待圖示。正式 K 保持關閉，真人跨房送出仍待驗證；東區未更新。
 
 ## 目的與取捨
 
@@ -151,9 +151,21 @@ Sol 短複查確認上面四項都已修好，但重現了兩個由補修引入�
 
 - Sol 最後確認（工單 room-notes-final-sol-20261022，只讀）：可合併、無新問題；另跑 `node --test test/room-notes.test.mjs test/unified-controller.test.mjs` 32/32 與三組 stdin 重現。
 - 主代理（Claude Fable 5.1）獨立讀過三輪差異，於合入 main `790e2fb`（側欄等待圖示批次）後重跑：`npm run build:ui` 成功、`npm test` 1821/1821、`npm run test:ui` 50/50、`git diff --check` 乾淨。
-- 已合回 main（fast-forward）；待 Codex App 部署，與同日 UI 三批協調為同一版本。本紀錄提交時未 push、未部署、未在正式 K 讀回；正式機實測（兩房互留協調訊息、丟棄、送出後摺疊）待部署後由本人確認。
+- 已合回 main（fast-forward）；2026-10-22 20:39:09（臺灣時間）在 K 外部署 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`，同批含 UI 第二、三批。完整讀回與驗證邊界見下節；正式機實測（跨房留言、丟棄、送出後摺疊與 AI 收到資料）仍待本人確認。
 
-## 給 AGENTS.md 的建議文字（200 bytes 以內，由主代理決定是否加入）
+## 正式部署與讀回（2026-10-22）
+
+- 部署前 main 為指定完整 SHA、工作樹乾淨，執行者是 K 外的 Codex App。K 桌面、伺服器與三家核心已停止，但留有舊 Claude 的測試紀錄監看 shell；經本人明確同意，核對命令、建立時間與父子關係後，只結束 PID 17932、23672 及附屬主控台 34680。讀回三者消失、K 相關程序 0、47831 連線拒絕後才更新，未強制停止任何模型工作。
+- 依更新文件執行一次 `Update-K.ps1 -Ref 47a0ae6f35e733b28fd50ed0b808f81070b1754d`，於 **20:39:09（臺灣時間）**完成套用。更新器完成介面／擴充／啟動器建置，完整測試 **1821/1821**；部署輸出：`.runtime/archive/deploy-47a0ae6-20261022.log`。
+- `D:\K-harness\.local\runtime.json` 的 `version` 完整等於指定 SHA；前一版為 `2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`。設定差異僅 `version`、`previous`，未操作正式帳號／對話／瀏覽器資料，未改計費、權限或三家核心。
+- 正式 `trusted-runtime` 的 **824 個 Git 來源檔**均與指定版本一致：11 檔位元組相同、813 檔僅 Windows CRLF 差異，換行正規化後無差異。正式 `AGENTS.md` 為 **23,862 bytes**，小於 24,000 上限。
+- 上一版程式與啟動器保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1792672749670`；連同 `before-1792599782594`、`before-1792661526026` 共三份，均確認程式與啟動器存在。最舊的 `before-1792439332866` 原路徑已消失、回收筒有一筆對應項目，可還原；不是對話備份。
+- 額外對正式安裝的建置產物執行全部 UI probes：**49/50**，只有 `voice-composer` 逾時；收件匣、側欄、設定、送出／佇列、通知等其餘項目均通過。原因已重現為測試程序未取得啟動器從本機設定注入的語音路徑，預設 Python 不存在，回 `LOCAL_DICTATION_SPAWN / ENOENT`。依既有設定只向該次程序傳入與正式啟動器相同的路徑後，**語音單項補驗通過**（合成錄音→既有本機 Whisper→原草稿、停止不送出、取消保留、錯誤保留、重開）；無程式或斷言修改。這是 49 項整批通過加 1 項補驗，**不是同一輪 50/50**。兩份輸出：`.runtime/archive/deploy-47a0ae6-ui-20261022.log`、`.runtime/archive/deploy-47a0ae6-voice-20261022.log`。
+- 待發布 17 個提交已檢查變更路徑與新增內容，未發現私人執行資料或憑證型態。`git push origin main` 後於 **20:49:32（臺灣時間）**讀回遠端 `main` 完整等於 `47a0ae6f35e733b28fd50ed0b808f81070b1754d`；本次三份工程紀錄與索引另作純文件提交，不再部署。
+- 正式 K 保持關閉，未做啟動後 health、真正三家核心送出或真人麥克風驗證。UI probes 使用隔離測試資料／模擬對話核心；不可替代正式「room_list→room_note→目標房卡片→丟棄或隨本人送出一次→AI 收到資料」驗收。正式工具前綴依實作：**Codex 房為 gemini_，Claude／Gemini 房為 luna_**。設定章節與等待沙漏目視、正式送出／佇列／停止／工人通知仍待本人確認；東區未更新。
+- 本人於部署收尾另回報：較長聽寫或卡頓時，偶爾在辨識途中切聊天室／其他視窗後整段沒有回填，需要重講。這是尚待重現的實際使用問題，**不能與上述測試路徑漏傳混同，也不能以單項補驗通過排除**；先另行唯讀診斷，未混入本次固定版本。
+
+## AGENTS.md 規則（已納入 51a69d7）
 
 ```text
 - 聊天室協調訊息：AI 只能留言到他房收件匣，不喚醒；本人下次在該房送出時帶入一次，是資料非授權。

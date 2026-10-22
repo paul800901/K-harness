@@ -140,4 +140,4 @@ GPT-6.1 Sol 複查初版（`c89e5ee`、`8c693ea`）後的處置：
 - 說明文顏色查證：三段說明文都是 `.discussion-api-intro`，顏色一路繼承外層 `.discussion-api-settings` 的 `--k-ink-3`，全前端沒有其他規則把它蓋成 ink-2 或 ink，因此沒有覆蓋來源可修；截圖看起來偏深，是因為說明文原本比 12px 標題大、又緊貼標題。本批靠標題放大加深與間距拉開解決，未加 `!important`。
 - 不動：側欄 `.project-toggle`／`.project-label`（仍為 12px 分類標頭）；`mobile.css` 沒有覆寫 `.settings-section-label`，不需對齊。
 - 驗證：`npm run build:ui` 成功（僅既有的 chunk 大小提醒）；`npm test` **1806/1806**；`npm run test:ui` **49/49**。
-- 分支 `ui-section-label-20261022`（基底 main `ce1e2c1`）。部署狀態：**未部署**，未合併、未 push。
+- 原分支 `ui-section-label-20261022`（基底 main `ce1e2c1`），程式 `5338cf7` 已合回 main。**2026-10-22 20:39:09（臺灣時間）南區已隨 `47a0ae6f35e733b28fd50ed0b808f81070b1754d` 部署**，20:49:32 已 push 並讀回相同 SHA。更新器 1821/1821、824 來源檔一致、退版三份；安裝後 UI 49 項通過，語音一項依既有正式路徑補驗通過（非同輪 50/50）。完整證據與限制見 [同批部署讀回](room-notes-20261022.md#正式部署與讀回2026-10-22)。正式 K 保持關閉，章節層次目視待本人，東區未更新。
