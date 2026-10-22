@@ -511,16 +511,20 @@ try {
   await noOverflow(page);
   await screenshot('mobile-dictation-quote');
   await page.getByRole('button', {name: '移除第 1 則註解', exact: true}).click();
-  // Synthetic page-hidden event exercises the same lifecycle used by phone Home/lock.
+  // Synthetic page-hidden event exercises the same lifecycle used by phone Home/lock: capture ends and
+  // what was said becomes a draft only (no hidden microphone, no send).
   await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
   await page.getByRole('button', {name: '停止聽寫', exact: true}).waitFor();
+  await wait(700);
   await page.evaluate(() => {
     Object.defineProperty(document, 'hidden', {configurable: true, value: true});
     document.dispatchEvent(new Event('visibilitychange'));
     delete document.hidden;
   });
   await page.getByRole('button', {name: '開始聽寫', exact: true}).waitFor();
-  assert.equal(calls.filter(c => c.op === 'dictation').length, 2);
+  assert.equal(await input.inputValue(), '手機假收音辨識');
+  assert.equal(calls.filter(c => c.op === 'dictation').length, 3);
+  await input.fill('');
   assert(!calls.some(c => c.op === 'send'), 'opening/changing reasoning must not send work');
   await page.setViewportSize({width: 412, height: 915});
   // Settings retains a small attachment disclosure and an authorized idle-only remote quota action.

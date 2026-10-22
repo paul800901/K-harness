@@ -77,6 +77,44 @@ try {
   await page.getByText('轉錄要求無法處理。 未送出；原草稿保留。', {exact: true}).waitFor();
   assert.equal(await draft.inputValue(), text);
   assert.equal(await app.evaluate(() => fixture.sends.length), 0);
+  await app.evaluate(() => {
+    fixture.fail = false;
+  });
+  // The real close-to-tray signal (main-process IPC through the production preload), then the window hides.
+  const hideWindow = () =>
+    app.evaluate(() => {
+      fixture.window.webContents.send('k-native-window-hidden');
+      fixture.window.hide();
+    });
+  // Hidden while recording: capture ends, the speech is transcribed into the draft only.
+  await mic.click();
+  await stop.waitFor();
+  await page.waitForTimeout(8200);
+  await hideWindow();
+  await page.waitForFunction(
+    previous => document.querySelector('textarea.composer-input')?.value.length > previous.length + 5,
+    text,
+    {timeout: 120000}
+  );
+  const hiddenDraft = await draft.inputValue();
+  assert.ok(hiddenDraft.startsWith(`${text}\n`));
+  assert.equal(await app.evaluate(() => fixture.calls.length), 3);
+  assert.equal(await app.evaluate(() => fixture.sends.length), 0, 'hidden while recording never sends');
+  // Send arrow, then hidden while real Whisper runs: completes and sends exactly once with the whole draft.
+  await mic.click();
+  await stop.waitFor();
+  await page.waitForTimeout(8200);
+  await page.getByRole('button', {name: '轉錄完成後送出', exact: true}).click();
+  await hideWindow();
+  await page.waitForFunction(() => document.querySelector('textarea.composer-input')?.value === '', null, {
+    timeout: 120000
+  });
+  await page.waitForTimeout(500);
+  const sent = await app.evaluate(() => fixture.sends.map(({threadId, text}) => ({threadId, text})));
+  assert.equal(sent.length, 1, 'send-on-completion sends exactly once after the window is hidden');
+  assert.equal(sent[0].threadId, 'voice-test');
+  assert.ok(sent[0].text.startsWith(`${hiddenDraft}\n`) && sent[0].text.length > hiddenDraft.length + 5);
+  assert.equal(await app.evaluate(() => fixture.calls.length), 4);
   await app.evaluate(async () => {
     await fixture.close();
   });
@@ -107,6 +145,8 @@ try {
       'stop does not send',
       'cancel keeps draft and makes no request',
       'transcription error keeps draft without send',
+      'real window-hidden IPC while recording: capture ends, real Whisper fills the draft, no send',
+      'send arrow then real window-hidden IPC: real Whisper completes and sends exactly once',
       'new Electron process and fresh storage start dictation without consent'
     ],
     realMicrophone: false,

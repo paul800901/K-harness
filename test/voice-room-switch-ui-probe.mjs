@@ -1,4 +1,5 @@
 // Built desktop/remote UI with synthetic capture and a deferred fake local transcriber; no model or real microphone.
+// One desktop case holds the transcriber longer than the former fixed 120-second cutoff (K_TEST_VOICE_LONG_MS).
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
@@ -112,7 +113,14 @@ const controller = {
   },
   async send(args) {
     calls.push({op: 'send', ...args});
+    if (args.text.includes('送出被拒')) throw Error('fake send rejected before sending');
     return {sent: true};
+  },
+  async uploadStream({threadId, name}, stream) {
+    let size = 0;
+    for await (const chunk of stream) size += chunk.length;
+    calls.push({op: 'upload', threadId, name});
+    return {id: `upload-${threadId}-${name}`, name, size};
   },
   async stop() {
     return {stopRequested: true};
@@ -233,9 +241,17 @@ async function rejectPlan(page, plan) {
   plan.reject(new Error('fake delayed transcription failure'));
   await response;
 }
+let sendBaseline = 0; // Sends made by earlier viewports.
+const sends = () => calls.filter(call => call.op === 'send').slice(sendBaseline);
 async function assertNoSend() {
-  assert.equal(calls.filter(call => call.op === 'send').length, 0, 'dictation never sends a message');
+  assert.equal(sends().length, 0, 'stop/fill-only dictation never sends a message');
 }
+async function waitForSends(count) {
+  for (let i = 0; i < 50 && sends().length < count; i += 1) await wait(100);
+  await wait(300); // A duplicate would arrive in this window.
+  assert.equal(sends().length, count, `expected exactly ${count} sends`);
+}
+const longHoldMs = Number(process.env.K_TEST_VOICE_LONG_MS ?? 125_000);
 try {
   browser = await launchProbeBrowser({
     args: [
@@ -272,10 +288,26 @@ try {
         window.__triggerKWindowHidden = () => listeners.forEach(callback => callback());
       });
     const {pageErrors, abortedRequests} = await connect(page, viewport.mobile);
+    const input = page.locator('textarea.composer-input');
+    sendBaseline = calls.filter(call => call.op === 'send').length;
+    const hideApp = async () => {
+      if (viewport.mobile)
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'hidden', {configurable: true, value: true});
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+      else await page.evaluate(() => window.__triggerKWindowHidden());
+    };
+    const showApp = async () => {
+      if (viewport.mobile)
+        await page.evaluate(() => {
+          Object.defineProperty(document, 'hidden', {configurable: true, value: false});
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+    };
     // A stops into a delayed transcribe; moving to B must neither cancel it nor put its result in B.
     let plan = await beginTranscription(page, 'A 原草稿', 'A 背景轉錄結果');
     await openRoom(page, roomB);
-    const input = page.locator('textarea.composer-input');
     await input.fill('B 草稿');
     await resolvePlan(page, plan);
     await page.waitForTimeout(100);
@@ -292,13 +324,7 @@ try {
     await page.evaluate(() => sessionStorage.setItem('k-draft:voice-room-A', 'A 較新儲存草稿'));
     await openRoom(page, roomA);
     await page.getByRole('button', {name: '取消聽寫', exact: true}).waitFor();
-    if (!viewport.mobile)
-      assert.equal(
-        await page.getByRole('button', {name: '轉錄完成後送出', exact: true}).isDisabled(),
-        true,
-        'a detached transcript cannot send on completion after returning to A'
-      );
-    else
+    if (viewport.mobile)
       assert.equal(
         await page.getByRole('button', {name: '轉錄完成後送出', exact: true}).count(),
         0,
@@ -355,57 +381,107 @@ try {
     );
     await page.screenshot({path: path.join(out, `${viewport.name}-failure.png`)});
     await assertNoSend();
-    // A still-pending background transcript is canceled when the app/tab is hidden; room switching is the only cancellation exception.
-    plan = await beginTranscription(page, 'A 隱藏時保留草稿', '隱藏後不得加入');
+    // Hiding the app/page no longer cancels a stopped transcription that has left its room.
+    plan = await beginTranscription(page, 'A 隱藏時保留草稿', '隱藏後仍完成');
     await openRoom(page, roomB);
-    if (viewport.mobile)
-      await page.evaluate(() => {
-        Object.defineProperty(document, 'hidden', {configurable: true, value: true});
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
-    else await page.evaluate(() => window.__triggerKWindowHidden());
+    await hideApp();
     await page.waitForTimeout(100);
-    plan.resolve();
-    await page.waitForTimeout(100);
-    if (viewport.mobile)
-      await page.evaluate(() => {
-        Object.defineProperty(document, 'hidden', {configurable: true, value: false});
-        document.dispatchEvent(new Event('visibilitychange'));
-      });
+    await resolvePlan(page, plan);
+    await showApp();
     await openRoom(page, roomA);
-    await page.waitForFunction(() => document.querySelector('textarea.composer-input')?.value === 'A 隱藏時保留草稿');
-    await page.getByRole('button', {name: '開始聽寫', exact: true}).waitFor();
-    await page
-      .locator('.composer-note [role="status"]')
-      .filter({hasText: '已取消這段聽寫'})
-      .waitFor({state: 'visible'});
+    await page.waitForFunction(
+      () => document.querySelector('textarea.composer-input')?.value === 'A 隱藏時保留草稿\n隱藏後仍完成'
+    );
     await assertNoSend();
-    // The real desktop-only “send after transcription” control must not send after leaving A.
-    if (!viewport.mobile) {
-      plan = await beginTranscription(page, 'A 點送出後切房仍保留', '切房後僅草稿', true);
-      await openRoom(page, roomB);
-      await resolvePlan(page, plan);
-      await openRoom(page, roomA);
-      await page.waitForFunction(
-        () => document.querySelector('textarea.composer-input')?.value === 'A 點送出後切房仍保留\n切房後僅草稿'
-      );
-      await assertNoSend();
-    }
-    // Switching during recording still cancels before any transcribe request is made.
-    await openRoom(page, roomA);
-    await input.fill('A 錄音切房保留');
-    const beforeRecordingSwitch = calls.filter(call => call.op === 'transcribe').length;
+    // Hiding while recording ends capture (no hidden microphone) and keeps the speech as a draft only.
+    await input.fill('A 錄音中隱藏');
+    plan = deferredPlan('隱藏前說的話');
+    transcriptionPlans.push(plan);
     await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
     await page.getByRole('button', {name: '停止聽寫', exact: true}).waitFor();
-    await openRoom(page, roomB);
-    assert.equal(
-      calls.filter(call => call.op === 'transcribe').length,
-      beforeRecordingSwitch,
-      'switching while recording cancels before upload'
+    await wait(700);
+    await hideApp();
+    await plan.started;
+    await page.getByText('轉錄中…', {exact: true}).waitFor();
+    await resolvePlan(page, plan);
+    await showApp();
+    await page.waitForFunction(
+      () => document.querySelector('textarea.composer-input')?.value === 'A 錄音中隱藏\n隱藏前說的話'
     );
-    await openRoom(page, roomA);
-    await page.waitForFunction(() => document.querySelector('textarea.composer-input')?.value === 'A 錄音切房保留');
     await assertNoSend();
+    // Switching rooms while recording also ends capture and fills only A's draft.
+    await input.fill('A 錄音切房保留');
+    plan = deferredPlan('切房前說的話');
+    transcriptionPlans.push(plan);
+    await page.getByRole('button', {name: '開始聽寫', exact: true}).click();
+    await page.getByRole('button', {name: '停止聽寫', exact: true}).waitFor();
+    await wait(700);
+    await openRoom(page, roomB);
+    await plan.started;
+    await resolvePlan(page, plan);
+    assert.equal(await input.inputValue(), 'B 草稿', 'the result never lands in B');
+    await openRoom(page, roomA);
+    await page.waitForFunction(
+      () => document.querySelector('textarea.composer-input')?.value === 'A 錄音切房保留\n切房前說的話'
+    );
+    await assertNoSend();
+    if (!viewport.mobile) {
+      // Send intent survives leaving A and a hidden window past the former 120 s cutoff, and sends once to A
+      // with A's own draft and attachment; B keeps its draft.
+      await input.fill('');
+      await page.locator('input[type="file"]').setInputFiles({
+        name: 'a-note.txt',
+        mimeType: 'text/plain',
+        buffer: Buffer.from('A 的附件')
+      });
+      await page.getByText('a-note.txt').first().waitFor();
+      plan = await beginTranscription(page, 'A 送出草稿', 'A 長時間後送出', true);
+      await openRoom(page, roomB);
+      await hideApp();
+      await wait(longHoldMs);
+      await assertNoSend();
+      await resolvePlan(page, plan);
+      await waitForSends(1);
+      const sent = sends().at(-1);
+      assert.equal(sent.threadId, roomA.threadId);
+      assert.equal(sent.text, 'A 送出草稿\nA 長時間後送出');
+      assert.deepEqual(sent.attachmentIds, [`upload-${roomA.threadId}-a-note.txt`]);
+      assert.equal(await input.inputValue(), 'B 草稿');
+      await openRoom(page, roomA);
+      await page.waitForTimeout(300);
+      assert.equal(await input.inputValue(), '', 'the sent draft is cleared from A');
+      assert.equal(await page.getByText('a-note.txt').count(), 0, 'the sent attachment leaves A');
+      await openRoom(page, roomB);
+      await openRoom(page, roomA);
+      await waitForSends(1); // Revisiting A never replays the send.
+      // Send intent, back in A before completion: the arrow's promise is shown and kept, once.
+      plan = await beginTranscription(page, 'A 返回後送出', 'A 返回後完成', true);
+      await openRoom(page, roomB);
+      await openRoom(page, roomA);
+      await page
+        .locator('.composer-note [role="status"]')
+        .filter({hasText: '會在此聊天室送出'})
+        .waitFor({state: 'visible'});
+      await page.screenshot({path: path.join(out, `${viewport.name}-send-pending.png`)});
+      await resolvePlan(page, plan);
+      await waitForSends(2);
+      assert.equal(sends().at(-1).threadId, roomA.threadId);
+      assert.equal(sends().at(-1).text, 'A 返回後送出\nA 返回後完成');
+      await page.waitForFunction(() => document.querySelector('textarea.composer-input')?.value === '');
+      // A rejected background send is attempted once, not retried, and keeps A's full draft.
+      plan = await beginTranscription(page, 'A 送出被拒草稿', '被拒時保留', true);
+      await openRoom(page, roomB);
+      await resolvePlan(page, plan);
+      await waitForSends(3);
+      assert.equal(await input.inputValue(), 'B 草稿');
+      await openRoom(page, roomA);
+      await page.waitForFunction(
+        () => document.querySelector('textarea.composer-input')?.value === 'A 送出被拒草稿\n被拒時保留'
+      );
+      await waitForSends(3);
+      await input.fill('');
+      assert.equal(sends().filter(call => call.threadId === roomB.threadId).length, 0, 'B never receives A dictation');
+    }
     assert.deepEqual(pageErrors, [], `${viewport.name} has no unexpected page errors`);
     const unexpectedAborts = abortedRequests.filter(
       request =>
@@ -429,10 +505,12 @@ try {
           'A→B→A completion appends to latest A sessionStorage draft without duplicate transcription',
           'return to A can cancel and retain its draft',
           'background failure retains A draft and shows A notice',
-          'hidden app callback/mobile visibility cancels pending background transcription',
-          'switch during recording still cancels',
-          'desktop send-after-transcription intent is cleared after leaving source room',
-          'no model send'
+          'hidden app callback/mobile visibility does not cancel a stopped transcription',
+          'hidden or room switch while recording ends capture and fills only the source draft',
+          `desktop send intent survives room switch + hidden window for ${longHoldMs} ms and sends once to A with its draft and attachment`,
+          'desktop send intent is shown and kept after returning before completion',
+          'rejected background send is not retried and keeps the draft',
+          'stop/fill-only never sends; B never receives A dictation'
         ]
       },
       null,

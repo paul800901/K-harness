@@ -3,20 +3,11 @@ import {WebSpeechDictationAdapter} from '@assistant-ui/react';
 import {createDictationSession} from './dictation-session.mjs';
 import {createNativeDictationSession} from './native-dictation.mjs';
 
-// Only stopped, in-flight main-composer transcripts outlive their room's view.
-// Audio stays in the existing request; this is not a retry or a recording queue.
+// Only stopped, in-flight main-composer transcripts outlive their room's view or a hidden window,
+// keeping the stop/send intent chosen in that room. Audio stays in the existing request; this is
+// not a retry or a recording queue.
 const backgroundTranscriptions = new Map(),
   backgroundNotices = new Map();
-function cancelBackgroundTranscriptions() {
-  for (const [key, entry] of backgroundTranscriptions) {
-    if (entry.view) entry.view.cancel();
-    else {
-      backgroundTranscriptions.delete(key);
-      entry.session.cancel();
-      backgroundNotices.set(key, '已取消這段聽寫，原草稿保留。');
-    }
-  }
-}
 
 // Capture stays in memory. Native audio is sent only to K's local transcription endpoint.
 function paintWaveform(canvas, levels) {
@@ -44,9 +35,11 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
   const canvas = useRef(null),
     job = useRef(null),
     callback = useRef(onResult),
+    background = useRef(onBackgroundResult),
     activity = useRef(onActiveChange),
     scope = useRef(sessionKey);
   callback.current = onResult;
+  background.current = onBackgroundResult;
   activity.current = onActiveChange;
   scope.current = sessionKey;
   const remote = typeof document !== 'undefined' && document.documentElement.dataset.kRemote === 'true';
@@ -77,7 +70,6 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
   };
   const attach = entry => {
     entry.view = {
-      cancel,
       state: next => {
         if (job.current === entry && entry.scope === scope.current) setPhase(next);
       },
@@ -92,7 +84,7 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
         if (error) setNotice(`${error} 未送出；原草稿保留。`);
         else if (!result.text.trim()) setNotice('沒有辨識到文字，未送出訊息。');
         else {
-          callback.current(remote || entry.wasDetached ? {...result, send: false} : result);
+          callback.current(remote ? {...result, send: false} : result);
           if (entry.hitLimit) setNotice('已達 5 分鐘上限；辨識已完成。');
         }
         return true;
@@ -108,24 +100,23 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
     if (!entry.backgroundResult) return;
     if (error) backgroundNotices.set(entry.scope, `${error} 未送出；原草稿保留。`);
     else if (!result.text.trim()) backgroundNotices.set(entry.scope, '沒有辨識到文字，未送出訊息。');
-    else entry.backgroundResult({...result, send: false});
+    else entry.backgroundResult(remote ? {...result, send: false} : result);
   };
-  const cancelRef = useRef(cancel);
-  cancelRef.current = cancel;
+  // Hiding the window/page ends capture (no hidden microphone) but keeps what was said: it is
+  // transcribed into the draft without sending. A stopped transcription simply continues.
+  const stopHiddenRecording = () => {
+    if (job.current?.session?.getState() === 'recording') void job.current.session.stop(false);
+  };
+  const hiddenRef = useRef(stopHiddenRecording);
+  hiddenRef.current = stopHiddenRecording;
   useEffect(() => {
     if (!desktop) return;
-    return window.kBrowser.onWindowHidden(() => {
-      cancelBackgroundTranscriptions();
-      cancelRef.current();
-    });
+    return window.kBrowser.onWindowHidden(() => hiddenRef.current());
   }, [desktop]);
   useEffect(() => {
     if (!remote) return;
     const hidden = () => {
-      if (document.hidden) {
-        cancelBackgroundTranscriptions();
-        cancelRef.current();
-      }
+      if (document.hidden) hiddenRef.current();
     };
     document.addEventListener('visibilitychange', hidden);
     return () => document.removeEventListener('visibilitychange', hidden);
@@ -136,7 +127,12 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       job.current = pending;
       attach(pending);
       setPhase(pending.session.getState());
-      setNotice(pending.notice ?? '轉錄完成後會留在此聊天室草稿，不會自動送出。');
+      setNotice(
+        pending.notice ??
+          (pending.send && !remote
+            ? '轉錄完成後會在此聊天室送出。'
+            : '轉錄完成後會留在此聊天室草稿，不會自動送出。')
+      );
     }
     if (onBackgroundResult && backgroundNotices.has(sessionKey)) {
       setNotice(backgroundNotices.get(sessionKey));
@@ -147,8 +143,11 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       job.current = null;
       if (entry) {
         entry.view = null;
+        // Leaving the room while recording ends capture; its audio becomes a draft-only transcript.
+        if (entry.backgroundResult && entry.session?.getState() === 'recording') void entry.session.stop(false);
         if (entry.backgroundResult && entry.session?.getState() === 'transcribing') {
-          entry.wasDetached = true;
+          // The room's latest callback carries its own draft, attachments, quotes and send settings.
+          entry.backgroundResult = background.current;
           backgroundTranscriptions.set(entry.scope, entry);
         } else {
           entry.session?.cancel();
@@ -294,7 +293,12 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       }
     }
   };
-  const stop = send => job.current?.session?.stop(send);
+  const stop = send => {
+    const entry = job.current;
+    if (!entry?.session) return;
+    entry.send ||= Boolean(send);
+    return entry.session.stop(send);
+  };
   return {
     phase,
     notice,
@@ -305,7 +309,6 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
     consent,
     native,
     consentKey,
-    canSendOnCompletion: !job.current?.wasDetached,
     decline: () => setConsent(false),
     accept: () => {
       sessionStorage.setItem(consentKey, 'yes');

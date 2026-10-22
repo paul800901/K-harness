@@ -161,15 +161,12 @@ export function createLocalDictation({
   modelPath = process.env.K_DICTATION_MODEL || LOCAL_DICTATION_MODEL,
   scriptPath = provider === 'windows' ? windowsHelperPath : helperPath,
   spawnImpl = spawn,
-  timeoutMs = 120_000,
   stopTimeoutMs = 5000
 } = {}) {
   if (!['whisper', 'windows'].includes(provider)) throw new TypeError('Dictation provider must be whisper or windows.');
   if (
     !path.isAbsolute(pythonPath) ||
     !path.isAbsolute(scriptPath) ||
-    !Number.isInteger(timeoutMs) ||
-    timeoutMs < 1 ||
     !Number.isInteger(stopTimeoutMs) ||
     stopTimeoutMs < 1
   ) {
@@ -181,7 +178,6 @@ export function createLocalDictation({
   function finish(job, error, value) {
     if (job.responseSettled) return;
     job.responseSettled = true;
-    clearTimeout(job.timer);
     job.signal?.removeEventListener('abort', job.onAbort);
     if (!job.child || job.childClosed) if (active === job) active = null;
     if (error) job.reject(error);
@@ -236,7 +232,6 @@ export function createLocalDictation({
       stopError: null,
       output: '',
       errors: '',
-      timer: null,
       stopTimer: null,
       resolve: null,
       reject: null,
@@ -254,15 +249,7 @@ export function createLocalDictation({
         new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499})
       );
     signal?.addEventListener('abort', job.onAbort, {once: true});
-    job.timer = setTimeout(
-      () =>
-        stopChild(
-          job,
-          'timeout',
-          new LocalDictationError('本機語音辨識逾時。', {code: 'LOCAL_DICTATION_TIMEOUT', statusCode: 504})
-        ),
-      timeoutMs
-    );
+    // Long audio has no fixed total deadline; the request's abort (cancel/disconnect) or close() stops it.
     try {
       const executable =
         provider === 'windows'

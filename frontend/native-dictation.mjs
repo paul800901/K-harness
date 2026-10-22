@@ -1,6 +1,5 @@
 export const NATIVE_DICTATION_SAMPLE_RATE = 16_000;
 export const NATIVE_DICTATION_MAX_MS = 5 * 60 * 1000;
-export const NATIVE_DICTATION_TIMEOUT_MS = 120_000;
 
 function resampleLinear(samples, sourceRate, targetRate) {
   if (!Number.isFinite(sourceRate) || sourceRate <= 0) throw new Error('無法讀取麥克風取樣率。');
@@ -82,7 +81,6 @@ export function createNativeDictationSession({
   onResult = () => {},
   onError = () => {},
   maxRecordingMs = NATIVE_DICTATION_MAX_MS,
-  transcriptionTimeoutMs = NATIVE_DICTATION_TIMEOUT_MS,
   setTimer = setTimeout,
   clearTimer = clearTimeout
 } = {}) {
@@ -95,7 +93,6 @@ export function createNativeDictationSession({
   let processor = null;
   let silence = null;
   let recordingTimer = null;
-  let transcriptionTimer = null;
   let abortController = null;
   let samples = [];
   let sampleCount = 0;
@@ -118,9 +115,7 @@ export function createNativeDictationSession({
   };
   const clearTimers = () => {
     if (recordingTimer !== null) clearTimer(recordingTimer);
-    if (transcriptionTimer !== null) clearTimer(transcriptionTimer);
     recordingTimer = null;
-    transcriptionTimer = null;
   };
   const disconnectCapture = ({clearSamples = false} = {}) => {
     if (processor) {
@@ -274,25 +269,13 @@ export function createNativeDictationSession({
     const settleFailure = error => {
       if (settled || token !== generation) return;
       settled = true;
-      clearTimers();
       abortController = null;
       pendingResolve = null;
       setState('idle');
       onError(error instanceof Error ? error.message : String(error));
       resolveCompletion();
     };
-    transcriptionTimer = setTimer(() => {
-      if (settled || token !== generation) return;
-      settled = true;
-      generation += 1;
-      controller.abort();
-      clearTimers();
-      abortController = null;
-      pendingResolve = null;
-      setState('idle');
-      onError('語音轉錄逾時，原草稿保留。');
-      resolveCompletion();
-    }, transcriptionTimeoutMs);
+    // No fixed total deadline: long audio may take a while; cancel, disconnect or a real error ends it.
     Promise.resolve()
       .then(() => requestTranscription(audioBase64, controller.signal))
       .then(result => {
@@ -302,7 +285,6 @@ export function createNativeDictationSession({
           return;
         }
         settled = true;
-        clearTimers();
         abortController = null;
         pendingResolve = null;
         setState('idle');

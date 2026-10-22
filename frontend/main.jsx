@@ -378,10 +378,14 @@ const ChatView = React.memo(function ChatView({
     disabled: blocked || !state.threadId || ['connecting', 'offline', 'error', 'uncertain'].includes(state.status),
     sessionKey: threadId,
     onActiveChange: active => reportVoiceActive('main', active),
-    onBackgroundResult: ({text}) => {
+    // Runs after this room's view was left: append to its latest saved draft and, only when the
+    // user chose send-on-completion here, submit once through this room's own send path.
+    onBackgroundResult: ({text, send}) => {
       const key = `k-draft:${threadId}`,
-        existing = sessionStorage.getItem(key) ?? '';
-      sessionStorage.setItem(key, existing + (existing && !/\s$/.test(existing) ? '\n' : '') + text);
+        existing = sessionStorage.getItem(key) ?? '',
+        draft = existing + (existing && !/\s$/.test(existing) ? '\n' : '') + text;
+      sessionStorage.setItem(key, draft);
+      if (send) roomAction(threadId, () => submitText(draft));
     },
     onResult: ({text, send}) => {
       const composer = runtime.thread.composer,
@@ -784,7 +788,6 @@ const ChatView = React.memo(function ChatView({
                             aria-label="轉錄完成後送出"
                             title="轉錄完成後送出"
                             disabled={
-                              !voice.canSendOnCompletion ||
                               voice.phase === 'starting' ||
                               blocked ||
                               uploads.some(a => a.loading)

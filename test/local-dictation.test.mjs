@@ -205,7 +205,7 @@ test('Windows dictation uses the built-in recognizer helper and keeps WAV, cance
 test('local dictation rejects concurrent job and abort kills only its child', async () => {
   const audio = makeWav().toString('base64');
   const child = new FakeChild({hold: true});
-  const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 5000});
+  const backend = createLocalDictation({spawnImpl: () => child});
   const abort = new AbortController();
   const first = backend.transcribe(audio, {signal: abort.signal});
   await new Promise(resolve => setImmediate(resolve));
@@ -218,7 +218,7 @@ test('local dictation rejects concurrent job and abort kills only its child', as
 
 test('local dictation close terminates the in-flight child without a box operation', async () => {
   const child = new FakeChild({hold: true});
-  const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 5000});
+  const backend = createLocalDictation({spawnImpl: () => child});
   const pending = backend.transcribe(makeWav().toString('base64'));
   await new Promise(resolve => setImmediate(resolve));
   await backend.close();
@@ -228,7 +228,7 @@ test('local dictation close terminates the in-flight child without a box operati
 
 test('local dictation retains active lock after unconfirmed stop and permits close retry after late exit', async () => {
   const child = new FakeChild({hold: true, ignoreKill: true});
-  const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 5000, stopTimeoutMs: 20});
+  const backend = createLocalDictation({spawnImpl: () => child, stopTimeoutMs: 20});
   const abort = new AbortController();
   const pending = backend.transcribe(makeWav().toString('base64'), {signal: abort.signal});
   pending.catch(() => {});
@@ -245,14 +245,17 @@ test('local dictation retains active lock after unconfirmed stop and permits clo
   await backend.close();
 });
 
-test('local dictation timeout kills its child and preserves timeout failure', async () => {
+test('long local transcription has no fixed total deadline and still returns its text', async t => {
+  t.mock.timers.enable({apis: ['setTimeout']});
   const child = new FakeChild({hold: true});
-  const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 25});
-  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {
-    code: 'LOCAL_DICTATION_TIMEOUT',
-    statusCode: 504
-  });
-  assert.equal(child.kills, 1);
+  const backend = createLocalDictation({spawnImpl: () => child});
+  const pending = backend.transcribe(makeWav({frames: 16000 * 290}).toString('base64'));
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(30 * 60 * 1000); // Far beyond the former 120-second cutoff.
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(child.kills, 0, 'a slow recognizer is not killed by elapsed time');
+  child.finish(0, JSON.stringify({ok: true, text: '很長的聽寫'}));
+  assert.deepEqual(await pending, {ok: true, text: '很長的聽寫'});
   await backend.close();
 });
 
@@ -405,7 +408,7 @@ test('desktop close reports partial failure, closes other resources, and retries
   const closes = {};
   let controllerCloses = 0;
   const child = new FakeChild({hold: true, ignoreKill: true});
-  const backend = createLocalDictation({spawnImpl: () => child, timeoutMs: 5000, stopTimeoutMs: 20});
+  const backend = createLocalDictation({spawnImpl: () => child, stopTimeoutMs: 20});
   const app = await startDesktop({
     root: 'test',
     executable: 'test',

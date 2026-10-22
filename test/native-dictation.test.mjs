@@ -257,20 +257,22 @@ test('late microphone stream is stopped when AudioContext resume fails first', a
   assert.equal(session.getState(), 'idle');
 });
 
-test('transcription timeout settles even if the request ignores abort and late text is ignored', async () => {
+test('a slow transcription has no fixed deadline and keeps its send intent', async () => {
   const audio = fakeAudio();
+  const timers = [];
   let signal;
-  let resolveLate;
+  let resolveSlow;
   const results = [];
   const errors = [];
   const session = createNativeDictationSession({
     acquireStream: async () => audio.stream,
     createAudioContext: () => audio.context,
-    transcriptionTimeoutMs: 10,
+    setTimer: (callback, ms) => timers.push({callback, ms}),
+    clearTimer: () => {},
     requestTranscription: (_payload, requestSignal) => {
       signal = requestSignal;
       return new Promise(resolve => {
-        resolveLate = resolve;
+        resolveSlow = resolve;
       });
     },
     onResult: result => results.push(result),
@@ -279,13 +281,16 @@ test('transcription timeout settles even if the request ignores abort and late t
   await session.start();
   audio.emit();
   const completion = session.stop(true);
-  await completion;
-  assert.equal(signal.aborted, true);
-  assert.equal(session.getState(), 'idle');
-  assert.deepEqual(errors, ['語音轉錄逾時，原草稿保留。']);
-  resolveLate({ok: true, text: '不可採用的晚到結果'});
   await delay(0);
-  assert.deepEqual(results, []);
+  // Let every timer the session ever scheduled elapse, as if many minutes had passed.
+  for (const timer of timers.splice(0)) timer.callback();
+  await delay(0);
+  assert.equal(session.getState(), 'transcribing');
+  assert.equal(signal.aborted, false);
+  assert.deepEqual(errors, []);
+  resolveSlow({ok: true, text: '很久之後才完成的長聽寫'});
+  await completion;
+  assert.deepEqual(results, [{text: '很久之後才完成的長聽寫', send: true}]);
 });
 
 test('invalid transcription success is an error and never returns send intent', async () => {
