@@ -48,7 +48,8 @@ try {
       const activity = [
         {threadId: 'A', busy: true, status: 'working', pendingQuestions: 1, workspace},
         {threadId: 'B', busy: false, status: 'completed', pendingQuestions: 0, workspace},
-        {threadId: 'C', busy: true, status: 'working', pendingQuestions: 0, workspace}
+        {threadId: 'C', busy: true, status: 'working', pendingQuestions: 0, workspace},
+        {threadId: 'D', busy: false, status: 'completed', pendingQuestions: 0, pendingWorkers: 1, workspace}
       ];
       const base = {
         workspace,
@@ -77,12 +78,12 @@ try {
           ? [{id: `reply-${id}`, role: 'assistant', text: `僅限 ${id} 的歷史`, completedAt: '2026-01-01T00:00:00Z'}]
           : []
       });
-      const sessions = ['A', 'B', 'C'].map((id, i) => ({
+      const sessions = ['A', 'B', 'C', 'D'].map((id, i) => ({
         threadId: id,
         title: `對話 ${id}`,
         workspace,
         model,
-        sortAt: `2026-01-0${3 - i}T00:00:00Z`
+        sortAt: `2026-01-0${4 - i}T00:00:00Z`
       }));
       const historyB = gate(),
         finishB = gate(),
@@ -151,8 +152,11 @@ try {
       assert.equal(await page.locator('.session-activity').filter({hasText: '待確認'}).count(), 1);
       assert.equal(await page.locator('.session-activity.running').count(), 1);
       assert.equal(await page.locator('.session-activity.completed-unread').count(), 1);
+      assert.equal(await page.locator('.session-activity.waiting-workers[title="等待子代理"]').count(), 1);
       const icons = await page
-        .locator('.session-activity.running svg,.session-activity.completed-unread svg')
+        .locator(
+          '.session-activity.running svg,.session-activity.completed-unread svg,.session-activity.waiting-workers svg'
+        )
         .evaluateAll(nodes =>
           nodes.map(n => ({
             tag: n.tagName,
@@ -161,7 +165,7 @@ try {
             width: n.getBoundingClientRect().width
           }))
         );
-      assert.notEqual(icons[0].shape, icons[1].shape);
+      assert.equal(new Set(icons.map(i => i.shape)).size, 3);
       assert.ok(icons.every(i => i.animation === 'none' && i.width >= 13));
       const order = await rows.allTextContents();
       await rows.filter({hasText: '對話 B'}).click();
