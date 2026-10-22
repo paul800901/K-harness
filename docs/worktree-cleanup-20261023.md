@@ -45,7 +45,7 @@ GPT-6.1 Sol（effort high，只讀）第一次驗收**不同意結案**，指出
   因此初版「其餘未複製內容都是未被引用的測試暫存」不成立，已刪除該說法。
 - **`tests` 內被點名的證據（Sol 複驗發現）**：盤點時把整個 `.runtime	ests` 當成測試暫存，但有紀錄明確點名其中的檔案。從回收筒補存（排除測試用瀏覽器設定檔與代理家目錄，新保存內容沒有登入檔或 Cookies）：
 
-  | 補存位置（`.runtimerchive\`） | 來源 | 引用紀錄 | 內容 |
+  | 補存位置（`.runtime\archive\`） | 來源 | 引用紀錄 | 內容 |
   |---|---|---|---|
   | `gemma-native` | `gemma-main-agents\.runtime	ests\gemma-native` 根層 | [Gemma 主代理](gemma-main-agents-20261016.md) | 34 檔（含點名的 9 個收據），不含 `home`、`k-state*`、`schema` 等測試狀態 |
   | `selfhost-native` | `gemma-main-agents\.runtime	ests\selfhost-native` | [自架社群模型](selfhost-community-models-20261019.md) | 整份 11 檔 |
