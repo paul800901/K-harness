@@ -1,6 +1,6 @@
 # Gemini 同帳號派工不再做整機閒置檢查（2026-10-22）
 
-工作樹 `.runtime/worktrees/gemini-dispatch-idle-20261022`、分支 `gemini-dispatch-idle-20261022`，基底 main `9a2ec97`。程式＋測試提交 `74a7f6c`；本紀錄與索引另作文件提交。實作：Claude Opus 5.5 子代理。未合併 main、未 push、未部署；未啟動任何 agy。
+原工作樹 `.runtime/worktrees/gemini-dispatch-idle-20261022`、分支 `gemini-dispatch-idle-20261022`，基底 main `9a2ec97`。程式＋測試提交 `74a7f6c`；本紀錄與索引另作文件提交。實作：Claude Opus 5.5 子代理。已合回 main；**2026-10-22 17:32:06（臺灣時間）南區已部署 `2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`，程式版已 push 並讀回**。未啟動任何正式 agy，K 保持關閉，實際送出驗證待本人；東區未更新。
 
 ## 症狀與機制
 
@@ -56,9 +56,12 @@
 
 - GPT-6.1 Sol 已覆核（工單 gemini-dispatch-idle-review-sol-20261022，只讀）：結論可合併、無必修；五項皆為備註，無建議修法。Sol 另跑 `node --test test/gemini-accounts.test.mjs` 141/141、`git diff --check` 通過。
 - 主代理（Claude Fable 5.1）獨立讀過完整差異，於工作樹重跑 `npm test`：1806/1806 pass、0 fail，約 73 秒。
-- 合回 main 後交 Codex App 部署，與同日 UI 視覺層次修正協調為同一版本；本紀錄提交時未 push、未部署、未在正式 K 讀回。
+- 與同日 UI 視覺層次修正合併後，main 已重跑介面建置、`npm test` **1806/1806**、`npm run test:ui` **49/49**。2026-10-22 **17:32:06（臺灣時間）**由 K 外的 Codex App 執行一次更新器，正式套用 `2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`；更新器再次完整測試 **1806/1806**。
+- 已從更新器實際使用的 `D:\K-harness\.local\runtime.json` 讀回完整部署 SHA；816 個 Git 來源檔核對一致（含 Windows CRLF 正規化）。前一版 `fb2754150a52c685d5fc412d94a931e173d61c15` 保留於 `releases/before-1792661526026`，共保留最新三份程式退版。設定差異僅 `version`、`previous`，未操作帳號／對話／瀏覽器資料，未改計費與權限。
+- `git push origin main` 後於 **17:34:35（臺灣時間）**讀回遠端完整 SHA 與正式部署版本相同。部署輸出、退版回收證據與完整讀回見 [UI 同批部署紀錄](ui-visual-hierarchy-20261022.md#正式部署與讀回)；本次工程紀錄與索引另作純文件提交，不再部署或重啟 K。
+- **K 仍關閉，未做啟動後 health 或正式雙聊天室實測**；不能以程式部署與回歸測試通過宣稱正式互動已驗收。東區未更新。
 
 ## 未完成事項
 
 - 16:09 那次的 agy 程序來源未查明；本修正後，同類外部程序不再擋同帳號送出，但若是 K 外有工具定期啟動 agy，仍會擋帳號切換與權杖同步。
-- 正式機實測（K 外有 agy 時於 Gemini 聊天室送出）待部署後由本人或主代理在不影響使用的時機確認；本批依規則未啟動 agy。
+- 正式機實測待本人啟動 K 後確認：一個 Gemini 聊天室執行時，在另一個 Gemini 聊天室送出，不再出現「Antigravity 正在執行」；設定頁切換帳號仍要求 Gemini 全部停止。本次部署未啟動正式 agy，也未代本人切換帳號。

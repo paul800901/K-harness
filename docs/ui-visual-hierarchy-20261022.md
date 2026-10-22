@@ -8,7 +8,7 @@
 - 實作：Claude Opus 5.5 子代理
 - 複查：GPT-6.1 Sol 已複查，必修兩項已修（見「Sol 複查與修正」）；修正版 Sol 最終覆核通過（build:ui 成功、test:ui 49/49、npm test 1803/1803，模型標籤 16 組情境通過，無剩餘必修）
 - 合併：以 main `198e38d`（含同日 Gemini 派工修正 `docs/gemini-dispatch-idle-20261022.md`）為基底合回，合併 commit `e7b478c`；合併後於 main 重跑 build:ui、npm test、test:ui（結果見「驗證」末段）
-- 部署狀態：**未部署、未 push**；交由本人在 Codex App 依 `docs/git-install-update.md` 更新正式 K
+- 部署狀態：**南區已部署、程式版已 push 並讀回**；2026-10-22 17:32:06（臺灣時間）由 K 外的 Codex App 套用 `2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`，與同日 Gemini 派工修正同批發布。K 保持關閉，三主題與正式操作待本人驗證；東區未更新。
 
 ## 改動檔案
 
@@ -113,6 +113,16 @@ GPT-6.1 Sol 複查初版（`c89e5ee`、`8c693ea`）後的處置：
 - **可接受項目**：本工單沒有逐條列出 Sol 判為可接受的項目；除上述四項外，初版其餘內容（A–F 各項與「與工單規格不同之處」）本次沒有更動。
 
 修正後驗證：`npm run build:ui` 成功（同一則 chunk > 500 kB 既有提示）；`npm test` **1803/1803 通過**（含 `ui-style-guard` 3/3）；`npm run test:ui` **49/49 通過**。
+
+## 正式部署與讀回
+
+- 2026-10-22 17:32:06（臺灣時間）完成正式套用。部署前確認正式 K 無相關程序、47831 連線拒絕，且執行者位於外部 Codex App 後，依 `docs/git-install-update.md` 執行一次 `Update-K.ps1 -Ref 2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`。當時 main 為該 SHA、工作樹乾淨。
+- 更新器完成 lockfile 安裝、介面／擴充／啟動器建置與完整測試 **1806/1806**；本輪未重跑 UI probes，沿用上節 main 已驗證的 **49/49**。輸出保留在 `.runtime/archive/deploy-2f46ccc-20261022.log`。
+- 更新器實際設定位置是 `D:\K-harness\.local\runtime.json`，不是候選目錄下的 `.local/runtime.json`。讀回 `version` 完整等於上述 SHA；部署前為 `fb2754150a52c685d5fc412d94a931e173d61c15`，設定差異僅 `version`、`previous`。
+- 正式 `trusted-runtime` 的 **816 個 Git 來源檔**全部對應指定版本：11 檔位元組完全相同，805 檔僅 Windows CRLF 差異（本機 `core.autocrlf=true`），換行正規化後無差異。沒有修改程式碼或三家核心。
+- 上一版程式與啟動器保留於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/releases/before-1792661526026`；現存退版為 `before-1792439332866`、`before-1792599782594`、`before-1792661526026`，共三份，均讀回程式與啟動器存在。舊的 `before-1792414820257` 原路徑已消失，資源回收筒有一筆相符項目，可還原；這是程式退版，不是對話備份。
+- push 前檢查待發布 10 個提交的路徑與新增內容，未發現私人執行資料或憑證型態；`git push origin main` 後於 **17:34:35（臺灣時間）**讀回遠端 `main` 為 `2f46ccc1d0a6ccb6e7a8157ebad559fcc1ab20e5`。本次兩份工程紀錄與索引另作純文件提交，不改正式程式版本、不重啟 K。
+- K 套用後仍停止，未啟動正式模型、未操作帳號／對話／瀏覽器資料，未改計費與權限。**尚未做啟動後 health 或正式互動驗證**；由本人啟動後檢查四章設定、API 卡片邊框、側欄標頭與黃銅選取條、頂部標題、回覆模型小標籤，並切換暖色／淺色／深色。Gemini 雙聊天室與切換帳號檢查見同日派工紀錄；東區仍待當地更新。
 
 ## 未做事項
 
