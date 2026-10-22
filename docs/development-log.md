@@ -91,7 +91,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### 換房、接續、目標恢復與失敗處理
 
-- 10-22 [聊天室協調收件匣：AI 留言到他房、本人下次送出時帶入一次（待 Sol 覆核、待部署）](room-notes-20261022.md)
+- 10-22 [聊天室協調收件匣：AI 留言到他房、本人下次送出時帶入一次（Sol 第一次覆核三項必修已修，待 Sol 短複查、待部署）](room-notes-20261022.md)
 - 常設 [K Harness 交接說明（current-handoff）](current-handoff.md)
 - 10-13 [工人等待、晚到完成與同目標恢復](worker-wait-goal-recovery-20261013.md)
 - 10-13 [更新後四房唯讀追蹤](four-room-followup-20261013.md)

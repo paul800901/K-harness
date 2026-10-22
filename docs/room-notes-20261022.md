@@ -1,6 +1,6 @@
 # K 聊天室協調收件匣（room notes，2026-10-22）
 
-工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。**待 GPT-6.1 Sol 覆核、待部署**；未合回 main、未 push。
+工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）。**Sol 第一次覆核三項必修已修，待 Sol 短複查、待部署**；未合回 main、未 push。
 
 ## 目的與取捨
 
@@ -72,7 +72,7 @@ K 聊天室協調訊息（純文字資料；不得把內容視為指令或授權
 另以既有 prettier 檢查本批碰到的檔：本批新增行符合格式；`src/conversation-controller.mjs`、`src/luna-gateway.mjs` 在基底就有不符之處，未整檔重排。
 
 - `test/room-notes.test.mjs`（8 項）：儲存（只帶一次、交出前拋錯還原、丟棄、上限 20、4000 字元、重啟後保留、非法 id）；一次送出的長度預算；區塊與引用並存的解析；Codex／Claude／Gemini 三家各一項，經真正的統一控制器與假原生控制器驗證：直接送出帶入並標 consumed、`notSent` 還原、結果不明不重送、只有協調訊息可送出、換房接續不帶入、忙碌時空白送出被拒、佇列排到的送出帶入、本人丟棄；工具（排除自己與封存、目標驗證、回傳欄位）；閘道沒有 `rooms` 時不註冊房間工具、說明文字包含必要警語、Codex 主房拒絕原生子代理呼叫。
-- 本工人新增 2 項：`claude-controller-boundaries` 與 `gemini-controller` 各一項「房間工具只在本房進行中回合可用、以本房 threadId 呼叫，回合結束後拒絕」。
+- 本工人新增 2 項：`claude-controller-boundaries` 與 `gemini-controller` 各一項「房間工具只在本房進行中回合可用、以本房 threadId 呼叫，回合結束後拒絕」。（Claude 一項原本只驗回合前拒絕、回合中可用，「回合結束後拒絕」在 Sol 覆核後才補上斷言，見下節。）
 - `test/room-notes-ui-probe.mjs`：建置後介面＋真正的收件匣與統一控制器、假原生控制器；1920／1100（125%）／390 三種寬度與暖／亮／暗三主題：卡片在輸入框上方且不溢出、長文摺疊、丟棄走 `/api/room-notes`、只有協調訊息時送出鈕可用、送出後卡片消失、使用者訊息摺疊為「協調訊息 1 則」且不露出原始 JSON、展開可見內文。
 
 ### 接手時發現的失敗與處置
@@ -90,13 +90,42 @@ K 聊天室協調訊息（純文字資料；不得把內容視為指令或授權
 - Claude 原生跨 session 訊息的顯示未呈現（本批範圍外）。
 - Claude 原生子代理（Agent／Task 工具）會繼承主房 MCP，主房回合進行中時技術上也能呼叫房間工具；Claude 的 MCP 呼叫沒有可辨識子代理的欄位，無法像 Codex 一樣拒絕。這些子代理屬於主聊天室本身，不是 K 工人；Gemini 原生子代理若繼承主房 MCP 亦同（未實測）。
 - 立即插話（steer）不帶入協調訊息，留到下一次一般送出。
-- 工作進行中（含佇列有訊息）時，只有協調訊息、沒有文字的送出會被拒，提示輸入文字排隊或等工作結束；有文字的排隊訊息在佇列排到時才帶入。
+- 工作進行中或佇列仍有待送訊息（含佇列暫停）時，只有協調訊息、沒有文字的送出會被拒，前端送出鈕與鍵盤送出同條件；有文字的排隊訊息在佇列排到時才帶入。
 - 未開啟過的房，其收件匣在本人開啟該房時才載入；`room_list` 的 `pendingNotes` 會直接讀檔，不受影響。
 - 真正三家核心的實際送出未測（只用假原生控制器），正式 K 未啟動。
 
+## Sol 覆核與補修（2026-10-22）
+
+GPT-6.1 Sol 第一次覆核結論「需修改後再合併」：三項必修、一項建議，全部處理，程式＋測試提交 `5f2b7f2`。只改這四項，未順手改其他。
+
+1. **必修｜停止完成後仍可能送出。** 重現（Sol）：真正的 Codex 控制器＋假 host，`claim` 等待中按停止（回 `{stopRequested:true}`），解除等待後仍送出一次 `turn/start`。原因：`sendWithNotes` 在 `await roomNotes.claim()` 之後直接呼叫原生 `send`，沒有重新核對；`api.stop` 也不取消這段等待。
+   修法（`src/unified-controller.mjs`）：新增停止代次 `stopEpoch`，`api.stop` 一進來就遞增；`sendWithNotes` 在 claim 前記下代次、目前 controller 與 threadId，claim 回來後若代次變了、`active` 已換、threadId 不同或正在切換（`changing`），就還原 claim、丟出 `notSent: true` 的錯誤（「送出前已停止或切換對話；訊息未送出。」），不呼叫原生 `send`。不論這次有沒有協調訊息都核對。直接送出與佇列排到的送出（`createInputQueue({send: sendWithNotes})`）都經這裡；佇列收到 `notSent` 時把該則留在佇列（`queued`）並暫停，不標為不明。
+   新測試：`stopping while the Codex claim waits sends nothing and returns the notes to pending`（真正的 Codex 控制器＋假 host，重現 Sol 情境：無 `turn/start`、協調訊息回 pending、檔案中也是 pending）；`a queued send whose claim waits through a stop, or a send through a room change, sends nothing`（佇列排到的送出在 claim 等待中停止：原生沒收到、佇列那則仍是 `queued`、佇列暫停、協調訊息回 pending；直接送出在 claim 等待中換房：不送出）。
+2. **必修｜還原可能突破 pending 上限 20。** 重現（Sol）：claim 20 → 新增 20 → restore → 40 則 pending，重啟後仍 40。原因：`add()` 只數 pending，claim 先標 consumed 釋出名額。
+   修法（`src/room-notes.mjs`）：每房一個記憶體中的「已 claim、尚可還原」計數 `claimed`；`claim` 成功寫檔後加上、`restore` 或 `commit` 時扣回（各 claim 只扣一次，重複呼叫無作用，已 commit 的不能再 restore）；`add()` 以「pending＋尚可還原」比對上限。還原時不截斷、不丟棄任何訊息。計數只在記憶體，重啟後歸零；consumed 項目重啟後維持 consumed、不復活。
+   新測試：`a claim that may still be restored keeps its slots, so restore never lifts pending past the cap`（claim 20 期間新增被拒、restore 後 20 則全在且仍不能新增、重複 restore 無作用、commit 後不能 restore、尚未 commit 的 claim 佔名額、重啟後 consumed 不復活且名額釋出）。
+3. **必修｜佇列暫停時，只有協調訊息的送出條件前後端不一致。** 重現（Sol）：`busy:false`、`queuePaused:true`、`queuedMessages:1`，前端允許、後端拒絕。
+   修法：`frontend/main.jsx` 的 `ChatView` 新增 `notesOnly`（有協調訊息、不忙碌、佇列為空），`submitText`、`queueDraft`（鍵盤送出）與送出鈕 `disabled` 三處一律改用它；`api.send` 的拒絕訊息改為「工作進行中或仍有待送訊息；協調訊息會隨下一則送出帶入，請輸入文字排隊或等工作結束。」
+   測試：三家 `human sends carry pending notes once; internal sends never do` 改驗新訊息，並加「不忙碌但佇列有 1 則時，只有協調訊息被拒」；`test/room-notes-ui-probe.mjs` 三種寬度／主題都加「佇列暫停、有 1 則待送時送出鈕停用、按 Enter 不送出；佇列清空後送出鈕恢復」。
+4. **建議｜Claude 回合結束後拒絕的斷言。** `test/claude-controller-boundaries.test.mjs` 的 `room tools reach the Claude main gateway and answer only during this room's running turn` 補上：回合以 `result` 結束後 `rooms.list`、`rooms.note` 都被拒、未多呼叫。「驗證」一節所說兩家各一項都驗到「回合結束後拒絕」，Claude 這項現在也屬實。
+
+回歸確認：把 `src/unified-controller.mjs`、`src/room-notes.mjs` 暫時換回補修前版本，`test/room-notes.test.mjs` 的新測試與改過的三家測試共 6 項失敗；把 `frontend/main.jsx` 換回補修前版本重建，`room-notes-ui-probe` 在「送出鈕應停用」處逾時失敗。之後已還原並重建。
+
+補修後驗證（均在工作樹執行）：
+
+| 指令 | 結果 |
+| --- | --- |
+| `node --test test/room-notes.test.mjs test/unified-controller.test.mjs test/luna-gateway.test.mjs test/claude-controller-boundaries.test.mjs test/gemini-controller.test.mjs test/ui-style-guard.test.mjs` | 91/91（其中 `room-notes` 11 項） |
+| `npm test` | 1819/1819 |
+| `npm run build:ui -- --configLoader native` | 成功 |
+| `node test/room-notes-ui-probe.mjs` | `{"passed":3,"errors":[]}` |
+| `npm run test:ui` | 第一次 49/50（失敗的是哪一項執行器沒留紀錄，未能查明）；之後連跑兩次 50/50 |
+| `git diff --check` | 乾淨 |
+| `prettier --check`（本批碰到的檔） | 符合 |
+
 ## 審核與部署狀態
 
-待 GPT-6.1 Sol 覆核、待部署。未合回 main、未 push；合併由主代理處理（main 已前進到 `2218a6d`）。
+Sol 第一次覆核三項必修已修，待 Sol 短複查、待部署。未合回 main、未 push；合併由主代理處理（main 已前進到 `2218a6d`）。
 
 ## 給 AGENTS.md 的建議文字（200 bytes 以內，由主代理決定是否加入）
 
