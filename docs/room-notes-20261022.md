@@ -1,6 +1,6 @@
 # K 聊天室協調收件匣（room notes，2026-10-22）
 
-工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）。**Sol 第一次覆核三項必修已修，待 Sol 短複查、待部署**；未合回 main、未 push。
+工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）；Sol 短複查的兩個新問題補修提交 `700a320`。**Sol 短複查兩項已修，待 Sol 最後確認、待部署**；未合回 main、未 push。
 
 ## 目的與取捨
 
@@ -32,7 +32,7 @@
 
 不經此點、因此**不帶入**的內部送出：換房接續（`source: 'continuation'`，`api.send` 分流直送）、分支交接（統一控制器內直接 `active.send`）、討論主持回合（直接 `owner.send({discussionTurn})`）、工人完成通知（各家控制器內部送出）、立即插話（steer）。本人在有討論的房送出時，討論交接文字之後仍附協調訊息，因為那是本人的送出。
 
-交出規則：`claim` 在送出前把選中的項目標為 consumed 並寫檔；原生 `send` 拋出 `notSent === true`（交出前就失敗）或回 `sent: false` 時 `restore` 還原為 pending；其他錯誤（結果不明）不還原、永不重送；成功後 `commit` 記錄 `consumedMessageId`（目前最後一則使用者訊息 id，取不到為 null）。一次送出依時間順序帶入放得下的項目（整段上限 32,000 字元），其餘留到下一次。
+交出規則：`claim` 在送出前把選中的項目標為 consumed 並寫檔；原生 `send` 拋出 `notSent === true`（交出前就失敗）或回 `sent: false` 時 `restore` 還原為 pending；其他錯誤（結果不明）不還原、永不重送，但以不帶 id 的 `commit` 結清名額；`restore` 寫檔成功後才結清，寫檔失敗則維持 consumed、可重試；成功後 `commit` 記錄 `consumedMessageId`（目前最後一則使用者訊息 id，取不到為 null）。一次送出依時間順序帶入放得下的項目（整段上限 32,000 字元），其餘留到下一次。
 
 ## K 工具
 
@@ -123,9 +123,33 @@ GPT-6.1 Sol 第一次覆核結論「需修改後再合併」：三項必修、�
 | `git diff --check` | 乾淨 |
 | `prettier --check`（本批碰到的檔） | 符合 |
 
+### Sol 短複查（2026-10-22）
+
+Sol 短複查確認上面四項都已修好，但重現了兩個由補修引入的問題，判定「需修改後再合併」。程式＋測試提交 `700a320`；只修這兩項，未順手改其他。
+
+1. **P2｜結果不明會永久佔用 claimed 名額。** 重現（Sol）：一次送出帶 20 則協調訊息後拋出結果不明（沒有 `notSent: true`），pending 已是 0，新的 `room_note` 仍被「已有 20 則」拒絕，直到重建收件匣實例。原因：`sendWithNotes` 的 catch 在這種情況既不還原（正確）也不結清 `claimed` 計數。
+   修法（`src/unified-controller.mjs` 的 `sendWithNotes`）：結果不明時改呼叫 `claim.commit()`（不帶 messageId，`consumedMessageId` 記為 null），失敗也吞掉。項目維持 consumed、永不重送，名額釋出。
+   新測試：`an unknown send outcome keeps notes consumed, never resends them and releases their slots`（20 則隨一次送出拋出一般錯誤：pending 數 0、檔案中全是 consumed；之後可再新增 20 則、第 21 則被拒；下一次送出只帶新的 20 則，舊的 20 則沒有重送、仍為 consumed）。
+2. **P2｜還原寫檔失敗後，重試變成假成功。** 重現（Sol）：注入一次 EIO 後再呼叫 `restore()` 直接返回成功，磁碟仍是 consumed、記憶體 pending=1，重新載入後 pending=0。原因：`restore()` 在寫檔前就 `settle()` 關閉 claim。
+   修法（`src/room-notes.mjs` 的 `claim()` 回傳之 `restore`）：先把記憶體改為 pending 再寫檔；寫檔失敗就把記憶體改回 consumed（含原本的 `consumedAt`，與磁碟一致）、claim 保持開啟、把錯誤丟出；寫檔成功後才 `settle()` 結清名額並通知變更。`commit()` 維持原樣（磁碟本來就是 consumed，先結清名額再寫檔可接受）。
+   新測試：`a failed restore write leaves the claim consumed and open, so a retry really returns the notes`（以 `fs.rename` 模擬注入一次 EIO：`restore` 拋錯、記憶體 pending 0、`count` 0、檔案全是 consumed、名額仍佔住；第二次 `restore` 成功：記憶體與檔案都是 pending 20 則、新實例重新載入也是 20 則；丟棄一則後可再新增，表示名額已釋放）。
+
+回歸確認：把 `src/room-notes.mjs`、`src/unified-controller.mjs` 暫時換回 `c8c1547` 版本，上述兩項新測試都失敗；還原後通過。
+
+短複查補修後驗證（均在工作樹執行）：
+
+| 指令 | 結果 |
+| --- | --- |
+| `node --test test/room-notes.test.mjs test/unified-controller.test.mjs test/luna-gateway.test.mjs test/claude-controller-boundaries.test.mjs test/gemini-controller.test.mjs test/ui-style-guard.test.mjs` | 93/93（其中 `room-notes` 13 項） |
+| `npm test` | 1821/1821 |
+| `npm run build:ui -- --configLoader native` | 成功 |
+| `npm run test:ui` | 50/50 |
+| `git diff --check` | 乾淨 |
+| `prettier --check`（本批碰到的檔） | 符合 |
+
 ## 審核與部署狀態
 
-Sol 第一次覆核三項必修已修，待 Sol 短複查、待部署。未合回 main、未 push；合併由主代理處理（main 已前進到 `2218a6d`）。
+Sol 短複查兩項已修，待 Sol 最後確認、待部署。未合回 main、未 push；合併由主代理處理（main 已前進到 `790e2fb`）。
 
 ## 給 AGENTS.md 的建議文字（200 bytes 以內，由主代理決定是否加入）
 
