@@ -54,8 +54,9 @@
 
 ## 審核與部署狀態
 
-- 待 GPT-6.1 Sol 覆核。
-- 待 Codex App 部署；未合併 main、未 push、未在正式 K 讀回。
+- GPT-6.1 Sol 已覆核（工單 gemini-dispatch-idle-review-sol-20261022，只讀）：結論可合併、無必修；五項皆為備註，無建議修法。Sol 另跑 `node --test test/gemini-accounts.test.mjs` 141/141、`git diff --check` 通過。
+- 主代理（Claude Fable 5.1）獨立讀過完整差異，於工作樹重跑 `npm test`：1806/1806 pass、0 fail，約 73 秒。
+- 合回 main 後交 Codex App 部署，與同日 UI 視覺層次修正協調為同一版本；本紀錄提交時未 push、未部署、未在正式 K 讀回。
 
 ## 未完成事項
 

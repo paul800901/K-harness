@@ -140,7 +140,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ### Gemini 帳號、額度與調度
 
-- 10-22 [Gemini 同帳號派工不再做整機閒置檢查：K 外的 agy 不再擋送出，待 Sol 覆核與部署](gemini-dispatch-idle-20261022.md)
+- 10-22 [Gemini 同帳號派工不再做整機閒置檢查：K 外的 agy 不再擋送出，Sol 已覆核，待部署](gemini-dispatch-idle-20261022.md)
 - 10-16 [更新前交接測試逾時與原生完成通知競態：南區已部署](fresh-target-timeout-20261016.md)
 - 10-16 [Gemini 獨立額度的 CLI 識別修正與 Gemini 4 查證：南區已部署](gemini-cli-quota-20261016.md)
 - 10-14 [Gemini 非目前帳號背景查詢：不再停在快照，失敗會自動重查，南區已部署](gemini-background-quota-20261014.md)
