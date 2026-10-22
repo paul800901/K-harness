@@ -43,6 +43,15 @@ GPT-6.1 Sol（effort high，只讀）第一次驗收**不同意結案**，指出
   | `ui-parity-20260924-fable-models` | 1 | 內容不同 |
 
   因此初版「其餘未複製內容都是未被引用的測試暫存」不成立，已刪除該說法。
+- **`tests` 內被點名的證據（Sol 複驗發現）**：盤點時把整個 `.runtime	ests` 當成測試暫存，但有紀錄明確點名其中的檔案。從回收筒補存（排除測試用瀏覽器設定檔與代理家目錄，新保存內容沒有登入檔或 Cookies）：
+
+  | 補存位置（`.runtimerchive\`） | 來源 | 引用紀錄 | 內容 |
+  |---|---|---|---|
+  | `gemma-native` | `gemma-main-agents\.runtime	ests\gemma-native` 根層 | [Gemma 主代理](gemma-main-agents-20261016.md) | 34 檔（含點名的 9 個收據），不含 `home`、`k-state*`、`schema` 等測試狀態 |
+  | `selfhost-native` | `gemma-main-agents\.runtime	ests\selfhost-native` | [自架社群模型](selfhost-community-models-20261019.md) | 整份 11 檔 |
+  | `discussion-v2-tests-20261015` | `discussion-skill\.runtime	ests` 根層與 `ui-evidence` | [討論圓桌權限](discussion-roundtable-permissions-20261015.md) | 根層 37 個紀錄檔（含點名的 6 個）＋`ui-evidence` 770 檔，排除 `browser-profile`、`electron` 測試設定檔 |
+
+  其餘約 10 萬個 `tests` 檔案是測試自動產生的暫存（隨機名稱目錄、測試用家目錄與狀態），沒有被任何紀錄點名，未保存，仍在回收筒。紀錄另點名的 `run-16992-1792178049715`、`archive-recycle-proof-9uKnJp`、`gemini-main-live-bg5wUR`、`main-crash-Yvv3nD` 不在這 9 個來源內（屬其他候選或更早已清理）。
 - 紀錄中 `room-lock-fix-20261010`、`steer-final-display` 等的證據：原工作樹位置已不存在，但 `archive\room-lock-fix-20261010`、`archive\steer-final-display-20261009` 及多份討論相關封存先前已保存在主工作區（初版寫「無從保存」不準確）。
 - `node_modules` 清空原因改標為疑似；刪除「未造成實際損失」的說法。修正初版一處被斷行破壞的路徑。
 
@@ -61,8 +70,9 @@ GPT-6.1 Sol（effort high，只讀）第一次驗收**不同意結案**，指出
 ## 驗收
 
 - GPT-6.1 Sol 第一次：不同意結案（漏存、措辭）。處理見上節。
-- （待補：Sol 複驗）
+- GPT-6.1 Sol 複驗：7 份補存逐檔 SHA-256 一致；全面掃描發現 `tests` 內被點名證據漏存，已補存（見上節）；建議的措辭修正已採納。
+- （待補：Sol 最終確認）
 
 ## 狀態
 
-- 未動正式 K、未重啟；純文件與本機清理，不需部署。舊資料夾仍在資源回收筒，本人清空回收筒前都可還原。
+- 未動正式 K、未重啟；純文件與本機清理，不需部署。舊資料夾仍在資源回收筒；回收筒清空前，其中內容可取回（不含已拆除的連結與直接移除的 `node_modules`）。
