@@ -1,6 +1,6 @@
 # K 聊天室協調收件匣（room notes，2026-10-22）
 
-工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）；Sol 短複查的兩個新問題補修提交 `700a320`。**Sol 短複查兩項已修，待 Sol 最後確認、待部署**；未合回 main、未 push。
+工作樹 `.runtime/worktrees/room-notes-20261022`、分支 `room-notes-20261022`，基底 main `ce1e2c1`。實作：Claude Opus 5.5 子代理。前一工人（工單 room-notes-opus-20261022）做到一半因 Claude 5 小時額度上限中止、未留回報，成果留在工作樹；由本工人接手清點、補完剩餘工作並提交。程式＋測試提交 `e5c3977`；本紀錄與索引另作文件提交。Sol 第一次覆核的補修見「Sol 覆核與補修」（程式＋測試提交 `5f2b7f2`）；Sol 短複查的兩個新問題補修提交 `700a320`。**Sol 最後確認（工單 room-notes-final-sol-20261022）：可合併、無新問題。** 主代理（Claude Fable 5.1）在合入 main `790e2fb` 後最終驗證：`npm test` 1821/1821、`npm run test:ui` 50/50。已合回 main，待 Codex App 與同日 UI 批次一併部署；本紀錄提交時未 push、未部署。
 
 ## 目的與取捨
 
@@ -149,7 +149,9 @@ Sol 短複查確認上面四項都已修好，但重現了兩個由補修引入�
 
 ## 審核與部署狀態
 
-Sol 短複查兩項已修，待 Sol 最後確認、待部署。未合回 main、未 push；合併由主代理處理（main 已前進到 `790e2fb`）。
+- Sol 最後確認（工單 room-notes-final-sol-20261022，只讀）：可合併、無新問題；另跑 `node --test test/room-notes.test.mjs test/unified-controller.test.mjs` 32/32 與三組 stdin 重現。
+- 主代理（Claude Fable 5.1）獨立讀過三輪差異，於合入 main `790e2fb`（側欄等待圖示批次）後重跑：`npm run build:ui` 成功、`npm test` 1821/1821、`npm run test:ui` 50/50、`git diff --check` 乾淨。
+- 已合回 main（fast-forward）；待 Codex App 部署，與同日 UI 三批協調為同一版本。本紀錄提交時未 push、未部署、未在正式 K 讀回；正式機實測（兩房互留協調訊息、丟棄、送出後摺疊）待部署後由本人確認。
 
 ## 給 AGENTS.md 的建議文字（200 bytes 以內，由主代理決定是否加入）
 
