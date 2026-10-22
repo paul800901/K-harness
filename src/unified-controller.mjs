@@ -95,8 +95,10 @@ export function createUnifiedController(options) {
     try {
       result = await controller.send({...data, text: claim.text});
     } catch (error) {
-      // Only a send that never reached the native core returns its notes; an unknown outcome is never resent.
+      // Only a send that never reached the native core returns its notes; an unknown outcome is never
+      // resent but still releases its claimed slots.
       if (error.notSent === true) await claim.restore().catch(() => {});
+      else await claim.commit().catch(() => {});
       throw error;
     }
     if (result?.sent === false) await claim.restore().catch(() => {});

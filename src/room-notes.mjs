@@ -142,9 +142,16 @@ export function createRoomNotes({root, onChange = () => {}}) {
           restore: () =>
             locked(id, async () => {
               if (!open) return;
-              settle();
+              // Settle only after disk says pending; a failed write keeps memory consumed and the claim
+              // open, so a retry really writes pending instead of returning early.
               for (const note of chosen) Object.assign(note, {status: 'pending', consumedAt: null});
-              await save(id);
+              try {
+                await save(id);
+              } catch (error) {
+                for (const note of chosen) Object.assign(note, {status: 'consumed', consumedAt});
+                throw error;
+              }
+              settle();
               onChange();
             }),
           commit: messageId =>

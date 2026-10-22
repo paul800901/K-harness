@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile} from 'node:fs/promises';
+import fs, {mkdtemp, readFile} from 'node:fs/promises';
+import {syncBuiltinESMExports} from 'node:module';
 import path from 'node:path';
 import {createRoomNotes, MAX_PENDING_ROOM_NOTES} from '../src/room-notes.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
@@ -240,6 +241,75 @@ test('a claim that may still be restored keeps its slots, so restore never lifts
   assert.equal(restarted.pending('room-b').length, MAX_PENDING_ROOM_NOTES - 1, 'consumed rows stay consumed');
   await restarted.add('room-b', {...from, text: 'restart frees the uncommitted slot'});
   await assert.rejects(restarted.add('room-b', {...from, text: 'over'}), /20 則/);
+});
+
+test('a failed restore write leaves the claim consumed and open, so a retry really returns the notes', async t => {
+  const root = await tempRoot('restore-retry');
+  const notes = createRoomNotes({root});
+  await notes.add('room-b', {...from, text: '還原重試'});
+  for (let i = 1; i < MAX_PENDING_ROOM_NOTES; i++) await notes.add('room-b', {...from, text: `r${i}`});
+  const claim = await notes.claim('room-b', '');
+  const target = path.join(root, '.runtime/room-notes/room-b.json'),
+    rename = fs.rename;
+  let failures = 1;
+  const mock = t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === target && failures-- > 0) throw Object.assign(Error('restore write failed'), {code: 'EIO'});
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  try {
+    await assert.rejects(claim.restore(), /restore write failed/);
+    assert.deepEqual(notes.pending('room-b'), [], 'memory stays consumed, matching disk');
+    assert.equal(await notes.count('room-b'), 0);
+    assert((await saved(root, 'room-b')).notes.every(n => n.status === 'consumed'));
+    await assert.rejects(notes.add('room-b', {...from, text: 'slots still held'}), /20 則/);
+
+    await claim.restore();
+    assert.equal(notes.pending('room-b').length, MAX_PENDING_ROOM_NOTES, 'the retry writes pending');
+    assert((await saved(root, 'room-b')).notes.every(n => n.status === 'pending'));
+    const reloaded = createRoomNotes({root});
+    await reloaded.load('room-b');
+    assert.equal(reloaded.pending('room-b').length, MAX_PENDING_ROOM_NOTES);
+    await notes.discard('room-b', notes.pending('room-b')[0].id);
+    await notes.add('room-b', {...from, text: 'restored claim released its slots'});
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
+});
+
+test('an unknown send outcome keeps notes consumed, never resends them and releases their slots', async () => {
+  const root = await tempRoot('unknown-outcome');
+  const notes = createRoomNotes({root});
+  const native = fakeNative('codex', 'gpt-6.1-sol');
+  const c = createUnifiedController({
+    root,
+    roomNotes: notes,
+    codexFactory: () => native,
+    claudeFactory: () => fakeNative('claude', 'claude-opus-5-5'),
+    geminiFactory: () => fakeNative('gemini', 'gemini-3.8-flash'),
+    inspect: async () => ({available: true})
+  });
+  try {
+    await c.open({model: 'gpt-6.1-sol'});
+    const id = c.state.threadId;
+    for (let i = 0; i < MAX_PENDING_ROOM_NOTES; i++) await notes.add(id, {...from, text: `u${i}`});
+    native.failNext = Error('outcome unknown');
+    await assert.rejects(c.send({text: '不明'}), /unknown/);
+    assert.equal(await notes.count(id), 0);
+    assert((await saved(root, id)).notes.every(n => n.status === 'consumed'));
+    await notes.add(id, {...from, text: '名額已釋放'});
+    for (let i = 1; i < MAX_PENDING_ROOM_NOTES; i++) await notes.add(id, {...from, text: `v${i}`});
+    await assert.rejects(notes.add(id, {...from, text: 'over'}), /20 則/);
+
+    await c.send({text: '下一次'});
+    const carried = parseRoomNotes(native.sends.at(-1).text).notes.map(n => n.text);
+    assert.equal(carried.length, MAX_PENDING_ROOM_NOTES);
+    assert(!carried.some(text => /^u\d+$/.test(text)), 'notes from the unknown send are never resent');
+    assert((await saved(root, id)).notes.filter(n => /^u\d+$/.test(n.text)).every(n => n.status === 'consumed'));
+  } finally {
+    await c.close();
+  }
 });
 
 const gated = notes => {
