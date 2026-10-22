@@ -6,8 +6,9 @@
 
 - 分支：`ui-visual-hierarchy-20261022`（基底 `9a2ec97`）；程式 commit `c89e5ee9df02962bd940f2dbc46b23d22020b991`；Sol 複查後修正 `aa04c56392c05cf4e5a44d68d8a76b2c71ce63a1`（分支回覆標籤、ink-3）、`33379cbb5a4aca9a2ace2bb11733000a4539b51d`（menu-viewport probe 競態）
 - 實作：Claude Opus 5.5 子代理
-- 複查：GPT-6.1 Sol 已複查，必修兩項已修（見「Sol 複查與修正」）；修正版待 Sol 再驗收
-- 部署狀態：**未部署**（未合回 main、未 push）
+- 複查：GPT-6.1 Sol 已複查，必修兩項已修（見「Sol 複查與修正」）；修正版 Sol 最終覆核通過（build:ui 成功、test:ui 49/49、npm test 1803/1803，模型標籤 16 組情境通過，無剩餘必修）
+- 合併：以 main `198e38d`（含同日 Gemini 派工修正 `docs/gemini-dispatch-idle-20261022.md`）為基底合回，合併 commit `e7b478c`；合併後於 main 重跑 build:ui、npm test、test:ui（結果見「驗證」末段）
+- 部署狀態：**未部署、未 push**；交由本人在 Codex App 依 `docs/git-install-update.md` 更新正式 K
 
 ## 改動檔案
 
@@ -92,6 +93,7 @@
 - `npm run test:ui`：第一次完整執行 48/49（`menu-viewport-ui-probe.mjs` 失敗，見下節）；最終建置後完整重跑 **49/49 通過**。
 - 三主題：**未實際截圖**。專案沒有三主題截圖 probe；以建置、全部 UI probe（含設定、側欄、手機遠端、討論 API 設定等）與 CSS 檢視為準。
 - mobile.css 檢查：未覆寫 `.project-*`、`.session.selected`、`.goal-header` 顏色、`.assistant-model`、`.settings-section*`；`.header-breadcrumb>h1`（16px）與 `.message-column` 間距（20px）由 mobile.css 後載入覆寫，手機維持原樣；`dialog .setting-row` 的手機 12px 列距在設定章節內被新規則改為 8px，排版方向與換行不變。
+- 合回 main 後（合併 commit `e7b478c`，基底 `198e38d`）由主代理 Claude Fable 5.1 重跑：`npm run build:ui` 成功、`npm test` **1806/1806**（多出的 3 個是同日 Gemini 派工修正的回歸測試）、`npm run test:ui` **49/49**。
 
 ### menu-viewport probe
 
