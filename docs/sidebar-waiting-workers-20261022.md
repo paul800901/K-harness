@@ -22,7 +22,9 @@
 
 ## 複查與部署狀態
 
-- 程式由 Opus 5.5（主代理）撰寫。獨立第二審見下方補記。
+- 程式由 Opus 5.5（主代理）撰寫並自查。
+- Fable 5.1（high，只讀，工單 `fable-review-sidebar-waiting-workers-20261022`）四項皆無問題：計數與上方快覽同源（`workerDetails` 投影不改變 `workerEnded` 結果）；三家 `s.workers` 來源均含 K 工人與原生子代理；`sessions()` 展開無寫回副作用；`completion-attention.mjs` 在仍有自有未結束工人時不設未讀，沙漏與對話泡實際上幾乎不會同時成立。主代理已讀回 `src/completion-attention.mjs` 核對此點。
+- 既有、非本次範圍：Claude 背景命令（`kind:'command'`）不計入沙漏，與快覽一致；側欄兩段三元判斷可合併，屬原寫法，不改。
 - 尚未部署。本聊天室在 K 內執行，無法更新自己所在的 K；需與同時進行中的 Gemini 派工修正聊天室協調單一部署者，於 K 完全停止後在 K 外執行 `Update-K.ps1`。
 
 ## 未完成
