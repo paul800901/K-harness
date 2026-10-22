@@ -27,7 +27,7 @@
 .sidebar .session-activity{display:flex;flex:none;align-items:center;gap:5px;color:var(--k-ink-2);font-size:var(--k-text-xs);white-space:nowrap}
 .sidebar .session-activity svg{flex:none;stroke-width:2}
 .sidebar .session-activity.running{color:var(--k-brass)}.sidebar .session-activity.running svg{animation:session-spin 1s linear infinite}
-.sidebar .session-activity.needs-approval{color:var(--k-brass)}.sidebar .session-activity.completed-unread{color:var(--k-ink-2)}
+.sidebar .session-activity.needs-approval{color:var(--k-brass)}.sidebar .session-activity.completed-unread{color:var(--k-ink-2)}.sidebar .session-activity.waiting-workers{color:var(--k-brass)}
 @keyframes session-spin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.sidebar .session-activity.running svg{animation:none}}
 .sidebar .session-menu{position:relative;flex:none;margin-right:3px;opacity:0}.sidebar .session:hover .session-menu,.sidebar .session:focus-within .session-menu,.sidebar .session.selected .session-menu,.sidebar .session-menu[data-open=true],.sidebar .session-menu:focus-within{opacity:1}

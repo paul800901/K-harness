@@ -231,7 +231,11 @@ export function createConversationController({
       workspace: s.workspace,
       busy: !!s.busy,
       status: s.status,
-      pendingQuestions: s.questions?.length ?? 0
+      pendingQuestions: s.questions?.length ?? 0,
+      // Same rule as the top quick view: unfinished workers this room still owns.
+      pendingWorkers: (s.workers ?? []).filter(
+        worker => worker.kind !== 'command' && !workerEnded(worker) && worker.executionUnowned !== true
+      ).length
     };
   };
   // Project the existing live owners, never saved history or only the selected room.

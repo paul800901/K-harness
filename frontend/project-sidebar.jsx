@@ -11,6 +11,7 @@ import {
   ArrowUp,
   ArrowDown,
   Ellipsis,
+  Hourglass,
   LoaderCircle,
   MessageCircle,
   TriangleAlert
@@ -175,7 +176,7 @@ function SessionRows({
       pending = Array.isArray(activity.pendingQuestions)
         ? activity.pendingQuestions.length
         : (activity.pendingQuestions ?? 0),
-      activityLabel = pending > 0 ? '待確認' : activity.busy ? '處理中' : '';
+      activityLabel = pending > 0 ? '待確認' : activity.busy ? '處理中' : activity.pendingWorkers > 0 ? '等待子代理' : '';
     return (
       <div
         key={s.threadId}
@@ -207,7 +208,7 @@ function SessionRows({
           {s.parentThreadId && <small className="session-branch">分支自：{s.parentTitle || '原對話'}</small>}
           {activityLabel ? (
             <small
-              className={`session-activity ${pending > 0 ? 'needs-approval' : 'running'}`}
+              className={`session-activity ${pending > 0 ? 'needs-approval' : activity.busy ? 'running' : 'waiting-workers'}`}
               aria-label={activityLabel}
               title={activityLabel}
             >
@@ -216,8 +217,10 @@ function SessionRows({
                   <TriangleAlert size={14} aria-hidden="true" />
                   待確認
                 </>
-              ) : (
+              ) : activity.busy ? (
                 <LoaderCircle size={14} aria-hidden="true" />
+              ) : (
+                <Hourglass size={14} aria-hidden="true" />
               )}
             </small>
           ) : unread.has(s.threadId) ? (
