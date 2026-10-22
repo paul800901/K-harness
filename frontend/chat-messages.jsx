@@ -6,6 +6,7 @@ import {MarkdownTextPrimitive} from '@assistant-ui/react-markdown';
 import React, {useContext, useEffect, useId, useLayoutEffect, useRef, useState} from 'react';
 import {RemoteRecord} from './remote-record.jsx';
 import {effortName} from './model-picker.jsx';
+import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 import {elapsedConversationMs, formatElapsed} from '../shared/conversation-groups.mjs';
 import {
   messageFileUrl,
@@ -444,9 +445,11 @@ export function TurnProcess({group, state}) {
     </details>
   );
 }
+// Shown when the core keeps no record of which model wrote a reply; the provider is bound to the room.
+const providerLabel = {codex: 'GPT', claude: 'Claude', gemini: 'Gemini', gemma: '自架模型'};
 export function AssistantMessage() {
   const id = useAuiState(s => s.message.id),
-    {state, branch, groups, messageIndex, openRoundtable} = useContext(TranscriptContext);
+    {state, models, branch, groups, messageIndex, replyModels, openRoundtable} = useContext(TranscriptContext);
   const record = messageIndex.get(id),
     messageGroup = groups.get(id),
     groupLatestAssistant = messageGroup?.latestAssistant,
@@ -476,12 +479,26 @@ export function AssistantMessage() {
           : record?.model?.startsWith('gemini-')
             ? 'gemini'
             : 'neutral';
+  const replyModel = replyModels?.get(id),
+    replyLabel =
+      discussion || record?.background
+        ? null
+        : replyModel
+          ? models?.find(item => item.model === replyModel)?.displayName ||
+            (replyModel === state.model ? state.modelDisplayName : null) ||
+            replyModel
+          : providerLabel[providerOf(state.model)];
   return (
     <MessagePrimitive.Root
       className={`message assistant-message${discussion ? ' discussion-message' : ''}`}
       data-discussion-provider={discussion ? speakerProvider : undefined}
     >
       <div className="assistant-body">
+        {replyLabel && (
+          <div className="assistant-model" data-aui-quote-selectable="false">
+            {replyLabel}
+          </div>
+        )}
         {discussion && (
           <div className="discussion-speaker">
             <strong>{speaker}</strong>
