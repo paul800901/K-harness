@@ -620,3 +620,20 @@ test('API connections cannot change while a consult worker holds them, and no wo
   await saving;
   assert.equal(releaseDuring, undefined);
 });
+
+test('a connection whose new key could not be fully saved stays unusable instead of pairing the old URL with the new key', async () => {
+  const f = await fixture();
+  const c = createDiscussionApiConnections({...f});
+  await c.save({name: 'A', baseUrl: 'https://old.example/v1', apiKey: 'OLD-KEY', models: [{id: 'm', name: 'M'}]});
+  const [{id}] = (await c.list()).connections;
+  const set = f.vault.set;
+  f.vault.set = async () => {
+    throw Error('vault write failed');
+  };
+  await assert.rejects(c.save({id, name: 'A', baseUrl: 'https://new.example/v1', apiKey: 'NEW-KEY'}), /vault write failed/);
+  f.vault.set = set;
+  await assert.rejects(c.credentials(id), /金鑰/);
+  assert.deepEqual((await c.models()).models, []);
+  await c.save({id, name: 'A', baseUrl: 'https://new.example/v1', apiKey: 'NEW-KEY', models: [{id: 'm', name: 'M'}]});
+  assert.deepEqual(await c.credentials(id), {baseUrl: 'https://new.example/v1', key: 'NEW-KEY'});
+});

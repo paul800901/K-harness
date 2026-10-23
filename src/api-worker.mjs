@@ -94,6 +94,8 @@ export function createApiWorker({
           outputFilesNote: API_OUTPUT_FILES_NOTE,
           acceptance: 'not-reviewed'
         };
+      // Keep what already arrived; the work still settles as failed and is never resent.
+      if (output) error.workerResult = {...error.workerResult, output};
       throw error;
     } finally {
       await session?.close();

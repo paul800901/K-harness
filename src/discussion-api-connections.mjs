@@ -197,7 +197,7 @@ export function createDiscussionApiConnections({
     async credentials(id) {
       const row = await get(id),
         key = await vault.get(id);
-      if (!key) throw Error('請在設定填寫這個討論 API 的金鑰。');
+      if (!key || !row.keyConfigured) throw Error('請在設定填寫這個討論 API 的金鑰。');
       return {baseUrl: discussionApiBaseUrl(row.baseUrl), key};
     },
     save(data) {
@@ -213,7 +213,16 @@ export function createDiscussionApiConnections({
         if (!existing && !apiKey?.trim()) throw Error('請自行填寫 API Key。');
         if (existing && baseUrl !== existing.baseUrl && !apiKey?.trim())
           throw Error('更換服務網址時請重新填寫該服務的 API Key。');
-        if (apiKey?.trim()) await vault.set(id, apiKey.trim());
+        if (apiKey?.trim()) {
+          // Until the key and the settings are both saved, the row is unusable, so a failed
+          // settings write cannot leave the old URL paired with the new key.
+          if (existing)
+            await atomicWrite(
+              file,
+              JSON.stringify({connections: rows.map(r => (r.id === id ? {...r, keyConfigured: false} : r))}, null, 2)
+            );
+          await vault.set(id, apiKey.trim());
+        }
         const preserved = models.map(m => ({
           ...(baseUrl === existing?.baseUrl ? existing.models.find(old => old.id === m.id) : {}),
           ...m
@@ -235,7 +244,7 @@ export function createDiscussionApiConnections({
       return exclusive(async () => {
         const row = await get(id),
           key = await vault.get(id);
-        if (!key) throw Error('請先填寫 API Key。');
+        if (!key || !row.keyConfigured) throw Error('請先填寫 API Key。');
         let response;
         try {
           response = await fetchImpl(`${discussionApiBaseUrl(row.baseUrl)}/models`, {

@@ -151,7 +151,10 @@ test('a saved API choice is a consult model, never an ordinary default or a nati
     {models: [...nativeModels, ...workerRows], geminiGateway: true, provider: 'gemini'}
   );
   assert.deepEqual(config.agents, {enabled: true});
-  assert.match(config.developer_instructions, new RegExp(`User-saved API consult model: ${API_MODEL}`));
+  assert.match(
+    config.developer_instructions,
+    new RegExp(`User-saved API consult model: ${API_MODEL}, reasoning effort max`)
+  );
   assert.match(config.developer_instructions, /not a default for ordinary delegation/);
   assert.doesNotMatch(config.developer_instructions, /User-selected default worker/);
 });
@@ -514,4 +517,21 @@ test('an API consult must name its effort too, so a saved effort is never reused
   } finally {
     await f.bridge.close();
   }
+});
+
+test('a failed consult keeps the partial answer it already received and is not resent', async () => {
+  const worker = createApiWorker({
+    workspace: path.resolve('.'),
+    connections: fakeConnections(),
+    sessionFactory: async () => ({
+      async ask(task, {onText}) {
+        onText('已收到的部分看法');
+        throw Error('串流中斷');
+      },
+      async close() {}
+    })
+  });
+  const error = await worker.run({task: 'x', model: API_MODEL, effort: 'high'}).catch(e => e);
+  assert.equal(error.message, '串流中斷');
+  assert.equal(error.workerResult.output, '已收到的部分看法');
 });
