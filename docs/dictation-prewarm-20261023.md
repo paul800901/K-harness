@@ -1,4 +1,4 @@
-# 聽寫預先載入：利用說話時間載入辨識模型（2026-10-23）
+# 聽寫預先載入：利用說話時間載入辨識模型（2026-10-23，南區已部署）
 
 ## 問題
 
@@ -97,4 +97,10 @@ GPT-6.1 Sol 收尾審查（工單 `dictation-prewarm-sol-review-20261023`，xhig
 
 ## 部署狀態
 
-尚未部署。部署版本為程式 commit `2bde716cec3d7e6af47e275460f10ad025dfec03`，已與本紀錄一起快轉合併入本機 `main`、尚未 push。依本人 10-23 定的流程，由 K 外的 Codex 停止確認、執行 `Update-K.ps1`、讀回並 push。東區未更新。
+- 南區於 **2026-10-23 13:01:13（臺灣時間）**由 K 外的 Codex 執行 `Update-K.ps1 -Ref 2bde716cec3d7e6af47e275460f10ad025dfec03` 部署；部署前正式版本 `c2544753ea44d553a8a98e4134dc0c595b7b4525`。更新器結束碼 0，完整測試 **1834/1834**（失敗、取消、跳過均為 0）。
+- 13:02:10 讀回：`.local/runtime.json` 的 `version` 為上述完整 SHA，`previous` 指向存在的 `before-1792731673637`；正式 runtime 的 `scripts/local-dictation.py` 含 `GPU_FLOAT16_MIN_FREE_MB`、`src/local-dictation.mjs` 含 `prepareLeaseMs` 與 `'ProgramFiles'`、`src/desktop-server.mjs` 含 `/api/dictation/prepare`，建置後 `dist-ui/assets/index-DX2CV_4I.js` 含 `/api/dictation/prepare`。帳號、對話、工作區、瀏覽器輸出目錄的實際路徑與身分未變，`dictationPython`／`dictationModel` 未變。
+- 退版保留最新三份：`before-1792681002929`、`before-1792692950125`、`before-1792731673637`。
+- **例外：最舊退版未進資源回收筒。** 更新器回收 `before-1792678220506` 時回報原路徑已不存在、但回收筒讀回沒有對應的新項目（`Recycle Bin readback did not confirm a new matching item.`），依設計停止、未自動重試；Codex 因此停在 push 前。Opus 事後唯讀查證：回收筒列舉與 `D:$Recycle.Bin` 的 `$I` 記錄檔都沒有該項，判斷為 Windows 直接永久刪除；同時段其他 78 筆、先前 10 份舊退版都正常進回收筒。已排除路徑長度與單項超過回收筒上限；D 槽回收筒約 42.6GB、9362 項（多為測試暫存），接近約 48.5GB 上限，是否相關未證實。該退版只有舊版程式、可由 Git 重建，不含帳號或對話資料。根因**待查**，本次未修改回收工具。
+- 本人選擇由 Opus 接續：推送前核對待發布內容只有本批程式、測試與兩份文件，秘密樣式掃描唯一命中為測試讀取測試伺服器 `set-cookie` 的程式碼，無個人路徑或信箱。`main` push 成功，遠端 `refs/heads/main` 讀回 **`f6deee8485210b38141b4ca685cad52c35b1fecb`**；本段部署紀錄另作純文件 commit 並再次推送讀回，不重啟 K。
+- 部署前狀態、更新器完整輸出、讀回結果與回收查證保存在本機 `.runtime/archive/dictation-prewarm-20261023/`（`deployment-before.json`、`deployment-update.log`、`deployment-readback-stopped.json`、`rollback-recycle-investigation.md`，不進 Git）。
+- 未做：正式 K 內真人聽寫實測（待本人）。東區未更新。
