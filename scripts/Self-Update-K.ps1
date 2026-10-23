@@ -24,17 +24,16 @@ $updateSuccess = $false
 $failureReason = "更新沒有完成。"
 $launcherGone = $false
 
-# The real cause is what the installer (Node, UTF-8) printed. Update-K.ps1 then throws only a generic
-# message, and Windows PowerShell appends its own error record: "+ ..." and "At ..." lines, a location
-# with "Update-K.ps1:<line>" that may wrap, and on a Chinese system text in the console code page that
-# reads back with replacement characters. Those lines are skipped; the last remaining line is the cause.
+# The real cause is what the installer (Node, UTF-8) printed. Update-K.ps1 throws only a generic message,
+# which the wrapper below writes in the console code page (it reads back with replacement characters);
+# the installer's own "build left at …" notice comes after the cause. Those lines are skipped.
 function Get-FailureLine([string]$fallback) {
     try {
         $candidates = @(@($logPath, $errorLogPath) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object {
             Get-Content -LiteralPath $_ -Encoding utf8
         } | Where-Object {
             -not [string]::IsNullOrWhiteSpace($_) -and -not $_.Contains([char]0xFFFD) -and
-            $_ -notmatch 'K 更新未完成|Update-K\.ps1:\d|^\s*\+|^At |^\s*~+\s*$'
+            $_ -notmatch 'K 更新未完成|未套用的建置暫存留在'
         })
         $line = if ($candidates.Count -gt 0) { [string]$candidates[$candidates.Count - 1] } else { $fallback }
         $line = $line.Trim()
@@ -67,8 +66,12 @@ try {
     Write-Host "正在測試並套用新版本（約 2～3 分鐘）…"
     # A separate process with raw redirection: Windows PowerShell would otherwise turn ordinary
     # git or npm messages on stderr into terminating errors. Only the exit code decides success.
+    # Update-K.ps1 stays unchanged for people and other agents; this wrapper turns its throw into a
+    # one-line message and exit code instead of a PowerShell error record.
+    $updateScript = (Join-Path $root 'Update-K.ps1').Replace("'", "''")
+    $wrapper = "& { try { & '$updateScript' -Ref $Ref; exit 0 } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 } }"
     $update = Start-Process -FilePath "powershell.exe" -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$(Join-Path $root 'Update-K.ps1')`"", "-Ref", $Ref
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($wrapper))
     ) -WorkingDirectory $root -NoNewWindow -Wait -PassThru -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath
     $updateSuccess = $update.ExitCode -eq 0
     if (-not $updateSuccess) { $failureReason = Get-FailureLine "更新執行失敗，代碼 $($update.ExitCode)" }

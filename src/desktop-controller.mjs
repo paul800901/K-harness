@@ -2479,8 +2479,23 @@ export function createDesktopController({
   return {
     state,
     sessions: () => listMainSessions(root),
-    // Native background terminals outlive the turn and would be stopped by closing K.
-    backgroundCommands: async () => (host && state.threadId ? (await listTerminals(host, state.threadId)).length : 0),
+    // Native background terminals outlive the turn (also those of native subagents whose last turn
+    // already finished) and would be stopped by closing K. Same reading as goal recovery.
+    backgroundCommands: async () => {
+      if (!host || !state.threadId) return 0;
+      const page = await host.request('thread/loaded/list', {});
+      if (!Array.isArray(page.data) || page.nextCursor) throw Error('原生已載入對話清單未確認。');
+      const loaded = new Set(page.data);
+      let count = 0;
+      for (const id of [
+        state.threadId,
+        ...state.workers
+          .filter(w => w.provider === 'codex' && isNativeWorker(w) && w.threadId && loaded.has(nativeId(w.threadId)))
+          .map(w => w.threadId)
+      ])
+        count += (await listTerminals(host, id)).length;
+      return count;
+    },
     workers,
     stop,
     usage,

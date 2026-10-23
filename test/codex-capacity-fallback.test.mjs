@@ -39,7 +39,9 @@ async function fixture({
     workspace: root
   });
   const calls = [],
-    turns = [];
+    turns = [],
+    loadedThreads = new Set(['parent']),
+    terminals = {};
   let nativeGoal = goal,
     opts,
     closed,
@@ -67,6 +69,8 @@ async function fixture({
         calls.push({method, p});
         if (method === 'model/list') return {data: catalog, nextCursor: null};
         if (method === 'account/read') return {account: {type: 'chatgpt'}};
+        if (method === 'thread/loaded/list') return {data: [...loadedThreads]};
+        if (method === 'thread/backgroundTerminals/list') return {data: terminals[p.threadId] ?? []};
         if (method === 'thread/read')
           return {
             thread: {
@@ -143,6 +147,8 @@ async function fixture({
     c,
     root,
     calls,
+    loadedThreads,
+    terminals,
     turns,
     emit,
     finish,
@@ -439,5 +445,24 @@ test('ordinary Codex failures and self-hosted 401s never report subscription log
     } finally {
       await f.c.close();
     }
+  }
+});
+
+test('background commands of the room and of its finished native subagents block an update', async () => {
+  const f = await fixture();
+  try {
+    assert.equal(await f.c.backgroundCommands(), 0);
+    f.terminals.parent = [{id: 'build'}];
+    assert.equal(await f.c.backgroundCommands(), 1);
+    // A native subagent whose last turn finished can still own a running terminal.
+    f.c.state.workers.push({provider: 'codex', threadId: 'child', status: 'completed', settled: true});
+    f.loadedThreads.add('child');
+    f.terminals.child = [{id: 'watch'}];
+    assert.equal(await f.c.backgroundCommands(), 2);
+    f.loadedThreads.delete('child');
+    assert.equal(await f.c.backgroundCommands(), 1, 'an unloaded subagent has no live terminal here');
+  } finally {
+    for (const id of Object.keys(f.terminals)) delete f.terminals[id];
+    await f.c.close();
   }
 });

@@ -102,21 +102,14 @@ export async function startDesktop({
     return wrapped;
   };
   let closing = false;
-  // Set when the tray launcher was asked to update; it expires if K is still running
-  // three minutes later (the launcher could not close K), so the button works again.
-  let updateRequestedAt = 0;
-  const updating = () => Date.now() - updateRequestedAt < 180_000;
-  // Everything a normal close would interrupt. Asynchronous checks first, the room snapshot last,
-  // right before the hand-off; anything that cannot be confirmed counts as busy.
-  const selfUpdateBusy = async () => {
+  // An update is reserved while its checks run, then for three minutes after the hand-off; if the
+  // launcher could not close K in that time, the button works again.
+  let updateChecking = false,
+    updateHandedOffAt = 0;
+  const updating = () => updateChecking || Date.now() - updateHandedOffAt < 180_000;
+  // Everything a normal close would interrupt, from the live snapshot.
+  const selfUpdateSnapshotBusy = () => {
     const busy = [];
-    try {
-      const gemini = await geminiAccounts?.list?.();
-      if (gemini?.busy || gemini?.checking || gemini?.loginPending) busy.push('Gemini 程序執行中');
-      if ((await controller.backgroundCommands?.()) > 0) busy.push('背景命令執行中');
-    } catch {
-      busy.push('部分工作狀態無法確認');
-    }
     for (const act of controller.state.conversationActivity ?? []) {
       const name = act.title || '未命名聊天室';
       if (act.busy) busy.push(`聊天室：${name} 工作中`);
@@ -129,6 +122,19 @@ export async function startDesktop({
     if (codexLogin.progress?.().login?.status === 'running') busy.push('Codex 登入程序執行中');
     if (localDictation.busy) busy.push('語音聽寫進行中');
     return busy;
+  };
+  // The slower checks, then the snapshot again right before the hand-off; anything that cannot be
+  // confirmed counts as busy.
+  const selfUpdateBusy = async () => {
+    const busy = [];
+    try {
+      const gemini = await geminiAccounts?.list?.();
+      if (gemini?.busy || gemini?.checking || gemini?.loginPending) busy.push('Gemini 程序執行中');
+      if ((await controller.backgroundCommands?.()) > 0) busy.push('背景命令執行中');
+    } catch {
+      busy.push('部分工作狀態無法確認');
+    }
+    return [...busy, ...selfUpdateSnapshotBusy()];
   };
   let pickerAbort = null;
   // A native login expiry in a main room starts the official sign-in in the owner's
@@ -343,9 +349,6 @@ export async function startDesktop({
         !(req.method === 'POST' && url.pathname === '/api/shutdown')
       )
         return json(503, {error: updating() ? 'K 正在更新並重新啟動，約 2 分鐘後再試。' : 'K 正在關閉，請稍後重試。'});
-      // While an update is reserved no new work may start; reading and closing stay available.
-      if (updating() && req.method === 'POST' && !['/api/shutdown', '/api/self-update'].includes(url.pathname))
-        return json(503, {error: 'K 正在更新並重新啟動，約 2 分鐘後再試。'});
       if (req.method === 'GET' && url.pathname === '/bootstrap') {
         const actual = Buffer.from(url.searchParams.get('token') ?? ''),
           expected = Buffer.from(launchToken ?? '');
@@ -586,6 +589,10 @@ export async function startDesktop({
         chunks.push(chunk);
       }
       const data = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      // Checked after the body arrived: while an update is reserved no new work may start. Stopping,
+      // answering a question and closing stay available.
+      if (updating() && !['/api/shutdown', '/api/self-update', '/api/stop', '/api/answer'].includes(url.pathname))
+        return json(503, {error: 'K 正在更新並重新啟動，約 2 分鐘後再試。'});
       if (url.pathname.startsWith('/api/discussion/connections/')) {
         if (!discussionApi) throw Error('此版本未接通討論 API 設定。');
         const operation = {
@@ -603,19 +610,22 @@ export async function startDesktop({
         if (updating()) return json(409, {error: '已經在更新了。'});
         const ref = readSelfUpdate(selfUpdate.repoRoot).available;
         if (!ref) return json(409, {error: '目前沒有可更新的版本。'});
-        // Reserved before the first await: a second press and any new work are refused until the hand-off.
-        updateRequestedAt = Date.now();
+        // Obvious work is refused at once; otherwise the update is reserved before the first await, so a
+        // second press and any new work are refused until the hand-off.
+        let busy = selfUpdateSnapshotBusy();
+        if (busy.length) return json(409, {error: '還有工作在跑，等結束再按。', busy});
+        updateChecking = true;
         try {
-          const busy = await selfUpdateBusy();
-          if (busy.length) {
-            updateRequestedAt = 0;
-            return json(409, {error: '還有工作在跑，等結束再按。', busy});
-          }
+          busy = await selfUpdateBusy();
+          if (busy.length) return json(409, {error: '還有工作在跑，等結束再按。', busy});
+          updateHandedOffAt = Date.now();
           await selfUpdate.request(ref);
           return json(200, {started: true});
         } catch {
-          updateRequestedAt = 0;
+          updateHandedOffAt = 0;
           return json(503, {error: 'K 無法開始更新，沒有關閉。'});
+        } finally {
+          updateChecking = false;
         }
       }
       if (url.pathname === '/api/core-update') {

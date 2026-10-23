@@ -1214,28 +1214,33 @@ function App() {
   }, []);
   const updateStartedAt = Number(sessionStorage.getItem('k-self-update-at') || 0);
   const isUpdatingDisconnect = !online && (selfUpdate.updating || Date.now() - updateStartedAt < 300000);
-  // Once K answers again after an update, load the new interface exactly once: the marker is
+  // Once K answers again and is no longer updating, load the new interface exactly once; the marker is
   // cleared first, so an ordinary later disconnect is never mistaken for an update.
-  const waitedForUpdate = useRef(false);
-  const updateFinished = useCallback(() => {
-    waitedForUpdate.current = false;
-    sessionStorage.removeItem('k-self-update-at');
-    location.reload();
+  const waitedForUpdate = useRef(false),
+    reloadingForUpdate = useRef(false);
+  const finishIfUpdated = useCallback(() => {
+    if (reloadingForUpdate.current) return;
+    api('self-update')
+      .then(status => {
+        if (status.updating || reloadingForUpdate.current) return;
+        reloadingForUpdate.current = true;
+        sessionStorage.removeItem('k-self-update-at');
+        location.reload();
+      })
+      .catch(() => {});
   }, []);
   useEffect(() => {
     if (isUpdatingDisconnect) waitedForUpdate.current = true;
-    else if (online && waitedForUpdate.current) updateFinished();
-  }, [isUpdatingDisconnect, online, updateFinished]);
+    else if (online && waitedForUpdate.current) {
+      waitedForUpdate.current = false;
+      finishIfUpdated();
+    }
+  }, [isUpdatingDisconnect, online, finishIfUpdated]);
   useEffect(() => {
     if (!isUpdatingDisconnect) return;
-    const timer = setInterval(() => {
-      if (document.visibilityState !== 'visible') return;
-      fetch('/api/sessions', {cache: 'no-store'})
-        .then(response => response.ok && updateFinished())
-        .catch(() => {});
-    }, 5000);
+    const timer = setInterval(() => document.visibilityState === 'visible' && finishIfUpdated(), 5000);
     return () => clearInterval(timer);
-  }, [isUpdatingDisconnect, updateFinished]);
+  }, [isUpdatingDisconnect, finishIfUpdated]);
   const startSelfUpdate = () => {
     setSelfUpdateNotice('');
     api('self-update', {})

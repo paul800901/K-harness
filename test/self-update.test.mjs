@@ -126,12 +126,8 @@ test('running work refuses the update with one short line and never asks the lau
     const {status, body} = await call('POST');
     assert.equal(status, 409);
     assert.equal(body.error, '還有工作在跑，等結束再按。');
-    assert.deepEqual(body.busy, [
-      'Gemini 程序執行中',
-      '聊天室：見觀社群文 工作中',
-      '聊天室：小說 子代理執行中',
-      '核心更新進行中'
-    ]);
+    // Obvious work is refused from the live snapshot at once, before the slower checks.
+    assert.deepEqual(body.busy, ['聊天室：見觀社群文 工作中', '聊天室：小說 子代理執行中', '核心更新進行中']);
     assert.deepEqual(requested, []);
     assert.equal((await call('GET')).body.updating, false);
   } finally {
@@ -289,8 +285,8 @@ test(
         'param([string]$Ref)',
         "$ErrorActionPreference='Stop'",
         "Write-Output 'building'",
-        "& node -e \"console.error('npm warn old');console.error('候選缺少 dist-ui/index.html');process.exit(1)\"",
-        "if($LASTEXITCODE -ne 0){[Console]::Error.WriteLine('K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。');exit 1}"
+        "& node -e \"console.error('npm warn old');console.error('候選缺少 dist-ui/index.html');console.error('未套用的建置暫存留在 C:/x（可從 Git 版本重建）');process.exit(1)\"",
+        "if($LASTEXITCODE -ne 0){throw 'K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。'}"
       ],
       pid
     );
@@ -341,6 +337,8 @@ test('two presses at once hand off once, and no new work starts while the update
     while (!release) await new Promise(resolve => setTimeout(resolve, 5));
     assert.deepEqual(await call('POST'), {status: 409, body: {error: '已經在更新了。'}});
     assert.equal((await call('POST', '/api/send', JSON.stringify({text: 'x'}))).status, 503);
+    // Stopping work and answering a question are never blocked by a pending update.
+    for (const route of ['/api/stop', '/api/answer']) assert.notEqual((await call('POST', route)).status, 503, route);
     release();
     assert.deepEqual(await first, {status: 200, body: {started: true}});
     assert.deepEqual(requested, [READY]);
@@ -350,9 +348,10 @@ test('two presses at once hand off once, and no new work starts while the update
 });
 
 test('background commands, a discussion or an unconfirmable state count as busy', async () => {
-  for (const [controller, expected] of [
+  for (const [controller, expected, gemini] of [
     [{backgroundCommands: async () => 1}, '背景命令執行中'],
     [{discussionBusy: true}, '討論進行中'],
+    [{}, 'Gemini 程序執行中', {busy: true}],
     [
       {
         backgroundCommands: async () => {
@@ -366,6 +365,7 @@ test('background commands, a discussion or an unconfirmable state count as busy'
     const {app, call} = await desktop({
       root: await repo({ready: READY}),
       controller,
+      gemini,
       request: async ref => requested.push(ref)
     });
     try {

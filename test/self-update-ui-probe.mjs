@@ -27,17 +27,30 @@ let browser,
   answer = {status: 409, json: {error: '還有工作在跑，等結束再按。', busy: ['聊天室：小說 工作中']}};
 const posts = [],
   errors = [];
-async function open(viewport) {
+async function open(viewport, {disconnected = false} = {}) {
   const page = await browser.newPage({viewport});
   page.on('pageerror', error => errors.push(error.message));
-  await page.addInitScript(initial => {
-    window.EventSource = class {
-      constructor() {
-        setTimeout(() => this.onmessage?.({data: JSON.stringify({type: 'snapshot', state: initial})}), 0);
-      }
-      close() {}
-    };
-  }, state);
+  await page.addInitScript(
+    ([initial, disconnected]) => {
+      // Counts page loads; the first load starts as if this device had just pressed update.
+      const loads = Number(localStorage.getItem('probe-loads') || 0) + 1;
+      localStorage.setItem('probe-loads', String(loads));
+      if (disconnected && loads === 1) sessionStorage.setItem('k-self-update-at', String(Date.now()));
+      window.EventSource = class {
+        constructor() {
+          setTimeout(
+            () =>
+              disconnected && loads === 1
+                ? this.onerror?.()
+                : this.onmessage?.({data: JSON.stringify({type: 'snapshot', state: initial})}),
+            0
+          );
+        }
+        close() {}
+      };
+    },
+    [state, disconnected]
+  );
   await page.route('**/api/**', async route => {
     const request = route.request(),
       url = new URL(request.url());
@@ -54,6 +67,7 @@ async function open(viewport) {
     await route.fulfill({json: body});
   });
   await page.goto('http://127.0.0.1:5195');
+  if (disconnected) return page;
   // The phone keeps the sidebar folded until it is opened.
   await page.getByRole('button', {name: viewport.width < 700 ? '展開側欄' : '設定', exact: true}).waitFor();
   return page;
@@ -90,6 +104,21 @@ try {
   await updateButton(phone).waitFor();
   await phone.locator('.self-update-failed').getByText('上次更新沒成功：測試未通過').waitFor();
   await phone.screenshot({path: path.join(output, 'phone-failed.png')});
+  await phone.close();
+
+  // While K restarts: a calm notice instead of the disconnect alarm, no reload while K still reports
+  // updating, then exactly one reload once it is back and finished, with the marker cleared.
+  update = {available: true, updating: true, failed: null};
+  const waiting = await open({width: 390, height: 844}, {disconnected: true});
+  await waiting.getByText('K 更新中，完成後會自動重新連線。').waitFor();
+  await waiting.waitForTimeout(6000);
+  assert.equal(await waiting.evaluate(() => localStorage.getItem('probe-loads')), '1', 'no reload while updating');
+  update = {available: false, updating: false, failed: null};
+  await waiting.waitForFunction(() => localStorage.getItem('probe-loads') === '2', null, {timeout: 15000});
+  await waiting.getByRole('button', {name: '展開側欄', exact: true}).waitFor();
+  await waiting.waitForTimeout(6000);
+  assert.equal(await waiting.evaluate(() => localStorage.getItem('probe-loads')), '2', 'reloaded exactly once');
+  assert.equal(await waiting.evaluate(() => sessionStorage.getItem('k-self-update-at')), null);
   assert.deepEqual(errors, []);
   console.log(
     JSON.stringify({
