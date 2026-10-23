@@ -52,7 +52,7 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
       return {
         available: false,
         auth: {loggedIn: true, authMethod: 'chatgpt', planType: null, expired: true},
-        reason: 'GPT 登入已失效（原生核心無法更新登入權杖），請重新登入 GPT 訂閱。'
+        reason: 'K 先前偵測到 GPT 登入失效（原生核心無法更新登入權杖），尚未確認恢復；請重新登入 GPT 訂閱。'
       };
     return {
       available: verified,

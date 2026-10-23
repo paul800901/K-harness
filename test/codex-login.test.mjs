@@ -82,7 +82,7 @@ test('a reported GPT login expiry shows signed-out, allows official login and cl
     const status = await f.service.status();
     assert.equal(status.available, false);
     assert.equal(status.auth.expired, true);
-    assert.match(status.reason, /GPT 登入已失效/);
+    assert.match(status.reason, /GPT 登入失效.*尚未確認恢復/);
     const started = await f.service.start();
     assert.equal(started.login.status, 'running');
     assert.equal(f.calls.filter(c => c.method === 'account/login/start').length, 1);
