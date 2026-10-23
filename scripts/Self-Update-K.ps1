@@ -8,107 +8,83 @@ param(
     [int]$LauncherPid
 )
 
+# Runs from the repository root, outside the runtime that Update-K.ps1 replaces. Never touches
+# phone sign-in files and never ends any process; the tray launcher already closed K normally.
 $ErrorActionPreference = "Stop"
-
-try {
-    $Host.UI.RawUI.WindowTitle = "K 更新中"
-} catch {}
+try { $Host.UI.RawUI.WindowTitle = "K 更新中" } catch {}
 
 $root = Split-Path -Parent $PSScriptRoot
-
-Write-Host "等待 K 完全關閉…"
-
-# 等待 LauncherPid 結束（最多 60 秒）
-$waitStart = [System.Diagnostics.Stopwatch]::StartNew()
-while ($waitStart.Elapsed.TotalSeconds -lt 60) {
-    $proc = Get-Process -Id $LauncherPid -ErrorAction SilentlyContinue
-    if (-not $proc -or $proc.HasExited) {
-        break
-    }
-    Start-Sleep -Milliseconds 250
-}
-
-# 讀取 .local/runtime.json 的 version 作為 from
-$runtimeJsonPath = Join-Path $root ".local\runtime.json"
-$fromVersion = $null
-if (Test-Path -LiteralPath $runtimeJsonPath) {
-    try {
-        $runtimeContent = [System.IO.File]::ReadAllText($runtimeJsonPath, [System.Text.Encoding]::UTF8)
-        $runtimeObj = ConvertFrom-Json $runtimeContent
-        if ($runtimeObj -and $runtimeObj.version) {
-            $fromVersion = [string]$runtimeObj.version
-        }
-    } catch {}
-}
-
-Write-Host "正在測試並套用新版本（約 2～3 分鐘）…"
-
 $localDir = Join-Path $root ".local"
-if (-not (Test-Path -LiteralPath $localDir)) {
-    New-Item -ItemType Directory -Path $localDir -Force | Out-Null
-}
 $logPath = Join-Path $localDir "self-update.log"
+$errorLogPath = Join-Path $localDir "self-update-error.log"
 $resultPath = Join-Path $localDir "self-update-result.json"
-
-$updateScript = Join-Path $root "Update-K.ps1"
+$launcherExe = Join-Path $root "local-launcher\dist\K桌面啟動器.exe"
+$fromVersion = $null
 $updateSuccess = $false
-$failureReason = $null
+$failureReason = "更新沒有完成。"
+$launcherGone = $false
 
-# Update-K.ps1 throws a generic message on failure; the real cause is the last line of its log.
-function Get-LastLogLine([string]$fallback) {
-    $lines = @(Get-Content -LiteralPath $logPath -Encoding utf8 -ErrorAction SilentlyContinue) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and $_ -notmatch 'K 更新未完成' }
-    $line = if ($lines.Count -gt 0) { $lines[-1].Trim() } else { $fallback }
-    if ($line.Length -gt 200) { $line = $line.Substring(0, 200) }
-    return $line
+# The real cause is what the installer (Node, UTF-8) printed. Update-K.ps1 then throws only a generic
+# message, and Windows PowerShell appends its own error record: "+ ..." and "At ..." lines, a location
+# with "Update-K.ps1:<line>" that may wrap, and on a Chinese system text in the console code page that
+# reads back with replacement characters. Those lines are skipped; the last remaining line is the cause.
+function Get-FailureLine([string]$fallback) {
+    try {
+        $candidates = @(@($logPath, $errorLogPath) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object {
+            Get-Content -LiteralPath $_ -Encoding utf8
+        } | Where-Object {
+            -not [string]::IsNullOrWhiteSpace($_) -and -not $_.Contains([char]0xFFFD) -and
+            $_ -notmatch 'K 更新未完成|Update-K\.ps1:\d|^\s*\+|^At |^\s*~+\s*$'
+        })
+        $line = if ($candidates.Count -gt 0) { [string]$candidates[$candidates.Count - 1] } else { $fallback }
+        $line = $line.Trim()
+        if ($line.Length -gt 200) { $line = $line.Substring(0, 200) }
+        return $line
+    } catch {
+        return $fallback
+    }
 }
 
 try {
-    # 執行 Update-K.ps1 並將完整輸出寫入 .local/self-update.log（覆寫）
-    & $updateScript -Ref $Ref *>&1 | Out-File -LiteralPath $logPath -Encoding utf8 -Force
-    $updateSuccess = $LASTEXITCODE -eq 0
-    if (-not $updateSuccess) { $failureReason = Get-LastLogLine "更新執行失敗，代碼 $LASTEXITCODE" }
+    Write-Host "等待 K 完全關閉…"
+    $deadline = [DateTime]::UtcNow.AddSeconds(60)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $proc = Get-Process -Id $LauncherPid -ErrorAction SilentlyContinue
+        if (-not $proc -or $proc.HasExited) { $launcherGone = $true; break }
+        Start-Sleep -Milliseconds 250
+    }
+    if (-not $launcherGone) {
+        # The old launcher is still running: replacing its exe would fail, so nothing is applied.
+        $failureReason = "啟動器沒有結束，這次沒有更新。"
+        return
+    }
+
+    try {
+        $runtime = [System.IO.File]::ReadAllText((Join-Path $localDir "runtime.json"), [System.Text.Encoding]::UTF8) | ConvertFrom-Json
+        if ($runtime.version) { $fromVersion = [string]$runtime.version }
+    } catch {}
+
+    Write-Host "正在測試並套用新版本（約 2～3 分鐘）…"
+    # A separate process with raw redirection: Windows PowerShell would otherwise turn ordinary
+    # git or npm messages on stderr into terminating errors. Only the exit code decides success.
+    $update = Start-Process -FilePath "powershell.exe" -ArgumentList @(
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "`"$(Join-Path $root 'Update-K.ps1')`"", "-Ref", $Ref
+    ) -WorkingDirectory $root -NoNewWindow -Wait -PassThru -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath
+    $updateSuccess = $update.ExitCode -eq 0
+    if (-not $updateSuccess) { $failureReason = Get-FailureLine "更新執行失敗，代碼 $($update.ExitCode)" }
 } catch {
     $updateSuccess = $false
-    $failureReason = Get-LastLogLine $(if ($_.Exception.Message) { $_.Exception.Message } else { '執行 Update-K.ps1 失敗' })
-}
-
-$finishedAt = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")
-
-if ($updateSuccess) {
-    $resultData = @{
-        ok = $true
-        from = $fromVersion
-        to = $Ref
-        finishedAt = $finishedAt
-    }
-} else {
-    $resultData = @{
-        ok = $false
-        from = $fromVersion
-        to = $Ref
-        finishedAt = $finishedAt
-        reason = $failureReason
+    $failureReason = Get-FailureLine $(if ($_.Exception.Message) { $_.Exception.Message } else { "更新沒有完成。" })
+} finally {
+    try {
+        $result = [ordered]@{ ok = $updateSuccess; from = $fromVersion; to = $Ref; finishedAt = [DateTime]::UtcNow.ToString("o") }
+        if (-not $updateSuccess) { $result.reason = $failureReason }
+        [System.IO.File]::WriteAllText($resultPath, (ConvertTo-Json -InputObject $result -Compress), (New-Object System.Text.UTF8Encoding($false)))
+    } catch {}
+    # Bring K back whatever happened, unless the old launcher is still the one running.
+    if ($launcherGone -and (Test-Path -LiteralPath $launcherExe)) {
+        Write-Host "正在重新啟動 K…"
+        Start-Process -FilePath $launcherExe -WorkingDirectory $root
     }
 }
-
-# 用 UTF-8 無 BOM 寫入 .local/self-update-result.json
-$jsonResult = ConvertTo-Json -InputObject $resultData -Compress
-$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
-[System.IO.File]::WriteAllText($resultPath, $jsonResult, $utf8NoBom)
-
-Write-Host "正在重新啟動 K…"
-
-# 不論成敗都啟動啟動器把 K 開回來
-$launcherExe = Join-Path $root "local-launcher\dist\K桌面啟動器.exe"
-if (Test-Path -LiteralPath $launcherExe) {
-    Start-Process -FilePath $launcherExe -WorkingDirectory $root
-}
-
-if ($updateSuccess) {
-    Start-Sleep -Seconds 2
-    exit 0
-} else {
-    Write-Host "更新失敗：$failureReason"
-    Start-Sleep -Seconds 15
-    exit 1
-}
+if (-not $updateSuccess) { exit 1 }

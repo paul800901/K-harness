@@ -2479,6 +2479,8 @@ export function createDesktopController({
   return {
     state,
     sessions: () => listMainSessions(root),
+    // Native background terminals outlive the turn and would be stopped by closing K.
+    backgroundCommands: async () => (host && state.threadId ? (await listTerminals(host, state.threadId)).length : 0),
     workers,
     stop,
     usage,

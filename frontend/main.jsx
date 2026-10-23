@@ -1214,16 +1214,28 @@ function App() {
   }, []);
   const updateStartedAt = Number(sessionStorage.getItem('k-self-update-at') || 0);
   const isUpdatingDisconnect = !online && (selfUpdate.updating || Date.now() - updateStartedAt < 300000);
-  // While K restarts for an update, come back by itself once it answers again.
+  // Once K answers again after an update, load the new interface exactly once: the marker is
+  // cleared first, so an ordinary later disconnect is never mistaken for an update.
+  const waitedForUpdate = useRef(false);
+  const updateFinished = useCallback(() => {
+    waitedForUpdate.current = false;
+    sessionStorage.removeItem('k-self-update-at');
+    location.reload();
+  }, []);
+  useEffect(() => {
+    if (isUpdatingDisconnect) waitedForUpdate.current = true;
+    else if (online && waitedForUpdate.current) updateFinished();
+  }, [isUpdatingDisconnect, online, updateFinished]);
   useEffect(() => {
     if (!isUpdatingDisconnect) return;
     const timer = setInterval(() => {
+      if (document.visibilityState !== 'visible') return;
       fetch('/api/sessions', {cache: 'no-store'})
-        .then(response => response.ok && location.reload())
+        .then(response => response.ok && updateFinished())
         .catch(() => {});
     }, 5000);
     return () => clearInterval(timer);
-  }, [isUpdatingDisconnect]);
+  }, [isUpdatingDisconnect, updateFinished]);
   const startSelfUpdate = () => {
     setSelfUpdateNotice('');
     api('self-update', {})

@@ -94,3 +94,30 @@ test('a reported GPT login expiry shows signed-out, allows official login and cl
     await f.service.close();
   }
 });
+test('a GPT sign-in that is still being set up already counts as running', async () => {
+  let release;
+  const service = createCodexLogin({
+    hostFactory: () => ({
+      closed: new Promise(() => {}),
+      notify() {},
+      async close() {},
+      async request(method) {
+        if (method === 'initialize') await new Promise(resolve => (release = resolve));
+        if (method === 'account/read') return {account: null};
+        if (method === 'account/login/start')
+          return {type: 'chatgpt', loginId: 'id', authUrl: 'https://auth.openai.com/oauth/authorize?state=x'};
+        return {};
+      }
+    })
+  });
+  assert.equal(service.progress().login.status, 'idle');
+  const started = service.start();
+  assert.equal(service.progress().login.status, 'running', 'before the official URL exists');
+  while (!release) await new Promise(resolve => setTimeout(resolve, 5));
+  release();
+  await started;
+  assert.equal(service.progress().login.status, 'running');
+  await service.cancel();
+  assert.equal(service.progress().login.status, 'idle');
+  await service.close();
+});

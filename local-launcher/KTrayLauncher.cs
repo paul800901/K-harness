@@ -328,10 +328,15 @@ internal sealed class KLauncherContext : ApplicationContext
                 Arguments = String.Format("-NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Ref {1} -LauncherPid {2}", scriptPath, refCommit, Process.GetCurrentProcess().Id),
                 WorkingDirectory = root,
                 UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Normal
+                WindowStyle = ProcessWindowStyle.Hidden
             };
             Process.Start(startInfo);
-            ExitLauncher();
+            Log("self-update handed to script; launcher exiting so its exe can be replaced");
+            Notify("K 更新中", "約 2～3 分鐘後會自動重新開啟。", ToolTipIcon.Info);
+            // K is already confirmed closed: leave without a second (possibly forcing) stop. The pause
+            // lets Windows show the notice before the tray icon goes away.
+            Thread.Sleep(3000);
+            CloseTray();
         } catch (Exception ex) {
             Log("failed to launch self-update script: " + ex.Message);
             Notify("K 更新未開始", "無法啟動更新腳本；K 正在重新啟動原版。", ToolTipIcon.Error);
@@ -437,6 +442,11 @@ internal sealed class KLauncherContext : ApplicationContext
     private void ExitLauncher()
     {
         if (!StopK(false)) return;
+        CloseTray();
+    }
+
+    private void CloseTray()
+    {
         tray.Visible = false;
         tray.Dispose();
         timer.Stop();

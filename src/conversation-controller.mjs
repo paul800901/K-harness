@@ -901,6 +901,16 @@ export function createConversationController({
     get historyVersion() {
       return pendingView ?? historyVersions.get(active) ?? active;
     },
+    async backgroundCommands() {
+      let count = 0;
+      for (const controller of controllers) {
+        count += (projected(controller).workers ?? []).filter(
+          worker => worker.kind === 'command' && !workerEnded(worker) && worker.executionUnowned !== true
+        ).length;
+        if (controller.backgroundCommands) count += await controller.backgroundCommands();
+      }
+      return count;
+    },
     get discussionBusy() {
       return locked.size > 0 || [...discussions.values()].some(d => d.busy || d.held);
     },

@@ -8,6 +8,7 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
     loginId = null,
     login = {status: 'idle'},
     queue = Promise.resolve(),
+    starting = 0,
     closed = false;
   const serial = work => {
     const next = queue.then(work);
@@ -67,7 +68,8 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
     };
   };
   return {
-    progress: () => ({login: {...login}}),
+    // A sign-in being set up already counts as running, before the official URL exists.
+    progress: () => ({login: starting ? {...login, status: 'running'} : {...login}}),
     status: () =>
       serial(async () => {
         try {
@@ -79,8 +81,9 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
           if (login.status !== 'running') await release();
         }
       }),
-    start: () =>
-      serial(async () => {
+    start: () => {
+      starting++;
+      return serial(async () => {
         try {
           if (closed) throw new Error();
           const status = await read();
@@ -105,7 +108,8 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
         } finally {
           if (login.status !== 'running') await release();
         }
-      }),
+      }).finally(() => starting--);
+    },
     cancel: () =>
       serial(async () => {
         try {

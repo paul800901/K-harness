@@ -106,6 +106,30 @@ export async function startDesktop({
   // three minutes later (the launcher could not close K), so the button works again.
   let updateRequestedAt = 0;
   const updating = () => Date.now() - updateRequestedAt < 180_000;
+  // Everything a normal close would interrupt. Asynchronous checks first, the room snapshot last,
+  // right before the hand-off; anything that cannot be confirmed counts as busy.
+  const selfUpdateBusy = async () => {
+    const busy = [];
+    try {
+      const gemini = await geminiAccounts?.list?.();
+      if (gemini?.busy || gemini?.checking || gemini?.loginPending) busy.push('Gemini 程序執行中');
+      if ((await controller.backgroundCommands?.()) > 0) busy.push('背景命令執行中');
+    } catch {
+      busy.push('部分工作狀態無法確認');
+    }
+    for (const act of controller.state.conversationActivity ?? []) {
+      const name = act.title || '未命名聊天室';
+      if (act.busy) busy.push(`聊天室：${name} 工作中`);
+      else if (act.pendingQuestions > 0) busy.push(`聊天室：${name} 等待確認中`);
+      else if (act.pendingWorkers > 0) busy.push(`聊天室：${name} 子代理執行中`);
+    }
+    if (controller.discussionBusy) busy.push('討論進行中');
+    if (coreUpdates?.pending) busy.push('核心更新進行中');
+    if (claudeLogin.progress?.().login?.status === 'running') busy.push('Claude 登入程序執行中');
+    if (codexLogin.progress?.().login?.status === 'running') busy.push('Codex 登入程序執行中');
+    if (localDictation.busy) busy.push('語音聽寫進行中');
+    return busy;
+  };
   let pickerAbort = null;
   // A native login expiry in a main room starts the official sign-in in the owner's
   // default browser. Claude's CLI opens it itself; Codex only returns the URL. An
@@ -319,6 +343,9 @@ export async function startDesktop({
         !(req.method === 'POST' && url.pathname === '/api/shutdown')
       )
         return json(503, {error: updating() ? 'K 正在更新並重新啟動，約 2 分鐘後再試。' : 'K 正在關閉，請稍後重試。'});
+      // While an update is reserved no new work may start; reading and closing stay available.
+      if (updating() && req.method === 'POST' && !['/api/shutdown', '/api/self-update'].includes(url.pathname))
+        return json(503, {error: 'K 正在更新並重新啟動，約 2 分鐘後再試。'});
       if (req.method === 'GET' && url.pathname === '/bootstrap') {
         const actual = Buffer.from(url.searchParams.get('token') ?? ''),
           expected = Buffer.from(launchToken ?? '');
@@ -571,46 +598,20 @@ export async function startDesktop({
       }
       if (url.pathname === '/api/self-update') {
         if (!selfUpdate) return json(404, {error: 'Self-update not configured'});
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length !== 0)
+          return json(400, {error: '更新要求格式無效。'});
         if (updating()) return json(409, {error: '已經在更新了。'});
-        const info = readSelfUpdate(selfUpdate.repoRoot);
-        if (!info.available) return json(409, {error: '目前沒有可更新的版本。'});
-
-        // Checked in this same request, so nothing can start between the check and the hand-off.
-        const busy = [];
-        for (const act of controller.state.conversationActivity ?? []) {
-          const name = act.title || '未命名聊天室';
-          if (act.busy) {
-            busy.push(`聊天室：${name} 工作中`);
-          } else if (act.pendingQuestions > 0) {
-            busy.push(`聊天室：${name} 等待確認中`);
-          } else if (act.pendingWorkers > 0) {
-            busy.push(`聊天室：${name} 子代理執行中`);
-          }
-        }
-        const gemini = await geminiAccounts?.list?.();
-        if (gemini && (gemini.busy || gemini.checking || gemini.loginPending)) {
-          busy.push('Gemini 程序執行中');
-        }
-        if (coreUpdates?.pending) {
-          busy.push('核心更新進行中');
-        }
-        if (claudeLogin?.progress?.().login?.status === 'running') {
-          busy.push('Claude 登入程序執行中');
-        }
-        if (codexLogin?.progress?.().login?.status === 'running') {
-          busy.push('Codex 登入程序執行中');
-        }
-        if (localDictation?.busy) {
-          busy.push('語音聽寫進行中');
-        }
-
-        if (busy.length > 0) {
-          return json(409, {error: '還有工作在跑，等結束再按。', busy});
-        }
-
+        const ref = readSelfUpdate(selfUpdate.repoRoot).available;
+        if (!ref) return json(409, {error: '目前沒有可更新的版本。'});
+        // Reserved before the first await: a second press and any new work are refused until the hand-off.
         updateRequestedAt = Date.now();
         try {
-          await selfUpdate.request(info.available);
+          const busy = await selfUpdateBusy();
+          if (busy.length) {
+            updateRequestedAt = 0;
+            return json(409, {error: '還有工作在跑，等結束再按。', busy});
+          }
+          await selfUpdate.request(ref);
           return json(200, {started: true});
         } catch {
           updateRequestedAt = 0;

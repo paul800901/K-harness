@@ -15,4 +15,5 @@ $arguments=@($manager,'--root',$InstallRoot)
 if($Rollback){$arguments+='--rollback'}else{$arguments+=@('--fetch','--ref',$Ref)}
 if($PrepareOnly){$arguments+='--prepare-only'}
 & node @arguments
-if($LASTEXITCODE -ne 0){throw 'K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。'}
+# A plain message and exit code, not a PowerShell error record, so the installer's own error stays last.
+if($LASTEXITCODE -ne 0){[Console]::Error.WriteLine('K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。');exit 1}

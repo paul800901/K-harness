@@ -4,7 +4,7 @@ import path from 'node:path';
 import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises';
 import {EventEmitter} from 'node:events';
 import {PassThrough} from 'node:stream';
-import {execFileSync} from 'node:child_process';
+import {execFileSync, spawn} from 'node:child_process';
 import {scratchBase} from './scratch.mjs';
 import {readSelfUpdate} from '../src/self-update.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
@@ -54,23 +54,30 @@ test('the phone may read and press the update button', () => {
   assert.equal(remoteRouteAllowed('POST', '/api/self-update'), true);
 });
 
-async function desktop({root, activity = [], gemini = {}, corePending = false, request = async () => {}} = {}) {
+async function desktop({
+  root,
+  activity = [],
+  gemini = {},
+  corePending = false,
+  controller = {},
+  request = async () => {}
+} = {}) {
   const app = await startDesktop({
     root: path.resolve('.'),
     port: 0,
     requireLaunchToken: true,
-    controllerFactory: () => ({state: {conversationActivity: activity}, async close() {}}),
+    controllerFactory: () => ({state: {conversationActivity: activity}, async close() {}, ...controller}),
     geminiAccounts: {list: async () => ({accounts: [], ...gemini})},
     coreUpdates: {pending: corePending, async close() {}},
     ...(root ? {selfUpdate: {repoRoot: root, request}} : {})
   });
   const boot = await fetch(app.createLaunchUrl(), {redirect: 'manual'}),
     cookie = boot.headers.get('set-cookie').split(';')[0];
-  const call = async method => {
-    const response = await fetch(app.origin + '/api/self-update', {
+  const call = async (method, route = '/api/self-update', body = '{}') => {
+    const response = await fetch(app.origin + route, {
       method,
       headers: {Cookie: cookie, 'Content-Type': 'application/json', 'X-K-Request': '1', Origin: app.origin},
-      ...(method === 'POST' ? {body: '{}'} : {})
+      ...(method === 'POST' ? {body} : {})
     });
     return {status: response.status, body: await response.json()};
   };
@@ -120,9 +127,9 @@ test('running work refuses the update with one short line and never asks the lau
     assert.equal(status, 409);
     assert.equal(body.error, '還有工作在跑，等結束再按。');
     assert.deepEqual(body.busy, [
+      'Gemini 程序執行中',
       '聊天室：見觀社群文 工作中',
       '聊天室：小說 子代理執行中',
-      'Gemini 程序執行中',
       '核心更新進行中'
     ]);
     assert.deepEqual(requested, []);
@@ -226,3 +233,149 @@ test(
       assert.equal(text.includes(forbidden), false, forbidden);
   }
 );
+
+// Runs the real script under Windows PowerShell 5.1 against a fake repository and a fake Update-K.ps1.
+async function runScript(updateLines, launcherPid) {
+  await mkdir(scratchBase, {recursive: true});
+  const root = await mkdtemp(path.join(scratchBase, 'self-update-script-'));
+  await mkdir(path.join(root, 'scripts'));
+  await mkdir(path.join(root, '.local'));
+  await writeFile(path.join(root, 'scripts', 'Self-Update-K.ps1'), await readFile('scripts/Self-Update-K.ps1'));
+  await writeFile(path.join(root, '.local', 'runtime.json'), JSON.stringify({version: RUNNING}));
+  await writeFile(path.join(root, 'Update-K.ps1'), '\ufeff' + updateLines.join('\r\n'));
+  try {
+    execFileSync(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        path.join(root, 'scripts', 'Self-Update-K.ps1'),
+        '-Ref',
+        READY,
+        '-LauncherPid',
+        String(launcherPid)
+      ],
+      {stdio: 'ignore', timeout: 120000}
+    );
+  } catch {}
+  return JSON.parse(await readFile(path.join(root, '.local', 'self-update-result.json'), 'utf8'));
+}
+const ended = () => {
+  const {pid} = spawn(process.execPath, ['-e', ''], {stdio: 'ignore'});
+  return new Promise(resolve => setTimeout(() => resolve(pid), 500));
+};
+
+test(
+  'the update script judges only the exit code and reports the installer cause, not PowerShell noise',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const pid = await ended();
+    const success = await runScript(
+      [
+        'param([string]$Ref)',
+        "$ErrorActionPreference='Stop'",
+        "[Console]::Error.WriteLine('npm warn deprecated')",
+        "Write-Output 'ok'",
+        'exit 0'
+      ],
+      pid
+    );
+    assert.equal(success.ok, true);
+    assert.equal(success.to, READY);
+    const failure = await runScript(
+      [
+        'param([string]$Ref)',
+        "$ErrorActionPreference='Stop'",
+        "Write-Output 'building'",
+        "& node -e \"console.error('npm warn old');console.error('候選缺少 dist-ui/index.html');process.exit(1)\"",
+        "if($LASTEXITCODE -ne 0){[Console]::Error.WriteLine('K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。');exit 1}"
+      ],
+      pid
+    );
+    assert.deepEqual([failure.ok, failure.from, failure.reason], [false, RUNNING, '候選缺少 dist-ui/index.html']);
+  }
+);
+
+test(
+  'the update script applies nothing while the old launcher is still running',
+  {skip: process.platform !== 'win32', timeout: 120000},
+  async () => {
+    const launcher = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 100000)'], {stdio: 'ignore'});
+    try {
+      const result = await runScript(
+        ['param([string]$Ref)', "Set-Content -LiteralPath (Join-Path $PSScriptRoot 'applied.txt') -Value x", 'exit 0'],
+        launcher.pid
+      );
+      assert.deepEqual([result.ok, result.reason], [false, '啟動器沒有結束，這次沒有更新。']);
+    } finally {
+      launcher.kill();
+    }
+  }
+);
+
+test('the request carries nothing: any body content is refused and K chooses the version', async () => {
+  const requested = [];
+  const {app, call} = await desktop({root: await repo({ready: READY}), request: async ref => requested.push(ref)});
+  try {
+    assert.equal((await call('POST', '/api/self-update', JSON.stringify({ref: RUNNING}))).status, 400);
+    assert.deepEqual(requested, []);
+  } finally {
+    await app.close();
+  }
+});
+
+test('two presses at once hand off once, and no new work starts while the update is reserved', async () => {
+  const requested = [];
+  let release;
+  const {app, call} = await desktop({
+    root: await repo({ready: READY}),
+    // The asynchronous checks are slow, so both presses overlap them.
+    gemini: {},
+    controller: {backgroundCommands: () => new Promise(resolve => (release = () => resolve(0)))},
+    request: async ref => requested.push(ref)
+  });
+  try {
+    const first = call('POST');
+    while (!release) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual(await call('POST'), {status: 409, body: {error: '已經在更新了。'}});
+    assert.equal((await call('POST', '/api/send', JSON.stringify({text: 'x'}))).status, 503);
+    release();
+    assert.deepEqual(await first, {status: 200, body: {started: true}});
+    assert.deepEqual(requested, [READY]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('background commands, a discussion or an unconfirmable state count as busy', async () => {
+  for (const [controller, expected] of [
+    [{backgroundCommands: async () => 1}, '背景命令執行中'],
+    [{discussionBusy: true}, '討論進行中'],
+    [
+      {
+        backgroundCommands: async () => {
+          throw Error('terminal list unavailable');
+        }
+      },
+      '部分工作狀態無法確認'
+    ]
+  ]) {
+    const requested = [];
+    const {app, call} = await desktop({
+      root: await repo({ready: READY}),
+      controller,
+      request: async ref => requested.push(ref)
+    });
+    try {
+      const {status, body} = await call('POST');
+      assert.equal(status, 409);
+      assert.deepEqual(body.busy, [expected]);
+      assert.deepEqual(requested, []);
+      assert.equal((await call('GET')).body.updating, false);
+    } finally {
+      await app.close();
+    }
+  }
+});
