@@ -42,6 +42,10 @@ export const discussionReadTools = [
 export async function createDiscussionReader(workspace, {signal, confined = false} = {}) {
   const root = await realpath(workspace),
     check = () => signal?.throwIfAborted();
+  const outside = target => {
+    const rel = path.relative(root, target);
+    return rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+  };
   const displayPath = target => {
     const rel = path.relative(root, target);
     return (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel) ? rel || '.' : target).replaceAll(
@@ -69,6 +73,8 @@ export async function createDiscussionReader(workspace, {signal, confined = fals
       )
     )
       throw Error('讀取路徑包含不允許的路徑片段。');
+    // Outside paths fail before any lstat, so a confined reader cannot even probe whether they exist.
+    if (confined && outside(path.resolve(anchor, ...parts))) throw Error('API 子代理只可讀取聊天室工作區。');
     let target = anchor;
     for (const part of parts) {
       target = path.join(target, part);
@@ -76,9 +82,7 @@ export async function createDiscussionReader(workspace, {signal, confined = fals
     }
     const canonical = await realpath(target);
     if (path.relative(path.resolve(target), canonical)) throw Error('讀取路徑解析不一致。');
-    const inside = path.relative(root, canonical);
-    if (confined && (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)))
-      throw Error('API 子代理只可讀取聊天室工作區。');
+    if (confined && outside(canonical)) throw Error('API 子代理只可讀取聊天室工作區。');
     return canonical;
   };
   const bytes = async target => {

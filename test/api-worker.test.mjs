@@ -504,3 +504,14 @@ test('omitting the model never falls back to a saved API consult model', async (
     await f.bridge.close();
   }
 });
+
+test('an API consult must name its effort too, so a saved effort is never reused silently', async () => {
+  const runs = [];
+  const f = await fixture({apiFactory: () => ({run: async input => runs.push(input)})});
+  try {
+    await assert.rejects(f.bridge.start({requestId: 'no-effort', task: '請諮詢', model: API_MODEL}), /明確指定 effort/);
+    assert.equal(runs.length, 0);
+  } finally {
+    await f.bridge.close();
+  }
+});

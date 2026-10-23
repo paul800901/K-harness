@@ -597,6 +597,9 @@ test('an API consult worker reader is confined to the room workspace; discussion
   assert.equal((await confined('read_file', {path: path.join(room, 'inside.txt')})).text, 'inside');
   await assert.rejects(confined('read_file', {path: path.join(f.root, 'outside.txt')}), /只可讀取聊天室工作區/);
   await assert.rejects(confined('list_files', {path: f.root}), /只可讀取聊天室工作區/);
+  // A missing outside path gets the same answer as an existing one: existence cannot be probed.
+  await assert.rejects(confined('read_file', {path: path.join(f.root, 'missing.txt')}), /只可讀取聊天室工作區/);
+  await assert.rejects(confined('read_file', {path: path.join(f.root, 'no-dir', 'x.txt')}), /只可讀取聊天室工作區/);
   const broad = await createDiscussionReader(room);
   assert.equal((await broad('read_file', {path: path.join(f.root, 'outside.txt')})).text, 'outside');
 });
