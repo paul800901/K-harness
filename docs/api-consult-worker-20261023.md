@@ -1,4 +1,4 @@
-# API 模型當唯讀諮詢子代理（2026-10-23）
+# API 模型當唯讀諮詢子代理（2026-10-23，南區已部署）
 
 ## 本人決定
 
@@ -75,4 +75,10 @@
 
 ## 部署狀態
 
-未部署、未 push。真實 API 諮詢的端到端實測（主代理派工 → 唯讀讀檔 → 結果送回）尚未做，部署後經本人同意以短諮詢實測（會產生少量 API 費用）。
+- 分支快轉合回 `main`（`e98aeb6`），由 K 外的 Codex 部署。
+- **第一次嘗試（2026-10-23 23:59，臺灣時間）停在閒置確認**：仍有 22:48 起的 `npm test`／`node --test`／`api-worker` 測試程序。查證為 Opus 在工作樹跑完整測試時，`api-worker` 測試因假連線缺 `lease()` 卡住，Opus 停掉外層指令但子程序殘留；核對命令列與啟動時間後由 Opus 結束這 5 個測試程序（不是 K、沒有工作在進行）。Codex 依規則停下、未做任何變更。證據：`.runtime/archive/deployment-7cfacd8e1a7c45de9070607ef5c653de18310abb/deployment-report.md`。
+- **第二次（2026-10-24 00:04:51–00:06:33）**：`Update-K.ps1 -Ref 7cfacd8e1a7c45de9070607ef5c653de18310abb`，結束碼 0，更新器測試 **1869/1869**。讀回全部通過：API 工人、`lease`、工作區讀取限制、`keyConfigured: false`、明確 effort；前次登入修正、`id_token_email` 與 UTF-8 BOM 保留；建置介面含 API 群組；帳號、對話、工作區、瀏覽器輸出、API 連線設定檔、遠端設定與工作階段、語音路徑未變。退版三份：`before-1792731673637`、`before-1792765732003`、`before-1792771586476`（previous），最舊者進資源回收筒。
+- **Codex 停在 push 前**：Windows 憑證儲存區（LocalMicrosoftCredentials）31 個檔案中 1 個的修改時間在 00:05:18 變動（更新器執行期間）。依限定只比對存在與時間、未讀內容，無法證明 K 的 API 金鑰未動。Opus 查證：K 部署時未執行；測試都用假的憑證儲存，不寫 Windows 憑證；更新器會先 `git fetch origin --tags`，但事後重做 fetch 與帶登入的 push 都沒有再改到該檔，**來源仍未查明**。API 連線設定檔（DeepSeek、GLM 兩個連線，皆標示已設定金鑰）自 10-22 後未變。
+- push 與本機金鑰狀態無關，秘密掃描無命中，Opus 於 2026-10-24 push，遠端 `refs/heads/main` 讀回 **`e98aeb65549298914fe728f46e356596c447dbfd`**。
+- 證據：`.runtime/archive/deployment-7cfacd8e1a7c45de9070607ef5c653de18310abb/run-20261024/`（不進 Git）。
+- 未做：真實 API 諮詢的端到端實測（同時可確認金鑰可用），待本人同意（會產生少量 API 費用）。東區未更新。
