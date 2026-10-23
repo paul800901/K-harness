@@ -181,6 +181,27 @@ Write-SafeJson @{writesAfterSame=$sameWrites;managedRefreshAfterSame=$same.token
 );
 
 test(
+  'agy 1.4.6 credentials without id_token keep the newer managed copy and accept another account',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const result = await runWindowsPowerShell(String.raw`
+$target='fake-managed-account'
+$managed=[KGeminiCredentialNative+Record]::new();$managed.Blob=[Text.Encoding]::UTF8.GetBytes('{"id_token_email":"one@example.test","token":{"expiry":"2026-10-13T00:00:00Z","refresh_token":"rotated-managed"}}')
+$live=[KGeminiCredentialNative+Record]::new();$live.Blob=[Text.Encoding]::UTF8.GetBytes('{"id_token_email":"one@example.test","token":{"expiry":"2026-10-13T00:00:00Z","refresh_token":"older-live"}}')
+[KGeminiCredentialNative]::Store[$target]=$managed;Save-CurrentManaged $live $target
+$sameWrites=[KGeminiCredentialNative]::Writes;$same=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([KGeminiCredentialNative]::Read($target).Blob))
+$other=[KGeminiCredentialNative+Record]::new();$other.Blob=[Text.Encoding]::UTF8.GetBytes('{"id_token_email":"two@example.test","token":{"expiry":"2026-10-13T00:00:00Z","refresh_token":"other-token"}}')
+Save-CurrentManaged $other $target
+$fresh=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString([KGeminiCredentialNative]::Read($target).Blob))
+Write-SafeJson @{writesAfterSame=$sameWrites;managedRefreshAfterSame=$same.token.refresh_token;writesAfterOther=[KGeminiCredentialNative]::Writes;freshRefresh=$fresh.token.refresh_token}
+`);
+    assert.deepEqual(result, [
+      {writesAfterSame: 0, managedRefreshAfterSame: 'rotated-managed', writesAfterOther: 1, freshRefresh: 'other-token'}
+    ]);
+  }
+);
+
+test(
   'malformed refresh-token responses classify as quota schema errors without saving tokens',
   {skip: process.platform !== 'win32'},
   async () => {

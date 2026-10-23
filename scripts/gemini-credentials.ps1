@@ -57,9 +57,14 @@ function Get-Email($Record){
  if($null -eq $Record){throw 'IDENTITY:Credential identity is missing.'}
  try{$json=[Text.UTF8Encoding]::new($false,$true).GetString($Record.Blob).TrimEnd([char]0);$data=ConvertFrom-Json -InputObject $json -ErrorAction Stop}catch{throw 'IDENTITY:Credential identity JSON is invalid.'}
 
- # The native JSON stores the account identity in its OIDC id_token. This only
+ # The native JSON stores the account identity in its OIDC id_token; agy 1.4.6
+ # drops the id_token and keeps only its email as id_token_email. This only
  # identifies the saved account; K still requires the official /usage check.
  try{
+  if($null -eq $data.id_token -and $data.id_token_email -is [string]){
+   if($data.id_token_email -notmatch '^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$'){throw 'invalid'}
+   return $data.id_token_email.ToLowerInvariant()
+  }
   if($data.id_token -isnot [string]){throw 'missing'}
   $parts=$data.id_token.Split('.')
   if($parts.Length -ne 3){throw 'invalid'}
@@ -81,7 +86,8 @@ function Save-CurrentManaged($Record,[string]$Target){
    $live=ConvertFrom-Json ([Text.Encoding]::UTF8.GetString($Record.Blob).TrimEnd([char]0))
    # Same native sign-in, but the quota helper refreshed its managed token.
    # Never replace it with the older live copy, including refresh-token rotation.
-   if($old.id_token -eq $live.id_token -and [DateTimeOffset]$old.token.expiry -ge [DateTimeOffset]$live.token.expiry){return}
+   # agy 1.4.6 keeps id_token_email instead of id_token.
+   if($old.id_token -eq $live.id_token -and $old.id_token_email -eq $live.id_token_email -and [DateTimeOffset]$old.token.expiry -ge [DateTimeOffset]$live.token.expiry){return}
   }
   [KGeminiCredentialNative]::Write($Target,$Record,2)
   $verify=[KGeminiCredentialNative]::Read($Target)
