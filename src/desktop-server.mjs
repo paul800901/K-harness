@@ -106,7 +106,7 @@ export async function startDesktop({
   // launcher could not close K in that time, the button works again.
   let updateChecking = false,
     updateHandedOffAt = 0,
-    uploadsInProgress = 0;
+    writesInProgress = 0;
   const updating = () => updateChecking || Date.now() - updateHandedOffAt < 180_000;
   // Everything a normal close would interrupt, from the live snapshot.
   const selfUpdateSnapshotBusy = () => {
@@ -122,7 +122,7 @@ export async function startDesktop({
     if (claudeLogin.progress?.().login?.status === 'running') busy.push('Claude 登入程序執行中');
     if (codexLogin.progress?.().login?.status === 'running') busy.push('Codex 登入程序執行中');
     if (localDictation.busy) busy.push('語音聽寫進行中');
-    if (uploadsInProgress) busy.push('附件上傳中');
+    if (writesInProgress) busy.push('有操作正在處理');
     return busy;
   };
   // The slower checks, then the snapshot again right before the hand-off; anything that cannot be
@@ -278,7 +278,7 @@ export async function startDesktop({
     return serverClosePromise;
   };
   let origin;
-  const handler = isRemote => async (req, res) => {
+  const handleRequest = isRemote => async (req, res) => {
     const json = (code, value) => {
       res.writeHead(code, {'Content-Type': 'application/json; charset=utf-8'});
       res.end(JSON.stringify(value));
@@ -563,14 +563,9 @@ export async function startDesktop({
         }
         if (!req.headers['x-k-command'] || typeof req.headers['x-k-command'] !== 'string')
           return json(400, {error: '附件請求識別無效。'});
-        // An upload writes a file, so it neither starts nor runs across an update.
+        // A streamed upload skips the JSON body check below, so it is refused here during an update.
         if (updating()) return json(503, {error: 'K 正在更新並重新啟動，約 2 分鐘後再試。'});
-        uploadsInProgress++;
-        try {
-          return json(200, await controller.uploadStream({threadId, name}, req));
-        } finally {
-          uploadsInProgress--;
-        }
+        return json(200, await controller.uploadStream({threadId, name}, req));
       }
       if (
         req.method !== 'POST' ||
@@ -747,15 +742,6 @@ export async function startDesktop({
       if (url.pathname === '/api/projects/metadata')
         return json(200, await updateProject(root, data, (await controller.sessions()).sessions));
       if (url.pathname === '/api/attention/read') return json(200, controller.markViewed(data));
-      // Both upload forms write a file, so an update waits for them (see uploadsInProgress).
-      if (url.pathname === '/api/upload') {
-        uploadsInProgress++;
-        try {
-          return json(200, await controller.upload(data));
-        } finally {
-          uploadsInProgress--;
-        }
-      }
       const routes = {
         '/api/discussion/message': 'discussionMessage',
         '/api/fork': 'fork',
@@ -769,6 +755,7 @@ export async function startDesktop({
         '/api/stop': 'stop',
         '/api/answer': 'answer',
         '/api/workers': 'workers',
+        '/api/upload': 'upload',
         '/api/metadata': 'metadata',
         '/api/archives/delete': 'deleteArchived',
         '/api/workspace': 'selectWorkspace',
@@ -810,6 +797,19 @@ export async function startDesktop({
         } else json(status, {error: e.message});
       } else res.end();
     }
+  };
+  // Every write still being handled holds back an update: closing K would cut it off midway.
+  const handler = isRemote => {
+    const handle = handleRequest(isRemote);
+    return async (req, res) => {
+      const write = req.method === 'POST' && !req.url?.startsWith('/api/self-update');
+      if (write) writesInProgress++;
+      try {
+        return await handle(req, res);
+      } finally {
+        if (write) writesInProgress--;
+      }
+    };
   };
   const server = http.createServer({requestTimeout: 0, headersTimeout: 60_000}, handler(false));
   server.once('close', () => {

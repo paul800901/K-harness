@@ -414,7 +414,7 @@ test('an attachment upload neither starts during a pending update nor lets one b
     while (!finishUpload) await new Promise(resolve => setTimeout(resolve, 5));
     const refused = await call('POST');
     assert.equal(refused.status, 409);
-    assert.deepEqual(refused.body.busy, ['附件上傳中']);
+    assert.deepEqual(refused.body.busy, ['有操作正在處理']);
     finishUpload();
     assert.equal((await running).status, 200);
     assert.deepEqual(await call('POST'), {status: 200, body: {started: true}});
@@ -436,11 +436,32 @@ test('the older JSON attachment upload also holds back an update while it is wri
   try {
     const running = call('POST', '/api/upload', JSON.stringify({threadId: 't1', name: 'a.txt', base64: 'ZGF0YQ=='}));
     while (!finishUpload) await new Promise(resolve => setTimeout(resolve, 5));
-    assert.deepEqual((await call('POST')).body.busy, ['附件上傳中']);
+    assert.deepEqual((await call('POST')).body.busy, ['有操作正在處理']);
     finishUpload();
     assert.equal((await running).status, 200);
     assert.deepEqual(await call('POST'), {status: 200, body: {started: true}});
     assert.equal((await call('POST', '/api/upload', JSON.stringify({threadId: 't1', name: 'b.txt'}))).status, 503);
+    assert.deepEqual(requested, [READY]);
+  } finally {
+    await app.close();
+  }
+});
+
+test('any write still being handled, such as a send that is preparing, holds back an update', async () => {
+  let finishSend;
+  const requested = [];
+  const {app, call} = await desktop({
+    root: await repo({ready: READY}),
+    controller: {send: () => new Promise(resolve => (finishSend = () => resolve({sent: true})))},
+    request: async ref => requested.push(ref)
+  });
+  try {
+    const sending = call('POST', '/api/send', JSON.stringify({text: 'x'}));
+    while (!finishSend) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual((await call('POST')).body.busy, ['有操作正在處理']);
+    finishSend();
+    assert.equal((await sending).status, 200);
+    assert.deepEqual(await call('POST'), {status: 200, body: {started: true}});
     assert.deepEqual(requested, [READY]);
   } finally {
     await app.close();
