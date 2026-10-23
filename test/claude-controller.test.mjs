@@ -97,7 +97,7 @@ test('Claude close drains result persistence before a durable immutable parent f
 const fakeWorkerProvider = model =>
   model?.startsWith('claude-') ? 'claude' : model?.startsWith('gpt-') ? 'codex' : 'gemini';
 
-async function fixture({models, waitForHost, browser = false, bridgeFactory, invalidateInspection} = {}) {
+async function fixture({models, waitForHost, browser = false, bridgeFactory, invalidateInspection, reportAuthExpired} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'claude-controller-'));
@@ -162,6 +162,7 @@ async function fixture({models, waitForHost, browser = false, bridgeFactory, inv
     root,
     executable: 'codex-test',
     ...(invalidateInspection ? {invalidateInspection} : {}),
+    ...(reportAuthExpired ? {reportAuthExpired} : {}),
     commandSpec: {command: 'claude-test', argsPrefix: []},
     hostFactory: async options => {
       hostOptions = options;
@@ -616,10 +617,12 @@ test('Claude exposes only native public status and actual context usage, never t
 
 test('Claude authentication failure invalidates inspection cache, marks nativeError, preserves original wording and does not resend work', async () => {
   let invalidated = 0;
+  const reported = [];
   const f = await fixture({
     invalidateInspection: () => {
       invalidated++;
-    }
+    },
+    reportAuthExpired: provider => reported.push(provider)
   });
   try {
     await f.controller.open({});
@@ -640,6 +643,7 @@ test('Claude authentication failure invalidates inspection cache, marks nativeEr
       result: originalText
     });
     assert.equal(invalidated, 1, 'invalidateInspection called once on authentication_failed');
+    assert.deepEqual(reported, ['claude'], 'a live main-room failure starts the official sign-in once');
     const lastAssistant = [...f.controller.state.messages].reverse().find(m => m.role === 'assistant');
     assert.ok(lastAssistant);
     assert.equal(lastAssistant.nativeError, 'authentication_failed');
@@ -661,6 +665,15 @@ test('Claude authentication failure invalidates inspection cache, marks nativeEr
     assert.ok(normalAssistant);
     assert.equal(normalAssistant.nativeError, undefined);
     assert.equal(invalidated, 0);
+
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      isReplay: true,
+      error: 'authentication_failed',
+      uuid: 'replayed-auth-failure',
+      message: {model: '<synthetic>', content: [{type: 'text', text: originalText}]}
+    });
+    assert.deepEqual(reported, ['claude'], 'replayed history never starts a sign-in');
   } finally {
     await f.controller.close();
   }

@@ -185,7 +185,7 @@ try {
   });
   await page
     .getByText(
-      'Claude 登入已失效，這一輪沒有完成。請到「設定 → 帳號與核心」按「登入 Claude 訂閱」重新登入；登入後再送出訊息即可繼續，K 不會自動重送。'
+      'Claude 登入已失效，這一輪沒有完成。K 已在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 Claude 訂閱」），再送出訊息即可繼續；K 不會自動重送。'
     )
     .waitFor();
   assert.equal(await page.locator('main [role="alert"]').count(), 0);

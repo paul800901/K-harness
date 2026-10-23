@@ -1,4 +1,5 @@
 import {openCodexHost} from './codex-host.mjs';
+import {authExpired, clearAuthExpired} from './auth-expiry.mjs';
 
 // The official runtime owns credentials and its OAuth callback. Only safe status
 // and the official authorization URL cross the local UI boundary.
@@ -25,8 +26,10 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
       cwd,
       executable,
       onEvent: event => {
-        if (host === current && event.method === 'account/login/completed' && event.params?.loginId === loginId)
+        if (host === current && event.method === 'account/login/completed' && event.params?.loginId === loginId) {
           login = {status: event.params.success ? 'complete' : 'error'};
+          if (event.params.success) clearAuthExpired('codex');
+        }
       }
     });
     host = current;
@@ -44,6 +47,13 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
   const read = async () => {
     const {account} = await (await connect()).request('account/read', {refreshToken: false});
     const verified = account?.type === 'chatgpt';
+    // A stored login whose tokens failed to refresh in a turn still appears here.
+    if (verified && authExpired('codex'))
+      return {
+        available: false,
+        auth: {loggedIn: true, authMethod: 'chatgpt', planType: null, expired: true},
+        reason: 'GPT 登入已失效（原生核心無法更新登入權杖），請重新登入 GPT 訂閱。'
+      };
     return {
       available: verified,
       auth: {

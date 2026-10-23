@@ -39,6 +39,7 @@ import {approvalRequest} from './desktop-permissions.mjs';
 import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {claudeRateStatus} from './claude-rate-status.mjs';
 import {withBrowserMcp, toClaudeBrowserMcpServer, browserSessionKey} from './browser-mcp-config.mjs';
+import {reportAuthExpired as reportExpired} from './auth-expiry.mjs';
 
 const SESSION_DIR = '.runtime/claude-sessions';
 const clone = value => structuredClone(value);
@@ -139,7 +140,8 @@ export function createClaudeController({
   onChange = () => {},
   browserConfig = async () => null,
   closeBrowser = async () => {},
-  invalidateInspection = invalidateClaudeInspection
+  invalidateInspection = invalidateClaudeInspection,
+  reportAuthExpired = reportExpired
 }) {
   let workerInstructions = '';
   const state = {
@@ -1093,7 +1095,10 @@ export function createClaudeController({
       recordNativeRequestUsage(message);
       streamText(message);
     } else if (message?.type === 'assistant') {
-      if (message.error === 'authentication_failed') invalidateInspection();
+      if (message.error === 'authentication_failed') {
+        invalidateInspection();
+        if (!message.isReplay) reportAuthExpired('claude');
+      }
       let text = plainText(message);
       const streamed = nativeStreams.get(message.message?.id);
       if (text && streamed && streamed.lastTextIndex !== undefined) {
