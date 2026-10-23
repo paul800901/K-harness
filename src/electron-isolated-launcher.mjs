@@ -123,6 +123,13 @@ export async function startElectronIsolatedLauncher({
       void protocol?.close();
       return;
     }
+    if (message?.type === 'owner-self-update') {
+      const ref = message.ref;
+      if (typeof ref === 'string' && /^[0-9a-f]{40}$/.test(ref)) {
+        output.write(`${JSON.stringify({type: 'self-update', ref, pid: processObject.pid})}\n`);
+      }
+      return;
+    }
     if (message?.type === 'owner-error') fail();
   });
   child.once('error', fail);

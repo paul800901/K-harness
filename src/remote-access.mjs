@@ -247,7 +247,8 @@ const reads = new Set([
   '/api/artifact',
   '/api/attachment',
   '/api/message-file',
-  '/api/browser/state'
+  '/api/browser/state',
+  '/api/self-update'
 ]);
 const writes = new Set([
   '/api/discussion/message',
@@ -274,7 +275,8 @@ const writes = new Set([
   '/api/compact',
   '/api/fork',
   '/api/native/files/search',
-  '/api/native/review'
+  '/api/native/review',
+  '/api/self-update'
 ]);
 export const remoteRouteAllowed = (method, pathname) =>
   method === 'GET' ? reads.has(pathname) : method === 'POST' && writes.has(pathname);

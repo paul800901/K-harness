@@ -229,6 +229,7 @@ export function createConversationController({
     const s = projected(controller);
     return {
       threadId: s.threadId,
+      title: s.title || '',
       workspace: s.workspace,
       busy: !!s.busy,
       status: s.status,

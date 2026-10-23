@@ -916,6 +916,8 @@ function App() {
     [loginRequired, setLoginRequired] = useState(false),
     [connecting, setConnecting] = useState(remoteClient),
     [error, setError] = useState(''),
+    [selfUpdate, setSelfUpdate] = useState({available: false, updating: false, failed: null}),
+    [selfUpdateNotice, setSelfUpdateNotice] = useState(''),
     [notice, setNotice] = useState(''),
     [archiveMessage, setArchiveMessage] = useState(''),
     [busy, setBusy] = useState(false),
@@ -1196,6 +1198,42 @@ function App() {
     });
     return disconnect;
   }, []);
+  // The update button appears only when AI has marked an accepted version; checked on load, focus and each minute.
+  useEffect(() => {
+    const read = () =>
+      api('self-update')
+        .then(setSelfUpdate)
+        .catch(() => {});
+    read();
+    const timer = setInterval(read, 60000);
+    window.addEventListener('focus', read);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', read);
+    };
+  }, []);
+  const updateStartedAt = Number(sessionStorage.getItem('k-self-update-at') || 0);
+  const isUpdatingDisconnect = !online && (selfUpdate.updating || Date.now() - updateStartedAt < 300000);
+  // While K restarts for an update, come back by itself once it answers again.
+  useEffect(() => {
+    if (!isUpdatingDisconnect) return;
+    const timer = setInterval(() => {
+      fetch('/api/sessions', {cache: 'no-store'})
+        .then(response => response.ok && location.reload())
+        .catch(() => {});
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [isUpdatingDisconnect]);
+  const startSelfUpdate = () => {
+    setSelfUpdateNotice('');
+    api('self-update', {})
+      .then(() => {
+        sessionStorage.setItem('k-self-update-at', String(Date.now()));
+        setSelfUpdate(current => ({...current, updating: true}));
+        setSelfUpdateNotice('K 更新中…');
+      })
+      .catch(e => setSelfUpdateNotice(e.message));
+  };
   useEffect(() => {
     if (!mobile || (!sidebar && !inspector)) return;
     const panel = appRef.current?.querySelector(sidebar ? '.sidebar' : '.inspector'),
@@ -1675,7 +1713,9 @@ function App() {
   const alertRaw =
       error ||
       (hasInlineError ? null : state.error) ||
-      '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
+      (isUpdatingDisconnect
+        ? 'K 更新中，完成後會自動重新連線。'
+        : '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。'),
     alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
   return (
     <TranscriptContext.Provider value={transcript}>
@@ -1802,9 +1842,20 @@ function App() {
             />
             <div className="sidebar-bottom">
               <Usage state={state} online={online} onDetails={() => setModal({type: 'usage'})} />
-              <button title="設定" onClick={() => setModal({type: 'settings'})}>
-                <Settings size={16} /> 設定
-              </button>
+              <div className="sidebar-settings-row">
+                <button title="設定" onClick={() => setModal({type: 'settings'})}>
+                  <Settings size={16} /> 設定
+                </button>
+                {selfUpdate.available && (
+                  <button className="self-update-button" disabled={selfUpdate.updating} onClick={startSelfUpdate}>
+                    更新
+                  </button>
+                )}
+              </div>
+              {selfUpdate.available && selfUpdateNotice && <div className="self-update-notice">{selfUpdateNotice}</div>}
+              {selfUpdate.available && selfUpdate.failed && !selfUpdateNotice && (
+                <div className="self-update-failed">上次更新沒成功：{selfUpdate.failed.reason}</div>
+              )}
             </div>
           </aside>
           <main>
@@ -1917,7 +1968,7 @@ function App() {
                 </IconButton>
               </div>
             </header>
-            {(error || (!hasInlineError && state.error) || (!online && !connecting)) && (
+            {(error || (!hasInlineError && state.error) || (!online && (!connecting || isUpdatingDisconnect))) && (
               <div className={`alert${remoteClient && !online ? ' remote-disconnected' : ''}`} role="alert">
                 <div className="native-notice-content">
                   <span>
@@ -1925,7 +1976,10 @@ function App() {
                       ? '手機登入已失效（可能已登出、逾期或被電腦端撤銷）。請先複製未送出的草稿，再按「重新登入」輸入存取金鑰；不會停止或重送電腦工作。'
                       : alertText}
                   </span>
-                  {!error && state.turnError && state.turnError.error?.message === state.error ? (
+                  {!error &&
+                  !isUpdatingDisconnect &&
+                  state.turnError &&
+                  state.turnError.error?.message === state.error ? (
                     <details>
                       <summary>查看原生錯誤詳細內容</summary>
                       <pre>{JSON.stringify(state.turnError, null, 2)}</pre>

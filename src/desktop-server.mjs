@@ -12,6 +12,7 @@ import {onAuthExpired} from './auth-expiry.mjs';
 import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
 import {listProjects, addProject, updateProject} from './projects.mjs';
+import {readSelfUpdate} from './self-update.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
@@ -57,6 +58,7 @@ export async function startDesktop({
   discussionApi,
   coreUpdates,
   browserRequest,
+  selfUpdate,
   validateProjectWorkspace = validateWorkspace,
   uiRoot = new URL('../dist-ui/', import.meta.url),
   maxPendingEventBytes = 16 * 1024 * 1024,
@@ -100,6 +102,10 @@ export async function startDesktop({
     return wrapped;
   };
   let closing = false;
+  // Set when the tray launcher was asked to update; it expires if K is still running
+  // three minutes later (the launcher could not close K), so the button works again.
+  let updateRequestedAt = 0;
+  const updating = () => Date.now() - updateRequestedAt < 180_000;
   let pickerAbort = null;
   // A native login expiry in a main room starts the official sign-in in the owner's
   // default browser. Claude's CLI opens it itself; Codex only returns the URL. An
@@ -312,7 +318,7 @@ export async function startDesktop({
         !(req.method === 'GET' && ['/health', '/api/state'].includes(url.pathname)) &&
         !(req.method === 'POST' && url.pathname === '/api/shutdown')
       )
-        return json(503, {error: 'K 正在關閉，請稍後重試。'});
+        return json(503, {error: updating() ? 'K 正在更新並重新啟動，約 2 分鐘後再試。' : 'K 正在關閉，請稍後重試。'});
       if (req.method === 'GET' && url.pathname === '/bootstrap') {
         const actual = Buffer.from(url.searchParams.get('token') ?? ''),
           expected = Buffer.from(launchToken ?? '');
@@ -454,6 +460,16 @@ export async function startDesktop({
           throw new Error('對話已切換。');
         return json(200, result);
       }
+      if (req.method === 'GET' && url.pathname === '/api/self-update') {
+        // Without the tray launcher (tests, development) there is simply nothing to update.
+        if (!selfUpdate) return json(200, {available: false, updating: false, failed: null});
+        const info = readSelfUpdate(selfUpdate.repoRoot);
+        return json(200, {
+          available: !!info.available,
+          updating: updating(),
+          failed: info.failed
+        });
+      }
       if (req.method === 'GET' && url.pathname === '/api/usage') {
         const refresh = url.searchParams.get('refresh') === '1',
           usage = await controller.usage(refresh),
@@ -553,6 +569,54 @@ export async function startDesktop({
         if (!operation) throw Error('API 連線操作無效。');
         return json(200, await discussionApi[operation](data));
       }
+      if (url.pathname === '/api/self-update') {
+        if (!selfUpdate) return json(404, {error: 'Self-update not configured'});
+        if (updating()) return json(409, {error: '已經在更新了。'});
+        const info = readSelfUpdate(selfUpdate.repoRoot);
+        if (!info.available) return json(409, {error: '目前沒有可更新的版本。'});
+
+        // Checked in this same request, so nothing can start between the check and the hand-off.
+        const busy = [];
+        for (const act of controller.state.conversationActivity ?? []) {
+          const name = act.title || '未命名聊天室';
+          if (act.busy) {
+            busy.push(`聊天室：${name} 工作中`);
+          } else if (act.pendingQuestions > 0) {
+            busy.push(`聊天室：${name} 等待確認中`);
+          } else if (act.pendingWorkers > 0) {
+            busy.push(`聊天室：${name} 子代理執行中`);
+          }
+        }
+        const gemini = await geminiAccounts?.list?.();
+        if (gemini && (gemini.busy || gemini.checking || gemini.loginPending)) {
+          busy.push('Gemini 程序執行中');
+        }
+        if (coreUpdates?.pending) {
+          busy.push('核心更新進行中');
+        }
+        if (claudeLogin?.progress?.().login?.status === 'running') {
+          busy.push('Claude 登入程序執行中');
+        }
+        if (codexLogin?.progress?.().login?.status === 'running') {
+          busy.push('Codex 登入程序執行中');
+        }
+        if (localDictation?.busy) {
+          busy.push('語音聽寫進行中');
+        }
+
+        if (busy.length > 0) {
+          return json(409, {error: '還有工作在跑，等結束再按。', busy});
+        }
+
+        updateRequestedAt = Date.now();
+        try {
+          await selfUpdate.request(info.available);
+          return json(200, {started: true});
+        } catch {
+          updateRequestedAt = 0;
+          return json(503, {error: 'K 無法開始更新，沒有關閉。'});
+        }
+      }
       if (url.pathname === '/api/core-update') {
         if (!coreUpdates) throw Error('請從正式桌面入口更新核心。');
         return json(200, await coreUpdates.update(data.provider));
@@ -560,12 +624,7 @@ export async function startDesktop({
       if (url.pathname === '/api/dictation/prepare') {
         // The request stays open until transcription adopts the preloaded helper or it ends: the
         // connection is the lease, so cancel, a closed page or a dropped network releases the GPU.
-        if (
-          !data ||
-          typeof data !== 'object' ||
-          Array.isArray(data) ||
-          Object.keys(data).length !== 0
-        )
+        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length !== 0)
           throw new LocalDictationError('預先載入要求格式無效。', {code: 'INVALID_REQUEST', statusCode: 400});
         const abort = new AbortController();
         const disconnected = () => {

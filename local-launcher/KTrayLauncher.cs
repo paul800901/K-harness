@@ -181,6 +181,18 @@ internal sealed class KLauncherContext : ApplicationContext
             }
             return;
         }
+        if (type == "self-update") {
+            string refCommit = JsonString(line, "ref");
+            int pid;
+            if (child == null || !Int32.TryParse(JsonNumber(line, "pid"), out pid) || pid != child.Id ||
+                String.IsNullOrEmpty(refCommit) || !Regex.IsMatch(refCommit, "^[0-9a-f]{40}$")) {
+                Log("self-update rejected (identity or ref validation failed)");
+                return;
+            }
+            Log("isolated supervisor requested self-update to: " + refCommit);
+            ShowOnUi(delegate { SelfUpdate(refCommit); });
+            return;
+        }
         Log("unrecognized supervisor output omitted");
     }
 
@@ -250,7 +262,9 @@ internal sealed class KLauncherContext : ApplicationContext
 
     private void StopK() { StopK(true); }
 
-    private bool StopK(bool notify)
+    private bool StopK(bool notify) { return StopK(notify, true); }
+
+    private bool StopK(bool notify, bool allowForce)
     {
         pendingOpen = false;
         Process current;
@@ -279,10 +293,12 @@ internal sealed class KLauncherContext : ApplicationContext
             lock (supervisorSync) { closed = closeConfirmed; refused = closeBlocked; failedClose = closeFailed; }
             if (!closed) {
                 if (!refused && !failedClose) Log("shutdown diagnostic stage=tray-wait code=" + (HasExited(current) ? "K_SHUTDOWN_DISCONNECTED" : "K_SHUTDOWN_TRAY_TIMEOUT") + " elapsedMs=" + closeStarted.ElapsedMilliseconds);
+                if (!allowForce) return false;
                 return ForceStop(current, refused ? "仍有工作或待核准事項" : failedClose ? "服務回報關閉失敗" : "等候逾時或無法確認");
             }
             for (int attempt = 0; attempt < 50 && IsPortOpen(); attempt++) Thread.Sleep(100);
             if (IsPortOpen()) {
+                if (!allowForce) return false;
                 return ForceStop(current, "服務回報關閉，但連接埠尚未釋放");
             }
             Log("isolated K stopped by owner supervisor");
@@ -290,7 +306,36 @@ internal sealed class KLauncherContext : ApplicationContext
             return true;
         } catch (Exception) {
             Log("shutdown diagnostic stage=tray-command code=K_SHUTDOWN_UNCONFIRMED");
+            if (!allowForce) return false;
             return ForceStop(current, "關閉控制通道失敗或無法確認");
+        }
+    }
+
+    private void SelfUpdate(string refCommit)
+    {
+        Log("beginning self-update to " + refCommit);
+        bool stopped = StopK(false, false);
+        if (!stopped || IsPortOpen()) {
+            Log("self-update aborted: K did not confirm normal close or port still open");
+            Notify("K 更新未開始", "K 沒有確認正常關閉，沒有更新。", ToolTipIcon.Warning);
+            return;
+        }
+
+        try {
+            string scriptPath = Path.Combine(root, "scripts", "Self-Update-K.ps1");
+            var startInfo = new ProcessStartInfo {
+                FileName = "powershell.exe",
+                Arguments = String.Format("-NoProfile -ExecutionPolicy Bypass -File \"{0}\" -Ref {1} -LauncherPid {2}", scriptPath, refCommit, Process.GetCurrentProcess().Id),
+                WorkingDirectory = root,
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Normal
+            };
+            Process.Start(startInfo);
+            ExitLauncher();
+        } catch (Exception ex) {
+            Log("failed to launch self-update script: " + ex.Message);
+            Notify("K 更新未開始", "無法啟動更新腳本；K 正在重新啟動原版。", ToolTipIcon.Error);
+            StartK();
         }
     }
 

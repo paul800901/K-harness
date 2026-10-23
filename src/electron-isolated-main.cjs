@@ -106,7 +106,11 @@ async function startNativeOwner({
       ownerServices = await startIsolatedOwner({
         paths,
         nodeExecutable: process.env.K_ISOLATED_PARENT_NODE_EXECUTABLE,
-        gatewayFactory
+        gatewayFactory,
+        selfUpdateRequest: ref => {
+          if (!process.connected) throw new Error('Native supervisor disconnected.');
+          process.send({type: 'owner-self-update', ref});
+        }
       });
       if (shuttingDown || !process.connected) {
         await ownerServices.app.close();

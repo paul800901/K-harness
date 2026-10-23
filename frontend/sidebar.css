@@ -33,7 +33,7 @@
 .sidebar .session-menu{position:relative;flex:none;margin-right:3px;opacity:0}.sidebar .session:hover .session-menu,.sidebar .session:focus-within .session-menu,.sidebar .session.selected .session-menu,.sidebar .session-menu[data-open=true],.sidebar .session-menu:focus-within{opacity:1}
 .sidebar .row-menu-trigger{display:grid;place-items:center;min-width:28px;min-height:28px;padding:4px;border-radius:var(--k-radius-sm);color:var(--k-ink-3);font-size:var(--k-text-md);cursor:pointer}
 .row-menu-popup{padding:4px;border:1px solid var(--k-line);border-radius:var(--k-radius-md);background:var(--k-raised);box-shadow:var(--k-shadow-2)}.row-menu-popup button{width:100%;justify-content:flex-start;padding:7px 9px;font-size:var(--k-text-sm)}
-@media(pointer:coarse){.project-menu{opacity:1}.sidebar .session-menu{opacity:1}.sidebar .session-menu>.row-menu-trigger{min-width:36px;min-height:36px}.sidebar .session,.sidebar .workspace-switch,.sidebar-toolbar .new-chat,.workspace-heading .icon-button,.archive-entry,.sidebar .sidebar-bottom>button{min-height:44px}.sidebar .session-open{padding-top:8px;padding-bottom:8px}}
+@media(pointer:coarse){.project-menu{opacity:1}.sidebar .session-menu{opacity:1}.sidebar .session-menu>.row-menu-trigger{min-width:36px;min-height:36px}.sidebar .session,.sidebar .workspace-switch,.sidebar-toolbar .new-chat,.workspace-heading .icon-button,.archive-entry,.sidebar .sidebar-bottom>button,.sidebar .sidebar-settings-row>button{min-height:44px}.sidebar .session-open{padding-top:8px;padding-bottom:8px}}
 .sidebar .session-info{margin:3px 5px 5px;padding:4px 2px 7px;border-bottom:1px solid var(--k-line);color:var(--k-ink-3);font-size:var(--k-text-xs);overflow-wrap:anywhere}
 .sidebar .sidebar-bottom{flex:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--k-line)}.sidebar .sidebar-bottom>button{width:100%;min-height:34px;justify-content:flex-start;padding:6px 8px;font-size:var(--k-text-sm)}
 .header-actions .status.connected i{background:var(--k-ok)}.header-actions .status.offline{color:var(--k-danger)}.header-actions .status.offline i{background:currentColor}
@@ -55,3 +55,11 @@
 .session[draggable="true"]{cursor:grab}
 
 .workspace-heading .sidebar-sort-button{display:flex;align-items:center;gap:4px;padding:5px 6px;white-space:nowrap;font-size:var(--k-text-xs)}
+
+.sidebar .sidebar-settings-row{display:flex;align-items:center;gap:6px}
+.sidebar .sidebar-settings-row>button[title="設定"]{flex:1;min-width:0;min-height:34px;justify-content:flex-start;padding:6px 8px;font-size:var(--k-text-sm)}
+.sidebar .self-update-button{flex:none;display:inline-flex;align-items:center;justify-content:center;min-height:30px;padding:4px 10px;border-radius:var(--k-radius-sm);background:var(--k-ink);color:var(--k-sheet);border:1px solid var(--k-ink);font-size:var(--k-text-xs);font-weight:700;cursor:pointer;white-space:nowrap}
+.sidebar .self-update-button:hover:not(:disabled){opacity:.88}
+.sidebar .self-update-button:disabled{opacity:.5;cursor:default}
+.sidebar .self-update-notice{font-size:var(--k-text-xs);color:var(--k-ink-2);margin-top:5px;padding:0 4px;line-height:1.4;word-break:break-all}
+.sidebar .self-update-failed{font-size:var(--k-text-xs);color:var(--k-danger);margin-top:5px;padding:0 4px;line-height:1.4;word-break:break-all}

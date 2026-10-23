@@ -170,6 +170,9 @@ export function createCoreUpdates({
     abort = null,
     closed = false;
   return {
+    get pending() {
+      return !!pending;
+    },
     update(provider) {
       if (!Object.hasOwn(names, provider)) return Promise.reject(Error('不支援的核心。'));
       if (closed || pending) return Promise.reject(Error('核心更新正在處理或 K 正在關閉，請稍後再試。'));

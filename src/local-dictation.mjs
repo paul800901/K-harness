@@ -461,5 +461,12 @@ export function createLocalDictation({
     }
   }
 
-  return {prepare, transcribe, close};
+  return {
+    prepare,
+    transcribe,
+    close,
+    get busy() {
+      return !!active;
+    }
+  };
 }

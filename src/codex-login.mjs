@@ -67,6 +67,7 @@ export function createCodexLogin({cwd, executable, hostFactory = openCodexHost} 
     };
   };
   return {
+    progress: () => ({login: {...login}}),
     status: () =>
       serial(async () => {
         try {

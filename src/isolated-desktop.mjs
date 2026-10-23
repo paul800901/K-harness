@@ -34,6 +34,7 @@ export async function startIsolatedDesktop({
   env,
   browsers,
   coreUpdates,
+  selfUpdate,
   allowLogin = false,
   workspaceLabel = '隔離測試工作區',
   startDesktopImpl = startDesktop,
@@ -248,6 +249,7 @@ export async function startIsolatedDesktop({
       controllerFactory,
       browserRequest: browsers.request,
       coreUpdates,
+      selfUpdate,
       discussionApi,
       claudeLoginFactory: () =>
         loginGate(createClaudeLogin({cwd: selected, env, inspect, resolve: async () => commandSpec})),

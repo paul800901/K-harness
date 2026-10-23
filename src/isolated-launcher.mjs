@@ -64,7 +64,8 @@ export async function startIsolatedOwner({
   nodeExecutable = process.execPath,
   gatewayFactory,
   browserFactory = createOwnerBrowserRegistry,
-  desktopFactory = startIsolatedDesktop
+  desktopFactory = startIsolatedDesktop,
+  selfUpdateRequest
 } = {}) {
   const p = paths;
   if (!path.isAbsolute(nodeExecutable ?? '')) throw Error('A trusted absolute Node executable is required.');
@@ -137,6 +138,10 @@ export async function startIsolatedOwner({
       env,
       browsers,
       coreUpdates,
+      // The tray launcher performs the update; K only asks it, from the repository root's records.
+      ...(selfUpdateRequest
+        ? {selfUpdate: {repoRoot: path.resolve(p.root, '../../..'), request: selfUpdateRequest}}
+        : {}),
       allowLogin: true,
       workspaceLabel: '私人工作區'
     });
