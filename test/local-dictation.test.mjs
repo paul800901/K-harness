@@ -375,6 +375,90 @@ test('a helper that fails to load before reading audio reports its own error, no
   }
 });
 
+test('our own kill after a broken stdin keeps the stdin error instead of blaming the helper', async () => {
+  const child = new FakeChild({hold: true});
+  child.kill = () => {
+    child.kills += 1;
+    setImmediate(() => {
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('close', null, 'SIGTERM');
+    });
+    return true;
+  };
+  const backend = createLocalDictation({spawnImpl: () => child});
+  try {
+    child.stderr.write('UserWarning: harmless\n');
+    const pending = backend.transcribe(makeWav().toString('base64'));
+    child.stdin.emit('error', Object.assign(Error('write EPIPE'), {code: 'EPIPE'}));
+    await assert.rejects(pending, error => error.code === 'LOCAL_DICTATION_STDIN' && error.diagnostic === 'write EPIPE');
+    assert.equal(child.kills, 1);
+  } finally {
+    await backend.close();
+  }
+});
+
+test('a recording right after a cancel waits for the released helper to exit instead of failing busy', async () => {
+  const children = [new FakeChild({hold: true}), new FakeChild({response: {ok: true, text: '重錄成功'}})];
+  let spawnCalls = 0;
+  const backend = createLocalDictation({spawnImpl: () => children[spawnCalls++]});
+  try {
+    const controller = new AbortController();
+    const prep = backend.prepare({signal: controller.signal});
+    controller.abort();
+    assert.equal(children[0].kills, 1);
+    assert.equal(children[0].exitCode, null, 'the released helper has not exited yet');
+    const result = await backend.transcribe(makeWav().toString('base64'));
+    assert.deepEqual(await prep, {ok: true, prepared: false});
+    assert.equal(spawnCalls, 2);
+    assert.deepEqual(result, {ok: true, text: '重錄成功'});
+  } finally {
+    await backend.close();
+  }
+});
+
+test('a released helper whose exit is unconfirmed keeps the lock after the stop timeout', async () => {
+  const child = new FakeChild({hold: true, ignoreKill: true});
+  let spawnCalls = 0;
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return child;
+    },
+    stopTimeoutMs: 20
+  });
+  const controller = new AbortController();
+  const prep = backend.prepare({signal: controller.signal});
+  controller.abort();
+  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {code: 'LOCAL_DICTATION_BUSY'});
+  assert.deepEqual(await prep, {ok: true, prepared: false});
+  assert.equal(spawnCalls, 1);
+  child.finish(1, '', 'late exit');
+  await backend.close();
+});
+
+test('an unused preloaded helper is released after its lease, and adoption clears the lease', {timeout: 5000}, async () => {
+  const idle = new FakeChild({hold: true});
+  const idleBackend = createLocalDictation({spawnImpl: () => idle, prepareLeaseMs: 20});
+  assert.deepEqual(await idleBackend.prepare(), {ok: true, prepared: false});
+  assert.equal(idle.kills, 1);
+  await idleBackend.close();
+
+  const used = new FakeChild({hold: true});
+  const usedBackend = createLocalDictation({spawnImpl: () => used, prepareLeaseMs: 20});
+  try {
+    const prep = usedBackend.prepare();
+    const pending = usedBackend.transcribe(makeWav().toString('base64'));
+    assert.deepEqual(await prep, {ok: true, prepared: true});
+    await new Promise(resolve => setTimeout(resolve, 60));
+    assert.equal(used.kills, 0, 'an adopted helper is not released by the lease');
+    used.finish(0, JSON.stringify({ok: true, text: '長錄音'}) + '\n');
+    assert.deepEqual(await pending, {ok: true, text: '長錄音'});
+  } finally {
+    await usedBackend.close();
+  }
+});
+
 test('transcribe abort after adoption kills the adopted child and rejects ABORTED', async () => {
   let spawnCalls = 0;
   const child = new FakeChild({hold: true});

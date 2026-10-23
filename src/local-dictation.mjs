@@ -161,14 +161,17 @@ export function createLocalDictation({
   modelPath = process.env.K_DICTATION_MODEL || LOCAL_DICTATION_MODEL,
   scriptPath = provider === 'windows' ? windowsHelperPath : helperPath,
   spawnImpl = spawn,
-  stopTimeoutMs = 5000
+  stopTimeoutMs = 5000,
+  prepareLeaseMs = (MAX_WAV_DURATION_SECONDS + 60) * 1000
 } = {}) {
   if (!['whisper', 'windows'].includes(provider)) throw new TypeError('Dictation provider must be whisper or windows.');
   if (
     !path.isAbsolute(pythonPath) ||
     !path.isAbsolute(scriptPath) ||
     !Number.isInteger(stopTimeoutMs) ||
-    stopTimeoutMs < 1
+    stopTimeoutMs < 1 ||
+    !Number.isInteger(prepareLeaseMs) ||
+    prepareLeaseMs < 1
   ) {
     throw new TypeError('Absolute Python/helper paths and a positive timeout are required.');
   }
@@ -198,6 +201,7 @@ export function createLocalDictation({
   function finish(job, error, value) {
     if (job.responseSettled) return;
     job.responseSettled = true;
+    clearTimeout(job.leaseTimer);
     job.signal?.removeEventListener('abort', job.onAbort);
     job.prepareSignal?.removeEventListener('abort', job.onPrepareAbort);
     if (!job.child || job.childClosed) if (active === job) active = null;
@@ -300,7 +304,7 @@ export function createLocalDictation({
       }
       // The helper loads the model before reading stdin, so a load failure surfaces as a broken
       // pipe; report the helper's own error instead.
-      const failedBeforeReading = job.stopReason === 'stdin-error' && code !== 0 && job.errors.trim();
+      const failedBeforeReading = job.stopReason === 'stdin-error' && code !== null && code !== 0 && job.errors.trim();
       if (job.stopReason && !failedBeforeReading) {
         finish(
           job,
@@ -386,7 +390,7 @@ export function createLocalDictation({
     if (closed || active || signal?.aborted) return {ok: true, prepared: false};
     const job = newJob({adopted: false, prepareSignal: signal});
     active = job;
-    const prepared = new Promise(resolve => {
+    job.prepareResult = new Promise(resolve => {
       job.prepareResolve = resolve;
     });
     job.onPrepareAbort = () =>
@@ -396,11 +400,17 @@ export function createLocalDictation({
         new LocalDictationError('預先載入已釋放。', {code: 'LOCAL_DICTATION_RELEASED', statusCode: 499})
       );
     signal?.addEventListener('abort', job.onPrepareAbort, {once: true});
+    // Recording stops by itself after five minutes, so a helper still unused well past that is stale
+    // (for example a phone that vanished without closing its connection); free its GPU memory.
+    job.leaseTimer = setTimeout(job.onPrepareAbort, prepareLeaseMs);
     startChild(job);
-    return prepared;
+    return job.prepareResult;
   }
 
   async function transcribe(audioBase64, {signal} = {}) {
+    // A recording that starts right after a cancel can arrive while the released helper is still
+    // exiting; wait for that (bounded by the stop timeout) instead of rejecting it as busy.
+    if (active && !active.adopted && active.stopReason) await active.prepareResult;
     if (closed)
       throw new LocalDictationError('本機語音辨識正在關閉。', {code: 'LOCAL_DICTATION_CLOSED', statusCode: 503});
     const warm = active && !active.adopted && !active.stopReason ? active : null;
@@ -411,6 +421,7 @@ export function createLocalDictation({
       throw new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
     // Long audio has no fixed total deadline; the request's abort (cancel/disconnect) or close() stops it.
     if (warm) {
+      clearTimeout(warm.leaseTimer);
       warm.prepareSignal?.removeEventListener('abort', warm.onPrepareAbort);
       warm.prepareResolve({ok: true, prepared: true});
       warm.adopted = true;
