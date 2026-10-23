@@ -74,6 +74,7 @@ function monoFrame(inputBuffer) {
 export function createNativeDictationSession({
   acquireStream = () => navigator.mediaDevices.getUserMedia({audio: {channelCount: 1}}),
   createAudioContext = () => new AudioContext({sampleRate: NATIVE_DICTATION_SAMPLE_RATE}),
+  prepareTranscription,
   requestTranscription,
   onState = () => {},
   onLevel = () => {},
@@ -94,6 +95,7 @@ export function createNativeDictationSession({
   let silence = null;
   let recordingTimer = null;
   let abortController = null;
+  let prepareController = null;
   let samples = [];
   let sampleCount = 0;
   let sendIntent = false;
@@ -105,6 +107,11 @@ export function createNativeDictationSession({
 
   const setState = next => {
     state = next;
+    // Back to idle releases the backend's preloaded recognizer (a no-op once transcription adopted it).
+    if (next === 'idle') {
+      prepareController?.abort();
+      prepareController = null;
+    }
     onState(next);
   };
   const stopTracks = activeStream => activeStream?.getTracks?.().forEach(track => track.stop());
@@ -168,6 +175,13 @@ export function createNativeDictationSession({
     sampleCount = 0;
     limitReported = false;
     setState('starting');
+    // Best-effort: let the backend load the recognizer while the user is speaking.
+    if (prepareTranscription) {
+      prepareController = new AbortController();
+      try {
+        Promise.resolve(prepareTranscription(prepareController.signal)).catch(() => {});
+      } catch {}
+    }
     try {
       context = createAudioContext();
       const activeContext = context;

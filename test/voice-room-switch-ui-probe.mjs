@@ -154,17 +154,36 @@ const app = await startDesktop({
   claudeLoginFactory: login,
   codexLoginFactory: login,
   geminiLoginFactory: login,
-  localDictationFactory: () => ({
-    close: async () => {},
-    async transcribe(audio) {
-      const wav = decodePcm16Mono16kWav(audio);
-      const plan = transcriptionPlans.shift();
-      if (!plan) throw Error('unexpected transcription request');
-      calls.push({op: 'transcribe', bytes: wav.length});
-      plan.markStarted();
-      return plan.result;
-    }
-  })
+  localDictationFactory: () => {
+    let warmResolve = null;
+    return {
+      close: async () => {},
+      prepare: ({signal} = {}) =>
+        new Promise(resolve => {
+          if (signal?.aborted) return resolve({ok: true, prepared: false});
+          warmResolve = resolve;
+          signal?.addEventListener('abort', () => {
+            if (warmResolve === resolve) {
+              warmResolve = null;
+              resolve({ok: true, prepared: false});
+            }
+          }, {once: true});
+        }),
+      async transcribe(audio) {
+        if (warmResolve) {
+          const r = warmResolve;
+          warmResolve = null;
+          r({ok: true, prepared: true});
+        }
+        const wav = decodePcm16Mono16kWav(audio);
+        const plan = transcriptionPlans.shift();
+        if (!plan) throw Error('unexpected transcription request');
+        calls.push({op: 'transcribe', bytes: wav.length});
+        plan.markStarted();
+        return plan.result;
+      }
+    };
+  }
 });
 assert.equal(app.remoteOrigin, origin, 'the fixture must use its own synthetic remote origin');
 const proxy = https.createServer(await probeTlsCertificate(), (req, res) => {
@@ -615,11 +634,13 @@ try {
     const unexpectedAborts = abortedRequests.filter(
       request =>
         !request.includes('ERR_ABORTED') ||
-        (!request.includes('/api/events') && !request.includes('/api/dictation/transcribe'))
+        (!request.includes('/api/events') &&
+          !request.includes('/api/dictation/transcribe') &&
+          !request.includes('/api/dictation/prepare'))
     );
     assert.deepEqual(unexpectedAborts, [], `${viewport.name} has no unexplained request aborts`);
     console.log(
-      `${viewport.name}: ${pageErrors.length} page errors; ${abortedRequests.filter(request => request.includes('/api/events')).length} event-stream aborts during room switches; ${abortedRequests.filter(request => request.includes('/api/dictation/transcribe')).length} expected transcription aborts`
+      `${viewport.name}: ${pageErrors.length} page errors; ${abortedRequests.filter(request => request.includes('/api/events')).length} event-stream aborts during room switches; ${abortedRequests.filter(request => request.includes('/api/dictation/transcribe')).length} expected transcription aborts; ${abortedRequests.filter(request => request.includes('/api/dictation/prepare')).length} expected prepare aborts`
     );
     await page.screenshot({path: path.join(out, `${viewport.name}-voice-room-switch.png`)});
     await page.close();

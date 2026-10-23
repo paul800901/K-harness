@@ -184,6 +184,17 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       const current = () => job.current === entry && entry.scope === scope.current;
       entry.session = createNativeDictationSession({
         ...(remote ? {createAudioContext: () => new AudioContext()} : {}),
+        prepareTranscription: signal =>
+          fetch('/api/dictation/prepare', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-K-Request': '1',
+              ...(remote ? {'X-K-Command': crypto.randomUUID()} : {})
+            },
+            body: '{}',
+            signal
+          }),
         requestTranscription: async (audioBase64, signal) => {
           const response = await fetch('/api/dictation/transcribe', {
             method: 'POST',

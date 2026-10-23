@@ -17,7 +17,7 @@ app.whenReady().then(async()=>{
  const controller={state,async sessions(){return {sessions:[]};},async models(){return [];},async usage(){return {};},async close(){},async send(data){fixture.sends.push(data);return {sent:true};}};
  const login=()=>({async status(){return {available:false};},async close(){}});
  const server=await startDesktop({root:process.env.K_VOICE_TEST_ROOT,port:0,controllerFactory:()=>controller,claudeLoginFactory:login,codexLoginFactory:login,
-  localDictationFactory:()=>({async transcribe(audio,options){fixture.calls.push({bytes:Buffer.from(audio,'base64').length});if(fixture.fail)throw Error('測試辨識失敗');return engine.transcribe(audio,options);},close:()=>engine.close()})});
+  localDictationFactory:()=>({prepare:options=>engine.prepare(options),async transcribe(audio,options){fixture.calls.push({bytes:Buffer.from(audio,'base64').length});if(fixture.fail)throw Error('測試辨識失敗');return engine.transcribe(audio,options);},close:()=>engine.close()})});
  const window=fixture.window=new BrowserWindow({show:false,width:1440,height:1000,webPreferences:{preload:path.join(root,'src/electron-owner-preload.cjs'),contextIsolation:true,sandbox:true,nodeIntegration:false,backgroundThrottling:false}});
  const handlers=createOwnerSessionMediaPermissionHandlers({ownerWebContents:window.webContents,getAppOrigin:()=>server.origin,isClosing:()=>false});
  window.webContents.session.setPermissionRequestHandler(handlers.request);

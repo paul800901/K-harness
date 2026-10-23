@@ -175,12 +175,35 @@ export function createLocalDictation({
   let active = null;
   let closed = false;
 
+  function newJob(fields) {
+    return {
+      child: null,
+      childClosed: false,
+      responseSettled: false,
+      stopReason: null,
+      stopError: null,
+      output: '',
+      errors: '',
+      stopTimer: null,
+      resolve: null,
+      reject: null,
+      signal: null,
+      adopted: true,
+      prepareResolve: null,
+      prepareSignal: null,
+      ...fields
+    };
+  }
+
   function finish(job, error, value) {
     if (job.responseSettled) return;
     job.responseSettled = true;
     job.signal?.removeEventListener('abort', job.onAbort);
+    job.prepareSignal?.removeEventListener('abort', job.onPrepareAbort);
     if (!job.child || job.childClosed) if (active === job) active = null;
-    if (error) job.reject(error);
+    // A warm helper that never received audio only reports that it was not used.
+    if (!job.adopted) job.prepareResolve({ok: true, prepared: false});
+    else if (error) job.reject(error);
     else job.resolve(value);
   }
 
@@ -216,32 +239,9 @@ export function createLocalDictation({
     }
   }
 
-  async function transcribe(audioBase64, {signal} = {}) {
-    if (closed)
-      throw new LocalDictationError('本機語音辨識正在關閉。', {code: 'LOCAL_DICTATION_CLOSED', statusCode: 503});
-    if (active)
-      throw new LocalDictationError('已有一筆語音辨識工作進行中。', {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
-    const wav = decodePcm16Mono16kWav(audioBase64);
-    if (signal?.aborted)
-      throw new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
-    const job = {
-      child: null,
-      childClosed: false,
-      responseSettled: false,
-      stopReason: null,
-      stopError: null,
-      output: '',
-      errors: '',
-      stopTimer: null,
-      resolve: null,
-      reject: null,
-      signal
-    };
-    active = job;
-    const done = new Promise((resolve, reject) => {
-      job.resolve = resolve;
-      job.reject = reject;
-    });
+  // A transcribe request's abort (cancel/disconnect) stops only its own child.
+  function settleOnRequest(job, signal) {
+    job.signal = signal;
     job.onAbort = () =>
       stopChild(
         job,
@@ -249,95 +249,121 @@ export function createLocalDictation({
         new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499})
       );
     signal?.addEventListener('abort', job.onAbort, {once: true});
-    // Long audio has no fixed total deadline; the request's abort (cancel/disconnect) or close() stops it.
-    try {
-      const executable =
-        provider === 'windows'
-          ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
-          : pythonPath;
-      const args =
-        provider === 'windows' ? ['-NoProfile', '-NonInteractive', '-File', scriptPath] : ['-I', '-B', scriptPath];
-      const child = spawnImpl(executable, args, {
-        cwd: path.dirname(scriptPath),
-        env: childEnvironment(process.env, modelPath, pythonPath, provider),
-        windowsHide: true,
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe']
-      });
-      job.child = child;
-      child.stdout.setEncoding('utf8');
-      child.stderr.setEncoding('utf8');
-      child.stdout.on('data', chunk => {
-        job.output += chunk;
-      });
-      child.stderr.on('data', chunk => {
-        job.errors += chunk;
-      });
-      child.once('error', error =>
-        stopChild(
+    return new Promise((resolve, reject) => {
+      job.resolve = resolve;
+      job.reject = reject;
+    });
+  }
+
+  function spawnChild(job) {
+    const executable =
+      provider === 'windows'
+        ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe')
+        : pythonPath;
+    const args =
+      provider === 'windows' ? ['-NoProfile', '-NonInteractive', '-File', scriptPath] : ['-I', '-B', scriptPath];
+    const child = spawnImpl(executable, args, {
+      cwd: path.dirname(scriptPath),
+      env: childEnvironment(process.env, modelPath, pythonPath, provider),
+      windowsHide: true,
+      shell: false,
+      stdio: ['pipe', 'pipe', 'pipe']
+    });
+    job.child = child;
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      job.output += chunk;
+    });
+    child.stderr.on('data', chunk => {
+      job.errors += chunk;
+    });
+    child.once('error', error =>
+      stopChild(
+        job,
+        'spawn-error',
+        new LocalDictationError('無法啟動本機語音辨識。', {
+          code: 'LOCAL_DICTATION_SPAWN',
+          statusCode: 503,
+          cause: error,
+          diagnostic: error.message
+        })
+      )
+    );
+    child.once('close', (code, childSignal) => {
+      job.childClosed = true;
+      clearTimeout(job.stopTimer);
+      if (active === job) active = null;
+      if (!job.adopted) {
+        finish(job);
+        return;
+      }
+      // The helper loads the model before reading stdin, so a load failure surfaces as a broken
+      // pipe; report the helper's own error instead.
+      const failedBeforeReading = job.stopReason === 'stdin-error' && code !== 0 && job.errors.trim();
+      if (job.stopReason && !failedBeforeReading) {
+        finish(
           job,
-          'spawn-error',
-          new LocalDictationError('無法啟動本機語音辨識。', {
-            code: 'LOCAL_DICTATION_SPAWN',
-            statusCode: 503,
+          job.stopError ??
+            new LocalDictationError('本機語音辨識已停止。', {code: 'LOCAL_DICTATION_STOPPED', statusCode: 503})
+        );
+        return;
+      }
+      if (code !== 0) {
+        finish(
+          job,
+          new LocalDictationError('本機語音辨識失敗。', {
+            code: 'LOCAL_DICTATION_PROCESS',
+            statusCode: 500,
+            diagnostic: job.errors.trim() || `exit=${code ?? childSignal ?? 'unknown'}`
+          })
+        );
+        return;
+      }
+      try {
+        const result = JSON.parse(job.output.trim());
+        if (!result || result.ok !== true || typeof result.text !== 'string') throw new Error('辨識回覆格式無效。');
+        finish(job, null, {ok: true, text: result.text});
+      } catch (error) {
+        finish(
+          job,
+          new LocalDictationError('本機語音辨識回覆格式無效。', {
+            code: 'LOCAL_DICTATION_PROTOCOL',
+            statusCode: 500,
             cause: error,
             diagnostic: error.message
           })
-        )
+        );
+      }
+    });
+  }
+
+  function attachAudio(job, wav) {
+    const failed = error =>
+      stopChild(
+        job,
+        'stdin-error',
+        new LocalDictationError('傳送音訊至本機辨識器失敗。', {
+          code: 'LOCAL_DICTATION_STDIN',
+          statusCode: 500,
+          cause: error,
+          diagnostic: error.message
+        })
       );
-      child.once('close', (code, childSignal) => {
-        job.childClosed = true;
-        clearTimeout(job.stopTimer);
-        if (active === job) active = null;
-        if (job.stopReason) {
-          finish(
-            job,
-            job.stopError ??
-              new LocalDictationError('本機語音辨識已停止。', {code: 'LOCAL_DICTATION_STOPPED', statusCode: 503})
-          );
-          return;
-        }
-        if (code !== 0) {
-          finish(
-            job,
-            new LocalDictationError('本機語音辨識失敗。', {
-              code: 'LOCAL_DICTATION_PROCESS',
-              statusCode: 500,
-              diagnostic: job.errors.trim() || `exit=${code ?? childSignal ?? 'unknown'}`
-            })
-          );
-          return;
-        }
-        try {
-          const result = JSON.parse(job.output.trim());
-          if (!result || result.ok !== true || typeof result.text !== 'string') throw new Error('辨識回覆格式無效。');
-          finish(job, null, {ok: true, text: result.text});
-        } catch (error) {
-          finish(
-            job,
-            new LocalDictationError('本機語音辨識回覆格式無效。', {
-              code: 'LOCAL_DICTATION_PROTOCOL',
-              statusCode: 500,
-              cause: error,
-              diagnostic: error.message
-            })
-          );
-        }
-      });
-      child.stdin.once('error', error => {
-        if (!job.childClosed)
-          stopChild(
-            job,
-            'stdin-error',
-            new LocalDictationError('傳送音訊至本機辨識器失敗。', {
-              code: 'LOCAL_DICTATION_STDIN',
-              statusCode: 500,
-              cause: error,
-              diagnostic: error.message
-            })
-          );
-      });
-      child.stdin.end(wav);
+    job.child.stdin.once('error', error => {
+      if (!job.childClosed) failed(error);
+    });
+    try {
+      job.child.stdin.end(wav);
+    } catch (error) {
+      failed(error);
+    }
+  }
+
+  function startChild(job, wav) {
+    try {
+      spawnChild(job);
+      if (wav) attachAudio(job, wav);
     } catch (error) {
       const failure =
         error instanceof LocalDictationError
@@ -351,6 +377,51 @@ export function createLocalDictation({
       if (job.child) stopChild(job, 'spawn-error', failure);
       else finish(job, failure);
     }
+  }
+
+  // Starts the helper while the user is still speaking so the model is loaded when the audio
+  // arrives. The signal is the lease: aborting it before transcribe() adopts the helper releases
+  // it. Best-effort; transcribe() falls back to a fresh helper whenever none is ready.
+  async function prepare({signal} = {}) {
+    if (closed || active || signal?.aborted) return {ok: true, prepared: false};
+    const job = newJob({adopted: false, prepareSignal: signal});
+    active = job;
+    const prepared = new Promise(resolve => {
+      job.prepareResolve = resolve;
+    });
+    job.onPrepareAbort = () =>
+      stopChild(
+        job,
+        'released',
+        new LocalDictationError('預先載入已釋放。', {code: 'LOCAL_DICTATION_RELEASED', statusCode: 499})
+      );
+    signal?.addEventListener('abort', job.onPrepareAbort, {once: true});
+    startChild(job);
+    return prepared;
+  }
+
+  async function transcribe(audioBase64, {signal} = {}) {
+    if (closed)
+      throw new LocalDictationError('本機語音辨識正在關閉。', {code: 'LOCAL_DICTATION_CLOSED', statusCode: 503});
+    const warm = active && !active.adopted && !active.stopReason ? active : null;
+    if (active && !warm)
+      throw new LocalDictationError('已有一筆語音辨識工作進行中。', {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
+    const wav = decodePcm16Mono16kWav(audioBase64);
+    if (signal?.aborted)
+      throw new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
+    // Long audio has no fixed total deadline; the request's abort (cancel/disconnect) or close() stops it.
+    if (warm) {
+      warm.prepareSignal?.removeEventListener('abort', warm.onPrepareAbort);
+      warm.prepareResolve({ok: true, prepared: true});
+      warm.adopted = true;
+      const done = settleOnRequest(warm, signal);
+      attachAudio(warm, wav);
+      return done;
+    }
+    const job = newJob({});
+    active = job;
+    const done = settleOnRequest(job, signal);
+    startChild(job, wav);
     return done;
   }
 
@@ -378,5 +449,5 @@ export function createLocalDictation({
     }
   }
 
-  return {transcribe, close};
+  return {prepare, transcribe, close};
 }

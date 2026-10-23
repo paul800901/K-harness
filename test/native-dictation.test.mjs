@@ -311,3 +311,107 @@ test('invalid transcription success is an error and never returns send intent', 
   assert.deepEqual(errors, ['語音辨識回覆格式錯誤。']);
   assert.equal(session.getState(), 'idle');
 });
+
+test('prepareTranscription is called on start, retained during transcribe, and aborted on settlement or cancel or zero samples', async () => {
+  const audio = fakeAudio();
+  let prepareSignals = [];
+  let resolveTranscription;
+  let rejectTranscription;
+
+  // Case 1: normal flow with success settlement
+  const session1 = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    prepareTranscription: signal => prepareSignals.push(signal),
+    requestTranscription: () =>
+      new Promise((resolve, reject) => {
+        resolveTranscription = resolve;
+        rejectTranscription = reject;
+      })
+  });
+
+  await session1.start();
+  assert.equal(prepareSignals.length, 1);
+  const signal1 = prepareSignals[0];
+  assert.equal(signal1.aborted, false);
+  audio.emit();
+
+  const stopPromise = session1.stop(false);
+  assert.equal(session1.getState(), 'transcribing');
+  await delay(0);
+  // NOT aborted at the moment requestTranscription is invoked
+  assert.equal(signal1.aborted, false);
+
+  resolveTranscription({ok: true, text: '成功'});
+  await stopPromise;
+  assert.equal(session1.getState(), 'idle');
+  assert.equal(signal1.aborted, true, 'aborted after success settlement');
+
+  // Case 2: failure settlement
+  prepareSignals = [];
+  const session2 = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    prepareTranscription: signal => prepareSignals.push(signal),
+    requestTranscription: () =>
+      new Promise((_, reject) => {
+        rejectTranscription = reject;
+      })
+  });
+  await session2.start();
+  assert.equal(prepareSignals.length, 1);
+  const signal2 = prepareSignals[0];
+  assert.equal(signal2.aborted, false);
+  audio.emit();
+  const stop2 = session2.stop(false);
+  await delay(0);
+  assert.equal(signal2.aborted, false);
+  rejectTranscription(new Error('辨識失敗'));
+  await stop2;
+  assert.equal(session2.getState(), 'idle');
+  assert.equal(signal2.aborted, true, 'aborted after failure settlement');
+
+  // Case 3: cancel
+  prepareSignals = [];
+  const session3 = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    prepareTranscription: signal => prepareSignals.push(signal),
+    requestTranscription: async () => ({ok: true, text: ''})
+  });
+  await session3.start();
+  assert.equal(prepareSignals.length, 1);
+  const signal3 = prepareSignals[0];
+  assert.equal(signal3.aborted, false);
+  session3.cancel();
+  assert.equal(session3.getState(), 'idle');
+  assert.equal(signal3.aborted, true, 'aborted on cancel');
+
+  // Case 4: stop with zero samples
+  prepareSignals = [];
+  const session4 = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    prepareTranscription: signal => prepareSignals.push(signal),
+    requestTranscription: async () => ({ok: true, text: ''})
+  });
+  await session4.start();
+  assert.equal(prepareSignals.length, 1);
+  const signal4 = prepareSignals[0];
+  assert.equal(signal4.aborted, false);
+  // No audio emitted -> sampleCount === 0
+  await session4.stop(false);
+  assert.equal(session4.getState(), 'idle');
+  assert.equal(signal4.aborted, true, 'aborted on stop with zero samples');
+
+  // Case 5: omitted prepareTranscription still works
+  const session5 = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    requestTranscription: async () => ({ok: true, text: '無預載正常運作'})
+  });
+  await session5.start();
+  audio.emit();
+  await session5.stop(false);
+  assert.equal(session5.getState(), 'idle');
+});

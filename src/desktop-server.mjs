@@ -518,6 +518,31 @@ export async function startDesktop({
         if (!coreUpdates) throw Error('請從正式桌面入口更新核心。');
         return json(200, await coreUpdates.update(data.provider));
       }
+      if (url.pathname === '/api/dictation/prepare') {
+        // The request stays open until transcription adopts the preloaded helper or it ends: the
+        // connection is the lease, so cancel, a closed page or a dropped network releases the GPU.
+        if (
+          !data ||
+          typeof data !== 'object' ||
+          Array.isArray(data) ||
+          Object.keys(data).length !== 0
+        )
+          throw new LocalDictationError('預先載入要求格式無效。', {code: 'INVALID_REQUEST', statusCode: 400});
+        const abort = new AbortController();
+        const disconnected = () => {
+          if (!res.writableEnded) abort.abort();
+        };
+        res.once('close', disconnected);
+        req.once('aborted', disconnected);
+        try {
+          const result = await localDictation.prepare({signal: abort.signal});
+          if (abort.signal.aborted || res.destroyed) return;
+          return json(200, result);
+        } finally {
+          res.off('close', disconnected);
+          req.off('aborted', disconnected);
+        }
+      }
       if (url.pathname === '/api/dictation/transcribe') {
         if (
           !data ||

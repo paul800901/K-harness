@@ -281,14 +281,33 @@ const app = await startDesktop({
   claudeLoginFactory: service,
   codexLoginFactory: service,
   geminiLoginFactory: service,
-  localDictationFactory: () => ({
-    close: async () => {},
-    transcribe: async audio => {
-      const wav = decodePcm16Mono16kWav(audio);
-      calls.push({op: 'dictation', bytes: wav.length});
-      return {ok: true, text: '手機假收音辨識'};
-    }
-  })
+  localDictationFactory: () => {
+    let warmResolve = null;
+    return {
+      close: async () => {},
+      prepare: ({signal} = {}) =>
+        new Promise(resolve => {
+          if (signal?.aborted) return resolve({ok: true, prepared: false});
+          warmResolve = resolve;
+          signal?.addEventListener('abort', () => {
+            if (warmResolve === resolve) {
+              warmResolve = null;
+              resolve({ok: true, prepared: false});
+            }
+          }, {once: true});
+        }),
+      transcribe: async audio => {
+        if (warmResolve) {
+          const r = warmResolve;
+          warmResolve = null;
+          r({ok: true, prepared: true});
+        }
+        const wav = decodePcm16Mono16kWav(audio);
+        calls.push({op: 'dictation', bytes: wav.length});
+        return {ok: true, text: '手機假收音辨識'};
+      }
+    };
+  }
 });
 assert.equal(app.remoteOrigin, origin, 'test remote listener must start; never proxy to an existing service');
 let dropNextSendResponse = false;

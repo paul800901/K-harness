@@ -259,6 +259,251 @@ test('long local transcription has no fixed total deadline and still returns its
   await backend.close();
 });
 
+test('prepare spawns exactly one child before audio; transcribe adopts it', async () => {
+  let spawnCalls = 0;
+  const child = new FakeChild({response: {ok: true, text: '溫熱辨識'}});
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return child;
+    }
+  });
+  try {
+    const prep = backend.prepare();
+    assert.equal(spawnCalls, 1);
+    assert.equal(child.input.length, 0);
+    const audio = makeWav();
+    const resultPromise = backend.transcribe(audio.toString('base64'));
+    const prepResult = await prep;
+    assert.deepEqual(prepResult, {ok: true, prepared: true});
+    assert.equal(spawnCalls, 1);
+    const result = await resultPromise;
+    assert.deepEqual(result, {ok: true, text: '溫熱辨識'});
+    assert.deepEqual(Buffer.concat(child.input), audio);
+  } finally {
+    await backend.close();
+  }
+});
+
+test('prepare abort before audio kills child and resolves prepared:false; later transcribe cold-spawns new child', async () => {
+  let spawnCalls = 0;
+  const children = [
+    new FakeChild({response: {ok: true, text: '第一隻'}}),
+    new FakeChild({response: {ok: true, text: '第二隻'}})
+  ];
+  const backend = createLocalDictation({
+    spawnImpl: () => children[spawnCalls++]
+  });
+  try {
+    const controller = new AbortController();
+    const prep = backend.prepare({signal: controller.signal});
+    assert.equal(spawnCalls, 1);
+    controller.abort();
+    const prepResult = await prep;
+    assert.deepEqual(prepResult, {ok: true, prepared: false});
+    assert.equal(children[0].kills, 1);
+
+    const audio = makeWav();
+    const result = await backend.transcribe(audio.toString('base64'));
+    assert.equal(spawnCalls, 2);
+    assert.deepEqual(result, {ok: true, text: '第二隻'});
+    assert.deepEqual(Buffer.concat(children[1].input), audio);
+  } finally {
+    await backend.close();
+  }
+});
+
+test('prepare while another job is active resolves prepared:false without spawning', async () => {
+  let spawnCalls = 0;
+  const child = new FakeChild({hold: true});
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return child;
+    }
+  });
+  try {
+    const audio = makeWav();
+    const trans = backend.transcribe(audio.toString('base64'));
+    assert.equal(spawnCalls, 1);
+    const prepResult = await backend.prepare();
+    assert.deepEqual(prepResult, {ok: true, prepared: false});
+    assert.equal(spawnCalls, 1);
+    child.finish(0, JSON.stringify({ok: true, text: '完成'}));
+    await trans;
+  } finally {
+    await backend.close();
+  }
+});
+
+test('warm child exits on its own before audio: prepare resolves prepared:false, later transcribe cold-spawns', async () => {
+  let spawnCalls = 0;
+  const child1 = new FakeChild({hold: true});
+  const child2 = new FakeChild({response: {ok: true, text: '冷啟動成果'}});
+  const backend = createLocalDictation({
+    spawnImpl: () => (spawnCalls++ === 0 ? child1 : child2)
+  });
+  try {
+    const prep = backend.prepare();
+    assert.equal(spawnCalls, 1);
+    child1.finish(1, '', 'simulated load failure');
+    const prepResult = await prep;
+    assert.deepEqual(prepResult, {ok: true, prepared: false});
+
+    const audio = makeWav();
+    const result = await backend.transcribe(audio.toString('base64'));
+    assert.equal(spawnCalls, 2);
+    assert.deepEqual(result, {ok: true, text: '冷啟動成果'});
+  } finally {
+    await backend.close();
+  }
+});
+
+test('a helper that fails to load before reading audio reports its own error, not the broken pipe', async () => {
+  const child = new FakeChild({hold: true});
+  const backend = createLocalDictation({spawnImpl: () => child});
+  try {
+    const pending = backend.transcribe(makeWav().toString('base64'));
+    child.stdin.emit('error', Object.assign(Error('write EPIPE'), {code: 'EPIPE'}));
+    child.finish(1, '', 'RuntimeError: CUDA failed with error out of memory');
+    await assert.rejects(
+      pending,
+      error => error.code === 'LOCAL_DICTATION_PROCESS' && /out of memory/.test(error.diagnostic)
+    );
+  } finally {
+    await backend.close();
+  }
+});
+
+test('transcribe abort after adoption kills the adopted child and rejects ABORTED', async () => {
+  let spawnCalls = 0;
+  const child = new FakeChild({hold: true});
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return child;
+    }
+  });
+  try {
+    const prep = backend.prepare();
+    const audio = makeWav();
+    const controller = new AbortController();
+    const trans = backend.transcribe(audio.toString('base64'), {signal: controller.signal});
+    const prepResult = await prep;
+    assert.deepEqual(prepResult, {ok: true, prepared: true});
+    assert.equal(child.kills, 0);
+
+    controller.abort();
+    await assert.rejects(trans, {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
+    assert.equal(child.kills, 1);
+  } finally {
+    await backend.close();
+  }
+});
+
+test('close() during prepare kills the warm child and resolves prepare prepared:false', async () => {
+  let spawnCalls = 0;
+  const child = new FakeChild({hold: true});
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return child;
+    }
+  });
+  const prep = backend.prepare();
+  assert.equal(spawnCalls, 1);
+  const closePromise = backend.close();
+  const prepResult = await prep;
+  assert.deepEqual(prepResult, {ok: true, prepared: false});
+  assert.equal(child.kills, 1);
+  await closePromise;
+});
+
+test('prepare route propagates client abort to signal and rejects non-{} body with 400', async () => {
+  let enteredResolve;
+  const entered = new Promise(resolve => {
+    enteredResolve = resolve;
+  });
+  let abortResolve;
+  const aborted = new Promise(resolve => {
+    abortResolve = resolve;
+  });
+  let closeCalls = 0;
+  let abortCalls = 0;
+  let prepareCalls = 0;
+  const app = await startDesktop({
+    root: 'test',
+    executable: 'test',
+    port: 0,
+    controllerFactory: () => ({state: {status: 'idle'}, close: async () => {}}),
+    localDictationFactory: () => ({
+      prepare: ({signal}) => {
+        prepareCalls += 1;
+        return new Promise(resolve => {
+          enteredResolve();
+          signal.addEventListener(
+            'abort',
+            () => {
+              abortCalls += 1;
+              abortResolve();
+              resolve({ok: true, prepared: false});
+            },
+            {once: true}
+          );
+        });
+      },
+      transcribe: async () => ({ok: true, text: ''}),
+      close: async () => {
+        closeCalls += 1;
+      }
+    })
+  });
+  try {
+    const page = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
+    const cookie = page.headers.get('set-cookie').split(';')[0];
+    const headers = {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'};
+
+    // Test non-{} bodies -> 400
+    const nonObject = await fetch(`${app.origin}/api/dictation/prepare`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({invalid: true})
+    });
+    assert.equal(nonObject.status, 400);
+
+    const arrayBody = await fetch(`${app.origin}/api/dictation/prepare`, {
+      method: 'POST',
+      headers,
+      body: '[]'
+    });
+    assert.equal(arrayBody.status, 400);
+
+    // Test client disconnect propagation
+    const target = new URL(`${app.origin}/api/dictation/prepare`);
+    const request = httpRequest(target, {
+      method: 'POST',
+      headers
+    });
+    request.on('error', () => {});
+    request.end('{}');
+    await entered;
+    request.destroy(new Error('synthetic client close'));
+    await Promise.race([
+      aborted,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('client abort did not reach dictation signal')), 1000)
+      )
+    ]);
+    assert.equal(abortCalls, 1);
+    assert.equal(prepareCalls, 1);
+    assert.equal(closeCalls, 0);
+  } finally {
+    await app.close();
+  }
+  assert.equal(closeCalls, 1);
+});
+
+
 test('transcribe route retains cookie, same-origin, request-header and route-local body limits', async () => {
   let calls = 0;
   const app = await startDesktop({

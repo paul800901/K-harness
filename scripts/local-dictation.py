@@ -43,14 +43,11 @@ def main():
     # The helper accepts only raw WAV bytes on stdin. No request-provided path,
     # model name or command is interpreted; the trusted parent supplies the
     # offline model path through its process environment.
+    # The model is loaded before audio arrives so the parent can start it early (prewarm).
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     if not MODEL:
         raise ValueError("K_DICTATION_MODEL is required")
-    raw = sys.stdin.buffer.read()
-    if not raw:
-        raise ValueError("Empty WAV input")
-    audio = read_pcm16_mono_16k(raw)
     dll_handles = load_cuda_dll_directories()
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -58,6 +55,10 @@ def main():
     from faster_whisper import WhisperModel
 
     model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
+    raw = sys.stdin.buffer.read()
+    if not raw:
+        raise ValueError("Empty WAV input")
+    audio = read_pcm16_mono_16k(raw)
     segments, _ = model.transcribe(audio, beam_size=5, language="zh", vad_filter=True,
                                   initial_prompt="以下是臺灣繁體中文的語音內容。")
     text = "".join(segment.text for segment in segments).strip()

@@ -806,6 +806,7 @@ test('remote dictation uses only authenticated audio requests, preserves dedup a
     geminiLoginFactory: service,
     localDictationFactory: () => ({
       close: async () => {},
+      prepare: async () => ({ok: true, prepared: false}),
       transcribe: async audio => {
         calls++;
         if (fail) throw Object.assign(Error('private path'), {diagnostic: 'C:/private/whisper', statusCode: 503});
@@ -853,6 +854,9 @@ test('remote dictation uses only authenticated audio requests, preserves dedup a
     413
   );
   assert.equal(calls, 0);
+  const prep = await request(url('/api/dictation/prepare'), {method: 'POST', headers: authenticated, body: {}});
+  assert.equal(prep.status, 200);
+  assert.deepEqual(await prep.json(), {ok: true, prepared: false});
   const commandId = randomUUID();
   const response = await request(url(route), {method: 'POST', headers: authenticated, commandId, body});
   assert.equal(response.status, 200);
