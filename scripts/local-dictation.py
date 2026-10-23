@@ -3,12 +3,19 @@
 import io
 import json
 import os
+import subprocess
 import sys
 import wave
 
 MODEL = os.environ.get("K_DICTATION_MODEL")
 MAX_SECONDS = 5 * 60
 SAMPLE_RATE = 16_000
+# Dictation takes the fastest option that fits in free GPU memory and leaves the rest to other GPU
+# work: float16 loads fastest (about 3.9 GB), int8 needs about 2 GB but loads about 2 s slower, and
+# below that the CPU is slower still but keeps dictation working.
+GPU_FLOAT16_MIN_FREE_MB = 4500
+GPU_INT8_MIN_FREE_MB = 2500
+PROMPT = "以下是臺灣繁體中文的語音內容。"
 
 
 def load_cuda_dll_directories():
@@ -39,6 +46,32 @@ def read_pcm16_mono_16k(raw):
     return np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768.0
 
 
+def gpu_compute_type():
+    """Returns the GPU compute type that fits, or None to use the CPU."""
+    try:
+        result = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                                capture_output=True, text=True, timeout=5, check=True,
+                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        free_mb = int(result.stdout.split()[0])
+    except Exception:
+        return "float16"  # Unknown: keep the previous behaviour; a GPU failure still falls back to the CPU.
+    if free_mb >= GPU_FLOAT16_MIN_FREE_MB:
+        return "float16"
+    if free_mb >= GPU_INT8_MIN_FREE_MB:
+        return "int8_float16"
+    return None
+
+
+def load_model(device, compute_type):
+    from faster_whisper import WhisperModel
+    return WhisperModel(MODEL, device=device, compute_type=compute_type, local_files_only=True)
+
+
+def transcribe(model, audio):
+    segments, _ = model.transcribe(audio, beam_size=5, language="zh", vad_filter=True, initial_prompt=PROMPT)
+    return "".join(segment.text for segment in segments).strip()
+
+
 def main():
     # The helper accepts only raw WAV bytes on stdin. No request-provided path,
     # model name or command is interpreted; the trusted parent supplies the
@@ -52,16 +85,30 @@ def main():
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
-    from faster_whisper import WhisperModel
-
-    model = WhisperModel(MODEL, device="cuda", compute_type="float16", local_files_only=True)
+    model = None
+    compute_type = gpu_compute_type()
+    if compute_type:
+        try:
+            model = load_model("cuda", compute_type)
+        except Exception as exc:
+            sys.stderr.write(f"GPU load failed, using CPU: {type(exc).__name__}: {exc}\n")
+    on_gpu = model is not None
+    if not on_gpu:
+        model = load_model("cpu", "int8")
     raw = sys.stdin.buffer.read()
     if not raw:
         raise ValueError("Empty WAV input")
     audio = read_pcm16_mono_16k(raw)
-    segments, _ = model.transcribe(audio, beam_size=5, language="zh", vad_filter=True,
-                                  initial_prompt="以下是臺灣繁體中文的語音內容。")
-    text = "".join(segment.text for segment in segments).strip()
+    try:
+        text = transcribe(model, audio)
+    except Exception as exc:
+        if not on_gpu:
+            raise
+        sys.stderr.write(f"GPU transcription failed, retrying on CPU: {type(exc).__name__}: {exc}\n")
+        text = None
+    if text is None:
+        model = None  # Free the GPU memory before the slower CPU retry.
+        text = transcribe(load_model("cpu", "int8"), audio)
     sys.stdout.write(json.dumps({"ok": True, "text": text}, ensure_ascii=False) + "\n")
     # Retain the DLL directory handles through model inference.
     _ = dll_handles

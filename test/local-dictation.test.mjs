@@ -131,6 +131,7 @@ test('local dictation starts one offline child, forwards WAV only on stdin, and 
     assert.equal(invocation[2].env.HF_HUB_OFFLINE, '1');
     assert.equal(invocation[2].env.TRANSFORMERS_OFFLINE, '1');
     assert.equal(invocation[2].env.K_DICTATION_MODEL, LOCAL_DICTATION_MODEL);
+    assert.equal(invocation[2].env.ProgramFiles, process.env.ProgramFiles, 'nvidia-smi needs ProgramFiles');
     assert.deepEqual(Buffer.concat(child.input), audio);
   } finally {
     await backend.close();

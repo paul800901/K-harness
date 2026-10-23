@@ -134,7 +134,8 @@ function childEnvironment(
   provider = 'whisper'
 ) {
   const env = {};
-  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH']) {
+  // ProgramFiles: nvidia-smi (NVML), which the helper uses to check free GPU memory, fails without it.
+  for (const name of ['SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH', 'ProgramFiles']) {
     const key = Object.keys(source).find(value => value.toUpperCase() === name.toUpperCase());
     if (key && typeof source[key] === 'string') env[name] = source[key];
   }
