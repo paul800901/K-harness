@@ -73,6 +73,7 @@ async function desktop({
   });
   const boot = await fetch(app.createLaunchUrl(), {redirect: 'manual'}),
     cookie = boot.headers.get('set-cookie').split(';')[0];
+  app.cookie = cookie;
   const call = async (method, route = '/api/self-update', body = '{}') => {
     const response = await fetch(app.origin + route, {
       method,
@@ -377,5 +378,49 @@ test('background commands, a discussion or an unconfirmable state count as busy'
     } finally {
       await app.close();
     }
+  }
+});
+
+test('an attachment upload neither starts during a pending update nor lets one begin while it runs', async () => {
+  let finishUpload;
+  const requested = [];
+  const {app, call} = await desktop({
+    root: await repo({ready: READY}),
+    controller: {
+      uploadStream: (meta, req) =>
+        new Promise(resolve => {
+          req.resume();
+          finishUpload = () => resolve({id: 'a1'});
+        })
+    },
+    request: async ref => requested.push(ref)
+  });
+  const upload = () =>
+    fetch(app.origin + '/api/upload', {
+      method: 'POST',
+      headers: {
+        Cookie: app.cookie,
+        'X-K-Request': '1',
+        'Content-Type': 'application/octet-stream',
+        Origin: app.origin,
+        'X-K-Thread-Id': 't1',
+        'X-K-File-Name': 'a.txt',
+        'X-K-Command': 'c1'
+      },
+      body: 'data'
+    });
+  try {
+    const running = upload();
+    while (!finishUpload) await new Promise(resolve => setTimeout(resolve, 5));
+    const refused = await call('POST');
+    assert.equal(refused.status, 409);
+    assert.deepEqual(refused.body.busy, ['附件上傳中']);
+    finishUpload();
+    assert.equal((await running).status, 200);
+    assert.deepEqual(await call('POST'), {status: 200, body: {started: true}});
+    assert.equal((await upload()).status, 503, 'no upload starts once the update is handed off');
+    assert.deepEqual(requested, [READY]);
+  } finally {
+    await app.close();
   }
 });

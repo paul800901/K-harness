@@ -1214,33 +1214,31 @@ function App() {
   }, []);
   const updateStartedAt = Number(sessionStorage.getItem('k-self-update-at') || 0);
   const isUpdatingDisconnect = !online && (selfUpdate.updating || Date.now() - updateStartedAt < 300000);
-  // Once K answers again and is no longer updating, load the new interface exactly once; the marker is
-  // cleared first, so an ordinary later disconnect is never mistaken for an update.
-  const waitedForUpdate = useRef(false),
+  // After an update disconnect, keep checking until K answers and no longer reports updating, then
+  // load the new interface exactly once; the marker is cleared first, so a later ordinary disconnect
+  // is never mistaken for an update. A failed check simply waits for the next one.
+  const [awaitingUpdate, setAwaitingUpdate] = useState(false),
     reloadingForUpdate = useRef(false);
-  const finishIfUpdated = useCallback(() => {
-    if (reloadingForUpdate.current) return;
-    api('self-update')
-      .then(status => {
-        if (status.updating || reloadingForUpdate.current) return;
-        reloadingForUpdate.current = true;
-        sessionStorage.removeItem('k-self-update-at');
-        location.reload();
-      })
-      .catch(() => {});
-  }, []);
   useEffect(() => {
-    if (isUpdatingDisconnect) waitedForUpdate.current = true;
-    else if (online && waitedForUpdate.current) {
-      waitedForUpdate.current = false;
-      finishIfUpdated();
-    }
-  }, [isUpdatingDisconnect, online, finishIfUpdated]);
+    if (isUpdatingDisconnect) setAwaitingUpdate(true);
+  }, [isUpdatingDisconnect]);
   useEffect(() => {
-    if (!isUpdatingDisconnect) return;
-    const timer = setInterval(() => document.visibilityState === 'visible' && finishIfUpdated(), 5000);
+    if (!awaitingUpdate) return;
+    const check = () => {
+      if (reloadingForUpdate.current || document.visibilityState !== 'visible') return;
+      api('self-update')
+        .then(status => {
+          if (status.updating || reloadingForUpdate.current) return;
+          reloadingForUpdate.current = true;
+          sessionStorage.removeItem('k-self-update-at');
+          location.reload();
+        })
+        .catch(() => {});
+    };
+    if (online) check();
+    const timer = setInterval(check, 5000);
     return () => clearInterval(timer);
-  }, [isUpdatingDisconnect, finishIfUpdated]);
+  }, [awaitingUpdate, online]);
   const startSelfUpdate = () => {
     setSelfUpdateNotice('');
     api('self-update', {})

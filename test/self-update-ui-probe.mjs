@@ -24,7 +24,8 @@ const state = {
 };
 let browser,
   update = {available: false, updating: false, failed: null},
-  answer = {status: 409, json: {error: '還有工作在跑，等結束再按。', busy: ['聊天室：小說 工作中']}};
+  answer = {status: 409, json: {error: '還有工作在跑，等結束再按。', busy: ['聊天室：小說 工作中']}},
+  failStatusReads = 0;
 const posts = [],
   errors = [];
 async function open(viewport, {disconnected = false} = {}) {
@@ -57,6 +58,10 @@ async function open(viewport, {disconnected = false} = {}) {
     if (url.pathname === '/api/self-update' && request.method() === 'POST') {
       posts.push(request.postDataJSON());
       return route.fulfill({status: answer.status, json: answer.json});
+    }
+    if (url.pathname === '/api/self-update' && failStatusReads > 0) {
+      failStatusReads--;
+      return route.fulfill({status: 503, json: {error: 'K 正在關閉，請稍後重試。'}});
     }
     let body = {};
     if (url.pathname === '/api/self-update') body = update;
@@ -113,8 +118,10 @@ try {
   await waiting.getByText('K 更新中，完成後會自動重新連線。').waitFor();
   await waiting.waitForTimeout(6000);
   assert.equal(await waiting.evaluate(() => localStorage.getItem('probe-loads')), '1', 'no reload while updating');
+  // K is finished, but the first status read after it answers again fails: the next one still reloads.
   update = {available: false, updating: false, failed: null};
-  await waiting.waitForFunction(() => localStorage.getItem('probe-loads') === '2', null, {timeout: 15000});
+  failStatusReads = 1;
+  await waiting.waitForFunction(() => localStorage.getItem('probe-loads') === '2', null, {timeout: 20000});
   await waiting.getByRole('button', {name: '展開側欄', exact: true}).waitFor();
   await waiting.waitForTimeout(6000);
   assert.equal(await waiting.evaluate(() => localStorage.getItem('probe-loads')), '2', 'reloaded exactly once');

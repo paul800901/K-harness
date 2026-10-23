@@ -105,7 +105,8 @@ export async function startDesktop({
   // An update is reserved while its checks run, then for three minutes after the hand-off; if the
   // launcher could not close K in that time, the button works again.
   let updateChecking = false,
-    updateHandedOffAt = 0;
+    updateHandedOffAt = 0,
+    uploadsInProgress = 0;
   const updating = () => updateChecking || Date.now() - updateHandedOffAt < 180_000;
   // Everything a normal close would interrupt, from the live snapshot.
   const selfUpdateSnapshotBusy = () => {
@@ -121,6 +122,7 @@ export async function startDesktop({
     if (claudeLogin.progress?.().login?.status === 'running') busy.push('Claude 登入程序執行中');
     if (codexLogin.progress?.().login?.status === 'running') busy.push('Codex 登入程序執行中');
     if (localDictation.busy) busy.push('語音聽寫進行中');
+    if (uploadsInProgress) busy.push('附件上傳中');
     return busy;
   };
   // The slower checks, then the snapshot again right before the hand-off; anything that cannot be
@@ -561,7 +563,14 @@ export async function startDesktop({
         }
         if (!req.headers['x-k-command'] || typeof req.headers['x-k-command'] !== 'string')
           return json(400, {error: '附件請求識別無效。'});
-        return json(200, await controller.uploadStream({threadId, name}, req));
+        // An upload writes a file, so it neither starts nor runs across an update.
+        if (updating()) return json(503, {error: 'K 正在更新並重新啟動，約 2 分鐘後再試。'});
+        uploadsInProgress++;
+        try {
+          return json(200, await controller.uploadStream({threadId, name}, req));
+        } finally {
+          uploadsInProgress--;
+        }
       }
       if (
         req.method !== 'POST' ||

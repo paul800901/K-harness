@@ -2484,7 +2484,8 @@ export function createDesktopController({
     backgroundCommands: async () => {
       if (!host || !state.threadId) return 0;
       const page = await host.request('thread/loaded/list', {});
-      if (!Array.isArray(page.data) || page.nextCursor) throw Error('原生已載入對話清單未確認。');
+      if (!Array.isArray(page.data) || page.data.some(id => typeof id !== 'string') || page.nextCursor)
+        throw Error('原生已載入對話清單未確認。');
       const loaded = new Set(page.data);
       let count = 0;
       for (const id of [
