@@ -65,3 +65,11 @@ test('other failures and malformed errors stay distinct', () => {
   assert.equal(recoveryErrorClass({codexErrorInfo: 'rateLimitExceeded'}), 'unknown');
   assert.equal(recoveryErrorClass(null), 'unknown');
 });
+
+test('an expired Codex login is a hard limit, so goal recovery never starts another model turn', () => {
+  for (const message of [
+    'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.',
+    'Your access token could not be refreshed. Please log out and sign in again.'
+  ])
+    assert.equal(recoveryErrorClass({message, codexErrorInfo: 'other'}), 'hard');
+});

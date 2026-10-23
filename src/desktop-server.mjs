@@ -112,9 +112,9 @@ export async function startDesktop({
     (async () => {
       if (provider === 'claude') return void (await claudeLogin.start());
       const url = officialCodexLoginUrl((await codexLogin.start())?.login?.url);
-      if (url && url !== openedCodexUrl) {
-        openedCodexUrl = url;
+      if (url && url !== openedCodexUrl && !closing) {
         await openExternalUrl(url);
+        openedCodexUrl = url;
       }
     })()
       .catch(() => {})

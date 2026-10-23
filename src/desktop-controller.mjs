@@ -49,7 +49,7 @@ import {createLunaBridge, lunaResult} from './luna-bridge.mjs';
 import {workerNoticeKey, workerNoticeCurrent, workerNoticeText, workerNeedsAttention} from './worker-watch.mjs';
 import {codexInput, projectUserAttachments} from './codex-attachments.mjs';
 import {recoveryErrorClass} from './native-error-class.mjs';
-import {codexAuthExpired, reportAuthExpired, clearAuthExpired} from './auth-expiry.mjs';
+import {codexAuthExpired, reportAuthExpired} from './auth-expiry.mjs';
 
 // One active conversation. Official runtime remains the history authority.
 export function createDesktopController({
@@ -68,7 +68,7 @@ export function createDesktopController({
   browserConfig = async () => null,
   browserRequest,
   closeBrowser = async () => {},
-  authExpiry = {report: reportAuthExpired, clear: clearAuthExpired}
+  reportAuthExpired: reportExpired = reportAuthExpired
 }) {
   const state = {
     status: 'idle',
@@ -991,8 +991,8 @@ export function createDesktopController({
         : null;
       if (p.turn.error) state.error = p.turn.error.message ?? '主回合失敗，未自動重送。';
       // Self-hosted models use their own endpoint; only the subscription login can expire here.
-      if (!selfHosted && p.turn.error && codexAuthExpired(p.turn.error)) authExpiry.report('codex');
-      else if (!selfHosted && p.turn.status === 'completed' && !p.turn.error) authExpiry.clear('codex');
+      // The mark is cleared only by a successful official sign-in, not by another room's turn.
+      if (!selfHosted && p.turn.error && codexAuthExpired(p.turn.error)) reportExpired('codex');
       const handoffOwnership = ownership ?? (audit && !goalRecovery.cancelled ? goalRecovery : null);
       flashFailedGoal =
         p.turn.status === 'failed' &&

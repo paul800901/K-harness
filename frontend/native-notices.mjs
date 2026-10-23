@@ -82,7 +82,7 @@ export function codexErrorKind(error) {
 
 // K starts the official sign-in in the default browser when a main room reports expiry.
 const authExpiredNotice = (name, button) =>
-  `${name} 登入已失效，這一輪沒有完成。K 已在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「${button}」），再送出訊息即可繼續；K 不會自動重送。`;
+  `${name} 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「${button}」），再送出訊息即可繼續；K 不會自動重送。`;
 const CLAUDE_AUTH_EXPIRED_NOTICE = authExpiredNotice('Claude', '登入 Claude 訂閱');
 
 // Presentation only: native records stay unchanged; unknown wording stays intact.

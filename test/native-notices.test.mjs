@@ -393,7 +393,7 @@ test('resolved recovery and Gemini handoff notices leave the banner while real f
 
 test('Claude authentication failure notices are localized while unrelated English remains intact', () => {
   const expiredChinese =
-    'Claude 登入已失效，這一輪沒有完成。K 已在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 Claude 訂閱」），再送出訊息即可繼續；K 不會自動重送。';
+    'Claude 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 Claude 訂閱」），再送出訊息即可繼續；K 不會自動重送。';
   const authStrings = [
     'Failed to authenticate: OAuth session expired and could not be refreshed',
     'Not logged in · Please run /login'
@@ -427,9 +427,20 @@ test('Claude authentication failure notices are localized while unrelated Englis
 test('GPT login expiry is shown in Chinese once the native error proves it; raw text is unchanged', () => {
   const raw = 'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.';
   const expected =
-    'GPT 登入已失效，這一輪沒有完成。K 已在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 GPT / Codex」），再送出訊息即可繼續；K 不會自動重送。';
+    'GPT 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 GPT / Codex」），再送出訊息即可繼續；K 不會自動重送。';
   assert.equal(nativeNotices.localizeNativeNotice(raw, 'codex', {message: raw, codexErrorInfo: 'other'}), expected);
   assert.equal(nativeNotices.localizeNativeNotice('401', 'codex', {message: '401', codexErrorInfo: 'unauthorized'}), expected);
   assert.equal(nativeNotices.codexErrorKind({message: 'x', codexErrorInfo: {httpConnectionFailed: {httpStatusCode: 401}}}), 'auth');
   assert.notEqual(nativeNotices.localizeNativeNotice('401', 'gemma', {message: '401', codexErrorInfo: 'unauthorized'}), expected);
+});
+
+test('an unauthorized code on a stream wrapper is shown as login expiry, not as a stream interruption', () => {
+  for (const message of [
+    'stream disconnected before completion: An error occurred while processing your request.',
+    'Error running remote compact task: stream disconnected before completion: An error occurred.'
+  ]) {
+    const error = {message, codexErrorInfo: 'unauthorized'};
+    assert.equal(nativeNotices.codexErrorKind(error), 'auth');
+    assert.match(nativeNotices.localizeNativeNotice(message, 'codex', error), /^GPT 登入已失效/);
+  }
 });
