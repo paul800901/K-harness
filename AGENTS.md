@@ -30,7 +30,7 @@
 
 ## 三、訂閱、登入與憑證
 
-- GPT 主代理與子代理用 Codex 訂閱，Claude 用 Claude Code 訂閱，Gemini 主代理與 Flash 用 Antigravity 訂閱。不改 API 計費、不用 API key（討論專用 API 例外見第九節）。Fable 系列沿用 Claude Code 原生模型清單、額度與計費；K 不另加系列排除或啟動限制，不替本人改計費設定。
+- GPT 主代理與子代理用 Codex 訂閱，Claude 用 Claude Code 訂閱，Gemini 主代理與 Flash 用 Antigravity 訂閱。不改 API 計費、不用 API key（API 連線例外見第五、九節）。Fable 系列沿用 Claude Code 原生模型清單、額度與計費；K 不另加系列排除或啟動限制，不替本人改計費設定。
 - 自架主代理例外：本人可選本機量化 Gemma、自租雲端高精度 Gemma，及本人授權的自架社群模型（含 uncensored／abliterated 的 Qwen、Mistral 等），沿用 Codex 原生代理核心與 K 既有操作，不是 API 計費。每條連線（含同端點不同模型）各用穩定 ID、無訂閱憑證的 home 與原生歷史，顯示實際模型與本機／雲端地點，不偽標、不複製訂閱登入。雲端用本人管理的 SSH 本機轉送；不自行租機、付款、轉移憑證或改計費。只為協定差異轉換 Responses 工具格式，不重造代理迴圈、不另加白名單或權限模式。自架模型不當工人或討論參與者，不假造 effort／Fast／額度；日常只在 K 選模型送出，載入由 K 透過已安裝原生引擎處理，不要本人操作 LM Studio；當輪「測試前不得載入／推論」限制優先。此例外不放寬其他計費或權限規則。
 - 不讀、複製、搬移或提交任何憑證，含其他專案、Chrome 登入資料、Google 密碼與授權碼。登入與 QR／手機驗證一律本人操作，AI 不同時操作。
 - 保留 K 專用 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、Antigravity profile（覆寫 USERPROFILE／HOME／LOCALAPPDATA）及對話／瀏覽器資料位置；不改真實 `~/.gemini` 或全域 Codex／Claude 設定。唯一全域例外：Codex 全域設定登記 `D:\K-harness` 為 `trust_level = "trusted"`。
@@ -52,7 +52,8 @@
 
 - 不強制派工。子代理選單第一項為「AI 自動選擇」（新對話預設），手選依 GPT／Claude／Gemini 分組，列本台訂閱原生目錄與已接路線的全部可派型號；effort 依原生清單，沒有 effort 傳 null。主模型選單同樣跟隨官方原生目錄（hidden 不顯示）。K 不寫死、不編造型號，不把口語稱呼當型號；既有對話不自動換模型。
 - 派工路線：Claude 與 Gemini 主代理選定的工人一律走 `k_luna`／`luna_start`；Gemini 主代理另可用 agy 原生子代理（define_subagent／invoke_subagent）做本回合內的短子任務，K 顯示其執行，回合結束即標為已結束、結果未知。GPT 主代理派 Sol／Luna 走 Codex 原生 agents，派 Flash／Claude 走 `k_gemini`／`gemini_start`，不把 Gemini 塞進 GPT 原生模型設定。Claude 原生 Agent 只在明確要求時使用，且不得忽略選定的模型／effort。
-- 自架主代理如明確選用 K 工人，沿 `k_gemini` gateway 派到各家原訂閱入口；GPT 工人不能送往自架推論端點，不把 GPT 寫進自架 home 的預設子模型。這不強制派工，也不將自架模型新增為工人。
+- 自架主代理如明確選用 K 工人，沿 `k_gemini` gateway 派到各家原訂閱入口；GPT 工人不能送往自架推論端點，不把 GPT 寫進自架 home 的預設子模型。
+- API 連線可作唯讀諮詢子代理，選單排最後；本人明確要求諮詢才派，不作自動選擇或備援。
 - 自動選擇時由主代理明確指定模型與 effort，不送假的 auto，也不暗中固定某個模型。K 不分類難度、不為自動選擇設品質驗收。手動、當輪指定與既有手動設定優先。
 - 本人分工偏好（只供 AI 內部選模，不向使用者重述，不加提醒、彈窗或按鈕；不是能力排名或固定路由）：
   - Opus 5.5：通才、平常的大腦；文章多由 Gemini 閱讀撰寫，Opus 最後提供盲點與第二意見，不是裁判，採納由本人依理由與效果決定。
@@ -104,7 +105,7 @@
 - Gemini 可用原生搜尋與 `read_url`，但 `read_url` 可能回傳快取；需要即時或動態頁面時改用 K Chrome。
 - 官方帳號連接器是長期保留的 AI 能力，不因精簡介面而停用；這不代表可任意讀寫或新增帳號連結，需要本人確認的操作仍要確認。
 - Google 商家（GBP）：四個唯讀工具，沿用 AdsControl 本機 OAuth，只啟用既有專案的 `mybusiness.googleapis.com`。營運發佈、回覆評論、上傳與廣告異動須該次明確授權；工作區限定的 MCP 綁定入口不自動開放營運寫入。
-- 多模型討論（平行比較、交叉審查、多人討論）的完整規則在 `docs/discussion-rules.md`（現行有效，因本檔大小上限移出）；修改討論功能、擔任主持或參與者前先讀。要點：討論設定只是設定，本人要求才由主模型寫任務書開始；參與者可廣泛唯讀、不得寫入或派工；主持沿用現有聊天室 session，停止不關主 session、不停一般工人，送出不明不重送；討論專用 API 只用於討論，不進入主模型、子代理或工人，搜尋不靜默改成付費。
+- 多模型討論（平行比較、交叉審查、多人討論）的完整規則在 `docs/discussion-rules.md`（現行有效，因本檔大小上限移出）；修改討論功能、擔任主持或參與者前先讀。要點：討論設定只是設定，本人要求才由主模型寫任務書開始；參與者可廣泛唯讀、不得寫入或派工；主持沿用現有聊天室 session，停止不關主 session、不停一般工人，送出不明不重送；API 連線不進主模型選單，搜尋不靜默改成付費。
 
 ## 十、檔案與資料
 
