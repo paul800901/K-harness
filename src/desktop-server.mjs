@@ -802,7 +802,11 @@ export async function startDesktop({
   const handler = isRemote => {
     const handle = handleRequest(isRemote);
     return async (req, res) => {
-      const write = req.method === 'POST' && !req.url?.startsWith('/api/self-update');
+      let path = '';
+      try {
+        path = new URL(req.url ?? '', 'http://127.0.0.1').pathname;
+      } catch {}
+      const write = req.method === 'POST' && path !== '/api/self-update';
       if (write) writesInProgress++;
       try {
         return await handle(req, res);
