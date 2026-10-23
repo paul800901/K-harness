@@ -424,3 +424,25 @@ test('an attachment upload neither starts during a pending update nor lets one b
     await app.close();
   }
 });
+
+test('the older JSON attachment upload also holds back an update while it is written', async () => {
+  let finishUpload;
+  const requested = [];
+  const {app, call} = await desktop({
+    root: await repo({ready: READY}),
+    controller: {upload: () => new Promise(resolve => (finishUpload = () => resolve({id: 'a2'})))},
+    request: async ref => requested.push(ref)
+  });
+  try {
+    const running = call('POST', '/api/upload', JSON.stringify({threadId: 't1', name: 'a.txt', base64: 'ZGF0YQ=='}));
+    while (!finishUpload) await new Promise(resolve => setTimeout(resolve, 5));
+    assert.deepEqual((await call('POST')).body.busy, ['附件上傳中']);
+    finishUpload();
+    assert.equal((await running).status, 200);
+    assert.deepEqual(await call('POST'), {status: 200, body: {started: true}});
+    assert.equal((await call('POST', '/api/upload', JSON.stringify({threadId: 't1', name: 'b.txt'}))).status, 503);
+    assert.deepEqual(requested, [READY]);
+  } finally {
+    await app.close();
+  }
+});

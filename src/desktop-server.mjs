@@ -747,6 +747,15 @@ export async function startDesktop({
       if (url.pathname === '/api/projects/metadata')
         return json(200, await updateProject(root, data, (await controller.sessions()).sessions));
       if (url.pathname === '/api/attention/read') return json(200, controller.markViewed(data));
+      // Both upload forms write a file, so an update waits for them (see uploadsInProgress).
+      if (url.pathname === '/api/upload') {
+        uploadsInProgress++;
+        try {
+          return json(200, await controller.upload(data));
+        } finally {
+          uploadsInProgress--;
+        }
+      }
       const routes = {
         '/api/discussion/message': 'discussionMessage',
         '/api/fork': 'fork',
@@ -760,7 +769,6 @@ export async function startDesktop({
         '/api/stop': 'stop',
         '/api/answer': 'answer',
         '/api/workers': 'workers',
-        '/api/upload': 'upload',
         '/api/metadata': 'metadata',
         '/api/archives/delete': 'deleteArchived',
         '/api/workspace': 'selectWorkspace',
