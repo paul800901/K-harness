@@ -81,4 +81,5 @@
 - **Codex 停在 push 前**：Windows 憑證儲存區（LocalMicrosoftCredentials）31 個檔案中 1 個的修改時間在 00:05:18 變動（更新器執行期間）。依限定只比對存在與時間、未讀內容，無法證明 K 的 API 金鑰未動。Opus 查證：K 部署時未執行；測試都用假的憑證儲存，不寫 Windows 憑證；更新器會先 `git fetch origin --tags`，但事後重做 fetch 與帶登入的 push 都沒有再改到該檔，**來源仍未查明**。API 連線設定檔（DeepSeek、GLM 兩個連線，皆標示已設定金鑰）自 10-22 後未變。
 - push 與本機金鑰狀態無關，秘密掃描無命中，Opus 於 2026-10-24 push，遠端 `refs/heads/main` 讀回 **`e98aeb65549298914fe728f46e356596c447dbfd`**。
 - 證據：`.runtime/archive/deployment-7cfacd8e1a7c45de9070607ef5c653de18310abb/run-20261024/`（不進 Git）。
-- 未做：真實 API 諮詢的端到端實測（同時可確認金鑰可用），待本人同意（會產生少量 API 費用）。東區未更新。
+- **真實實測（本人同意，2026-10-24 00:16 臺灣時間）**：Claude 主聊天室以 `luna_start` 派 `api:ef41195d2390402dbaa13ab747f730b9/deepseek-flash`（DeepSeek-V4.1-Flash，effort low），請它讀工作區根目錄 `package.json` 並回覆 name；約 1 秒完成，回覆「package.json 的 name 是 k-harness。」與實際值相符，outputFilesNote 為唯讀說明。派工、工作區內唯讀讀檔、完成送回原對話均實際通過，DeepSeek 金鑰可用（部署期間憑證檔的變動未影響此連線；GLM 連線未實測）。
+- 東區未更新。
