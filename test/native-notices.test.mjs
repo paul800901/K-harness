@@ -388,3 +388,36 @@ test('resolved recovery and Gemini handoff notices leave the banner while real f
   );
   assert.deepEqual(notices, before, 'hiding a lifecycle banner must not erase or rewrite diagnostics');
 });
+
+test('Claude authentication failure notices are localized while unrelated English remains intact', () => {
+  const expiredChinese =
+    'Claude 登入已失效，這一輪沒有完成。請到「設定 → 帳號與核心」按「登入 Claude 訂閱」重新登入；登入後再送出訊息即可繼續，K 不會自動重送。';
+  const authStrings = [
+    'Failed to authenticate: OAuth session expired and could not be refreshed',
+    'Not logged in · Please run /login'
+  ];
+  for (const str of authStrings) {
+    assert.equal(nativeNotices.localizeNativeNotice(str, 'claude'), expiredChinese);
+    assert.equal(nativeNotices.nativeErrorMessageText({text: str}, 'claude'), expiredChinese);
+  }
+  assert.equal(
+    nativeNotices.nativeErrorMessageText(
+      {nativeError: 'authentication_failed', text: 'Some arbitrary error text'},
+      'claude'
+    ),
+    expiredChinese
+  );
+  const quotaMsg = "You've hit your session limit";
+  assert.equal(
+    nativeNotices.nativeErrorMessageText({nativeError: 'other', text: quotaMsg}, 'claude'),
+    '本時段額度已用完。'
+  );
+
+  const unrelated = 'Unrelated native message that should not be touched';
+  assert.equal(nativeNotices.localizeNativeNotice(unrelated, 'claude'), unrelated);
+  assert.equal(nativeNotices.nativeErrorMessageText({text: unrelated}, 'claude'), unrelated);
+  for (const str of authStrings) {
+    assert.equal(nativeNotices.localizeNativeNotice(str, 'codex'), str);
+    assert.equal(nativeNotices.nativeErrorMessageText({text: str}, 'codex'), str);
+  }
+});

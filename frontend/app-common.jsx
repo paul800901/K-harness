@@ -1,4 +1,5 @@
 import {X} from 'lucide-react';
+import {nativeErrorMessageText} from './native-notices.mjs';
 import React, {createContext, useContext, useEffect, useId, useRef} from 'react';
 
 export const remoteClient = document.documentElement.dataset.kRemote === 'true';
@@ -7,7 +8,11 @@ export const narrowScreen = () => window.matchMedia('(max-width:700px)').matches
 export const emptyUploads = [];
 export const AppContext = createContext(null);
 export const TranscriptContext = createContext(null);
-export const convertMessage = m => ({id: m.id, role: m.role, content: [{type: 'text', text: m.text}]});
+export const convertMessage = m => ({
+  id: m.id,
+  role: m.role,
+  content: [{type: 'text', text: m.nativeError ? nativeErrorMessageText(m, 'claude') : m.text}]
+});
 export const ResponseQuoteContext = createContext(null);
 export const toolStatusName = {
   inProgress: '執行中',

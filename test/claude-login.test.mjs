@@ -252,3 +252,24 @@ test('close reports incomplete shutdown if isolated login termination is unconfi
   assert.equal((await login.close()).login.status, 'idle');
   assert.equal(attempts, 2);
 });
+
+test('status({refresh: true}) invalidates cached inspection before inspecting, while status() does not', async () => {
+  const calls = [];
+  const login = createClaudeLogin({
+    inspect: async () => {
+      calls.push('inspect');
+      return {available: true};
+    },
+    invalidate: () => {
+      calls.push('invalidate');
+    }
+  });
+  await login.status();
+  assert.deepEqual(calls, ['inspect']);
+  calls.length = 0;
+  await login.status({refresh: false});
+  assert.deepEqual(calls, ['inspect']);
+  calls.length = 0;
+  await login.status({refresh: true});
+  assert.deepEqual(calls, ['invalidate', 'inspect']);
+});

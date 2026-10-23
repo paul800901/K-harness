@@ -62,3 +62,39 @@ test('manual login progress and code remain human-session-only and never reach a
     await app.close();
   }
 });
+
+test('GET /api/claude/auth forwards refresh flag to claudeLogin.status', async () => {
+  const calls = [];
+  const app = await startDesktop({
+    root: path.resolve('.'),
+    port: 0,
+    requireLaunchToken: true,
+    controllerFactory: () => ({state: {}, async close() {}}),
+    claudeLoginFactory: () => ({
+      status: async (options = {}) => {
+        calls.push(options);
+        return {available: true, auth: {loggedIn: true}};
+      },
+      async close() {}
+    })
+  });
+  try {
+    const boot = await fetch(app.createLaunchUrl(), {redirect: 'manual'}),
+      cookie = boot.headers.get('set-cookie').split(';')[0];
+    const res1 = await fetch(app.origin + '/api/claude/auth', {headers: {Cookie: cookie}});
+    assert.equal(res1.status, 200);
+    assert.deepEqual(calls, [{refresh: false}]);
+
+    calls.length = 0;
+    const res2 = await fetch(app.origin + '/api/claude/auth?refresh=1', {headers: {Cookie: cookie}});
+    assert.equal(res2.status, 200);
+    assert.deepEqual(calls, [{refresh: true}]);
+
+    calls.length = 0;
+    const res3 = await fetch(app.origin + '/api/claude/auth?refresh=0', {headers: {Cookie: cookie}});
+    assert.equal(res3.status, 200);
+    assert.deepEqual(calls, [{refresh: false}]);
+  } finally {
+    await app.close();
+  }
+});

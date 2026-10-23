@@ -386,7 +386,7 @@ export async function startDesktop({
         );
       }
       if (req.method === 'GET' && url.pathname === '/api/claude/auth') {
-        const result = await claudeLogin.status();
+        const result = await claudeLogin.status({refresh: url.searchParams.get('refresh') === '1'});
         if (!isRemote) return json(200, result);
         const {loggedIn, authMethod, apiProvider, subscriptionType} = result.auth ?? {};
         return json(200, {available: result.available, auth: {loggedIn, authMethod, apiProvider, subscriptionType}});

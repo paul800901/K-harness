@@ -27,9 +27,12 @@ const state = {
 let browser,
   codexLoggedIn = false,
   claudeLoggedIn = false,
+  claudeAvailable = null,
+  claudeAuthMethod = null,
   codexLogin = {status: 'idle'},
   claudeLogin = {status: 'idle'};
 const requests = [],
+  claudeAuthRefreshParams = [],
   errors = [];
 const auth = provider =>
   provider === 'codex'
@@ -43,11 +46,11 @@ const auth = provider =>
         login: codexLogin
       }
     : {
-        available: claudeLoggedIn,
+        available: claudeAvailable !== null ? claudeAvailable : claudeLoggedIn,
         version: '2.1.287',
         auth: {
           loggedIn: claudeLoggedIn,
-          authMethod: claudeLoggedIn ? 'claude.ai' : null,
+          authMethod: claudeLoggedIn ? 'claude.ai' : (claudeAuthMethod ?? null),
           apiProvider: 'firstParty',
           subscriptionType: claudeLoggedIn ? 'pro' : null
         },
@@ -76,7 +79,10 @@ try {
     else if (url.pathname === '/api/sessions') body = {sessions: []};
     else if (url.pathname === '/api/models') body = {models: []};
     else if (url.pathname === '/api/codex/auth') body = auth('codex');
-    else if (url.pathname === '/api/claude/auth') body = auth('claude');
+    else if (url.pathname === '/api/claude/auth') {
+      claudeAuthRefreshParams.push(url.searchParams.get('refresh'));
+      body = auth('claude');
+    }
     else if (url.pathname === '/api/codex/login/cancel') {
       codexLogin = {status: 'idle'};
       body = auth('codex');
@@ -148,6 +154,18 @@ try {
   await accountDetails.locator('summary').click();
   for (const name of ['登入 GPT / Codex', '登入 Claude 訂閱'])
     assert.equal(await accountDetails.getByRole('button', {name, exact: true}).isDisabled(), true);
+  claudeLoggedIn = false;
+  claudeAvailable = true;
+  claudeAuthMethod = 'none';
+  claudeLogin = {status: 'idle'};
+  claudeAuthRefreshParams.length = 0;
+  const claudeRow = accountDetails.locator('.provider-auth-row').filter({hasText: 'Claude 訂閱'});
+  await claudeRow.getByRole('button', {name: '刷新狀態', exact: true}).click();
+  await page.waitForFunction(() =>
+    document.querySelector('summary[aria-label="帳號連線"]')?.textContent.includes('Claude 未連線')
+  );
+  assert.equal(claudeAuthRefreshParams.includes('1'), true, 'refresh status button passed refresh=1');
+  assert.equal(await accountDetails.getByRole('button', {name: '登入 Claude 訂閱', exact: true}).isDisabled(), false);
   assert.ok(!requests.some(request => request.path === '/api/open'));
   assert.deepEqual(errors, []);
   console.log(

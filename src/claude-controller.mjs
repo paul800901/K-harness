@@ -21,7 +21,8 @@ import {
   CLAUDE_ACCESS_MODES,
   normalizeClaudeAccessMode,
   claudePermissionMode,
-  nativeCapabilitiesFrom
+  nativeCapabilitiesFrom,
+  invalidateClaudeInspection
 } from './claude-host.mjs';
 import {normalizeWorkerPolicy, workerPolicyConfig} from './worker-policy.mjs';
 import {createLunaBridge, lunaResult} from './luna-bridge.mjs';
@@ -137,7 +138,8 @@ export function createClaudeController({
   roomTools,
   onChange = () => {},
   browserConfig = async () => null,
-  closeBrowser = async () => {}
+  closeBrowser = async () => {},
+  invalidateInspection = invalidateClaudeInspection
 }) {
   let workerInstructions = '';
   const state = {
@@ -1091,6 +1093,7 @@ export function createClaudeController({
       recordNativeRequestUsage(message);
       streamText(message);
     } else if (message?.type === 'assistant') {
+      if (message.error === 'authentication_failed') invalidateInspection();
       let text = plainText(message);
       const streamed = nativeStreams.get(message.message?.id);
       if (text && streamed && streamed.lastTextIndex !== undefined) {
@@ -1110,6 +1113,8 @@ export function createClaudeController({
           assistant.partial = true;
           delete assistant.streaming;
           activeAssistantId = assistant.id;
+          if (message.message?.model === '<synthetic>' && typeof message.error === 'string' && message.error)
+            assistant.nativeError = message.error;
         }
       }
       for (const block of message.message?.content ?? [])

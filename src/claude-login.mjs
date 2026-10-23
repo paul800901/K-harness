@@ -64,7 +64,8 @@ export function createClaudeLogin({
     progress() {
       return {login: {...login}};
     },
-    async status() {
+    async status({refresh = false} = {}) {
+      if (refresh) invalidate();
       return {...(await inspect(envProvided ? {cwd, env} : {cwd})), login: {...login}};
     },
     async start() {

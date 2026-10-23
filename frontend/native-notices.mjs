@@ -78,6 +78,9 @@ export function codexErrorKind(error) {
   return null;
 }
 
+const CLAUDE_AUTH_EXPIRED_NOTICE =
+  'Claude 登入已失效，這一輪沒有完成。請到「設定 → 帳號與核心」按「登入 Claude 訂閱」重新登入；登入後再送出訊息即可繼續，K 不會自動重送。';
+
 // Presentation only: native records stay unchanged; unknown wording stays intact.
 export function localizeNativeNotice(message, provider, error) {
   if (provider === 'gemma' && typeof message === 'string') {
@@ -103,6 +106,11 @@ export function localizeNativeNotice(message, provider, error) {
         : 'Codex 回覆在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
   }
   if (provider !== 'claude' || typeof message !== 'string') return message;
+  if (
+    message === 'Failed to authenticate: OAuth session expired and could not be refreshed' ||
+    message === 'Not logged in · Please run /login'
+  )
+    return CLAUDE_AUTH_EXPIRED_NOTICE;
   const match =
     /^You've hit your session limit(?: · resets (1[0-2]|[1-9])(?::([0-5]\d))?(am|pm) \(([^()\r\n]+)\))?$/.exec(message);
   if (!match) return message;
@@ -110,4 +118,9 @@ export function localizeNativeNotice(message, provider, error) {
   const hour = String((Number(match[1]) % 12) + (match[3] === 'pm' ? 12 : 0)).padStart(2, '0');
   const zone = match[4] === 'Asia/Taipei' ? '臺灣時間' : match[4];
   return `本時段額度已用完；${hour}:${match[2] ?? '00'}（${zone}）恢復。`;
+}
+
+export function nativeErrorMessageText(record, provider) {
+  if (record?.nativeError === 'authentication_failed') return CLAUDE_AUTH_EXPIRED_NOTICE;
+  return localizeNativeNotice(record?.text, provider);
 }

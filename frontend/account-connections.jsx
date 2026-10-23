@@ -30,10 +30,10 @@ export function AccountConnections({
     [geminiAccountsLoading, setGeminiAccountsLoading] = useState(true);
   const geminiGeneration = useRef(0);
   const [accountsOpen, setAccountsOpen] = useState(defaultOpen);
-  const refreshClaudeStatus = async ({refreshModels = false} = {}) => {
+  const refreshClaudeStatus = async ({refreshModels = false, fresh = false} = {}) => {
     setClaudeLoading(true);
     try {
-      const response = await fetch('/api/claude/auth', {cache: 'no-store'});
+      const response = await fetch(`/api/claude/auth${fresh ? '?refresh=1' : ''}`, {cache: 'no-store'});
       if (!response.ok) throw new Error();
       const next = await response.json();
       setClaudeStatus(next);
@@ -481,7 +481,7 @@ export function AccountConnections({
           <button
             type="button"
             disabled={claudeAction || claudeLoading}
-            onClick={() => refreshClaudeStatus({refreshModels: true})}
+            onClick={() => refreshClaudeStatus({refreshModels: true, fresh: true})}
           >
             <RefreshCw size={14} />
             刷新狀態
