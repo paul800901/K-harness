@@ -10,6 +10,7 @@ import {stopThreadTerminals} from './background-terminals.mjs';
 import {checkedPath} from './files.mjs';
 import {createGeminiWorker, UNKNOWN_OUTPUT_FILES_NOTE} from './gemini-worker.mjs';
 import {createClaudeWorker} from './claude-worker.mjs';
+import {createApiWorker, API_OUTPUT_FILES_NOTE} from './api-worker.mjs';
 import {randomUUID} from 'node:crypto';
 import {createWorkerWatch, workerObservation, workerNeedsAttention, workerNoticeKey} from './worker-watch.mjs';
 
@@ -17,6 +18,8 @@ import {normalizeWorkerPolicy, validateWorkerPolicy} from './worker-policy.mjs';
 const safeId = value =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
 const clone = value => structuredClone(value);
+// Workers K runs as its own process or request, with no Codex thread: restart leaves them unowned, never replayed.
+const PROCESS_PROVIDERS = ['gemini', 'claude', 'api'];
 
 /** Compact model-facing result. Full output stays inside the parent's workspace. */
 export async function lunaResult(record) {
@@ -196,6 +199,8 @@ export async function createLunaBridge({
   geminiOptions = {},
   claudeFactory = createClaudeWorker,
   claudeOptions = {},
+  apiFactory = createApiWorker,
+  apiOptions = {},
   geminiOnly = false,
   onRequest,
   onChange = () => {},
@@ -206,7 +211,7 @@ export async function createLunaBridge({
     throw new Error('root、workspace 與 parentId 必須有效。');
   const directory = path.join(root, '.runtime', 'luna-bridge', parentId);
   let requestGuard = () => undefined;
-  let host, codexError, gemini, claude;
+  let host, codexError, gemini, claude, api;
   const processRuns = new Map();
   const snapshotRecord = record => {
     if (!record) return null;
@@ -224,7 +229,7 @@ export async function createLunaBridge({
     return {
       ...clone(record),
       ...(scheduling ? {scheduling: clone(scheduling)} : {}),
-      ...(['gemini', 'claude'].includes(record.provider)
+      ...(PROCESS_PROVIDERS.includes(record.provider)
         ? {
             observation: workerObservation(record, {
               owned: processRuns.has(record.requestId),
@@ -365,7 +370,7 @@ export async function createLunaBridge({
       delete record.waitingForApproval; // Saved approval state is not a live pending request.
       // Recovered records have no execution owner in this bridge. Reading them
       // must not adopt an old PID or rewrite the persisted evidence.
-      if (['gemini', 'claude'].includes(record.provider) && !record.settled) {
+      if (PROCESS_PROVIDERS.includes(record.provider) && !record.settled) {
         record.executionUnowned = true;
         record.status = 'unresolved';
         record.error ??= 'K 重啟後子代理程序與完成結果無法確認；未重播。';
@@ -469,7 +474,7 @@ export async function createLunaBridge({
     if (!safeId(requestId)) throw new Error('requestId 格式無效。');
     const record = await load(requestId);
     if (!record) return null;
-    if (['gemini', 'claude'].includes(record.provider)) {
+    if (PROCESS_PROVIDERS.includes(record.provider)) {
       // A restarted bridge cannot own/adopt a saved PID (it may have been reused).
       // Preserve ambiguity, including a lost result after side effects; never replay.
       if (!record.settled && !processRuns.has(requestId) && !operations.has(requestId)) {
@@ -514,13 +519,17 @@ export async function createLunaBridge({
     if (!safeId(requestId) || typeof task !== 'string' || !task.trim() || task.length > 32000)
       throw new Error('requestId 或 task 無效。');
     const choice = {model: model ?? defaults.model, effort: effort !== undefined ? effort : defaults.effort};
-    if (geminiOnly && !/^(gemini-|claude-)/.test(choice.model))
-      throw Error('此入口只提供 Gemini 或 Claude；GPT 子代理仍使用 Codex 原生派工。');
+    if (geminiOnly && !/^(gemini-|claude-|api:)/.test(choice.model))
+      throw Error('此入口只提供 Gemini 或 Claude（及 API 諮詢模型）；GPT 子代理仍使用 Codex 原生派工。');
     if (choice.model.startsWith('gemini-'))
       return startProcess({provider: 'gemini', requestId, task, accountId, handoffFrom, ...choice});
     if (choice.model.startsWith('claude-')) {
       if (accountId !== undefined || handoffFrom !== undefined) throw Error('帳號選用與接手欄位只適用 Gemini。');
       return startProcess({provider: 'claude', requestId, task, ...choice});
+    }
+    if (choice.model.startsWith('api:')) {
+      if (accountId !== undefined || handoffFrom !== undefined) throw Error('帳號選用與接手欄位只適用 Gemini。');
+      return startProcess({provider: 'api', requestId, task, ...choice});
     }
     if (accountId !== undefined || handoffFrom !== undefined) throw Error('帳號選用與接手欄位只適用 Gemini Flash。');
     if (choice.model === 'auto' || choice.effort === 'auto')
@@ -619,7 +628,10 @@ export async function createLunaBridge({
   }
   const processFailure = (error, provider) => ({
     ...(error.workerResult ?? {}),
-    outputFilesNote: error.outputFilesNote ?? error.workerResult?.outputFilesNote ?? UNKNOWN_OUTPUT_FILES_NOTE,
+    outputFilesNote:
+      error.outputFilesNote ??
+      error.workerResult?.outputFilesNote ??
+      (provider === 'api' ? API_OUTPUT_FILES_NOTE : UNKNOWN_OUTPUT_FILES_NOTE),
     ...(provider === 'gemini'
       ? {
           failureKind: error.failureKind ?? 'unknown',
@@ -701,7 +713,9 @@ export async function createLunaBridge({
           const worker =
             provider === 'gemini'
               ? (gemini ??= geminiFactory({...geminiOptions, root, workspace, accessMode}))
-              : (claude ??= claudeFactory({...claudeOptions, root, workspace, accessMode}));
+              : provider === 'api'
+                ? (api ??= apiFactory({...apiOptions, root, workspace, accessMode}))
+                : (claude ??= claudeFactory({...claudeOptions, root, workspace, accessMode}));
           const epoch = handoffEpoch;
           handle.completion = Promise.resolve()
             .then(() =>
@@ -836,7 +850,7 @@ export async function createLunaBridge({
       const record = await load(requestId);
       if (
         !record ||
-        !['gemini', 'claude'].includes(record.provider) ||
+        !PROCESS_PROVIDERS.includes(record.provider) ||
         record.executionUnowned !== true ||
         record.settled !== false ||
         ownedRequests.has(requestId) ||
@@ -869,7 +883,7 @@ export async function createLunaBridge({
     const current = await inspect({requestId});
     if (!current) return null;
     const record = records.get(requestId);
-    if (['gemini', 'claude'].includes(record.provider)) {
+    if (PROCESS_PROVIDERS.includes(record.provider)) {
       const handle = processRuns.get(requestId);
       if (!record.settled && handle) {
         record.cancelRequested = true;

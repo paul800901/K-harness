@@ -11,6 +11,7 @@ import {permissionMode} from './desktop-permissions.mjs';
 import {groupConversationMessages} from '../shared/conversation-groups.mjs';
 import {writeConversationHandoff} from './conversation-handoff.mjs';
 import {deleteArchived as deleteArchivedRecords} from './archive-delete.mjs';
+import {apiWorkerRows} from './api-worker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {movedWorkspace} from './session-workspace.mjs';
 import {
@@ -28,6 +29,7 @@ export function createUnifiedController(options) {
     claudeFactory = createClaudeController,
     geminiFactory = createGeminiController,
     gemmaConnections = [],
+    workerApi,
     inspect = inspectClaude,
     roomNotes
   } = options;
@@ -41,7 +43,11 @@ export function createUnifiedController(options) {
     onChange();
     if (!changing) queue?.schedule();
   };
-  const workerCatalog = () => api.models();
+  // The user's API connections are consult workers only: they join the worker catalog, never the main models.
+  const workerCatalog = async () => {
+    const catalog = await api.models();
+    return {...catalog, models: [...catalog.models, ...(catalog.apiModels ?? [])]};
+  };
   const codex = codexFactory({
     ...options,
     workerCatalog,
@@ -223,7 +229,8 @@ export function createUnifiedController(options) {
         ...gemmaConnections.map(connection => connection.models())
       ]);
       const models = [],
-        warnings = [];
+        warnings = [],
+        apiModels = [];
       for (const [provider, result] of [
         ['codex', gpt],
         ['claude', anthropic],
@@ -234,9 +241,16 @@ export function createUnifiedController(options) {
           models.push(...result.value.models.filter(m => m.hidden !== true).map(m => ({...m, provider})));
         else warnings.push(`${provider} 目錄暫時不可用：${String(result.reason?.message ?? result.reason)}`);
       }
+      if (workerApi)
+        try {
+          apiModels.push(...(await apiWorkerRows(workerApi)));
+        } catch (error) {
+          warnings.push(`api 目錄暫時不可用：${String(error.message ?? error)}`);
+        }
       return {
         models,
         warnings,
+        apiModels,
         geminiGateway: gpt.status === 'fulfilled' && gpt.value.geminiGateway === true,
         claudeGateway: anthropic.status === 'fulfilled'
       };

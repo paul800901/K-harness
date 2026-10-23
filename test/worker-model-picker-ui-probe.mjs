@@ -134,7 +134,8 @@ let browser;
 try {
   browser = await launchProbeBrowser();
   for (const [width, height, label] of viewports) {
-    let catalog = baseModels;
+    let catalog = baseModels,
+      apiModels = [];
     const page = await browser.newPage({viewport: {width, height}});
     page.setDefaultTimeout(10000);
     const errors = [];
@@ -178,7 +179,7 @@ try {
               : url.pathname === '/api/sessions'
                 ? {sessions: []}
                 : url.pathname === '/api/models'
-                  ? {models: catalog, claudeGateway: true, geminiGateway: true}
+                  ? {models: catalog, apiModels, claudeGateway: true, geminiGateway: true}
                   : url.pathname === '/api/codex/auth'
                     ? {available: true, auth: {loggedIn: true, authMethod: 'chatgpt'}, login: {status: 'idle'}}
                     : url.pathname === '/api/claude/auth'
@@ -224,6 +225,42 @@ try {
       [7, 12, 4]
     );
     await page.screenshot({path: path.join(out, `${label}-native-catalog.png`)});
+
+    // The user's API connections join the worker menu as a last group, never the main models (2026-10-23).
+    const apiId = `api:${'a'.repeat(32)}/deepseek-v4-pro`;
+    apiModels = [
+      {
+        model: apiId,
+        displayName: 'DeepSeek · DeepSeek-V4-Pro',
+        provider: 'api',
+        route: 'api',
+        available: true,
+        supportedReasoningEfforts: efforts(['high', 'max']),
+        defaultReasoningEffort: 'high'
+      }
+    ];
+    const accountRefresh = page.locator('.provider-auth-row').first().getByRole('button', {name: '刷新狀態'});
+    if ((await page.locator('.provider-auth-status').getAttribute('open')) === null)
+      await page.locator('.provider-auth-status summary').click();
+    await accountRefresh.click();
+    await picker.locator(`option[value="${apiId}"]`).waitFor({state: 'attached'});
+    rows = await options();
+    assert.equal(rows.length, 25, '23 native worker models, one API model and AI Auto');
+    assert.deepEqual(rows.at(-1), {value: apiId, label: 'DeepSeek · DeepSeek-V4-Pro', group: 'API'});
+    assert.deepEqual(
+      ['GPT', 'Claude', 'Gemini', 'API'].map(group => rows.filter(row => row.group === group).length),
+      [7, 12, 4, 1]
+    );
+    await picker.selectOption(apiId);
+    assert.deepEqual(await effortPicker.locator('option').evaluateAll(nodes => nodes.map(node => node.value)), [
+      'high',
+      'max'
+    ]);
+    assert.equal(await effortPicker.inputValue(), 'high');
+    apiModels = [];
+    await picker.selectOption('auto');
+    await accountRefresh.click();
+    await picker.locator(`option[value="${apiId}"]`).waitFor({state: 'detached'});
 
     // Simulate a live native catalog growing after a provider refresh; only supported visible rows appear.
     const accountDetails = page.locator('.provider-auth-status');
@@ -319,6 +356,7 @@ try {
       'native efforts for Fable and three Claude 5.5 models',
       'dated Haiku 4.5 null effort summary and submit',
       'Gemini 3.1 Pro low/high only',
+      'API connections appear as the last worker group and never as main models',
       'future catalog models appear',
       'hidden/unavailable stay out',
       'manual missing choice preserved and blocks creation',

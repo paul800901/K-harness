@@ -100,7 +100,9 @@ export function createWorkerWatch({inspect, publish, now = Date.now, quietMs = 3
           ? 'K-owned agy run'
           : result.provider === 'claude'
             ? 'K-owned Claude stream'
-            : 'native thread/read',
+            : result.provider === 'api'
+              ? 'K-owned API request'
+              : 'native thread/read',
       reason:
         result.status === 'unresolved'
           ? '久無新活動，原生執行狀態無法確認；未停止或重送。'

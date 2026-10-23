@@ -143,6 +143,7 @@ export async function startIsolatedDesktop({
                       executable,
                       hostFactory: lunaHostFactory,
                       claudeOptions: {env, commandSpec},
+                      apiOptions: {connections: discussionApi},
                       geminiOptions: {env, accounts: geminiAccounts, browserSession: browsers.session}
                     })
                 });
@@ -181,6 +182,7 @@ export async function startIsolatedDesktop({
                         ? {hostFactory: hostOptions => codexHost(hostOptions, current.state.workspace)}
                         : {}),
                       claudeOptions: {env, commandSpec},
+                      apiOptions: {connections: discussionApi},
                       geminiOptions: {env, accounts: geminiAccounts, browserSession: browsers.session}
                     }),
                   browserConfig: browser.config,
@@ -210,6 +212,7 @@ export async function startIsolatedDesktop({
                       executable,
                       hostFactory: lunaHostFactory,
                       claudeOptions: {env, commandSpec},
+                      apiOptions: {connections: discussionApi},
                       geminiOptions: {env, accounts: geminiAccounts, browserSession: browsers.session}
                     })
                 });

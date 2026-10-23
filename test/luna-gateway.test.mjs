@@ -811,3 +811,38 @@ test('goal resume MCP has no goal, thread, budget or confirmation override and f
     await gateway.close();
   }
 });
+
+test('the process-only gateway accepts an api: worker model and lists unfinished api workers', async () => {
+  const f = fixture(),
+    calls = [],
+    model = `api:${'a'.repeat(32)}/deepseek-v4-pro`;
+  f.bridge.start = async args => {
+    calls.push(args);
+    return {requestId: args.requestId, provider: 'api', model: args.model, status: 'running', settled: false};
+  };
+  f.bridge.list = async () => [
+    {requestId: 'consult', provider: 'api', model, status: 'running', settled: false},
+    {requestId: 'native', provider: 'codex', status: 'running', settled: false}
+  ];
+  const gateway = await createLunaGateway({bridge: f.bridge, geminiOnly: true});
+  try {
+    const config = gateway.mcpConfig.mcpServers.k_gemini,
+      token = config.headers.Authorization.slice(7);
+    const call = async (id, name, args) =>
+      body(await post(config.url, token, {jsonrpc: '2.0', id, method: 'tools/call', params: {name, arguments: args}}));
+    const args = {requestId: 'consult', task: '請諮詢', model, effort: 'high'};
+    const started = await call(1, 'gemini_start', args);
+    assert.notEqual(started.result.isError, true);
+    assert.deepEqual(calls, [args]);
+    const listed = await call(2, 'gemini_list', {});
+    assert.deepEqual(
+      listed.result.structuredContent.workers.map(row => row.requestId),
+      ['consult']
+    );
+    const gpt = await call(3, 'gemini_start', {...args, requestId: 'gpt', model: 'gpt-6.1-sol'});
+    assert.equal(gpt.result.isError, true);
+    assert.equal(calls.length, 1);
+  } finally {
+    await gateway.close();
+  }
+});

@@ -11,7 +11,8 @@ export {effortName};
 const remoteClient = document.documentElement.dataset.kRemote === 'true';
 const displayModel = model => model?.displayName || model?.model || '選擇模型';
 const modelProvider = model => model?.provider ?? providerOf(model?.model);
-const providerLabel = provider => ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: '自架'})[provider];
+const providerLabel = provider =>
+  ({claude: 'Claude', codex: 'GPT', gemini: 'Gemini', gemma: '自架', api: 'API'})[provider];
 // The owner's standing choice (2026-10-22): new GPT/Claude/Gemini rooms start at the
 // highest native mode; self-hosted keeps the native default. The default itself is the
 // owner's confirmation, so only a different elevated choice asks again.
@@ -220,6 +221,8 @@ export function ModelPicker({
   }, []);
   const [catalogClaudeGateway, setCatalogClaudeGateway] = useState(false);
   const [catalogGeminiGateway, setCatalogGeminiGateway] = useState(geminiGateway === true);
+  // API connections are consult workers: listed beside the catalog, never among the main models.
+  const [apiModels, setApiModels] = useState([]);
   const [workerPolicy, setWorkerPolicy] = useState(() => normalizeWorkerPolicy(currentWorkerPolicy));
   const [accessMode, setAccessMode] = useState(providerDefaultPermission('codex')),
     [permissionConfirmed, setPermissionConfirmed] = useState(false);
@@ -234,6 +237,7 @@ export function ModelPicker({
         catalog.geminiGateway === undefined ? geminiGateway === true : catalog.geminiGateway === true
       );
       setCatalogClaudeGateway(catalog.claudeGateway === true);
+      setApiModels(catalog.apiModels ?? []);
       setModels(list);
       onCatalog(list, catalog.warnings ?? []);
       setError('');
@@ -267,6 +271,7 @@ export function ModelPicker({
           catalog.geminiGateway === undefined ? geminiGateway === true : catalog.geminiGateway === true
         );
         setCatalogClaudeGateway(catalog.claudeGateway === true);
+        setApiModels(catalog.apiModels ?? []);
         const supported = list;
         setModels(supported);
         onCatalog(list, warnings);
@@ -321,7 +326,7 @@ export function ModelPicker({
     ['pro', 'max', 'team', 'enterprise'].includes(auth?.subscriptionType);
   const isAvailable = item => item?.available !== false && (modelProvider(item) !== 'claude' || claudeVerified);
   const supportedEfforts = selected?.supportedReasoningEfforts ?? [];
-  const workerModels = availableWorkerModels(models, {
+  const workerModels = availableWorkerModels([...models, ...apiModels], {
     provider,
     geminiGateway: provider === 'claude' || catalogGeminiGateway,
     claudeGateway: catalogClaudeGateway
@@ -574,7 +579,7 @@ export function ModelPicker({
                     {workerPolicy.model !== 'auto' && !workerModels.some(item => item.model === workerPolicy.model) && (
                       <option value={workerPolicy.model}>{workerPolicy.model}（目錄暫不可用）</option>
                     )}
-                    {['codex', 'claude', 'gemini'].map(group => {
+                    {['codex', 'claude', 'gemini', 'api'].map(group => {
                       const rows = workerModels.filter(item => modelProvider(item) === group);
                       return rows.length ? (
                         <optgroup key={group} label={providerLabel(group)}>

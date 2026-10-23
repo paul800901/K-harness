@@ -1,6 +1,7 @@
 export const DEFAULT_WORKER_MODEL = 'auto';
 export const DEFAULT_WORKER_EFFORT = 'auto';
-// The native account catalog is the authority, not a K model allowlist.
+// The native account catalog is the authority, not a K model allowlist. api: rows are the user's own API
+// connections; they exist in the catalog only when K supplied them.
 export function availableWorkerModels(
   models = [],
   {provider = 'codex', geminiGateway = false, claudeGateway = false} = {}
@@ -12,7 +13,8 @@ export function availableWorkerModels(
       row.available !== false &&
       (/^gpt-/.test(row.model) ||
         (geminiGateway && /^gemini-/.test(row.model)) ||
-        (claudeGateway && /^claude-/.test(row.model)))
+        (claudeGateway && /^claude-/.test(row.model)) ||
+        /^api:/.test(row.model))
   );
 }
 
@@ -32,6 +34,7 @@ export const MODEL_ROLE_GUIDANCE = `K 使用者模型分工（2026-10-04）：
 - Opus 5.5 要複查 Astra／GPT 寫的程式是否過度工程化：找不必要架構、重複檢查、無用備援、多餘狀態或設定；採最小完整解，不把小修做成新系統。刪減需核對真實用途，保留必要原生權限、核准與防止未知工作重播。
 - GPT-6.1 Sol 寫的程式碼，最後必須由真正的 Opus 5.5 審核（正確性、錯誤處理、過度工程化）；自查、測試或其他模型不能替代。沒有可用的 Opus 5.5 審查管道時，在工程交接紀錄標示「待 Opus 5.5 審核」，保留給 Opus 聊天室的交接內容，不額外提醒使用者，不宣稱已完成審核，也不自行新增派工管道。審核必須做，意見仍依證據判斷，不是一律照改。
 - Gemini 帳號採逐一使用：除使用者明確指定外，持續使用目前帳號，不平均分散、不每項工作輪換，也不因另一帳號重置就切回。官方查詢確認目前帳號的 5 小時或每週額度已耗盡時，從目前帳號的下一個已保存位置往後循環查詢，選第一個官方確認可用帳號接後續工作（例如第四→第五→第一），不能每次從第一個重選；5 小時用完即可換，不必等週額度耗盡，也不強制等待該時段恢復。登入異常、權限拒絕、一般速率限制、網路錯誤、逾時或未知快照都不是已確認額度耗盡；成功官方回報的明確零額度，在其有效重設時間前保留為有日期的證據，不反覆查詢或選為自動派工候選。全數帳號確認耗盡後，最早有效重設到期時完整重查全部帳號一次；人工明確更新全部可例外。只用既有 K 帳號工具，不自行改原生登入檔、不使用第三方 OAuth 外掛；不同帳號不並行。切換前等全部 Gemini 工作停止並核對已有成果，只交接剩餘工作、不重播未知結果。只有全數帳號都由官方確認無可用額度，才可依使用者已明確授權的備援模型接手剩餘工作；沒有該授權就等待或回報，不換模型／計費。一般新工單省略 accountId，K 自行核對目前共用帳號；不要記住舊帳號再逐房沿用。明確傳入 accountId 仍需核對，帳號不符不會暗中派到別的帳號或切回舊帳號；K 通知就緒後核對剩餘工作再接手。gemini_accounts 回 scheduling.waiting 且 notificationRegistered 時，K 已接管等待，主代理應結束本回合或做其他工作，不輪詢或僅因等待把目標標為 blocked；queryIds 不是工單，不能用作 handoffFrom。本人在設定頁手動切換不受此順序限制。這是用量管理偏好，不保證降低官方帳號風險。
+- DeepSeek 等 API 模型（api: 開頭）：只在本人明確要求諮詢該模型、取得不同看法時才派；API 計費、唯讀（可讀檔與上網查證，不能寫檔或跑指令）、排最後，不作一般選項或失敗備援。
 模型偏好不增加工具、資料、登入、部署或發布授權；失敗／額度不足不暗換模型、不改 API 計費、不重播未確認工作。Gemini 帳號接手只依既有已授權流程，先確認原工人停止並檢查成果，再由新工人接剩餘工作。`;
 
 // Preserve legacy metadata for readback; new execution validates the current policy.
@@ -72,7 +75,9 @@ export function workerPolicyConfig(
   const native = policy.model.startsWith('gpt-');
   const canUseFlash = geminiGateway;
   const choices = availableWorkerModels(models, {provider, geminiGateway, claudeGateway});
-  const autoChoices = choices.map(row => row.model).join(' or ');
+  const nativeChoices = choices.filter(row => !row.model.startsWith('api:')),
+    apiChoices = choices.filter(row => row.model.startsWith('api:'));
+  const autoChoices = nativeChoices.map(row => row.model).join(' or ');
   const luna = provider === 'claude' || provider === 'gemini';
   const gateway = luna ? 'k_luna / luna_start' : 'k_gemini / gemini_start';
   const prefix = luna ? 'luna' : 'gemini';
@@ -90,7 +95,12 @@ export function workerPolicyConfig(
         : provider === 'gemini'
           ? `For K-selected workers of any provider use ${gateway}, including its inspect/list/wait/cancel tools. Native agy subagents (define_subagent / invoke_subagent) run inside the current turn on the same Gemini account; use them for short parallel subtasks, and K workers for GPT/Claude or work that must continue after this turn. K delivers each worker completion to this conversation as a later message; after starting K workers, finish the turn instead of polling.`
           : `For K-selected workers of any provider use ${gateway}; native Claude Agent remains available for explicitly requested native work, not as a way to ignore the user's worker model or effort.`,
-    `目前官方可派模型與推理程度：${choices.map(m => `${m.model}: ${(m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).join(', ') || 'native default (null)'}`).join('; ')}。`,
+    `目前官方可派模型與推理程度：${[...nativeChoices, ...apiChoices].map(m => `${m.model}${m.model.startsWith('api:') ? `（${m.displayName}，API 計費）` : ''}: ${(m.supportedReasoningEfforts ?? []).map(e => e.reasoningEffort).join(', ') || 'native default (null)'}`).join('; ')}。`,
+    ...(apiChoices.length
+      ? [
+          'API models (prefix api:) are billed per use through an API key the user owns and are read-only consult workers: they read files and search the web but cannot write files or run commands. Choose one ONLY when the user explicitly asks in this conversation to consult that model or provider; never as an ordinary AI-auto choice, failure fallback or substitute.'
+        ]
+      : []),
     'Independently inspect subagent results before accepting them. Model selection grants no additional tool or filesystem permissions.',
     ...(canUseFlash
       ? [

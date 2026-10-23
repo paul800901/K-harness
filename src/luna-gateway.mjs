@@ -24,9 +24,12 @@ const taskSchema = z.strictObject({
     .max(32000)
     .refine(value => value.trim().length > 0)
 });
-const geminiTaskSchema = taskSchema.refine(args => args.model === undefined || /^(gemini-|claude-)/.test(args.model), {
-  message: 'GPT workers use native Codex delegation.'
-});
+const geminiTaskSchema = taskSchema.refine(
+  args => args.model === undefined || /^(gemini-|claude-|api:)/.test(args.model),
+  {
+    message: 'GPT workers use native Codex delegation.'
+  }
+);
 const waitSchema = eventWait =>
   z.strictObject({
     requestId,
@@ -260,7 +263,7 @@ function createMcpServer(
   server.registerTool(
     `${prefix}_list`,
     {
-      description: `List unfinished K ${processOnly ? 'Gemini / Claude' : 'GPT / Claude / Gemini'} worker records for THIS conversation to find requestIds, including old unresolved jobs after restart. Use this when K shows waiting or unconfirmed workers but the requestId is unknown. K Gemini workers are NOT in Codex list_agents. No Chrome/browser is needed. These are last-known records, not proof that a process is alive; executionUnowned means this K instance does not own that execution, NOT completion or confirmed stop. Use ${prefix}_inspect with a returned requestId for the original task and details. Records with reconciliation already have a main-agent handling note; do not repeatedly investigate them without new evidence. A note is NOT native completion or stop proof. Does not start, cancel, replay, acknowledge results or switch accounts.`,
+      description: `List unfinished K ${processOnly ? 'Gemini / Claude / API' : 'GPT / Claude / Gemini'} worker records for THIS conversation to find requestIds, including old unresolved jobs after restart. Use this when K shows waiting or unconfirmed workers but the requestId is unknown. K Gemini workers are NOT in Codex list_agents. No Chrome/browser is needed. These are last-known records, not proof that a process is alive; executionUnowned means this K instance does not own that execution, NOT completion or confirmed stop. Use ${prefix}_inspect with a returned requestId for the original task and details. Records with reconciliation already have a main-agent handling note; do not repeatedly investigate them without new evidence. A note is NOT native completion or stop proof. Does not start, cancel, replay, acknowledge results or switch accounts.`,
       inputSchema: z.strictObject({}),
       annotations: {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false}
     },
@@ -269,7 +272,8 @@ function createMcpServer(
         const rows = await bridge.list(false);
         const workers = rows
           .filter(
-            record => record && !record.settled && (!processOnly || ['gemini', 'claude'].includes(record.provider))
+            record =>
+              record && !record.settled && (!processOnly || ['gemini', 'claude', 'api'].includes(record.provider))
           )
           .map(record => ({
             ...Object.fromEntries(
@@ -322,7 +326,7 @@ function createMcpServer(
     );
   register(
     `${prefix}_start`,
-    `${processOnly ? 'Start one bounded task with native subscription Gemini or Claude, including Opus / Sonnet / Haiku. GPT workers use Codex native agents.' : 'Start one bounded task with native subscription GPT, Claude (including Opus / Sonnet / Haiku) or Gemini.'} Flash 是使用者優先的一般工人，也適合文章、審美及提出方向，不限機械性工作；依目前 K 分工與明確指定選擇。Sol 寫碼後必須交真正的 Opus 5.5 審核；無審查管道則標示待審，不冒稱完成。模型與 effort 依這台原生目錄，無 effort 模型傳 null。Gemini／Claude 非完整存取模式不能跑指令；workspace-write 寫檔不得超出工作區，唯讀不能寫檔；Claude 原生核准沿用主對話。GPT 權限保持 Codex 原生模式。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work; when only waiting under an active native goal, use ${prefix}_wait with timeoutMs=null instead of ending and repeatedly restarting goal turns. Do not poll. The tool call returning does not prove a worker launched: dispatch=not-started + scheduling=waiting means K is waiting, not executing the task. Reuse the requestId only for the identical task.`,
+    `${processOnly ? 'Start one bounded task with native subscription Gemini or Claude, including Opus / Sonnet / Haiku, or a read-only consult with an API model (model api:<connectionId>/<model>, only when the human explicitly asks to consult it). GPT workers use Codex native agents.' : 'Start one bounded task with native subscription GPT, Claude (including Opus / Sonnet / Haiku) or Gemini.'} Flash 是使用者優先的一般工人，也適合文章、審美及提出方向，不限機械性工作；依目前 K 分工與明確指定選擇。Sol 寫碼後必須交真正的 Opus 5.5 審核；無審查管道則標示待審，不冒稱完成。模型與 effort 依這台原生目錄，無 effort 模型傳 null。Gemini／Claude 非完整存取模式不能跑指令；workspace-write 寫檔不得超出工作區，唯讀不能寫檔；Claude 原生核准沿用主對話。GPT 權限保持 Codex 原生模式。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work; when only waiting under an active native goal, use ${prefix}_wait with timeoutMs=null instead of ending and repeatedly restarting goal turns. Do not poll. The tool call returning does not prove a worker launched: dispatch=not-started + scheduling=waiting means K is waiting, not executing the task. Reuse the requestId only for the identical task.`,
     processOnly ? geminiTaskSchema : taskSchema,
     args => bridge.start(args),
     {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false}
@@ -377,7 +381,6 @@ function createMcpServer(
   );
   return server;
 }
-
 
 /** Start a token-authenticated, loopback-only MCP HTTP gateway for one Luna bridge. */
 export async function createLunaGateway({

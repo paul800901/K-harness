@@ -202,6 +202,7 @@ export function createConversationController({
       root,
       roomNotes,
       roomTools,
+      workerApi: discussionApi,
       onContinueConversation: data => requestContinuation(controller, data),
       onConversationSettled: data => {
         const task = finishContinuation(controller, data);

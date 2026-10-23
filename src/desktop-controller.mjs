@@ -733,7 +733,7 @@ export function createDesktopController({
           .filter(
             w =>
               flashArmed.has(w.requestId) &&
-              ['gemini', 'claude'].includes(w.provider) &&
+              ['gemini', 'claude', 'api'].includes(w.provider) &&
               w.settled === false &&
               w.executionUnowned !== true &&
               !w.cancelRequested
