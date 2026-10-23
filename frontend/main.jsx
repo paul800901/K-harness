@@ -1669,7 +1669,13 @@ function App() {
       openRoundtable
     ]
   );
-  const alertRaw = error || state.error || '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
+  // A native error already shown in the conversation is not repeated as a top alert.
+  const hasInlineError =
+    !error && !!state.error && !!state.messages?.some(m => m?.nativeError && m.text === state.error);
+  const alertRaw =
+      error ||
+      (hasInlineError ? null : state.error) ||
+      '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。',
     alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
   return (
     <TranscriptContext.Provider value={transcript}>
@@ -1911,7 +1917,7 @@ function App() {
                 </IconButton>
               </div>
             </header>
-            {(error || state.error || (!online && !connecting)) && (
+            {(error || (!hasInlineError && state.error) || (!online && !connecting)) && (
               <div className={`alert${remoteClient && !online ? ' remote-disconnected' : ''}`} role="alert">
                 <div className="native-notice-content">
                   <span>

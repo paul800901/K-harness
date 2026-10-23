@@ -278,6 +278,14 @@ test(
     const valid = blob({name: '王小明', email: 'User@example.test'});
     const ambiguous = blob({email: ['one@example.test', 'two@example.test']});
     const missing = blob({name: '王小明'});
+    // agy 1.4.6 keeps no id_token, only its email as id_token_email.
+    const flat = email =>
+      Buffer.from(
+        JSON.stringify({token: {access_token: 'fake-only'}, auth_method: 'oauth', id_token_email: email}),
+        'utf8'
+      ).toString('base64');
+    const current = flat('User@example.test');
+    const currentInvalid = flat('not an email');
     const expected = createHash('sha256').update('user@example.test').digest('hex').slice(0, 32);
     const command = String.raw`
 $ErrorActionPreference='Stop'
@@ -293,11 +301,15 @@ Add-Type -TypeDefinition $nativeAst.Right.Expression.Value -ErrorAction Stop
 $valid=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${valid}')}
 $ambiguous=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${ambiguous}')}
 $missing=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${missing}')}
+$current=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${current}')}
+$currentInvalid=[PSCustomObject]@{Blob=[Convert]::FromBase64String('${currentInvalid}')}
 $email=Get-Email $valid;$accountId=Get-AccountId $email;$upper=Get-AccountId 'USER@example.test'
 $ambiguousRejected=$false;try{Get-Email $ambiguous|Out-Null}catch{$ambiguousRejected=$_.Exception.Message -like 'IDENTITY:*'}
 $missingRejected=$false;try{Get-Email $missing|Out-Null}catch{$missingRejected=$_.Exception.Message -like 'IDENTITY:*'}
+$currentEmail=Get-Email $current
+$currentInvalidRejected=$false;try{Get-Email $currentInvalid|Out-Null}catch{$currentInvalidRejected=$_.Exception.Message -like 'IDENTITY:*'}
 Write-SafeJson $null
-[Console]::Out.WriteLine((ConvertTo-Json -Compress @{email=$email;accountId=$accountId;upperAccountId=$upper;ambiguousRejected=$ambiguousRejected;missingRejected=$missingRejected}))
+[Console]::Out.WriteLine((ConvertTo-Json -Compress @{email=$email;accountId=$accountId;upperAccountId=$upper;ambiguousRejected=$ambiguousRejected;missingRejected=$missingRejected;currentEmail=$currentEmail;currentInvalidRejected=$currentInvalidRejected}))
 `;
     const encoded = Buffer.from(command, 'utf16le').toString('base64');
     const ps = await execFileAsync(
@@ -313,7 +325,9 @@ Write-SafeJson $null
       accountId: expected,
       upperAccountId: expected,
       ambiguousRejected: true,
-      missingRejected: true
+      missingRejected: true,
+      currentEmail: 'user@example.test',
+      currentInvalidRejected: true
     });
   }
 );

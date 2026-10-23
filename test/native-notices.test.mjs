@@ -192,7 +192,7 @@ test('Codex 429 retry exhaustion is not displayed as proven quota exhaustion', (
   }
   assert.deepEqual(error, before);
   assert.equal(nativeNotices.codexErrorKind({...error, codexErrorInfo: 'usageLimitExceeded'}), 'quota');
-  assert.equal(nativeNotices.codexErrorKind({...error, codexErrorInfo: 'unauthorized'}), null);
+  assert.equal(nativeNotices.codexErrorKind({...error, codexErrorInfo: 'unauthorized'}), 'auth');
   assert.equal(nativeNotices.codexErrorKind({message: 'Tool said ' + message}), null);
   assert.equal(
     nativeNotices.codexErrorKind({...error, codexErrorInfo: {responseTooManyFailedAttempts: {httpStatusCode: 503}}}),
@@ -227,7 +227,8 @@ test('native stream failures are localized without guessing a cause or changing 
     assert.equal(nativeNotices.localizeNativeNotice(message, provider, error), message);
   for (const text of ['Tool said ' + message, 'stream disconnected before completion', 'Unknown error'])
     assert.equal(nativeNotices.localizeNativeNotice(text, 'codex', {message: text, codexErrorInfo: 'other'}), text);
-  for (const code of ['unauthorized', 'internalServerError', {httpConnectionFailed: {httpStatusCode: 500}}])
+  // A specific code keeps precedence; unauthorized has its own login-expiry text.
+  for (const code of ['internalServerError', {httpConnectionFailed: {httpStatusCode: 500}}])
     assert.equal(nativeNotices.localizeNativeNotice(message, 'codex', {message, codexErrorInfo: code}), message);
   assert.match(
     nativeNotices.localizeNativeNotice(message, 'codex', {message, codexErrorInfo: 'serverOverloaded'}),
@@ -270,7 +271,8 @@ test('the exact native remote compaction stream wrapper keeps its phase and raw 
     message.toLowerCase()
   ])
     assert.equal(nativeNotices.localizeNativeNotice(text, 'codex', {...error, message: text}), text);
-  for (const code of ['unauthorized', 'internalServerError', {httpConnectionFailed: {httpStatusCode: 500}}])
+  // A specific code keeps precedence; unauthorized has its own login-expiry text.
+  for (const code of ['internalServerError', {httpConnectionFailed: {httpStatusCode: 500}}])
     assert.equal(nativeNotices.localizeNativeNotice(message, 'codex', {...error, codexErrorInfo: code}), message);
   assert.match(
     nativeNotices.localizeNativeNotice(message, 'codex', {...error, codexErrorInfo: 'serverOverloaded'}),
@@ -387,4 +389,58 @@ test('resolved recovery and Gemini handoff notices leave the banner while real f
     ['recovery-failed', 'recovery-unknown', 'handoff-failed', 'native-failed', 'other-warning']
   );
   assert.deepEqual(notices, before, 'hiding a lifecycle banner must not erase or rewrite diagnostics');
+});
+
+test('Claude authentication failure notices are localized while unrelated English remains intact', () => {
+  const expiredChinese =
+    'Claude 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 Claude 訂閱」），再送出訊息即可繼續；K 不會自動重送。';
+  const authStrings = [
+    'Failed to authenticate: OAuth session expired and could not be refreshed',
+    'Not logged in · Please run /login'
+  ];
+  for (const str of authStrings) {
+    assert.equal(nativeNotices.localizeNativeNotice(str, 'claude'), expiredChinese);
+    assert.equal(nativeNotices.nativeErrorMessageText({text: str}, 'claude'), expiredChinese);
+  }
+  assert.equal(
+    nativeNotices.nativeErrorMessageText(
+      {nativeError: 'authentication_failed', text: 'Some arbitrary error text'},
+      'claude'
+    ),
+    expiredChinese
+  );
+  const quotaMsg = "You've hit your session limit";
+  assert.equal(
+    nativeNotices.nativeErrorMessageText({nativeError: 'other', text: quotaMsg}, 'claude'),
+    '本時段額度已用完。'
+  );
+
+  const unrelated = 'Unrelated native message that should not be touched';
+  assert.equal(nativeNotices.localizeNativeNotice(unrelated, 'claude'), unrelated);
+  assert.equal(nativeNotices.nativeErrorMessageText({text: unrelated}, 'claude'), unrelated);
+  for (const str of authStrings) {
+    assert.equal(nativeNotices.localizeNativeNotice(str, 'codex'), str);
+    assert.equal(nativeNotices.nativeErrorMessageText({text: str}, 'codex'), str);
+  }
+});
+
+test('GPT login expiry is shown in Chinese once the native error proves it; raw text is unchanged', () => {
+  const raw = 'Your access token could not be refreshed because your refresh token was already used. Please log out and sign in again.';
+  const expected =
+    'GPT 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「登入 GPT / Codex」），再送出訊息即可繼續；K 不會自動重送。';
+  assert.equal(nativeNotices.localizeNativeNotice(raw, 'codex', {message: raw, codexErrorInfo: 'other'}), expected);
+  assert.equal(nativeNotices.localizeNativeNotice('401', 'codex', {message: '401', codexErrorInfo: 'unauthorized'}), expected);
+  assert.equal(nativeNotices.codexErrorKind({message: 'x', codexErrorInfo: {httpConnectionFailed: {httpStatusCode: 401}}}), 'auth');
+  assert.notEqual(nativeNotices.localizeNativeNotice('401', 'gemma', {message: '401', codexErrorInfo: 'unauthorized'}), expected);
+});
+
+test('an unauthorized code on a stream wrapper is shown as login expiry, not as a stream interruption', () => {
+  for (const message of [
+    'stream disconnected before completion: An error occurred while processing your request.',
+    'Error running remote compact task: stream disconnected before completion: An error occurred.'
+  ]) {
+    const error = {message, codexErrorInfo: 'unauthorized'};
+    assert.equal(nativeNotices.codexErrorKind(error), 'auth');
+    assert.match(nativeNotices.localizeNativeNotice(message, 'codex', error), /^GPT 登入已失效/);
+  }
 });

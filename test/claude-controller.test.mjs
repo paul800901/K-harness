@@ -97,7 +97,7 @@ test('Claude close drains result persistence before a durable immutable parent f
 const fakeWorkerProvider = model =>
   model?.startsWith('claude-') ? 'claude' : model?.startsWith('gpt-') ? 'codex' : 'gemini';
 
-async function fixture({models, waitForHost, browser = false, bridgeFactory} = {}) {
+async function fixture({models, waitForHost, browser = false, bridgeFactory, invalidateInspection, reportAuthExpired} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'claude-controller-'));
@@ -161,6 +161,8 @@ async function fixture({models, waitForHost, browser = false, bridgeFactory} = {
     ...(browser ? await fixtureBrowser(root) : {}),
     root,
     executable: 'codex-test',
+    ...(invalidateInspection ? {invalidateInspection} : {}),
+    ...(reportAuthExpired ? {reportAuthExpired} : {}),
     commandSpec: {command: 'claude-test', argsPrefix: []},
     hostFactory: async options => {
       hostOptions = options;
@@ -608,6 +610,70 @@ test('Claude exposes only native public status and actual context usage, never t
       'Claude emits per-result usage, not cumulative session token totals'
     );
     assert.equal(JSON.stringify(state).includes('private hidden reasoning'), false);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude authentication failure invalidates inspection cache, marks nativeError, preserves original wording and does not resend work', async () => {
+  let invalidated = 0;
+  const reported = [];
+  const f = await fixture({
+    invalidateInspection: () => {
+      invalidated++;
+    },
+    reportAuthExpired: provider => reported.push(provider)
+  });
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'request that triggers auth failure'});
+    const originalText = 'Not logged in · Please run /login';
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      error: 'authentication_failed',
+      message: {
+        model: '<synthetic>',
+        content: [{type: 'text', text: originalText}]
+      }
+    });
+    f.hostOptions.onMessage({
+      type: 'result',
+      subtype: 'success',
+      is_error: true,
+      result: originalText
+    });
+    assert.equal(invalidated, 1, 'invalidateInspection called once on authentication_failed');
+    assert.deepEqual(reported, ['claude'], 'a live main-room failure starts the official sign-in once');
+    const lastAssistant = [...f.controller.state.messages].reverse().find(m => m.role === 'assistant');
+    assert.ok(lastAssistant);
+    assert.equal(lastAssistant.nativeError, 'authentication_failed');
+    assert.equal(lastAssistant.text, originalText, 'assistant message text preserves English original');
+    assert.equal(f.controller.state.error, originalText, 'state.error preserves English original');
+    assert.equal(f.controller.state.busy, false);
+    assert.equal(f.host.startCalls.length, 1, 'host start called only once, no resend');
+
+    invalidated = 0;
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'normal-assistant-msg',
+      message: {
+        model: 'claude-3-7-sonnet',
+        content: [{type: 'text', text: 'normal response'}]
+      }
+    });
+    const normalAssistant = f.controller.state.messages.find(m => m.id === 'normal-assistant-msg');
+    assert.ok(normalAssistant);
+    assert.equal(normalAssistant.nativeError, undefined);
+    assert.equal(invalidated, 0);
+
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      isReplay: true,
+      error: 'authentication_failed',
+      uuid: 'replayed-auth-failure',
+      message: {model: '<synthetic>', content: [{type: 'text', text: originalText}]}
+    });
+    assert.deepEqual(reported, ['claude'], 'replayed history never starts a sign-in');
   } finally {
     await f.controller.close();
   }

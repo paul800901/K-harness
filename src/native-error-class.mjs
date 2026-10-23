@@ -1,4 +1,5 @@
 import {selfHostBridgeError, selfHostPreparationCodes} from '../shared/selfhost-error.mjs';
+import {codexAuthExpired} from '../shared/codex-auth-error.mjs';
 
 // Classifies a native Codex turn error for goal recovery: proven hard limits, ordinary rate limits, or other.
 export function recoveryErrorClass(error) {
@@ -6,6 +7,8 @@ export function recoveryErrorClass(error) {
   // K's own self-host refusal (busy, failed/unknown load) arrives as codexErrorInfo
   // "other"; recovery would only repeat it, or replay work whose result is unknown.
   if (selfHostPreparationCodes.has(selfHostBridgeError(error)?.code)) return 'hard';
+  // An expired login needs the owner to sign in again; another model turn cannot fix it.
+  if (codexAuthExpired(error)) return 'hard';
   const info = error.codexErrorInfo,
     details = error.additionalDetails,
     codes = typeof info === 'string' ? [info] : info && typeof info === 'object' ? Object.keys(info) : [];

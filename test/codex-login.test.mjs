@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createCodexLogin} from '../src/codex-login.mjs';
+import {authExpired, reportAuthExpired, clearAuthExpired} from '../src/auth-expiry.mjs';
 function fixture(account = null, url = 'https://auth.openai.com/oauth/authorize?state=test') {
   const calls = [];
   let event,
@@ -73,4 +74,23 @@ test('API identity is not subscription and invalid authorization URL is not expo
   assert.equal(result.login.status, 'error');
   assert.equal(result.login.url, undefined);
   await f.service.close();
+});
+test('a reported GPT login expiry shows signed-out, allows official login and clears on success', async () => {
+  const f = fixture({type: 'chatgpt', planType: 'pro'});
+  reportAuthExpired('codex');
+  try {
+    const status = await f.service.status();
+    assert.equal(status.available, false);
+    assert.equal(status.auth.expired, true);
+    assert.match(status.reason, /GPT 登入失效.*尚未確認恢復/);
+    const started = await f.service.start();
+    assert.equal(started.login.status, 'running');
+    assert.equal(f.calls.filter(c => c.method === 'account/login/start').length, 1);
+    f.complete(true);
+    assert.equal(authExpired('codex'), false);
+    assert.equal((await f.service.status()).available, true);
+  } finally {
+    clearAuthExpired('codex');
+    await f.service.close();
+  }
 });

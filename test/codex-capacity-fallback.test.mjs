@@ -24,7 +24,9 @@ async function fixture({
   immediateFailure = false,
   startAck = null,
   onStartAckWait = null,
-  flash = false
+  flash = false,
+  reportAuthExpired,
+  selfHosted
 } = {}) {
   await mkdir('.runtime/tests', {recursive: true});
   const root = await mkdtemp(path.join(scratchBase, 'capacity-'));
@@ -105,6 +107,8 @@ async function fixture({
     createDesktopController({
       root,
       hostFactory,
+      selfHosted,
+      ...(reportAuthExpired ? {reportAuthExpired} : {}),
       executable: 'fake',
       bridgeFactory: async o => {
         bridgeOptions = o;
@@ -392,5 +396,48 @@ test('failed delivery of a worker completion is not replayed or escalated', asyn
     assert.equal(f.c.state.modelChanges.length, 0);
   } finally {
     await f.c.close();
+  }
+});
+
+test('a Codex subscription auth failure reports login expiry once and is never cleared by a later turn', async () => {
+  const events = [];
+  const f = await fixture({reportAuthExpired: provider => events.push(provider)});
+  try {
+    await f.c.send({text: 'x'});
+    f.finish({
+      message: 'Your access token could not be refreshed. Please log out and sign in again.',
+      codexErrorInfo: 'unauthorized'
+    });
+    await settle(f.c);
+    assert.deepEqual(events, ['codex']);
+    assert.equal(f.calls.filter(x => x.method === 'turn/start').length, 1, 'no K resend');
+    await f.c.send({text: 'y'});
+    f.finish(null);
+    await settle(f.c);
+    assert.deepEqual(events, ['codex'], 'only a successful official sign-in clears the mark');
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('ordinary Codex failures and self-hosted 401s never report subscription login expiry', async () => {
+  for (const [options, error] of [
+    [{}, overload],
+    [{}, {message: 'rate', codexErrorInfo: 'rateLimitExceeded'}],
+    [
+      {selfHosted: {models: async () => ({models: catalog}), prepare: async () => {}, nativeModel: () => LUNA}},
+      {message: 'unauthorized', codexErrorInfo: 'unauthorized'}
+    ]
+  ]) {
+    const events = [];
+    const f = await fixture({...options, reportAuthExpired: p => events.push(p)});
+    try {
+      await f.c.send({text: 'x'});
+      f.finish(error);
+      await settle(f.c);
+      assert.deepEqual(events, []);
+    } finally {
+      await f.c.close();
+    }
   }
 });

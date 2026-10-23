@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {spawn} from 'node:child_process';
 import path from 'node:path';
 import {createReadStream} from 'node:fs';
 import {readFile} from 'node:fs/promises';
@@ -7,6 +8,8 @@ import {randomBytes, timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {createCodexLogin} from './codex-login.mjs';
+import {onAuthExpired} from './auth-expiry.mjs';
+import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
 import {listProjects, addProject, updateProject} from './projects.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
@@ -24,6 +27,21 @@ import {
   remoteLoginCss
 } from './remote-access.mjs';
 
+// Same opener the official Claude CLI uses; only a validated official URL is passed.
+const openInDefaultBrowser = url =>
+  new Promise((resolve, reject) => {
+    const child = spawn('rundll32.exe', ['url.dll,FileProtocolHandler', url], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.once('error', reject);
+    child.once('spawn', () => {
+      child.unref();
+      resolve();
+    });
+  });
+
 export async function startDesktop({
   root,
   executable,
@@ -33,6 +51,7 @@ export async function startDesktop({
   localDictationFactory = createLocalDictation,
   claudeLoginFactory = createClaudeLogin,
   codexLoginFactory = createCodexLogin,
+  openExternalUrl = openInDefaultBrowser,
   geminiLoginFactory = createGeminiLogin,
   geminiAccounts,
   discussionApi,
@@ -82,6 +101,25 @@ export async function startDesktop({
   };
   let closing = false;
   let pickerAbort = null;
+  // A native login expiry in a main room starts the official sign-in in the owner's
+  // default browser. Claude's CLI opens it itself; Codex only returns the URL. An
+  // already-waiting sign-in is reused, so repeated failures do not open more pages.
+  const recoveringLogin = new Set();
+  let openedCodexUrl = null;
+  const stopAuthExpiry = onAuthExpired(provider => {
+    if (closing || recoveringLogin.has(provider) || !['claude', 'codex'].includes(provider)) return;
+    recoveringLogin.add(provider);
+    (async () => {
+      if (provider === 'claude') return void (await claudeLogin.start());
+      const url = officialCodexLoginUrl((await codexLogin.start())?.login?.url);
+      if (url && url !== openedCodexUrl && !closing) {
+        await openExternalUrl(url);
+        openedCodexUrl = url;
+      }
+    })()
+      .catch(() => {})
+      .finally(() => recoveringLogin.delete(provider));
+  });
   const publicState = () => {
     const state = controller.state;
     return geminiAccounts?.cachedUsage
@@ -136,6 +174,7 @@ export async function startDesktop({
     if (resourceCloseAttempt) return resourceCloseAttempt;
     const pending = (async () => {
       closing = true;
+      stopAuthExpiry();
       launchToken = null;
       pickerAbort?.abort();
       clearTimeout(scheduled);
@@ -386,7 +425,7 @@ export async function startDesktop({
         );
       }
       if (req.method === 'GET' && url.pathname === '/api/claude/auth') {
-        const result = await claudeLogin.status();
+        const result = await claudeLogin.status({refresh: url.searchParams.get('refresh') === '1'});
         if (!isRemote) return json(200, result);
         const {loggedIn, authMethod, apiProvider, subscriptionType} = result.auth ?? {};
         return json(200, {available: result.available, auth: {loggedIn, authMethod, apiProvider, subscriptionType}});

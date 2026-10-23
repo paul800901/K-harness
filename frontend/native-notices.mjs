@@ -1,4 +1,5 @@
 import {selfHostBridgeError} from '../shared/selfhost-error.mjs';
+import {codexAuthExpired} from '../shared/codex-auth-error.mjs';
 
 const hiddenEngineeringKinds = new Set([
   'status',
@@ -52,6 +53,7 @@ export function nativeNoticeText(notice, provider = 'codex') {
 // Presentation only, never permission to retry or change models.
 export function codexErrorKind(error) {
   const info = error?.codexErrorInfo;
+  if (codexAuthExpired(error)) return 'auth';
   if (info === 'serverOverloaded') return 'capacity';
   if (info === 'usageLimitExceeded') return 'quota';
   if (info === 'rateLimitExceeded' || info?.responseTooManyFailedAttempts?.httpStatusCode === 429) return 'rate';
@@ -78,6 +80,11 @@ export function codexErrorKind(error) {
   return null;
 }
 
+// K starts the official sign-in in the default browser when a main room reports expiry.
+const authExpiredNotice = (name, button) =>
+  `${name} 登入已失效，這一輪沒有完成。K 會嘗試在預設瀏覽器開啟官方登入頁，請完成登入（沒有出現時，到「設定 → 帳號與核心」按「${button}」），再送出訊息即可繼續；K 不會自動重送。`;
+const CLAUDE_AUTH_EXPIRED_NOTICE = authExpiredNotice('Claude', '登入 Claude 訂閱');
+
 // Presentation only: native records stay unchanged; unknown wording stays intact.
 export function localizeNativeNotice(message, provider, error) {
   if (provider === 'gemma' && typeof message === 'string') {
@@ -93,6 +100,7 @@ export function localizeNativeNotice(message, provider, error) {
   }
   if (provider === 'codex' && typeof message === 'string') {
     const kind = codexErrorKind(error?.message === message ? error : {message});
+    if (kind === 'auth') return authExpiredNotice('GPT', '登入 GPT / Codex');
     if (kind === 'capacity') return '模型服務容量不足，與剩餘額度不同。請稍後再試，或自行選擇其他模型。';
     if (kind === 'quota') return 'Codex 原生回報用量限制，與模型服務容量不足不同；恢復時間以官方額度資訊為準。';
     if (kind === 'rate')
@@ -103,6 +111,11 @@ export function localizeNativeNotice(message, provider, error) {
         : 'Codex 回覆在完成前中斷；本輪未完成。接續前先核對已保存成果，K 不會自動重送。';
   }
   if (provider !== 'claude' || typeof message !== 'string') return message;
+  if (
+    message === 'Failed to authenticate: OAuth session expired and could not be refreshed' ||
+    message === 'Not logged in · Please run /login'
+  )
+    return CLAUDE_AUTH_EXPIRED_NOTICE;
   const match =
     /^You've hit your session limit(?: · resets (1[0-2]|[1-9])(?::([0-5]\d))?(am|pm) \(([^()\r\n]+)\))?$/.exec(message);
   if (!match) return message;
@@ -110,4 +123,9 @@ export function localizeNativeNotice(message, provider, error) {
   const hour = String((Number(match[1]) % 12) + (match[3] === 'pm' ? 12 : 0)).padStart(2, '0');
   const zone = match[4] === 'Asia/Taipei' ? '臺灣時間' : match[4];
   return `本時段額度已用完；${hour}:${match[2] ?? '00'}（${zone}）恢復。`;
+}
+
+export function nativeErrorMessageText(record, provider) {
+  if (record?.nativeError === 'authentication_failed') return CLAUDE_AUTH_EXPIRED_NOTICE;
+  return localizeNativeNotice(record?.text, provider);
 }
