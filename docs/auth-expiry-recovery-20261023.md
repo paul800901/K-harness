@@ -47,7 +47,7 @@
 - 新 `src/auth-expiry.mjs`：程序層級的登入失效標記與通知（與檢查快取同一層級）；`shared/codex-auth-error.mjs` 判斷 GPT 登入失效：`codexErrorInfo === 'unauthorized'`、任一 `httpStatusCode === 401`，或原生確切文字 `Your access token could not be refreshed` 開頭。
 - `src/claude-controller.mjs`：非 replay 的 `authentication_failed` 通報 `claude`。
 - `src/desktop-controller.mjs`：主聊天室回合以 GPT 登入失效結束時通報 `codex`；自架模型（`selfHosted`）排除。
-- `src/codex-login.mjs`：有失效標記且登入檔仍在時，狀態回「GPT 登入已失效（原生核心無法更新登入權杖），請重新登入 GPT 訂閱。」、不算已驗證，登入按鈕可按；官方登入成功才清除。
+- `src/codex-login.mjs`：有失效標記且登入檔仍在時，狀態回「K 先前偵測到 GPT 登入失效（原生核心無法更新登入權杖），尚未確認恢復；請重新登入 GPT 訂閱。」（Astra 複查後由「GPT 登入已失效…」改成此文字）、不算已驗證，登入按鈕可按；官方登入成功才清除。
 - `src/desktop-server.mjs`：收到通報即啟動官方登入。Claude 的官方 CLI 會自己用預設瀏覽器開 loopback 登入（實測確認，完成後自動回傳、不用貼授權碼）；Codex 只回網址，K 以 `rundll32 url.dll,FileProtocolHandler`（與 Claude CLI 相同的開啟方式、引數陣列、不經 shell）只開通過 `officialCodexLoginUrl` 驗證的網址。已在等待的登入沿用、不重開頁面。
 - `frontend/native-notices.mjs`：GPT 登入失效翻成中文；兩家文字說明「K 會嘗試在預設瀏覽器開啟官方登入頁」，沒出現時到設定按登入。
 
@@ -66,6 +66,17 @@ GPT-6.1 Sol 只讀複查，回報 1 高、2 中、2 低：
 | 低：同一程序多個 desktop 共用通知；啟動失敗留下訂閱 | 不改：正式 K 只有一個 desktop，只影響測試；記錄於此 |
 
 Sol 也確認：Codex 子代理、背景房與自架排除正確；`rundll32` 無引數注入；三處 `unauthorized` 測試改為預期 `auth` 屬合理（原意是「明確代碼優先」），並依建議補上 stream wrapper 搭配 `unauthorized` 的正向斷言與目標核對案例。Claude 的失效標記沒有讀取者，屬無害多餘狀態。
+
+### Astra 最終複查
+
+GPT-6 Astra（xhigh）只讀複查 `3fceed6..fd67fcd`：未發現高／中風險；確認目標核對修正、模組轉出在測試改寫路徑可解析、失效標記不擋送出或選模、子代理與工人不觸發、關閉中不開頁。另以 38 項純函式／假 host 測試與 `git diff --check` 驗證。兩項低風險：
+
+| 項目 | 處理 |
+|---|---|
+| 在 K 外恢復同一登入後，設定頁仍顯示失效（只影響顯示與登入控制） | 採納：文字改為「K 先前偵測到 GPT 登入失效……尚未確認恢復」；不改回由任一成功回合清除，以免重現 Sol 指出的競態 |
+| `rundll32` 一啟動就算開頁成功；若啟動後非零結束仍會記錄已開 | 不改：`rundll32` 結束碼本身不能證明瀏覽器已開；文字已是「會嘗試」，設定頁仍有官方登入連結 |
+
+可選精簡（Claude 失效標記無讀取者）不改，無功能影響。
 
 ### 測試調整
 
