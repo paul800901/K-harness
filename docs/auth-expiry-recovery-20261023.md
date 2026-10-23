@@ -1,4 +1,4 @@
-# 登入失效時 K 無法自行恢復：Claude／GPT 修正（2026-10-23，尚未部署）
+# 登入失效時 K 無法自行恢復：Claude／GPT 修正（2026-10-23，南區已部署）
 
 ## 問題
 
@@ -122,6 +122,12 @@ GPT-6 Astra（xhigh）只讀複查 `3fceed6..fd67fcd`：未發現高／中風險
 
 ## 審核與部署狀態
 
-- 第一批 Flash 程式：Opus 5.5（主代理）逐行複查。第二批與 Sol 修正：Opus 5.5 實作，Sol 只讀複查並逐項處理。
-- 未部署、未合回 main、未 push。另一聊天室（API 連線當子代理，分支 `claude/api-worker-20261023`）留言：本人要求兩批合併後只複查一次、只部署一次；本分支保留待合併，是否照辦由本人決定。
+- 第一批 Flash 程式：Opus 5.5（主代理）逐行複查。第二批與 Sol、Astra 修正：Opus 5.5 實作，Sol 與 Astra 只讀複查並逐項處理。
+- 本人決定 Gemini 不能等，本分支先單獨部署；API 子代理分支之後另行部署。分支快轉合回 `main`。
+- 南區於 **2026-10-23 22:27:18–22:28:58（臺灣時間）**由 K 外的 Codex 執行 `Update-K.ps1 -Ref 0cf673e33087a4b3d856aeea671e77b28e8eaa0b`；部署前正式版本 `2bde716cec3d7e6af47e275460f10ad025dfec03`。更新器結束碼 0，完整測試 **1848/1848**（失敗、取消、跳過皆 0）。
+- 讀回全部通過：`version` 為上述 SHA、`previous` 指向存在的退版；`src/auth-expiry.mjs` 存在，`onAuthExpired`、`codexAuthExpired`、「尚未確認恢復」均在；`scripts/gemini-credentials.ps1` 含 `id_token_email` 且保留 UTF-8 BOM；建置介面含「會嘗試在預設瀏覽器開啟官方登入頁」；帳號、對話、工作區、瀏覽器輸出路徑與身分及 `dictationPython`／`dictationModel` 未變。
+- 退版保留三份：`before-1792692950125`、`before-1792731673637`、`before-1792765732003`（previous）；最舊 `before-1792681002929` 已確認進入資源回收筒（上次永久刪除的情形本次沒有發生）。
+- push：遠端 `refs/heads/main` 22:33:04 讀回 `0ec488379b4d4c8b362a2e278a017f6f2bc3cbae`；推送 8 個 commit，秘密掃描無未解決項目。交接指令誤寫「程式版之後有兩個文件 commit」，實際只有一個，Codex 已如實回報。兩份既有 Gemini 日誌的中繼資料與部署前列舉不同，但最後寫入時間都早於部署，原因未確認、未改動。
+- 部署證據：`.runtime/archive/deployment-0cf673e-20261023-222531/`（不進 Git）。
+- 部署後 K 重新啟動，22:35 實際派 Flash（low）最小工作：在目前帳號完成並回覆；五個 Gemini 帳號的 `requiresActivation` 全部清除，Gemini 已恢復。正式 K 內 Claude／GPT 真實登入失效尚未再發生，自動開登入頁的正式環境表現待日後實際遇到時確認（測試 K 已實機驗收）。
 - 東區未更新。
