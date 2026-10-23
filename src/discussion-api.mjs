@@ -23,6 +23,7 @@ export async function openDiscussionApiSession({
   connections,
   signal,
   instructions = DISCUSSION_INSTRUCTIONS,
+  confined = false,
   onIdentity = () => {},
   fetchImpl = fetch,
   webFetchImpl = fetch
@@ -31,7 +32,7 @@ export async function openDiscussionApiSession({
   const {baseUrl, key} = await connections.credentials(selection.connectionId),
     abort = new AbortController();
   const active = signal ? AbortSignal.any([signal, abort.signal]) : abort.signal;
-  const reader = await createDiscussionReader(workspace, {signal: active}),
+  const reader = await createDiscussionReader(workspace, {signal: active, confined}),
     webReader = createDiscussionWebReader({signal: active, fetchImpl: webFetchImpl});
   let work = null,
     closed = false;

@@ -585,3 +585,35 @@ test('text written before a tool round and the final answer are separate paragra
   assert.equal(shown.at(-1), '我先讀檔。\n\n結論。', 'the live view uses the same paragraph break');
   await s.close();
 });
+
+test('an API consult worker reader is confined to the room workspace; discussion keeps broad read-only', async () => {
+  const f = await fixture();
+  const room = path.join(f.root, 'room');
+  await mkdir(room);
+  await writeFile(path.join(room, 'inside.txt'), 'inside');
+  await writeFile(path.join(f.root, 'outside.txt'), 'outside');
+  const confined = await createDiscussionReader(room, {confined: true});
+  assert.equal((await confined('read_file', {path: 'inside.txt'})).text, 'inside');
+  assert.equal((await confined('read_file', {path: path.join(room, 'inside.txt')})).text, 'inside');
+  await assert.rejects(confined('read_file', {path: path.join(f.root, 'outside.txt')}), /只可讀取聊天室工作區/);
+  await assert.rejects(confined('list_files', {path: f.root}), /只可讀取聊天室工作區/);
+  const broad = await createDiscussionReader(room);
+  assert.equal((await broad('read_file', {path: path.join(f.root, 'outside.txt')})).text, 'outside');
+});
+
+test('API connections cannot change while a consult worker holds them, and no worker starts mid-change', async () => {
+  const f = await fixture();
+  const c = createDiscussionApiConnections({...f});
+  await c.save({name: 'A', baseUrl: 'https://a.example/v1', apiKey: 'KEY-A', models: [{id: 'm', name: 'M'}]});
+  const release = c.lease();
+  await assert.rejects(c.save({name: 'B', baseUrl: 'https://b.example/v1', apiKey: 'KEY-B'}), /API 子代理執行中/);
+  release();
+  release();
+  const {connections} = await c.list();
+  let releaseDuring;
+  await c.save({id: connections[0].id, name: 'A2', baseUrl: 'https://a.example/v1', models: [{id: 'm', name: 'M'}]});
+  const saving = c.save({id: connections[0].id, name: 'A3', baseUrl: 'https://a.example/v1', models: [{id: 'm', name: 'M'}]});
+  assert.throws(() => (releaseDuring = c.lease()), /正在更新/);
+  await saving;
+  assert.equal(releaseDuring, undefined);
+});

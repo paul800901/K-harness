@@ -40,7 +40,12 @@ const connectionRows = [
     defaultReasoningEffort: null
   }
 ];
+let leases = 0;
 const fakeConnections = () => ({
+  lease() {
+    leases++;
+    return () => leases--;
+  },
   async models() {
     return {models: connectionRows};
   },
@@ -140,16 +145,15 @@ test('API models are listed last with the connection and API billing, and are ne
   assert.match(MODEL_ROLE_GUIDANCE, /API 計費、唯讀[^\n]*排最後，不作一般選項或失敗備援/);
 });
 
-test('a manual API default is honored without becoming a native GPT default', () => {
+test('a saved API choice is a consult model, never an ordinary default or a native GPT default', () => {
   const config = workerPolicyConfig(
     {model: API_MODEL, effort: 'max'},
     {models: [...nativeModels, ...workerRows], geminiGateway: true, provider: 'gemini'}
   );
   assert.deepEqual(config.agents, {enabled: true});
-  assert.match(
-    config.developer_instructions,
-    new RegExp(`User-selected default worker: ${API_MODEL}, reasoning effort max`)
-  );
+  assert.match(config.developer_instructions, new RegExp(`User-saved API consult model: ${API_MODEL}`));
+  assert.match(config.developer_instructions, /not a default for ordinary delegation/);
+  assert.doesNotMatch(config.developer_instructions, /User-selected default worker/);
 });
 
 test('the API worker asks once with the worker role prompt, effort and read-only tools, and returns the answer', async () => {
@@ -466,5 +470,37 @@ test('an unreadable API connection list only drops the API rows with a warning',
     assert.match(catalog.warnings.join('\n'), /api 目錄暫時不可用：API 連線設定格式無效/);
   } finally {
     await controller.close();
+  }
+});
+
+test('a consult holds the API connections while it runs and releases them on success or failure', async () => {
+  leases = 0;
+  let during;
+  const worker = createApiWorker({
+    workspace: path.resolve('.'),
+    connections: fakeConnections(),
+    sessionFactory: async () => ({
+      async ask() {
+        during = leases;
+        return '看法';
+      },
+      async close() {}
+    })
+  });
+  await worker.run({task: 'x', model: API_MODEL, effort: 'high'});
+  assert.equal(during, 1);
+  assert.equal(leases, 0);
+  await assert.rejects(worker.run({task: 'x', model: API_MODEL, effort: 'low'}), /不支援/);
+  assert.equal(leases, 0);
+});
+
+test('omitting the model never falls back to a saved API consult model', async () => {
+  const runs = [];
+  const f = await fixture({apiFactory: () => ({run: async input => runs.push(input)})});
+  try {
+    await assert.rejects(f.bridge.start({requestId: 'implicit', task: '一般工作'}), /明確指定 model 與 effort/);
+    assert.equal(runs.length, 0);
+  } finally {
+    await f.bridge.close();
   }
 });

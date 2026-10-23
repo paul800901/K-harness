@@ -38,67 +38,76 @@ export function createApiWorker({
   webFetchImpl
 } = {}) {
   if (!path.isAbsolute(workspace ?? '') || !connections) throw Error('API 子代理工作區或連線無效。');
-  return {
-    async run({task, model, effort, signal, onStart = () => {}, onActivity = () => {}} = {}) {
-      const parsed = parseApiWorkerModel(model);
-      if (!parsed) throw Error('API 子代理型號無效；格式為 api:<連線ID>/<模型>。');
-      const row = (await connections.models()).models.find(
-        item => item.connectionId === parsed.connectionId && item.model === parsed.model
-      );
-      if (!row) throw Error(`${model} 不在目前 API 連線的可用模型清單；未換模。`);
-      if (row.supportedReasoningEfforts.length ? !row.supportedReasoningEfforts.includes(effort) : effort != null)
-        throw Error(`${row.displayName} 不支援 ${effort ?? '未指定'} 推理程度；未換模。`);
-      const state = {},
-        activity = createWorkActivity(state);
-      let output = '',
-        session,
-        lastPublished = 0;
-      const publish = () => {
-        onActivity(state.activity);
-        lastPublished = Date.now();
+  const consult = async (parsed, {task, model, effort, signal, onStart = () => {}, onActivity = () => {}}) => {
+    const row = (await connections.models()).models.find(
+      item => item.connectionId === parsed.connectionId && item.model === parsed.model
+    );
+    if (!row) throw Error(`${model} 不在目前 API 連線的可用模型清單；未換模。`);
+    if (row.supportedReasoningEfforts.length ? !row.supportedReasoningEfforts.includes(effort) : effort != null)
+      throw Error(`${row.displayName} 不支援 ${effort ?? '未指定'} 推理程度；未換模。`);
+    const state = {},
+      activity = createWorkActivity(state);
+    let output = '',
+      session,
+      lastPublished = 0;
+    const publish = () => {
+      onActivity(state.activity);
+      lastPublished = Date.now();
+    };
+    try {
+      signal?.throwIfAborted();
+      session = await sessionFactory({
+        selection: {route: 'api', connectionId: parsed.connectionId, model: parsed.model, effort},
+        workspace,
+        connections,
+        signal,
+        instructions: API_WORKER_INSTRUCTIONS,
+        confined: true,
+        ...(fetchImpl ? {fetchImpl} : {}),
+        ...(webFetchImpl ? {webFetchImpl} : {})
+      });
+      onStart();
+      activity.begin();
+      publish();
+      output = await session.ask(task, {
+        onText: text => {
+          output = text;
+          activity.record();
+          if (Date.now() - lastPublished >= 1000) publish();
+        }
+      });
+      return {
+        status: 'completed',
+        settled: true,
+        output,
+        outputFiles: [],
+        outputFilesNote: API_OUTPUT_FILES_NOTE,
+        acceptance: 'not-reviewed'
       };
-      try {
-        signal?.throwIfAborted();
-        session = await sessionFactory({
-          selection: {route: 'api', connectionId: parsed.connectionId, model: parsed.model, effort},
-          workspace,
-          connections,
-          signal,
-          instructions: API_WORKER_INSTRUCTIONS,
-          ...(fetchImpl ? {fetchImpl} : {}),
-          ...(webFetchImpl ? {webFetchImpl} : {})
-        });
-        onStart();
-        activity.begin();
-        publish();
-        output = await session.ask(task, {
-          onText: text => {
-            output = text;
-            activity.record();
-            if (Date.now() - lastPublished >= 1000) publish();
-          }
-        });
+    } catch (error) {
+      if (signal?.aborted)
         return {
-          status: 'completed',
+          status: 'cancelled',
           settled: true,
           output,
           outputFiles: [],
           outputFilesNote: API_OUTPUT_FILES_NOTE,
           acceptance: 'not-reviewed'
         };
-      } catch (error) {
-        if (signal?.aborted)
-          return {
-            status: 'cancelled',
-            settled: true,
-            output,
-            outputFiles: [],
-            outputFilesNote: API_OUTPUT_FILES_NOTE,
-            acceptance: 'not-reviewed'
-          };
-        throw error;
+      throw error;
+    } finally {
+      await session?.close();
+    }
+  };
+  return {
+    async run(options = {}) {
+      const parsed = parseApiWorkerModel(options.model);
+      if (!parsed) throw Error('API 子代理型號無效；格式為 api:<連線ID>/<模型>。');
+      const release = connections.lease();
+      try {
+        return await consult(parsed, options);
       } finally {
-        await session?.close();
+        release();
       }
     }
   };

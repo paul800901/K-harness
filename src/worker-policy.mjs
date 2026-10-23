@@ -87,7 +87,9 @@ export function workerPolicyConfig(
     'Delegation is optional. Work directly when delegation would not help; send only the necessary bounded context.',
     auto
       ? `For every delegated task, choose ${autoChoices} based on that task. Pass both model and officially supported effort explicitly (null when the model has no effort setting). This is task-by-task model selection by the main AI, not a K heuristic, failure fallback, or automatic retry; never replay an unknown failure or silently substitute a model. Follow explicit user choices.`
-      : `User-selected default worker: ${policy.model}, reasoning effort ${policy.effort ?? 'native default'}. Honor this manual choice; choose another model only when the user or an explicit task rule requests it, never merely because you consider it more appropriate. Do not silently substitute on failure.`,
+      : policy.model.startsWith('api:')
+        ? `User-saved API consult model: ${policy.model}. Use it only when the user explicitly asks to consult it, always passing model and effort explicitly; it is not a default for ordinary delegation. Do not silently substitute on failure.`
+        : `User-selected default worker: ${policy.model}, reasoning effort ${policy.effort ?? 'native default'}. Honor this manual choice; choose another model only when the user or an explicit task rule requests it, never merely because you consider it more appropriate. Do not silently substitute on failure.`,
     provider === 'codex'
       ? `For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`
       : provider === 'gemma'

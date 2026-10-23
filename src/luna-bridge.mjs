@@ -518,6 +518,9 @@ export async function createLunaBridge({
     if (closed || closing) throw new Error('Luna bridge 正在關閉或已關閉。');
     if (!safeId(requestId) || typeof task !== 'string' || !task.trim() || task.length > 32000)
       throw new Error('requestId 或 task 無效。');
+    // A saved API consult model is never an implicit default: each paid consult names its model.
+    if (model === undefined && defaults.model?.startsWith('api:'))
+      throw Error('API 諮詢工人須在本人明確要求時明確指定 model 與 effort；省略型號不會沿用 API 模型，未派工。');
     const choice = {model: model ?? defaults.model, effort: effort !== undefined ? effort : defaults.effort};
     if (geminiOnly && !/^(gemini-|claude-|api:)/.test(choice.model))
       throw Error('此入口只提供 Gemini 或 Claude（及 API 諮詢模型）；GPT 子代理仍使用 Codex 原生派工。');

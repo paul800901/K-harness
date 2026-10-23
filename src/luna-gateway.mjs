@@ -240,7 +240,9 @@ function createMcpServer(
     ? '此入口可派 Gemini 或 Claude 原生訂閱工人；GPT 子代理使用原生派工，不從本入口轉派。明確提供原生模型及其支援的 effort；無推理設定時傳 null。'
     : policy.model === 'auto'
       ? `AI 自動選擇目前啟用：每次派工都必須明確提供原生目錄的 model 與 effort（沒有推理設定時為 null）；一般工人優先 Flash，Sol 為日常技術主腦，可交付規劃、架構、除錯與複查，但此入口派出的 Sol 子代理不能再派工；Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
-      : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設；除非本人當輪或明確任務規則指定，否則遵守手動選擇，不因自己認為更適合而改選。`;
+      : policy.model.startsWith('api:')
+        ? `已保存 API 諮詢模型 ${policy.model}：只在本人明確要求諮詢時使用，且每次都要明確提供 model 與 effort，不可省略；它不是一般工作的預設工人。`
+        : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設；除非本人當輪或明確任務規則指定，否則遵守手動選擇，不因自己認為更適合而改選。`;
   const register = (name, description, inputSchema, execute, annotations) =>
     server.registerTool(name, {description, inputSchema, annotations}, async (args, context) => {
       try {

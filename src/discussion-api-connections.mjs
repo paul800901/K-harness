@@ -111,7 +111,8 @@ export function createDiscussionApiConnections({
   isBusy = () => false
 } = {}) {
   const file = path.join(root, '.local/discussion-api-connections.json');
-  let mutation = false;
+  let mutation = false,
+    workers = 0;
   const read = async () => {
     try {
       const data = JSON.parse(await readFile(file, 'utf8'));
@@ -131,7 +132,7 @@ export function createDiscussionApiConnections({
     ...(row.catalogCheckedAt ? {catalogCheckedAt: row.catalogCheckedAt} : {})
   });
   const exclusive = async fn => {
-    if (mutation || isBusy()) throw Error('討論正在使用 API 連線；請等討論結束後再修改。');
+    if (mutation || workers || isBusy()) throw Error('討論正在使用 API 連線或 API 子代理執行中；請等結束後再修改。');
     mutation = true;
     try {
       return await fn();
@@ -165,6 +166,18 @@ export function createDiscussionApiConnections({
               defaultReasoningEffort: m.defaultEffort ?? null
             }))
           )
+      };
+    },
+    // An API consult worker holds the connections while it runs, so its URL and key come from one saved version.
+    lease() {
+      if (mutation) throw Error('API 連線正在更新；未開始 API 子代理。');
+      workers++;
+      let released = false;
+      return () => {
+        if (!released) {
+          released = true;
+          workers--;
+        }
       };
     },
     async resolve(choice) {

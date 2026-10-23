@@ -38,7 +38,8 @@ export const discussionReadTools = [
     }
   }
 ];
-export async function createDiscussionReader(workspace, {signal} = {}) {
+// Discussion participants may read broadly; an API consult worker is confined to the room workspace.
+export async function createDiscussionReader(workspace, {signal, confined = false} = {}) {
   const root = await realpath(workspace),
     check = () => signal?.throwIfAborted();
   const displayPath = target => {
@@ -75,6 +76,9 @@ export async function createDiscussionReader(workspace, {signal} = {}) {
     }
     const canonical = await realpath(target);
     if (path.relative(path.resolve(target), canonical)) throw Error('讀取路徑解析不一致。');
+    const inside = path.relative(root, canonical);
+    if (confined && (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)))
+      throw Error('API 子代理只可讀取聊天室工作區。');
     return canonical;
   };
   const bytes = async target => {
