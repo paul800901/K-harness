@@ -17,8 +17,7 @@ export const statusLabel = {
   ended: '已結束，結果未知'
 };
 // 'ended' is the summary status workerDetails gives a settled worker without a native status.
-export const workerEnded = worker =>
-  endedWorker(worker) || (worker.settled !== false && worker.status === 'ended');
+export const workerEnded = worker => endedWorker(worker) || (worker.settled !== false && worker.status === 'ended');
 // A main-agent handling note is separate from native execution settlement.
 export const workerReconciled = worker =>
   !workerEnded(worker) && worker.executionUnowned === true && !!worker.reconciliation?.reviewedAt;
@@ -139,7 +138,8 @@ export function workStatus(state, online = true, now = Date.now()) {
   const quiet = recent ?? age(a?.startedAt, now);
   const stale = quiet !== null && quiet >= QUIET_WORK_MS;
   // Self-hosted: no evidence separates local model preparation from waiting for its reply.
-  const starting = (state.provider ?? providerOf(state.model)) === 'gemma' ? '正在準備自架模型或等待回覆' : '等待核心回報';
+  const starting =
+    (state.provider ?? providerOf(state.model)) === 'gemma' ? '正在準備自架模型或等待回覆' : '等待核心回報';
   const phase = !a
     ? '工作狀態待確認'
     : ({starting, tool: '等待工具回報', worker: '等待子代理回報', compacting: '正在壓縮工作脈絡'}[a.phase] ??

@@ -859,7 +859,9 @@ test('a nested-worker gateway tells the worker it receives no completion events 
         method: 'initialize',
         params: {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'test', version: '1'}}
       });
-      const listed = await body(await post(config.url, token, {jsonrpc: '2.0', id: 2, method: 'tools/list', params: {}}));
+      const listed = await body(
+        await post(config.url, token, {jsonrpc: '2.0', id: 2, method: 'tools/list', params: {}})
+      );
       const description = listed.result.tools.find(tool => tool.name === 'luna_start').description;
       if (nestedWorker) {
         assert.match(description, /K delivers NO completion event to you/);

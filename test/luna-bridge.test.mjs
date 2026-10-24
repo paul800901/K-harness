@@ -1394,9 +1394,7 @@ test('lunaResult includes subWorkers array when present on record', async () => 
     requestId: 'parent-with-sub',
     status: 'completed',
     settled: true,
-    subWorkers: [
-      {requestId: 'sub-1', model: 'gemini-3.8-flash', status: 'completed', settled: true}
-    ]
+    subWorkers: [{requestId: 'sub-1', model: 'gemini-3.8-flash', status: 'completed', settled: true}]
   });
   assert.ok(Array.isArray(withSub.subWorkers));
   assert.equal(withSub.subWorkers.length, 1);

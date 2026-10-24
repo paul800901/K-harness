@@ -16,7 +16,18 @@ export function createClaudeWorker({
   if (!path.isAbsolute(workspace ?? '') || !['read-only', 'workspace-write', 'danger-full-access'].includes(accessMode))
     throw Error('Claude 子代理工作區或權限無效。');
   return {
-    async run({task, model, effort, sessionId, signal, mcpConfig, instructions = '', onStart = () => {}, onActivity = () => {}, onPermission} = {}) {
+    async run({
+      task,
+      model,
+      effort,
+      sessionId,
+      signal,
+      mcpConfig,
+      instructions = '',
+      onStart = () => {},
+      onActivity = () => {},
+      onPermission
+    } = {}) {
       const state = {},
         activity = createWorkActivity(state),
         tools = new Map(),
@@ -126,7 +137,12 @@ export function createClaudeWorker({
           // Only a nested-capable worker gets a K gateway and the main room's worker catalog.
           nestedWorker: Boolean(mcpConfig),
           mcpConfig: mcpConfig ?? {mcpServers: {}},
-          ...(mcpConfig && instructions ? {workspaceInstructions: `\n${instructions}`} : {}),
+          ...(mcpConfig
+            ? {
+                // The shared catalog is written for main rooms; these worker rules take precedence over it.
+                workspaceInstructions: `\n${instructions}\nAs a K worker these rules override the guidance above: K delivers no completion events to you and you must not end your turn to wait; native Claude Agent is unavailable; on scheduling.waiting call luna_wait with its waitId and timeoutMs=null; finish only after every sub-worker you started is settled and its results are checked.`
+              }
+            : {}),
           accessMode:
             accessMode === 'danger-full-access'
               ? 'claude-bypassPermissions'

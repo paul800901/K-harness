@@ -12,7 +12,7 @@ import {
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {quotaZeroUntil, quotaZeroRecheckDue} from './quota-zero.mjs';
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {
   openClaudeHost,
   claudeQuota,
@@ -1353,8 +1353,12 @@ export function createClaudeController({
           epoch = geminiBridgeEpoch;
         // One extra layer for Claude workers only: the sub-bridge gets no `nested`, so its workers cannot delegate.
         const nested = async ({requestId: upperRequestId, accessMode: upperAccessMode, onChange: onSubChange}) => {
-          const base = `${parent}--${upperRequestId}`.replace(/[^A-Za-z0-9._-]/g, '_');
-          const subParentId = base.length > 120 ? `${base.slice(0, 80)}-${base.slice(-16)}` : base;
+          // A long pair falls back to a hash of the whole pair, so two workers never share a record directory.
+          const base = `${parent}--${upperRequestId}`;
+          const subParentId =
+            base.length <= 128
+              ? base
+              : `${parent.slice(0, 60)}--${createHash('sha256').update(`${parent}\n${upperRequestId}`).digest('hex').slice(0, 40)}`;
           const subBridge = await bridgeFactory({
             root,
             workspace: state.workspace,
@@ -1368,8 +1372,19 @@ export function createClaudeController({
                 : undefined,
             onChange: onSubChange
           });
-          const runtimeGatewayFactory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
-          const subGateway = await runtimeGatewayFactory({bridge: subBridge, nestedWorker: true});
+          let subGateway;
+          try {
+            const runtimeGatewayFactory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
+            subGateway = await runtimeGatewayFactory({bridge: subBridge, nestedWorker: true});
+          } catch (error) {
+            // No sub-worker can exist yet; an unconfirmed close still keeps the parent unresolved.
+            await subBridge.close().catch(closeError => {
+              throw Object.assign(Error(`${error.message}；第二層派工關閉未確認：${closeError.message}`), {
+                settled: false
+              });
+            });
+            throw error;
+          }
           return {
             mcpConfig: subGateway.mcpConfig,
             instructions: workerInstructions,
@@ -1426,7 +1441,9 @@ export function createClaudeController({
         disarm(args.requestId);
         const result = await (await ensureBridge()).cancel(args);
         // The cancelled worker's approval card would otherwise stay on screen and block the room.
-        clearQuestions(item => item.workerRequestId === args.requestId || item.parentWorkerRequestId === args.requestId);
+        clearQuestions(
+          item => item.workerRequestId === args.requestId || item.parentWorkerRequestId === args.requestId
+        );
         changed();
         return result;
       },

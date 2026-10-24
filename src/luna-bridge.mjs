@@ -215,6 +215,13 @@ export async function createLunaBridge({
   let requestGuard = () => undefined;
   let host, codexError, gemini, claude, api;
   const processRuns = new Map();
+  // Second layers whose stop could not be confirmed, kept so cancel/close can retry; requestId → saved outcome.
+  const nestedCleanups = new Map();
+  const closeNested = context =>
+    context?.close().then(
+      () => null,
+      error => error
+    ) ?? Promise.resolve(null);
   const snapshotRecord = record => {
     if (!record) return null;
     const current = handoffObservations.get(record.requestId),
@@ -376,6 +383,8 @@ export async function createLunaBridge({
         record.executionUnowned = true;
         record.status = 'unresolved';
         record.error ??= 'K 重啟後子代理程序與完成結果無法確認；未重播。';
+        // A saved sub-worker snapshot is not evidence that it is still running; its second layer is never reloaded.
+        for (const sub of record.subWorkers ?? []) if (!sub.settled) sub.status = 'unresolved';
       }
       records.set(requestId, record);
       return record;
@@ -740,7 +749,9 @@ export async function createLunaBridge({
                 const idx = record.subWorkers.findIndex(item => item.requestId === entry.requestId);
                 if (idx >= 0) record.subWorkers[idx] = entry;
                 else record.subWorkers.push(entry);
-                void persist(record).then(() => changed(record)).catch(() => {});
+                void persist(record)
+                  .then(() => changed(record))
+                  .catch(() => {});
               }
             });
           }
@@ -815,25 +826,29 @@ export async function createLunaBridge({
                 }
               })
             )
-            .then(result => Object.assign(record, result))
-            .catch(error => {
-              Object.assign(record, processFailure(error, provider), {
-                status: error.settled === false ? 'unresolved' : controller.signal.aborted ? 'cancelled' : 'failed',
-                settled: error.settled !== false,
-                error: error.message,
-                ...(error.scheduling ? {scheduling: clone(error.scheduling), dispatch: error.dispatch} : {})
-              });
+            // The worker's own outcome is published only after its sub-workers are confirmed stopped.
+            .then(
+              async result => ({result, nestedError: await closeNested(nestedContext)}),
+              async error => ({error, nestedError: await closeNested(nestedContext)})
+            )
+            .then(({result, error, nestedError}) => {
+              if (!error) Object.assign(record, result);
+              else
+                Object.assign(record, processFailure(error, provider), {
+                  status: error.settled === false ? 'unresolved' : controller.signal.aborted ? 'cancelled' : 'failed',
+                  settled: error.settled !== false,
+                  error: error.message,
+                  ...(error.scheduling ? {scheduling: clone(error.scheduling), dispatch: error.dispatch} : {})
+                });
+              if (nestedError) {
+                // Keep the second layer so a later cancel or close can retry confirming its stop; never replay.
+                nestedCleanups.set(requestId, {context: nestedContext, status: record.status, settled: record.settled});
+                record.status = 'unresolved';
+                record.settled = false;
+                record.error = `${record.error ? `${record.error}；` : ''}小工人停止狀態未確認：${nestedError.message}`;
+              }
             })
             .then(async () => {
-              if (nestedContext) {
-                try {
-                  await nestedContext.close();
-                } catch (closeError) {
-                  record.status = 'unresolved';
-                  record.settled = false;
-                  record.error = `${record.error ? `${record.error}；` : ''}小工人停止狀態未確認：${closeError.message}`;
-                }
-              }
               record.acceptance = 'not-reviewed';
               record.endedAt = new Date().toISOString();
               await persist(record);
@@ -846,13 +861,18 @@ export async function createLunaBridge({
           // returns before agy emits output. No task retry or provider fallback.
           void handle.completion.catch(() => {});
         } catch (error) {
-          if (nestedContext) {
-            await nestedContext.close().catch(() => {});
-          }
+          // The worker never started, so no sub-worker exists; an unconfirmed close still is not settled.
+          const nestedError = await closeNested(nestedContext);
+          Object.assign(record, processFailure(error, provider));
           record.status = 'failed';
           record.settled = true;
           record.error = error.message;
-          Object.assign(record, processFailure(error, provider));
+          if (error.settled === false || nestedError) {
+            if (nestedError) nestedCleanups.set(requestId, {context: nestedContext, status: 'failed', settled: true});
+            record.status = 'unresolved';
+            record.settled = false;
+            if (nestedError) record.error += `；小工人停止狀態未確認：${nestedError.message}`;
+          }
           processRuns.delete(requestId);
           await persist(record);
           changed(record);
@@ -938,7 +958,19 @@ export async function createLunaBridge({
         handle.controller.abort();
         await operations.get(requestId);
         await handle.completion;
+      }
+      const cleanup = nestedCleanups.get(requestId);
+      if (cleanup && !processRuns.has(requestId) && !operations.has(requestId)) {
+        // The worker itself has ended; only its sub-workers' stop is retried. A failure throws and stays unresolved.
+        await cleanup.context.close();
+        nestedCleanups.delete(requestId);
+        record.status = cleanup.status;
+        record.settled = cleanup.settled;
+        record.error = `${record.error ?? ''} 小工人停止已於重試時確認。`.trim();
+        await persist(record);
+        changed(record);
       } else if (
+        !handle &&
         record.status === 'unresolved' &&
         !record.settled &&
         record.executionUnowned !== true &&

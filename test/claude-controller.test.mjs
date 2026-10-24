@@ -97,7 +97,14 @@ test('Claude close drains result persistence before a durable immutable parent f
 const fakeWorkerProvider = model =>
   model?.startsWith('claude-') ? 'claude' : model?.startsWith('gpt-') ? 'codex' : 'gemini';
 
-async function fixture({models, waitForHost, browser = false, bridgeFactory, invalidateInspection, reportAuthExpired} = {}) {
+async function fixture({
+  models,
+  waitForHost,
+  browser = false,
+  bridgeFactory,
+  invalidateInspection,
+  reportAuthExpired
+} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'claude-controller-'));
@@ -3448,7 +3455,10 @@ test('a background command stopped through Claude Code settles from its explicit
     for (const id of ['bg-a', 'bg-b', 'bg-c', 'bg-d', 'bg-e', 'bg-f', 'bg-1', 'bg-10'])
       emit({type: 'system', subtype: 'task_started', task_type: 'local_bash', task_id: id, tool_use_id: `tool-${id}`});
     const stop = (toolId, taskId, result, extra = {}) => {
-      emit({type: 'assistant', message: {content: [{type: 'tool_use', id: toolId, name: 'TaskStop', input: {task_id: taskId}}]}});
+      emit({
+        type: 'assistant',
+        message: {content: [{type: 'tool_use', id: toolId, name: 'TaskStop', input: {task_id: taskId}}]}
+      });
       emit({type: 'user', message: {content: [{type: 'tool_result', tool_use_id: toolId, ...result}]}, ...extra});
     };
     // The native background list once showed bg-e, then dropped it before its stop result arrived.
@@ -4246,7 +4256,11 @@ test('Claude controller creates nested factory with bounded second-layer bridge 
     const sub = subBridges[0];
     assert.equal(sub.options.accessMode, 'workspace-write', 'accessMode equals upper worker');
     assert.equal(sub.options.nested, undefined, 'second layer cannot delegate further');
-    assert.match(sub.options.parentId, /^claude-.*--parent-worker$/, 'parentId is derived from parent and upper worker requestId');
+    assert.match(
+      sub.options.parentId,
+      /^claude-.*--parent-worker$/,
+      'parentId is derived from parent and upper worker requestId'
+    );
 
     // Test sub-worker approval brings delegatedBy and worker identity in title
     const approvalPromise = sub.options.onRequest({
@@ -4286,6 +4300,39 @@ test('Claude controller creates nested factory with bounded second-layer bridge 
     await secondLayer.close();
     assert.equal(sub.closed, true);
     assert.equal(f.controller.state.questions.length, 0, 'second-layer close clears sub-worker approvals');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('long worker IDs that differ only in the middle get distinct second-layer record directories', async () => {
+  const parentIds = [];
+  let f;
+  f = await fixture({
+    bridgeFactory: async options => {
+      if (options.parentId === f.controller.state.threadId) return f.bridge;
+      parentIds.push(options.parentId);
+      return {
+        async list() {
+          return [];
+        },
+        async cancel() {
+          return {settled: true};
+        },
+        async close() {}
+      };
+    }
+  });
+  try {
+    await f.controller.open({accessMode: 'claude-manual'});
+    await f.gatewayOptions.bridge.start({requestId: 'first', task: 'start the main bridge'});
+    const nested = f.bridgeOptions.nested;
+    const long = middle => `${'a'.repeat(60)}${middle}${'b'.repeat(60)}`;
+    await nested({requestId: long('x'), accessMode: 'workspace-write', onChange: () => {}});
+    await nested({requestId: long('y'), accessMode: 'workspace-write', onChange: () => {}});
+    assert.equal(parentIds.length, 2);
+    assert.notEqual(parentIds[0], parentIds[1]);
+    for (const id of parentIds) assert.match(id, /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
   } finally {
     await f.controller.close();
   }

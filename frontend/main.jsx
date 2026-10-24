@@ -805,11 +805,7 @@ const ChatView = React.memo(function ChatView({
                             className="send-button"
                             aria-label="轉錄完成後送出"
                             title="轉錄完成後送出"
-                            disabled={
-                              voice.phase === 'starting' ||
-                              blocked ||
-                              uploads.some(a => a.loading)
-                            }
+                            disabled={voice.phase === 'starting' || blocked || uploads.some(a => a.loading)}
                             onClick={() => voice.stop(true)}
                           >
                             <ArrowUp size={21} />
