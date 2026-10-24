@@ -15,6 +15,7 @@ import {atomicWrite} from './atomic-write.mjs';
 import {workerEnded, workerMayBeLive} from './worker-status.mjs';
 import {usesCodexCore, modelProvider} from '../shared/model-provider.mjs';
 import {createRoomNotes} from './room-notes.mjs';
+import {createRoomSchedules} from './room-schedules.mjs';
 
 const FENCE = '```';
 // The main model ends a reply with this block when the person asked it to start the armed discussion.
@@ -46,6 +47,7 @@ export function createConversationController({
   discussionApi,
   discussionOptions = {},
   browserRequest,
+  scheduleClock,
   ...options
 }) {
   const rooms = new Map(),
@@ -82,6 +84,7 @@ export function createConversationController({
       if (continuationWrites.get(file) === next) continuationWrites.delete(file);
     });
   };
+  let roomSchedules;
   const attention = createCompletionAttention();
   const roomNotes = createRoomNotes({root, onChange: () => !closing && onChange()});
   // Main-chat tools for leaving a note in another room's inbox. The target is never woken;
@@ -131,6 +134,14 @@ export function createConversationController({
         text
       });
       return {noteId: note.id, queued: true, delivered: false};
+    },
+    // Timed wakeups; a schedule without a target wakes the chat that set it.
+    async schedule(selfId, action, args = {}) {
+      if (!selfId) throw Error('請先開啟對話。');
+      if (action === 'add')
+        return roomSchedules.add({...args, targetThreadId: args.targetThreadId ?? selfId, createdByThreadId: selfId});
+      if (['list', 'update', 'remove'].includes(action)) return roomSchedules[action](args);
+      throw Error('未知的排程操作。');
     }
   };
   const discussions = new Map();
@@ -894,7 +905,67 @@ export function createConversationController({
       throw error;
     }
   };
+  // A due schedule reaches its room like a person's send: queued while busy, never resent when uncertain.
+  // A room that is not open is opened in the background; the person's selected room does not change.
+  const sendScheduled = async ({threadId, text}) => {
+    const notSent = message => Object.assign(Error(message), {notSent: true});
+    if (closing) throw notSent('K 正在關閉。');
+    const session = (await listMainSessions(root, {threadId})).sessions[0];
+    if (!session || session.archived)
+      throw Object.assign(notSent(session ? '聊天室已封存。' : '找不到目標聊天室。'), {noNote: true});
+    let controller = rooms.get(threadId);
+    if (!controller) {
+      let operation = openingRooms.get(threadId);
+      if (!operation) {
+        const data = {threadId, model: session.model};
+        operation = {abort: new AbortController(), record: data};
+        openingRooms.set(threadId, operation);
+        openingTasks.add(operation);
+        operation.promise = loadRoom(data, operation).finally(() => {
+          openingTasks.delete(operation);
+          if (openingRooms.get(threadId) === operation) openingRooms.delete(threadId);
+        });
+      }
+      try {
+        controller = (await operation.promise).controller;
+      } catch (error) {
+        throw notSent(`背景開啟聊天室失敗：${error.message}`);
+      }
+      openedOrder.set(controller, ++openSequence);
+      releasing = releasing.then(releaseIdleRooms);
+    }
+    const d = discussion(controller);
+    if (locked.has(controller) || d?.busy || d?.held || continuations.has(controller))
+      throw notSent('聊天室正在更新、討論中或有未結束的換房交接。');
+    return api.send({threadId, text});
+  };
+  const deliverScheduled = async item => {
+    try {
+      return await sendScheduled(item);
+    } catch (error) {
+      if (!error.noNote)
+        await roomNotes
+          .add(item.threadId, {
+            fromThreadId: 'k-schedule',
+            fromTitle: 'K 定時排程',
+            fromProvider: null,
+            text: `排程「${item.title}」原定 ${item.scheduledLabel}，${error.notSent === true ? '未送出' : '送出狀態不明、未重送'}：${error.message}`
+          })
+          .catch(() => {});
+      throw error;
+    }
+  };
+  roomSchedules = createRoomSchedules({
+    root,
+    deliver: deliverScheduled,
+    listSessions: listMainSessions,
+    ...scheduleClock,
+    onChange: () => !closing && onChange()
+  });
+
   const api = {
+    // Internal handle for tests and diagnostics; AI tools reach schedules through roomTools.
+    schedules: roomSchedules,
     concurrentConversations: true,
     // Internal invalidation token, not user data. In-place native updates advance
     // their own room; background updates do not dirty the selected transcript.
@@ -1160,6 +1231,7 @@ export function createConversationController({
     },
     async close() {
       closing = true;
+      await roomSchedules.close();
       ++navigationRequest;
       pendingView = null;
       idleProbe?.abort.abort(new DOMException('K 正在關閉。', 'AbortError'));

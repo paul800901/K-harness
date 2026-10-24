@@ -532,11 +532,21 @@ test('gateway exposes room tools only when given and the Codex main room refuses
     }
   };
   const rooms = {list: async () => ({rooms: []}), note: async () => ({queued: true})};
-  assert(!(await names({})).some(tool => tool.name.includes('room')), 'worker-style gateways have no room tools');
+  assert(
+    !(await names({})).some(tool => tool.name.includes('room') || tool.name.includes('schedule')),
+    'worker-style gateways have no room tools'
+  );
   const luna = await names({rooms});
   assert.deepEqual(
-    luna.filter(tool => tool.name.includes('room')).map(tool => tool.name),
-    ['luna_room_list', 'luna_room_note']
+    luna.filter(tool => tool.name.includes('room') || tool.name.includes('schedule')).map(tool => tool.name),
+    [
+      'luna_room_list',
+      'luna_room_note',
+      'luna_schedule_add',
+      'luna_schedule_list',
+      'luna_schedule_update',
+      'luna_schedule_remove'
+    ]
   );
   const description = luna.find(tool => tool.name === 'luna_room_note').description;
   for (const phrase of [
@@ -552,10 +562,15 @@ test('gateway exposes room tools only when given and the Codex main room refuses
     (await names({rooms, geminiOnly: true})).some(tool => tool.name === 'gemini_room_note'),
     'Codex main rooms use the gemini prefix'
   );
+  assert(
+    (await names({rooms, geminiOnly: true})).some(tool => tool.name === 'gemini_schedule_add'),
+    'Codex main rooms use the gemini prefix for schedules'
+  );
 
   const root = await tempRoot('codex-guard');
   let gateway, hooks;
-  const listed = [];
+  const listed = [],
+    scheduled = [];
   const host = {
     closed: new Promise(() => {}),
     notify() {},
@@ -590,7 +605,11 @@ test('gateway exposes room tools only when given and the Codex main room refuses
         close: async () => {}
       };
     },
-    roomTools: {list: async id => listed.push(id) && {rooms: []}, note: async () => ({})}
+    roomTools: {
+      list: async id => listed.push(id) && {rooms: []},
+      note: async () => ({}),
+      schedule: async (id, action) => scheduled.push([id, action]) && {}
+    }
   });
   try {
     await c.open({model: 'gpt-6.1-sol', effort: 'medium', accessMode: 'read-only'});
@@ -598,8 +617,12 @@ test('gateway exposes room tools only when given and the Codex main room refuses
     const meta = threadId => ({'x-codex-turn-metadata': JSON.stringify({thread_id: threadId, turn_id: 'turn-1'})});
     assert.throws(() => gateway.rooms.list(meta('subagent')), /目前主對話/);
     assert.throws(() => gateway.rooms.note({targetThreadId: 'x', text: 'y'}, meta('subagent')), /目前主對話/);
+    for (const action of ['add', 'list', 'update', 'remove'])
+      assert.throws(() => gateway.rooms.schedule(action, {}, meta('subagent')), /目前主對話/);
     await gateway.rooms.list(meta('parent'));
     assert.deepEqual(listed, [c.state.threadId]);
+    await gateway.rooms.schedule('list', {}, meta('parent'));
+    assert.deepEqual(scheduled, [[c.state.threadId, 'list']]);
   } finally {
     await c.close().catch(() => {});
   }

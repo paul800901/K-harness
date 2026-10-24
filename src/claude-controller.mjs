@@ -1425,7 +1425,13 @@ export function createClaudeController({
     gateway = await runtimeGatewayFactory({
       bridge: lazyBridge,
       ...(roomTools
-        ? {rooms: {list: () => roomTools.list(mainTurn()), note: args => roomTools.note(mainTurn(), args)}}
+        ? {
+            rooms: {
+              list: () => roomTools.list(mainTurn()),
+              note: args => roomTools.note(mainTurn(), args),
+              schedule: (action, args) => roomTools.schedule(mainTurn(), action, args)
+            }
+          }
         : {})
     });
   }

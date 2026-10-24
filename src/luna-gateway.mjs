@@ -234,6 +234,62 @@ function createMcpServer(
       (args, meta) => rooms.note(args, meta),
       {readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false}
     );
+    const scheduleTool = (action, description, inputSchema, annotations) =>
+      roomTool(
+        `${prefix}_schedule_${action}`,
+        description,
+        inputSchema,
+        (args, meta) => rooms.schedule(action, args, meta),
+        annotations
+      );
+    const scheduleFields = {
+      title: z.string().min(1).max(80),
+      text: z.string().min(1).max(4000),
+      cron: z.string().min(1).max(120),
+      at: z.string().min(1).max(64),
+      timezone: z.string().min(1).max(64)
+    };
+    scheduleTool(
+      'add',
+      `Set a timed wakeup for a K chat, ONLY when the human asked for a reminder or a timed/recurring job. At the time, K sends text into the target chat as a message labeled as the human's pre-set reminder, so that chat's AI starts working while the human is usually at the computer; a busy chat queues it. Give exactly one of cron (5-field, local time in timezone, e.g. "0 11 * * 6" = Saturdays 11:00; runs must be at least 10 minutes apart) or at (one time, ISO local date-time such as "2026-10-31T11:00", in timezone). timezone defaults to this computer's zone. targetThreadId defaults to this chat; use ${prefix}_room_list for another chat. Write text as a complete instruction (what to do, which files or scripts), because it may arrive long after this conversation. If K was off or the computer asleep, a missed time is sent once when K runs again, never more. A send that fails or is uncertain is not resent; K shows a note above that chat's input box. Not for polling workers, self-waking loops or replacing ${prefix}_room_note. Returns the schedule with nextRunAt.`,
+      z.strictObject({
+        ...scheduleFields,
+        cron: scheduleFields.cron.optional(),
+        at: scheduleFields.at.optional(),
+        timezone: scheduleFields.timezone.optional(),
+        targetThreadId: z
+          .string()
+          .regex(/^[a-zA-Z0-9_-]{1,128}$/u)
+          .optional()
+      }),
+      {readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false}
+    );
+    scheduleTool(
+      'list',
+      `List every timed wakeup in this K: id, target chat and title, text, cron/at, timezone, paused, nextRunAt, and the last run time and result (sent, queued, failed, uncertain). Main chat only; not a worker tool.`,
+      z.strictObject({}),
+      {readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false}
+    );
+    scheduleTool(
+      'update',
+      `Change a timed wakeup found with ${prefix}_schedule_list, when the human asked: title, text, cron or at, timezone, or paused. A new time, or resuming with paused:false, counts from now; paused periods are not made up.`,
+      z.strictObject({
+        id: z.string().min(1).max(64),
+        title: scheduleFields.title.optional(),
+        text: scheduleFields.text.optional(),
+        cron: scheduleFields.cron.optional(),
+        at: scheduleFields.at.optional(),
+        timezone: scheduleFields.timezone.optional(),
+        paused: z.boolean().optional()
+      }),
+      {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false}
+    );
+    scheduleTool(
+      'remove',
+      `Delete a timed wakeup found with ${prefix}_schedule_list, when the human asked.`,
+      z.strictObject({id: z.string().min(1).max(64)}),
+      {readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false}
+    );
   }
   const policy = bridge.workerPolicy;
   const selectionGuidance = processOnly

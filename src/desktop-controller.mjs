@@ -1648,6 +1648,10 @@ export function createDesktopController({
               note: (args, meta) => {
                 assertMainGoalCaller(meta);
                 return roomTools.note(state.threadId, args);
+              },
+              schedule: (action, args, meta) => {
+                assertMainGoalCaller(meta);
+                return roomTools.schedule(state.threadId, action, args);
               }
             }
           }
