@@ -23,6 +23,7 @@ $fromVersion = $null
 $updateSuccess = $false
 $failureReason = "更新沒有完成。"
 $launcherGone = $false
+$updateLock = $null
 
 # The real cause is what the installer (Node, UTF-8) printed. Update-K.ps1 throws only a generic message,
 # which the wrapper below writes in the console code page (it reads back with replacement characters);
@@ -40,6 +41,9 @@ function Get-FailureLine([string]$fallback) {
         $line = if ($candidates.Count -gt 0) { [string]$candidates[$candidates.Count - 1] } else { $fallback }
         $line = $line.Trim()
         if ($line.Length -gt 200) { $line = $line.Substring(0, 200) }
+        # The installer found K listening again (2026-10-24: the K icon was clicked while tests were still
+        # running). Say what happened in the button's terms instead of asking to "leave and stop K".
+        if ($line -match '離開並停止 K') { $line = "更新進行中 K 又被開啟了，這次沒有套用；再按一次更新即可。" }
         return $line
     } catch {
         return $fallback
@@ -47,6 +51,12 @@ function Get-FailureLine([string]$fallback) {
 }
 
 try {
+    # Until K is started again below, a launcher opened by hand sees this name and does not start K:
+    # the installer stops when K is listening, and a running launcher holds the exe the update
+    # replaces. The name disappears with this process, so a crash never locks K out. Best effort: if
+    # the name cannot be created, the update still runs and K is still started again below.
+    try { $updateLock = New-Object System.Threading.Mutex($false, "Local\KHarnessSelfUpdate") } catch {}
+
     Write-Host "等待 K 完全關閉…"
     $deadline = [DateTime]::UtcNow.AddSeconds(60)
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -86,6 +96,7 @@ try {
         if (-not $updateSuccess) { $result.reason = $failureReason }
         [System.IO.File]::WriteAllText($resultPath, (ConvertTo-Json -InputObject $result -Compress), (New-Object System.Text.UTF8Encoding($false)))
     } catch {}
+    if ($updateLock) { $updateLock.Dispose() }
     # Bring K back whatever happened, unless the old launcher is still the one running.
     if ($launcherGone -and (Test-Path -LiteralPath $launcherExe)) {
         Write-Host "正在重新啟動 K…"

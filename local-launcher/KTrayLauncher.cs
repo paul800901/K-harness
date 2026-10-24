@@ -14,8 +14,8 @@ internal sealed class KLauncherContext : ApplicationContext
     private const int Port = 47831;
     private const string CandidateDirectory = ".runtime\\isolation-pilot\\sandboxie-candidate-3b6c43ee";
     private const string StateChild = "private-state";
-    private readonly string root;
-    private readonly string logPath;
+    private static readonly string root = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
+    private static readonly string logPath = Path.Combine(root, ".runtime", "desktop-logs", "launcher.log");
     private readonly NotifyIcon tray;
     private readonly System.Windows.Forms.Timer timer;
     private readonly EventWaitHandle openSignal;
@@ -32,8 +32,6 @@ internal sealed class KLauncherContext : ApplicationContext
     public KLauncherContext(EventWaitHandle signal)
     {
         openSignal = signal;
-        root = Path.GetFullPath(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", ".."));
-        logPath = Path.Combine(root, ".runtime", "desktop-logs", "launcher.log");
         Directory.CreateDirectory(Path.GetDirectoryName(logPath));
         uiDispatcher = new Control();
         uiDispatcher.CreateControl();
@@ -462,9 +460,21 @@ internal sealed class KLauncherContext : ApplicationContext
         tray.ShowBalloonTip(3000);
     }
 
-    private void Log(string message)
+    private static void Log(string message)
     {
         try { File.AppendAllText(logPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " " + message + Environment.NewLine, Encoding.UTF8); } catch { }
+    }
+
+    // scripts/Self-Update-K.ps1 keeps this name alive while it builds, tests and replaces K and this exe.
+    // K started now would make the installer stop, and a running launcher could not be replaced.
+    internal static bool SelfUpdateInProgress()
+    {
+        Mutex updating;
+        if (!Mutex.TryOpenExisting("Local\\KHarnessSelfUpdate", out updating)) return false;
+        updating.Dispose();
+        Log("start refused: self-update in progress");
+        MessageBox.Show("K 更新中，約 2～3 分鐘後會自動重新開啟，不用再開。", "K", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        return true;
     }
 
     private static string SafeExitCode(Process process) { try { return process.ExitCode.ToString(); } catch { return "unknown"; } }
@@ -475,12 +485,13 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        if (KLauncherContext.SelfUpdateInProgress()) return;
         bool created;
         using (var mutex = new Mutex(true, "Local\\KHarnessTrayLauncher", out created)) {
             using (var openSignal = new EventWaitHandle(false, EventResetMode.AutoReset, "Local\\KHarnessTrayOpen")) {
                 if (!created) { openSignal.Set(); return; }
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
                 Application.Run(new KLauncherContext(openSignal));
                 GC.KeepAlive(mutex);
             }

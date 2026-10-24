@@ -92,6 +92,9 @@ export async function activateRuntime({
     await rename(prepared, p.runtime);
     movedNew = true;
     await mkdir(path.dirname(p.launcher), {recursive: true});
+    // A launcher that is still running (one refused during this update may still show its notice)
+    // keeps its exe busy: it cannot be overwritten, but it can be moved aside into the backup.
+    if (await exists(p.launcher)) await rename(p.launcher, path.join(backup, 'launcher.exe'));
     await copyFile(path.join(backup, 'incoming-launcher.exe'), p.launcher);
     await copyFile(path.join(backup, 'incoming-entry.ps1'), p.entry);
     const codexHome = path.join(p.candidate, 'agent-home/.codex');

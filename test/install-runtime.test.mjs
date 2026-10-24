@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {mkdir, mkdtemp, writeFile, readFile, stat, readdir} from 'node:fs/promises';
-import {spawnSync} from 'node:child_process';
+import {mkdir, mkdtemp, writeFile, readFile, stat, readdir, copyFile} from 'node:fs/promises';
+import {spawn, spawnSync} from 'node:child_process';
 import {
   activateRuntime,
   rollbackRuntime,
@@ -90,6 +90,32 @@ test('running work prevents activation, preserving existing code and candidate',
   assert.ok(await stat(prepared));
   await assert.rejects(stat(path.join(p.candidate, 'agent-home/.codex/config.toml')), {code: 'ENOENT'});
 });
+
+test(
+  'a launcher that is still running is moved aside instead of blocking the update',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const {root, p, prepared} = await fixture();
+    // A real running image at the launcher path (2026-10-24: a launcher refused during the update was
+    // still showing its notice): Windows refuses to overwrite it but allows renaming it.
+    await copyFile(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'PING.EXE'), p.launcher);
+    const running = spawn(p.launcher, ['-n', '60', '127.0.0.1'], {stdio: 'ignore', windowsHide: true});
+    try {
+      await assert.rejects(copyFile(path.join(prepared, 'Start-K-Desktop.ps1'), p.launcher), error =>
+        ['EBUSY', 'EPERM'].includes(error.code)
+      );
+      const result = await activateRuntime({root, prepared, version: 'while-running', checkStopped});
+      assert.equal(await readFile(p.launcher, 'utf8'), 'new-launcher');
+      const movedAside = await stat(path.join(result.previous, 'launcher.exe'));
+      assert.ok(movedAside.size > 0);
+      // The moved file is what rollback restores, even while that old launcher is still running.
+      await rollbackRuntime(root, {checkStopped});
+      assert.equal((await stat(p.launcher)).size, movedAside.size);
+    } finally {
+      running.kill();
+    }
+  }
+);
 
 test('activation creates the missing K Codex Windows sandbox config', async () => {
   const {root, p, prepared} = await fixture();

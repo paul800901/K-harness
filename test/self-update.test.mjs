@@ -325,6 +325,43 @@ test(
   }
 );
 
+test(
+  'the update script keeps the launcher lock alive while the installer runs',
+  {skip: process.platform !== 'win32', timeout: 120000},
+  async () => {
+    // Observed from inside the fake Update-K.ps1 and reported through the failure line. A real update
+    // runs this very test under its own lock, so the lock's absence is never asserted.
+    const result = await runScript(
+      [
+        'param([string]$Ref)',
+        '$lock = $null',
+        "$held = [System.Threading.Mutex]::TryOpenExisting('Local\\KHarnessSelfUpdate', [ref]$lock)",
+        'if ($lock) { $lock.Dispose() }',
+        'throw "lock while updating: $held"'
+      ],
+      await ended()
+    );
+    assert.deepEqual([result.ok, result.reason], [false, 'lock while updating: True']);
+  }
+);
+
+test(
+  'a K opened again during the update is explained in the button\'s own words',
+  {skip: process.platform !== 'win32', timeout: 120000},
+  async () => {
+    const result = await runScript(
+      [
+        'param([string]$Ref)',
+        "& node (Join-Path $PSScriptRoot 'reopened.js')",
+        "if($LASTEXITCODE -ne 0){throw 'K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。'}"
+      ],
+      await ended(),
+      {'reopened.js': "console.error('請先「離開並停止 K」，更新不會強制結束工作。');\nprocess.exit(1);"}
+    );
+    assert.deepEqual([result.ok, result.reason], [false, '更新進行中 K 又被開啟了，這次沒有套用；再按一次更新即可。']);
+  }
+);
+
 test('the request carries nothing: any body content is refused and K chooses the version', async () => {
   const requested = [];
   const {app, call} = await desktop({root: await repo({ready: READY}), request: async ref => requested.push(ref)});
