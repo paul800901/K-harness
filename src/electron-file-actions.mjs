@@ -22,40 +22,42 @@ export function openFileWith(target, {ownerHandle, execFileImpl = execFile} = {}
   });
 }
 
-// Only a native context-menu click can reach these actions. No renderer IPC or
-// HTTP endpoint can ask the OS to open an arbitrary Markdown destination.
-export function nativeFileMenuItems({electron, window, owner, app, params, isClosing, openWith = openFileWith}) {
+// Only a native context-menu click or the owner page's left click on a K file
+// link reaches these actions. The left click may only reveal the file in File
+// Explorer; opening it remains a native menu choice. Neither can name an
+// arbitrary Markdown destination: the original room must have emitted it.
+function messageFileAction({electron, window, owner, app, linkURL, frame, isClosing}) {
   let url;
   try {
-    url = new URL(params.linkURL);
+    url = new URL(linkURL);
     if (
       url.origin !== app?.origin ||
       url.pathname !== '/api/message-file' ||
       !url.searchParams.get('path') ||
       !url.searchParams.get('threadId')
     )
-      return [];
+      return null;
   } catch {
-    return [];
+    return null;
   }
   const allowed = () => {
     try {
       return (
-        !!params.frame &&
+        !!frame &&
         !isClosing() &&
         !window.isDestroyed() &&
         !owner.isDestroyed() &&
-        params.frame === owner.mainFrame &&
+        frame === owner.mainFrame &&
         new URL(owner.getURL()).origin === app.origin
       );
     } catch {
       return false;
     }
   };
-  if (!allowed()) return [];
+  if (!allowed()) return null;
   const href = url.searchParams.get('path'),
     context = {threadId: url.searchParams.get('threadId')};
-  const action = perform => async () => {
+  return perform => async () => {
     try {
       if (!allowed()) throw Error('原視窗已關閉或離開 K。');
       // Recheck the original conversation at click time, not whichever room is
@@ -75,6 +77,30 @@ export function nativeFileMenuItems({electron, window, owner, app, params, isClo
         });
     }
   };
+}
+
+const reveal = electron => target => electron.shell.showItemInFolder(target);
+
+// Left click from the owner page's main frame. Returns false without any OS
+// action when the request is not a K file link from that frame.
+export async function revealMessageFile(options) {
+  const action = messageFileAction(options);
+  if (!action) return false;
+  await action(reveal(options.electron))();
+  return true;
+}
+
+export function nativeFileMenuItems({electron, window, owner, app, params, isClosing, openWith = openFileWith}) {
+  const action = messageFileAction({
+    electron,
+    window,
+    owner,
+    app,
+    isClosing,
+    linkURL: params.linkURL,
+    frame: params.frame
+  });
+  if (!action) return [];
   return [
     {
       label: '用預設程式開啟',
@@ -86,7 +112,7 @@ export function nativeFileMenuItems({electron, window, owner, app, params, isClo
     ...(process.platform === 'win32'
       ? [{label: '開啟方式…', click: action(target => openWith(target, {ownerHandle: window.getNativeWindowHandle()}))}]
       : []),
-    {label: '在檔案總管中顯示', click: action(target => electron.shell.showItemInFolder(target))},
+    {label: '在檔案總管中顯示', click: action(reveal(electron))},
     {label: '複製完整路徑', click: action(target => electron.clipboard.writeText(target))}
   ];
 }

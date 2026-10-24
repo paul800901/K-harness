@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, writeFile, readFile} from 'node:fs/promises';
 import {execFileSync} from 'node:child_process';
 import path from 'node:path';
-import {nativeFileMenuItems, openFileWith} from '../src/electron-file-actions.mjs';
+import {nativeFileMenuItems, openFileWith, revealMessageFile} from '../src/electron-file-actions.mjs';
 import {resolveNativeMessageFile} from '../src/native-message-file.mjs';
 import {messageFileUrl} from '../shared/native-content.mjs';
 import {scratchBase} from './scratch.mjs';
@@ -133,6 +133,34 @@ test('menu click revalidates native source, file existence and window lifecycle;
   await items[0].click();
   assert.equal(f.calls.length, before);
   assert.equal(f.errors.length, 4);
+});
+
+test('left click reveals only a K file link from the main frame and reports failures without retrying', async () => {
+  const f = await fixture(),
+    reveal = extra =>
+      revealMessageFile({...f.args, linkURL: f.args.params.linkURL, frame: f.args.params.frame, ...extra});
+  assert.equal(await reveal(), true);
+  assert.deepEqual(
+    f.calls.filter(c => c[0] !== 'resolve'),
+    [['reveal', f.file]]
+  );
+  assert.deepEqual(f.calls[0], ['resolve', f.file, {threadId: 'original-room'}]);
+  f.calls.length = 0;
+  for (const linkURL of [undefined, 'file:///D:/file.md', 'https://example.test/api/message-file?path=a&threadId=b'])
+    assert.equal(await reveal({linkURL}), false);
+  for (const frame of [null, {url: f.args.app.origin}]) assert.equal(await reveal({frame}), false);
+  assert.deepEqual(f.calls, []);
+  f.state.messages = [];
+  assert.equal(await reveal(), true);
+  assert.match(f.errors.at(-1).detail, /本聊天室/);
+  f.state.messages = [{role: 'assistant', text: `[缺檔](<${path.join(f.root, 'gone.mp4')}>)`}];
+  assert.equal(
+    await reveal({linkURL: f.args.app.origin + messageFileUrl(path.join(f.root, 'gone.mp4'), 'original-room')}),
+    true
+  );
+  assert.match(f.errors.at(-1).detail, /ENOENT/);
+  assert.equal(f.errors.length, 2);
+  assert.equal(f.calls.filter(c => c[0] === 'reveal').length, 0);
 });
 
 test(

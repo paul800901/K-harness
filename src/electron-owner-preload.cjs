@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld(
       ipcRenderer.on('k-native-window-hidden', listener);
       return () => ipcRenderer.removeListener('k-native-window-hidden', listener);
     },
+    // The main process revalidates the room, frame and file before revealing it.
+    revealMessageFile: linkURL => ipcRenderer.invoke('k-native-reveal-message-file', String(linkURL)),
     onWindowFocusChanged: callback => {
       if (typeof callback !== 'function') throw new TypeError('Callback required.');
       windowFocusListeners.add(callback);

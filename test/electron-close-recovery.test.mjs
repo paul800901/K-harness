@@ -46,6 +46,7 @@ test('failed safe shutdown leaves the window reopenable and attention attached, 
     isDestroyed() {
       return !!this.destroyed;
     }
+    ipc = {handle() {}};
     send() {}
     setWindowOpenHandler() {}
     async loadURL() {}

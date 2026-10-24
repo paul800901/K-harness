@@ -12,6 +12,7 @@ import {
   messageFileUrl,
   nativeDestinationKind,
   preserveNativeUrl,
+  readableDestination,
   restoreNativeFileDestinations
 } from '../shared/native-content.mjs';
 import {parseResponseAnnotations} from './response-annotations.mjs';
@@ -44,11 +45,14 @@ export function NativeLink({href, children, title}) {
         href={messageFileUrl(href, state.threadId)}
         draggable={false}
         className="inline-file"
-        title={title || href}
+        title={title || readableDestination(href)}
         onAuxClick={event => event.preventDefault()}
         onClick={event => {
           event.preventDefault();
-          preview(href, 'message-file');
+          // The desktop shell reveals the file in File Explorer; a browser
+          // cannot reach the OS, so it keeps the in-page preview.
+          if (window.kBrowser?.revealMessageFile) void window.kBrowser.revealMessageFile(event.currentTarget.href);
+          else preview(href, 'message-file');
         }}
       >
         <FileText size={14} />

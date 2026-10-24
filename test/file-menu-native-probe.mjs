@@ -110,6 +110,14 @@ async function run() {
       const observer=new MutationObserver(check);observer.observe(document.body,{subtree:true,childList:true});check();
     })`);
     assert.equal(rect.draggable, false);
+    // Left click goes through the owner preload to the main process and reveals
+    // the file; it never opens the in-page preview in the desktop shell.
+    await wc.executeJavaScript("document.querySelector('a.inline-file').click()");
+    for (let i = 0; i < 100 && calls.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(calls, [['startup-show-suppressed'], ['reveal', file]]);
+    assert.deepEqual(errors, []);
+    assert.equal(await wc.executeJavaScript("!!document.querySelector('.file-preview')"), false);
+    calls.length = 1;
     let watchdog;
     const boundedMenu = Promise.race([
       menuPromise,
@@ -133,13 +141,6 @@ async function run() {
       ['copy', file]
     ]);
     assert.deepEqual(errors, []);
-    await wc.executeJavaScript("document.querySelector('a.inline-file').click()");
-    const preview = await wc.executeJavaScript(`new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{observer.disconnect();reject(Error('preview missing'));},10000);
-      const check=()=>{const p=document.querySelector('.file-preview');if(!p?.textContent.includes('native renderer preview'))return;clearTimeout(timer);observer.disconnect();resolve(p.textContent);};
-      const observer=new MutationObserver(check);observer.observe(document.body,{subtree:true,childList:true});check();
-    })`);
-    assert.match(preview, /native renderer preview/);
     await writeFile(
       path.join(out, 'native-result.json'),
       JSON.stringify(
@@ -148,7 +149,7 @@ async function run() {
           electron: process.versions.electron,
           nativeMenuEvent: true,
           labels: menu.items.map(i => i.label),
-          preview: true,
+          leftClickReveal: true,
           boundary:
             'Hidden real Electron; native Menu constructed, popup and OS actions intercepted. Open With dialog UI not exercised; no formal state or focus change.'
         },

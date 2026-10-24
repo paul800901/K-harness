@@ -43,6 +43,16 @@ export function restoreNativeFileDestinations() {
   };
 }
 
+// Markdown destinations often percent-encode Chinese file names. Show them as
+// text; the original value still goes to the server unchanged.
+export function readableDestination(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function messageFileUrl(href, threadId, download = false) {
   return `/api/message-file?path=${encodeURIComponent(href)}&threadId=${encodeURIComponent(threadId ?? '')}${download ? '&download=1' : ''}`;
 }

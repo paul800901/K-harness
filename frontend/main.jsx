@@ -84,6 +84,7 @@ import {SettingsDialog} from './settings-dialog.jsx';
 import './model-picker.css';
 import {PermissionPicker, claudePermissionModes} from './permission-picker.jsx';
 import {modelProvider as providerOf} from '../shared/model-provider.mjs';
+import {readableDestination} from '../shared/native-content.mjs';
 import './mobile.css';
 import {AddResponseSelectionButton, AttachmentLabel, WorkProgress, messageComponents} from './chat-messages.jsx';
 import {
@@ -2592,7 +2593,7 @@ function App() {
             />
           )}
           {modal?.type === 'preview' && (
-            <Modal title={modal.name.split('/').at(-1)} onClose={() => setModal(null)}>
+            <Modal title={readableDestination(modal.name).split(/[\\/]/).at(-1)} onClose={() => setModal(null)}>
               {modal.loading ? (
                 <p>載入成果…</p>
               ) : modal.image ? (

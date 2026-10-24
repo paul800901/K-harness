@@ -1,6 +1,6 @@
 import {fileURLToPath} from 'node:url';
 import {createTaskbarAttentionController, createWindowFocusNotifier} from './taskbar-attention.mjs';
-import {nativeFileMenuItems} from './electron-file-actions.mjs';
+import {nativeFileMenuItems, revealMessageFile} from './electron-file-actions.mjs';
 
 export function createExternalLinkWindowHandler(openExternal, getAppOrigin = () => null) {
   return ({url}) => {
@@ -160,6 +160,19 @@ export async function createElectronWorkbench({electron, servicesFactory, browse
       electron.Menu.buildFromTemplate(items).popup({window});
     }
   });
+  // Left click on a K file link: reveal it in File Explorer. Scoped to the
+  // owner page; the same source, frame and file checks as the native menu apply.
+  owner.webContents.ipc.handle('k-native-reveal-message-file', (event, linkURL) =>
+    revealMessageFile({
+      electron,
+      window,
+      owner: owner.webContents,
+      app: services?.app,
+      linkURL,
+      frame: event.senderFrame,
+      isClosing: () => closed || closing
+    })
+  );
   window.contentView.addChildView(owner);
   let services,
     closed = false,

@@ -8,6 +8,7 @@ import {
   preserveNativeUrl,
   referencesNativeDestination,
   messageFileUrl,
+  readableDestination,
   restoreNativeFileDestinations
 } from '../shared/native-content.mjs';
 import {readNativeMessageFile} from '../src/native-message-file.mjs';
@@ -36,6 +37,14 @@ test('native destinations remain exact: Windows, file URI, web, email, custom an
   assert.ok(messageFileUrl('中文/a.md', 'room').includes('threadId=room'));
   assert.ok(remoteRouteAllowed('GET', '/api/message-file'));
   assert.equal(remoteRouteAllowed('POST', '/api/message-file'), false);
+});
+
+test('percent-encoded Chinese file names display as text; malformed escapes stay as written', () => {
+  assert.equal(
+    readableDestination('/E:/CaseAgent/0073_61023_%E7%99%BC%E5%B8%83%E5%BD%B1%E7%89%87.mp4'),
+    '/E:/CaseAgent/0073_61023_發布影片.mp4'
+  );
+  assert.equal(readableDestination('D:/中文/a #100%.md'), 'D:/中文/a #100%.md');
 });
 
 test('existing file links need no file-change artifact event; source must be this native assistant', async () => {

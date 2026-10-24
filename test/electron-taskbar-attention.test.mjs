@@ -247,7 +247,8 @@ test('focus notifications are read-only, reflect native focused and visible stat
       },
       removeListener(channel, listener) {
         if (ipcListeners.get(channel) === listener) ipcListeners.delete(channel);
-      }
+      },
+      invoke: async (...args) => args
     };
   vm.runInNewContext(source, {
     require: id =>
@@ -263,7 +264,14 @@ test('focus notifications are read-only, reflect native focused and visible stat
         : null
   });
   assert.equal(typeof api.onWindowFocusChanged, 'function');
-  assert.deepEqual(Object.keys(api).sort(), ['onPageChanged', 'onWindowFocusChanged', 'onWindowHidden']);
+  assert.deepEqual(Object.keys(api).sort(), [
+    'onPageChanged',
+    'onWindowFocusChanged',
+    'onWindowHidden',
+    'revealMessageFile'
+  ]);
+  // The only renderer request: reveal a K file link, revalidated by the main process.
+  assert.deepEqual(await api.revealMessageFile({toString: () => 'link'}), ['k-native-reveal-message-file', 'link']);
   assert.equal('focus' in api, false, 'renderer receives observation only, never a window-control method');
   const seen = [];
   ipcListeners.get('k-native-window-focus')({}, {focused: false});
