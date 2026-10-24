@@ -37,7 +37,7 @@ export function CodeHeader({language, code}) {
   );
 }
 export function NativeLink({href, children, title}) {
-  const {preview, state} = useContext(TranscriptContext),
+  const {preview, revealFile, state} = useContext(TranscriptContext),
     kind = nativeDestinationKind(href);
   if (kind === 'file')
     return (
@@ -51,7 +51,7 @@ export function NativeLink({href, children, title}) {
           event.preventDefault();
           // The desktop shell reveals the file in File Explorer; a browser
           // cannot reach the OS, so it keeps the in-page preview.
-          if (window.kBrowser?.revealMessageFile) void window.kBrowser.revealMessageFile(event.currentTarget.href);
+          if (window.kBrowser?.revealMessageFile) void revealFile(event.currentTarget.href);
           else preview(href, 'message-file');
         }}
       >

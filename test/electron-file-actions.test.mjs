@@ -163,6 +163,68 @@ test('left click reveals only a K file link from the main frame and reports fail
   assert.equal(f.calls.filter(c => c[0] === 'reveal').length, 0);
 });
 
+test('left click rejects unready services and rechecks lifecycle after asynchronous path resolution', async () => {
+  const f = await fixture(),
+    options = {...f.args, linkURL: f.args.params.linkURL, frame: f.args.params.frame};
+  for (const extra of [{app: undefined}, {frame: undefined}, {isClosing: () => true}])
+    assert.equal(await revealMessageFile({...options, ...extra}), false);
+  f.navigate('https://example.test/');
+  assert.equal(await revealMessageFile(options), false);
+  assert.deepEqual(f.calls, []);
+  assert.deepEqual(f.errors, []);
+
+  for (const change of ['navigate', 'closing', 'frame', 'destroy']) {
+    const pending = await fixture();
+    let closing = false;
+    const resolvePath = pending.args.app.controller.messageFilePath;
+    pending.args.app.controller.messageFilePath = async (...args) => {
+      const target = resolvePath(...args);
+      if (change === 'navigate') pending.navigate('https://example.test/');
+      if (change === 'closing') closing = true;
+      if (change === 'frame') pending.args.owner.mainFrame = {};
+      if (change === 'destroy') pending.close();
+      return target;
+    };
+    assert.equal(
+      await revealMessageFile({
+        ...pending.args,
+        linkURL: pending.args.params.linkURL,
+        frame: pending.args.params.frame,
+        isClosing: () => closing
+      }),
+      true
+    );
+    assert.equal(pending.calls.filter(c => c[0] === 'resolve').length, 1);
+    assert.deepEqual(
+      pending.calls.filter(c => c[0] !== 'resolve'),
+      []
+    );
+    assert.equal(pending.errors.length, change === 'destroy' ? 0 : 1);
+    if (change !== 'destroy') assert.match(pending.errors[0].detail, /原視窗/);
+  }
+});
+
+test('left click rejects directories and reports a shell failure once without invoking another action', async () => {
+  const f = await fixture(),
+    options = {...f.args, linkURL: f.args.params.linkURL, frame: f.args.params.frame};
+  f.state.messages.push({role: 'assistant', text: `[資料夾](<${f.root}>)`});
+  await revealMessageFile({...options, linkURL: f.args.app.origin + messageFileUrl(f.root, 'original-room')});
+  assert.match(f.errors[0].detail, /不是一般檔案/);
+  let attempts = 0;
+  f.args.electron.shell.showItemInFolder = () => {
+    attempts++;
+    throw Error('Explorer unavailable');
+  };
+  await revealMessageFile(options);
+  assert.equal(attempts, 1);
+  assert.equal(f.errors.length, 2);
+  assert.equal(f.errors[1].detail, 'Explorer unavailable');
+  assert.deepEqual(
+    f.calls.filter(c => c[0] !== 'resolve'),
+    []
+  );
+});
+
 test(
   'Open With passes Unicode and shell-looking file names only as stdin data, with a hidden STA helper',
   {skip: process.platform !== 'win32'},

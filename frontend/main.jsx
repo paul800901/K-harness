@@ -1458,6 +1458,17 @@ function App() {
     },
     [state.threadId]
   );
+  const revealFile = useCallback(
+    async linkURL => {
+      const threadId = state.threadId;
+      try {
+        if (!(await window.kBrowser.revealMessageFile(linkURL))) throw Error('檔案連結來源或原視窗已失效。');
+      } catch (e) {
+        if (stateRef.current.threadId === threadId) setError(`無法在檔案總管中顯示：${e.message}`);
+      }
+    },
+    [state.threadId]
+  );
   const createInProject = path => {
     const visible = projects.filter(p => !p.archived),
       selected = visible.find(p => sameWorkspace(p.path, path ?? state.workspace)) ?? visible[0];
@@ -1696,6 +1707,7 @@ function App() {
     () => ({
       state: transcriptState,
       preview,
+      revealFile,
       modelName,
       models,
       setModels,
@@ -1709,6 +1721,7 @@ function App() {
     [
       transcriptState,
       preview,
+      revealFile,
       modelName,
       models,
       startBranch,
@@ -1729,6 +1742,9 @@ function App() {
         ? 'K 更新中，大概要 2～3 分鐘。這個畫面留著不用動，K 回來會自己重新整理；先離開也可以，等一下再開。'
         : '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。'),
     alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
+  // Only message destinations are URL-encoded; artifact names are literal paths.
+  const previewName =
+    modal?.type === 'preview' ? (modal.route === 'message-file' ? readableDestination(modal.name) : modal.name) : '';
   return (
     <TranscriptContext.Provider value={transcript}>
       <AppContext.Provider
@@ -2593,14 +2609,14 @@ function App() {
             />
           )}
           {modal?.type === 'preview' && (
-            <Modal title={readableDestination(modal.name).split(/[\\/]/).at(-1)} onClose={() => setModal(null)}>
+            <Modal title={previewName.split(/[\\/]/).at(-1)} onClose={() => setModal(null)}>
               {modal.loading ? (
                 <p>載入成果…</p>
               ) : modal.image ? (
                 <img
                   className="preview-image"
                   src={`/api/${modal.route ?? 'artifact'}?path=${encodeURIComponent(modal.name)}&threadId=${encodeURIComponent(modal.threadId ?? '')}`}
-                  alt={modal.name}
+                  alt={previewName}
                 />
               ) : modal.isText ? (
                 <pre className="file-preview">{modal.text}</pre>
