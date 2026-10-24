@@ -38,7 +38,13 @@ const timing = (value, timezone) => {
 };
 const nextTime = (value, timezone, from) => timing(value, timezone).nextRun(from) ?? null;
 
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u,
+  CRON_FIELDS = /^\S+(\s+\S+){4,5}$/u;
+
+// Catches obvious over-frequent rules early; the tick's spacing rule enforces the minimum for any rule.
 const cronStart = (pattern, timezone, from) => {
+  if (!CRON_FIELDS.test(pattern) || ISO_TIME.test(pattern))
+    throw Error('cron 須為 5 或 6 欄的 cron 規則；單次時間請用 at。');
   const runs = timing(pattern, timezone).nextRuns(5, from);
   if (!runs.length) throw Error('Cron 排程在未來沒有可執行的時間。');
   for (let i = 1; i < runs.length; i++)
@@ -47,6 +53,7 @@ const cronStart = (pattern, timezone, from) => {
 };
 
 const atStart = (at, timezone, from) => {
+  if (!ISO_TIME.test(at)) throw Error('at 須為 ISO 日期時間，例如 2026-10-31T11:00；週期請用 cron。');
   const next = nextTime(at, timezone, from);
   if (!next) throw Error('at 時間必須在未來。');
   return next;
@@ -106,8 +113,7 @@ export function createRoomSchedules({
   const run = async item => {
     let status, error;
     try {
-      const result = await deliver(item);
-      status = result?.queued ? 'queued' : result?.sent === false ? 'failed' : 'sent';
+      status = (await deliver(item))?.queued ? 'queued' : 'sent';
     } catch (e) {
       status = e.notSent === true ? 'failed' : 'uncertain';
       error = e.message;
@@ -116,7 +122,7 @@ export function createRoomSchedules({
       firing.delete(item.id);
       const s = schedules.find(row => row.id === item.id);
       if (!s) return;
-      Object.assign(s, {lastStatus: status, lastError: error ?? (status === 'failed' ? '訊息未送出。' : null)});
+      Object.assign(s, {lastStatus: status, lastError: error ?? null});
       await save();
       onChange();
     });
@@ -131,12 +137,15 @@ export function createRoomSchedules({
         s => !s.paused && !s.done && s.nextRunAt && !firing.has(s.id) && new Date(s.nextRunAt) <= at
       );
       if (!rows.length) return [];
+      const before = rows.map(s => ({...s}));
       const items = rows.map(s => {
         const planned = new Date(s.nextRunAt),
           late = at - planned > OVERDUE_THRESHOLD_MS,
           label = formatScheduleTime(planned, s.timezone);
-        // Missed slots (K closed, sleep) collapse into this one late send; the next slot counts from now.
-        const next = s.cron ? nextTime(s.cron, s.timezone, at) : null;
+        // Missed slots (K closed, sleep) collapse into this one late send; the next slot counts from now
+        // and is never sooner than the minimum spacing after this one.
+        const from = new Date(Math.max(at.getTime(), planned.getTime() + MIN_CRON_INTERVAL_MS - 1)),
+          next = s.cron ? nextTime(s.cron, s.timezone, from) : null;
         Object.assign(s, {
           lastRunAt: s.nextRunAt,
           lastStatus: 'sending',
@@ -158,8 +167,9 @@ export function createRoomSchedules({
       try {
         await save();
       } catch (error) {
+        // Nothing was sent: put these rows back so the next tick tries again.
+        rows.forEach((s, i) => Object.assign(s, before[i]));
         for (const item of items) firing.delete(item.id);
-        schedules = null; // Reload the saved truth; nothing was sent.
         throw error;
       }
       onChange();
@@ -239,7 +249,8 @@ export function createRoomSchedules({
         if (!current) throw Error('找不到指定排程。');
         if (cron !== undefined && at !== undefined) throw Error('排程須指定 cron 或 at 其中之一。');
         // Validate on a copy so a rejected update leaves memory and disk unchanged.
-        const s = {...current},
+        const original = {...current},
+          s = {...current},
           from = now();
         if (title !== undefined) s.title = checkText(title, MAX_SCHEDULE_TITLE_LENGTH, '標題');
         if (text !== undefined) s.text = checkText(text, MAX_SCHEDULE_TEXT_LENGTH, '內容');
@@ -251,15 +262,18 @@ export function createRoomSchedules({
           cron !== undefined || at !== undefined || timezone !== undefined || (current.paused && !s.paused);
         if (retimed) {
           // Resuming or retiming counts from now; paused periods are not backfilled.
-          const next = s.cron ? cronStart(s.cron, s.timezone, from) : nextTime(s.at, s.timezone, from);
-          if (!next && (cron !== undefined || at !== undefined)) throw Error('at 時間必須在未來。');
+          const next = s.cron
+            ? cronStart(s.cron, s.timezone, from)
+            : at !== undefined
+              ? atStart(s.at, s.timezone, from)
+              : nextTime(s.at, s.timezone, from);
           Object.assign(s, {nextRunAt: next?.toISOString() ?? null, done: !next});
         }
         Object.assign(current, s);
         try {
           await save();
         } catch (error) {
-          schedules = null;
+          Object.assign(current, original);
           throw error;
         }
         onChange();

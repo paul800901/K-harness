@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, readFile, writeFile, mkdir} from 'node:fs/promises';
+import {mkdtemp, readFile, writeFile, mkdir, rm} from 'node:fs/promises';
 import path from 'node:path';
 import {createRoomSchedules} from '../src/room-schedules.mjs';
 import {createRoomNotes} from '../src/room-notes.mjs';
@@ -752,13 +752,15 @@ test('luna-gateway exposes schedule tools and handles add, list, update, remove'
   }
 });
 
-test('rejected updates change nothing, local at times follow the timezone, and sent:false is a failure', async () => {
+test('rejected updates change nothing, local at times follow the timezone, and a refused send consumes the slot', async () => {
   const root = await tempRoot('review-fixes');
   let currentTime = new Date('2026-10-24T02:00:00.000Z');
   const schedules = createRoomSchedules({
     listSessions: knownRooms,
     root,
-    deliver: async () => ({sent: false}),
+    deliver: async () => {
+      throw Object.assign(Error('refused'), {notSent: true});
+    },
     now: () => currentTime
   });
   try {
@@ -787,7 +789,7 @@ test('rejected updates change nothing, local at times follow the timezone, and s
     currentTime = new Date('2026-10-24T03:00:05.000Z');
     await schedules.tick();
     const row = (await schedules.list()).schedules.find(s => s.id === schedule.id);
-    assert.equal(row.lastStatus, 'failed', 'a send that reports sent:false was not delivered');
+    assert.equal(row.lastStatus, 'failed', 'a refused send is recorded as not delivered');
     assert.equal(row.nextRunAt, '2026-10-31T03:00:00.000Z', 'the slot is consumed, not retried');
   } finally {
     await schedules.close();
@@ -814,5 +816,127 @@ test('room tools default the target to the calling chat', async () => {
     await assert.rejects(tools.schedule('room-self', 'bogus'), /未知/);
   } finally {
     await cc.close();
+  }
+});
+
+test('fired cron slots keep the minimum spacing and cron/at kinds are not interchangeable', async () => {
+  const root = await tempRoot('spacing');
+  let currentTime = new Date('2026-10-24T00:00:00.000Z');
+  const sent = [];
+  const schedules = createRoomSchedules({
+    listSessions: knownRooms,
+    root,
+    deliver: async item => sent.push(item) && {sent: true},
+    now: () => currentTime
+  });
+  try {
+    // The first five runs are 10 minutes apart, so creation accepts it; 00:50 -> 00:51 must still not fire.
+    const {schedule} = await schedules.add({
+      title: 'dense',
+      text: 'x',
+      cron: '0,10,20,30,40,50,51 * * * *',
+      timezone: 'UTC',
+      targetThreadId: 'room-a'
+    });
+    currentTime = new Date('2026-10-24T00:50:05.000Z');
+    await schedules.tick(); // late catch-up of the 00:10 slot
+    const row = (await schedules.list()).schedules.find(s => s.id === schedule.id);
+    assert.equal(row.nextRunAt, '2026-10-24T00:51:00.000Z');
+    currentTime = new Date('2026-10-24T00:51:05.000Z');
+    await schedules.tick();
+    const after = (await schedules.list()).schedules.find(s => s.id === schedule.id);
+    assert.equal(after.nextRunAt, '2026-10-24T01:10:00.000Z', 'next slot is at least 10 minutes after 00:51');
+    assert.equal(sent.length, 2);
+
+    await assert.rejects(
+      schedules.add({title: 't', text: 'x', at: '*/1 * * * * *', targetThreadId: 'room-a'}),
+      /ISO 日期時間/
+    );
+    await assert.rejects(
+      schedules.add({title: 't', text: 'x', cron: '2026-10-25T11:00:00Z', targetThreadId: 'room-a'}),
+      /cron 須為/
+    );
+    await assert.rejects(schedules.update({id: schedule.id, at: '0 11 * * 6'}), /ISO 日期時間/);
+  } finally {
+    await schedules.close();
+  }
+});
+
+test('a scheduled send the core reports as not sent leaves a note in that room', async () => {
+  const root = await tempRoot('sent-false');
+  await saveMainSession(root, {threadId: 'room-self', title: '本房', model: 'gpt-6-astra', workspace: root});
+  let currentTime = new Date('2026-10-24T02:00:00.000Z');
+  const cc = createConversationController({
+    root,
+    scheduleClock: {now: () => currentTime},
+    sessionFactory: () => ({
+      state: {provider: 'codex', status: 'idle', workspace: root, threadId: null, model: 'gpt-6-astra', messages: []},
+      async selectWorkspace() {},
+      async open(data) {
+        this.state.threadId = data.threadId;
+        return {threadId: data.threadId};
+      },
+      async send() {
+        return {sent: false};
+      },
+      async close() {}
+    })
+  });
+  try {
+    await cc.open({threadId: 'room-self', model: 'gpt-6-astra'});
+    await cc.schedules.add({title: '拒收', text: 'x', at: '2026-10-24T03:00:00Z', targetThreadId: 'room-self'});
+    currentTime = new Date('2026-10-24T03:00:01Z');
+    await cc.schedules.tick();
+    const row = (await cc.schedules.list()).schedules[0];
+    assert.equal(row.lastStatus, 'failed');
+    const notes = JSON.parse(await readFile(path.join(root, '.runtime/room-notes/room-self.json'), 'utf8')).notes;
+    assert(notes.some(n => n.fromTitle === 'K 定時排程' && n.text.includes('拒收') && n.text.includes('未送出')));
+  } finally {
+    await cc.close();
+  }
+});
+
+test('a tick whose save fails puts its rows back and leaves other in-flight sends intact', async () => {
+  const root = await tempRoot('save-fail');
+  const file = path.join(root, '.runtime/room-schedules.json');
+  let currentTime = new Date('2026-10-24T02:00:00.000Z'),
+    release;
+  const gate = new Promise(resolve => (release = resolve));
+  const sent = [];
+  const schedules = createRoomSchedules({
+    listSessions: knownRooms,
+    root,
+    deliver: async item => {
+      sent.push(item.title);
+      if (item.title === 'A') await gate;
+      return {sent: true};
+    },
+    now: () => currentTime
+  });
+  try {
+    await schedules.add({title: 'A', text: 'x', at: '2026-10-24T03:00:00Z', targetThreadId: 'room-a'});
+    await schedules.add({title: 'B', text: 'x', at: '2026-10-24T04:00:00Z', targetThreadId: 'room-a'});
+    currentTime = new Date('2026-10-24T03:00:01Z');
+    const first = schedules.tick(); // A is now in flight
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const saved = await readFile(file, 'utf8');
+    await rm(file);
+    await mkdir(file); // atomic replace onto a directory fails
+    currentTime = new Date('2026-10-24T04:00:01Z');
+    await assert.rejects(schedules.tick());
+    assert.deepEqual(sent, ['A'], 'B was not sent when its sending state could not be saved');
+    await rm(file, {recursive: true});
+    await writeFile(file, saved);
+    release();
+    await first;
+    const rows = (await schedules.list()).schedules;
+    assert.equal(rows.find(s => s.title === 'A').lastStatus, 'sent');
+    const b = rows.find(s => s.title === 'B');
+    assert.equal(b.lastStatus, null);
+    assert.equal(b.nextRunAt, '2026-10-24T04:00:00.000Z', 'B was put back unchanged');
+    await schedules.tick();
+    assert.deepEqual(sent, ['A', 'B'], 'the next tick sends B');
+  } finally {
+    await schedules.close();
   }
 });

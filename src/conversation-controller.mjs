@@ -913,6 +913,8 @@ export function createConversationController({
     const session = (await listMainSessions(root, {threadId})).sessions[0];
     if (!session || session.archived)
       throw Object.assign(notSent(session ? '聊天室已封存。' : '找不到目標聊天室。'), {noNote: true});
+    // close() may have finished while the session list was read; never open a room it will not close.
+    if (closing) throw notSent('K 正在關閉。');
     let controller = rooms.get(threadId);
     if (!controller) {
       let operation = openingRooms.get(threadId);
@@ -941,7 +943,9 @@ export function createConversationController({
   };
   const deliverScheduled = async item => {
     try {
-      return await sendScheduled(item);
+      const result = await sendScheduled(item);
+      if (result?.sent === false && !result.queued) throw Object.assign(Error('訊息未送出。'), {notSent: true});
+      return result;
     } catch (error) {
       if (!error.noNote)
         await roomNotes
@@ -1231,7 +1235,6 @@ export function createConversationController({
     },
     async close() {
       closing = true;
-      await roomSchedules.close();
       ++navigationRequest;
       pendingView = null;
       idleProbe?.abort.abort(new DOMException('K 正在關閉。', 'AbortError'));
@@ -1258,6 +1261,8 @@ export function createConversationController({
           '部分聊天室尚未確認關閉，請查明後再試。'
         );
       }
+      // Stopped only once every room closed, so a failed close keeps schedules running.
+      await roomSchedules.close();
       rooms.clear();
       controllers.clear();
     }
