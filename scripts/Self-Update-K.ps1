@@ -26,14 +26,16 @@ $launcherGone = $false
 
 # The real cause is what the installer (Node, UTF-8) printed. Update-K.ps1 throws only a generic message,
 # which the wrapper below writes in the console code page (it reads back with replacement characters);
-# the installer's own "build left at …" notice comes after the cause. Those lines are skipped.
+# the installer's own "build left at …" notice comes after the cause. Without a console, Windows
+# PowerShell also writes progress records to stderr as CLIXML ("#< CLIXML", "<Objs …>"). Those lines
+# are skipped.
 function Get-FailureLine([string]$fallback) {
     try {
         $candidates = @(@($logPath, $errorLogPath) | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object {
             Get-Content -LiteralPath $_ -Encoding utf8
         } | Where-Object {
             -not [string]::IsNullOrWhiteSpace($_) -and -not $_.Contains([char]0xFFFD) -and
-            $_ -notmatch 'K 更新未完成|未套用的建置暫存留在'
+            $_ -notmatch 'K 更新未完成|未套用的建置暫存留在|^\s*#< CLIXML|^\s*<Objs\b'
         })
         $line = if ($candidates.Count -gt 0) { [string]$candidates[$candidates.Count - 1] } else { $fallback }
         $line = $line.Trim()
@@ -69,7 +71,7 @@ try {
     # Update-K.ps1 stays unchanged for people and other agents; this wrapper turns its throw into a
     # one-line message and exit code instead of a PowerShell error record.
     $updateScript = (Join-Path $root 'Update-K.ps1').Replace("'", "''")
-    $wrapper = "& { try { & '$updateScript' -Ref $Ref; exit 0 } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 } }"
+    $wrapper = "`$ProgressPreference = 'SilentlyContinue'; & { try { & '$updateScript' -Ref $Ref; exit 0 } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 } }"
     $update = Start-Process -FilePath "powershell.exe" -ArgumentList @(
         "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($wrapper))
     ) -WorkingDirectory $root -NoNewWindow -Wait -PassThru -RedirectStandardOutput $logPath -RedirectStandardError $errorLogPath

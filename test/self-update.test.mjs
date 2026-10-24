@@ -232,7 +232,7 @@ test(
 );
 
 // Runs the real script under Windows PowerShell 5.1 against a fake repository and a fake Update-K.ps1.
-async function runScript(updateLines, launcherPid) {
+async function runScript(updateLines, launcherPid, files = {}) {
   await mkdir(scratchBase, {recursive: true});
   const root = await mkdtemp(path.join(scratchBase, 'self-update-script-'));
   await mkdir(path.join(root, 'scripts'));
@@ -240,6 +240,7 @@ async function runScript(updateLines, launcherPid) {
   await writeFile(path.join(root, 'scripts', 'Self-Update-K.ps1'), await readFile('scripts/Self-Update-K.ps1'));
   await writeFile(path.join(root, '.local', 'runtime.json'), JSON.stringify({version: RUNNING}));
   await writeFile(path.join(root, 'Update-K.ps1'), '\ufeff' + updateLines.join('\r\n'));
+  for (const [name, content] of Object.entries(files)) await writeFile(path.join(root, name), content);
   try {
     execFileSync(
       'powershell.exe',
@@ -286,10 +287,22 @@ test(
         'param([string]$Ref)',
         "$ErrorActionPreference='Stop'",
         "Write-Output 'building'",
-        "& node -e \"console.error('npm warn old');console.error('候選缺少 dist-ui/index.html');console.error('未套用的建置暫存留在 C:/x（可從 Git 版本重建）');process.exit(1)\"",
+        "& node (Join-Path $PSScriptRoot 'fail.js')",
         "if($LASTEXITCODE -ne 0){throw 'K 更新未完成；沒有強制結束工作，請保留錯誤交給 AI 檢查。'}"
       ],
-      pid
+      pid,
+      {
+        // The installer's cause, its "build left at" notice, and the CLIXML progress records Windows
+        // PowerShell writes to stderr when it has no console (seen in a real deployment run).
+        'fail.js': [
+          "console.error('npm warn old');",
+          "console.error('候選缺少 dist-ui/index.html');",
+          "console.error('未套用的建置暫存留在 C:/x（可從 Git 版本重建）');",
+          "console.error('#< CLIXML');",
+          `console.error('<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"></Obj></Objs>');`,
+          'process.exit(1);'
+        ].join('\n')
+      }
     );
     assert.deepEqual([failure.ok, failure.from, failure.reason], [false, RUNNING, '候選缺少 dist-ui/index.html']);
   }
