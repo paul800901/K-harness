@@ -78,7 +78,9 @@ test('user model roles reach Codex instructions without changing manual defaults
   assert.match(MODEL_ROLE_GUIDANCE, /不持續輪詢進度/);
   assert.match(MODEL_ROLE_GUIDANCE, /仍有實質進展就可繼續；不設固定失敗次數/);
   assert.match(MODEL_ROLE_GUIDANCE, /Flash → Sol → Opus/);
-  assert.match(MODEL_ROLE_GUIDANCE, /Claude 派出的 Sol 子代理目前不能再派 Flash/);
+  assert.match(MODEL_ROLE_GUIDANCE, /Claude 主對話派出的 Claude 工人可再派一層/);
+  assert.match(MODEL_ROLE_GUIDANCE, /Fable 討論 → Opus 統籌 → Sol／Flash/);
+  assert.match(MODEL_ROLE_GUIDANCE, /其他工人仍不能再派/);
   assert.match(MODEL_ROLE_GUIDANCE, /Luna：除非使用者明確指定，僅在小任務對規則遵守有極高要求/);
   assert.match(MODEL_ROLE_GUIDANCE, /Sol 寫的程式碼，最後必須由真正的 Opus 5\.5 審核/);
   assert.match(MODEL_ROLE_GUIDANCE, /待 Opus 5\.5 審核/);

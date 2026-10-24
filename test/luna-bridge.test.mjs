@@ -121,7 +121,8 @@ async function make({
   terminalStuck,
   watchOptions,
   accessMode = 'workspace-write',
-  workerPolicy = {model: 'gpt-6-luna', effort: 'high'}
+  workerPolicy = {model: 'gpt-6-luna', effort: 'high'},
+  ...extra
 } = {}) {
   let fixture;
   const parentId = randomUUID();
@@ -135,6 +136,7 @@ async function make({
     accessMode,
     workerPolicy,
     watchOptions,
+    ...extra,
     hostFactory: options => {
       fixture = fakeHost({accountType, models, onStart, threadRead, parentId, terminalData, terminalStuck});
       fixture.setOptions(options);
@@ -1357,3 +1359,53 @@ test(
     }
   }
 );
+
+test('non-Claude workers (Codex) do not call nested, while Claude workers do', async () => {
+  let nestedCalls = 0;
+  const {bridge, fixture} = await make({
+    nested: async () => {
+      nestedCalls++;
+      return {mcpConfig: {mcpServers: {}}, async close() {}, list: async () => []};
+    },
+    claudeFactory: () => ({
+      run: async () => ({status: 'completed', settled: true, output: 'claude output', outputFiles: []})
+    })
+  });
+  try {
+    // Codex worker should NOT call nested
+    const started = await bridge.start({requestId: 'codex-job', task: 'do codex'});
+    fixture.finish(started.threadId, started.turnId);
+    const codexRes = await bridge.wait({requestId: 'codex-job', timeoutMs: 1000});
+    assert.equal(codexRes.status, 'completed');
+    assert.equal(nestedCalls, 0, 'Codex worker does not call nested');
+
+    // Claude worker DOES call nested
+    await bridge.start({requestId: 'claude-job', task: 'do claude', model: 'claude-opus-5-5', effort: 'high'});
+    const claudeRes = await bridge.wait({requestId: 'claude-job', timeoutMs: 1000});
+    assert.equal(claudeRes.status, 'completed');
+    assert.equal(nestedCalls, 1, 'Claude worker calls nested');
+  } finally {
+    await bridge.close();
+  }
+});
+
+test('lunaResult includes subWorkers array when present on record', async () => {
+  const withSub = await lunaResult({
+    requestId: 'parent-with-sub',
+    status: 'completed',
+    settled: true,
+    subWorkers: [
+      {requestId: 'sub-1', model: 'gemini-3.8-flash', status: 'completed', settled: true}
+    ]
+  });
+  assert.ok(Array.isArray(withSub.subWorkers));
+  assert.equal(withSub.subWorkers.length, 1);
+  assert.equal(withSub.subWorkers[0].requestId, 'sub-1');
+
+  const withoutSub = await lunaResult({
+    requestId: 'no-sub',
+    status: 'completed',
+    settled: true
+  });
+  assert.equal(withoutSub.subWorkers, undefined);
+});

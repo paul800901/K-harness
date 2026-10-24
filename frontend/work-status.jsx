@@ -1,5 +1,5 @@
 import React, {useEffect, useState} from 'react';
-import {workStatus, currentWorkers, workerEnded, workerHealth} from './work-status.mjs';
+import {workStatus, currentWorkers, workerEnded, workerHealth, statusLabel} from './work-status.mjs';
 
 export function WorkStatus({state, online, connecting = false, loginRequired = false, footer = false}) {
   const [now, setNow] = useState(Date.now);
@@ -80,5 +80,23 @@ export function WorkerDetails({worker}) {
         ))}
       </dl>
     </details>
+  );
+}
+
+export function SubWorkersList({subWorkers}) {
+  if (!subWorkers?.length) return null;
+  return (
+    <div className="worker-subworkers">
+      <small>小工人清單：</small>
+      <ul className="subworker-list">
+        {subWorkers.map(sub => (
+          <li key={sub.requestId}>
+            <strong>{sub.model || sub.provider || '小工人'}</strong>
+            <span> · {statusLabel[sub.status] ?? (sub.settled ? '已結束' : '狀態未確認')}</span>
+            <small>（{sub.requestId}）</small>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }

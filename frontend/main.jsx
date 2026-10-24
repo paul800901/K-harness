@@ -1,7 +1,7 @@
 import {DiscussionRoundtable} from './discussion-roundtable.jsx';
 import {DiscussionControls, useDiscussionConfig} from './discussion-controls.jsx';
 import {uploadAttachment} from './attachment-upload.mjs';
-import {WorkStatus, WorkerHealthLabel, WorkerDetails} from './work-status.jsx';
+import {WorkStatus, WorkerHealthLabel, WorkerDetails, SubWorkersList} from './work-status.jsx';
 
 import {GoalDialog, goalStatusLabel} from './goal-dialog.jsx';
 import {NativeNotices, NativeDiffs, NativeFilePicker, NativeReview} from './native-ui.jsx';
@@ -2299,6 +2299,7 @@ function App() {
                           </details>
                         )}
                         <WorkerDetails worker={detail} />
+                        <SubWorkersList subWorkers={detail.subWorkers ?? w.subWorkers} />
                         {['unresolved', 'unavailable'].includes(w.status) && (
                           <p className="worker-warning">原工作狀態未確認；請勿直接重派。</p>
                         )}

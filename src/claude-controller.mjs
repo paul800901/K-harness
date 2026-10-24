@@ -1268,10 +1268,11 @@ export function createClaudeController({
     changed();
   }
 
-  function codexApproval(request, item) {
+  // A sub-worker's approval names its own bridge parentId and the dispatching worker.
+  function codexApproval(request, item, {parentId = state.threadId, parentWorkerRequestId} = {}) {
     if (
       request.method === 'k/claude/requestApproval' &&
-      (request.params?.parentId !== state.threadId || opening || closing || stopping)
+      (request.params?.parentId !== parentId || opening || closing || stopping)
     )
       return undefined;
     const approval = approvalRequest(request, item);
@@ -1283,9 +1284,14 @@ export function createClaudeController({
         cancelValue: approval.cancel?.() ?? {decision: 'cancel'},
         approval,
         // K worker approvals are cleared when that worker is cancelled.
-        workerRequestId: request.method === 'k/claude/requestApproval' ? request.params?.requestId : undefined
+        workerRequestId: request.method === 'k/claude/requestApproval' ? request.params?.requestId : undefined,
+        parentWorkerRequestId
       });
       const {reply, cancel, ...display} = approval;
+      if (parentWorkerRequestId) {
+        display.title = `${display.title}（由工人 ${parentWorkerRequestId} 派出）`;
+        display.details = {...display.details, delegatedBy: parentWorkerRequestId};
+      }
       state.questions.push({
         id,
         kind: 'approval',
@@ -1345,6 +1351,39 @@ export function createClaudeController({
       if (!bridgeInitPromise) {
         const parent = state.threadId,
           epoch = geminiBridgeEpoch;
+        // One extra layer for Claude workers only: the sub-bridge gets no `nested`, so its workers cannot delegate.
+        const nested = async ({requestId: upperRequestId, accessMode: upperAccessMode, onChange: onSubChange}) => {
+          const base = `${parent}--${upperRequestId}`.replace(/[^A-Za-z0-9._-]/g, '_');
+          const subParentId = base.length > 120 ? `${base.slice(0, 80)}-${base.slice(-16)}` : base;
+          const subBridge = await bridgeFactory({
+            root,
+            workspace: state.workspace,
+            parentId: subParentId,
+            executable,
+            accessMode: upperAccessMode,
+            workerPolicy: state.workerPolicy,
+            onRequest: (req, item) =>
+              state.threadId === parent
+                ? codexApproval(req, item, {parentWorkerRequestId: upperRequestId, parentId: subParentId})
+                : undefined,
+            onChange: onSubChange
+          });
+          const runtimeGatewayFactory = gatewayFactory ?? (await import('./luna-gateway.mjs')).createLunaGateway;
+          const subGateway = await runtimeGatewayFactory({bridge: subBridge, nestedWorker: true});
+          return {
+            mcpConfig: subGateway.mcpConfig,
+            instructions: workerInstructions,
+            // The gateway closes its bridge first (cancel and confirm every sub-worker), then the HTTP endpoint.
+            async close() {
+              try {
+                await subGateway.close();
+              } finally {
+                clearQuestions(item => item.parentWorkerRequestId === upperRequestId);
+                changed();
+              }
+            }
+          };
+        };
         bridgeInitPromise = Promise.resolve()
           .then(() =>
             bridgeFactory({
@@ -1356,6 +1395,7 @@ export function createClaudeController({
               workerPolicy: state.workerPolicy,
               onRequest: codexApproval,
               onChange: recordWorker,
+              nested,
               onGeminiHandoff: event => {
                 if (state.threadId === parent && epoch === geminiBridgeEpoch) recordGeminiHandoff(event);
               }
@@ -1386,7 +1426,7 @@ export function createClaudeController({
         disarm(args.requestId);
         const result = await (await ensureBridge()).cancel(args);
         // The cancelled worker's approval card would otherwise stay on screen and block the room.
-        clearQuestions(item => item.workerRequestId === args.requestId);
+        clearQuestions(item => item.workerRequestId === args.requestId || item.parentWorkerRequestId === args.requestId);
         changed();
         return result;
       },

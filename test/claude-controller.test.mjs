@@ -4202,3 +4202,91 @@ test('discussion interruption leaves the Claude host and existing worker bridge 
     await f.controller.close();
   }
 });
+
+test('Claude controller creates nested factory with bounded second-layer bridge and routed approvals', async () => {
+  const subBridges = [];
+  let f;
+  f = await fixture({
+    bridgeFactory: async options => {
+      if (options.parentId === f.controller.state.threadId) {
+        return f.bridge;
+      }
+      const subBridge = {
+        options,
+        closed: false,
+        async list() {
+          return [];
+        },
+        async cancel() {
+          return {settled: true};
+        },
+        async close() {
+          this.closed = true;
+        }
+      };
+      subBridges.push(subBridge);
+      return subBridge;
+    }
+  });
+  try {
+    await f.controller.open({accessMode: 'claude-manual'});
+    const mainLazyBridge = f.gatewayOptions.bridge;
+    await mainLazyBridge.start({requestId: 'parent-worker', task: 'delegate to sub'});
+    const nested = f.bridgeOptions.nested;
+    assert.equal(typeof nested, 'function', 'Claude main bridge receives nested factory');
+
+    const secondLayer = await nested({
+      parentId: f.controller.state.threadId,
+      requestId: 'parent-worker',
+      accessMode: 'workspace-write',
+      onChange: () => {}
+    });
+
+    assert.equal(subBridges.length, 1);
+    const sub = subBridges[0];
+    assert.equal(sub.options.accessMode, 'workspace-write', 'accessMode equals upper worker');
+    assert.equal(sub.options.nested, undefined, 'second layer cannot delegate further');
+    assert.match(sub.options.parentId, /^claude-.*--parent-worker$/, 'parentId is derived from parent and upper worker requestId');
+
+    // Test sub-worker approval brings delegatedBy and worker identity in title
+    const approvalPromise = sub.options.onRequest({
+      method: 'item/commandExecution/requestApproval',
+      params: {command: 'npm test', cwd: f.root}
+    });
+    assert.equal(f.controller.state.questions.length, 1);
+    const q = f.controller.state.questions[0];
+    assert.match(q.title, /由工人 parent-worker 派出/, 'title indicates delegated worker');
+    assert.equal(q.details.delegatedBy, 'parent-worker', 'delegatedBy indicates parent worker');
+
+    // Test cancel parent-worker clears sub-worker approval
+    await mainLazyBridge.cancel({requestId: 'parent-worker'});
+    assert.equal(f.controller.state.questions.length, 0, 'cancelling parent worker clears sub-worker approval');
+
+    // Test sub-worker record does NOT enter main conversation workers
+    const subRecord = {
+      requestId: 'flash-sub',
+      parentId: sub.options.parentId,
+      provider: 'gemini',
+      status: 'completed',
+      settled: true
+    };
+    f.bridgeOptions.onChange(subRecord);
+    assert.equal(
+      f.controller.state.workers.some(w => w.requestId === 'flash-sub'),
+      false,
+      'sub-worker record with subParentId is filtered out from main conversation'
+    );
+
+    // Closing the second layer (normal parent completion) also clears its sub-workers' approval cards.
+    void sub.options.onRequest({
+      method: 'item/commandExecution/requestApproval',
+      params: {command: 'npm test', cwd: f.root}
+    });
+    assert.equal(f.controller.state.questions.length, 1);
+    await secondLayer.close();
+    assert.equal(sub.closed, true);
+    assert.equal(f.controller.state.questions.length, 0, 'second-layer close clears sub-worker approvals');
+  } finally {
+    await f.controller.close();
+  }
+});

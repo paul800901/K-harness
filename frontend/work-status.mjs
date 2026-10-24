@@ -4,7 +4,7 @@ import {modelProvider as providerOf} from '../shared/model-provider.mjs';
 
 export const QUIET_WORK_MS = 5 * 60 * 1000;
 const age = (at, now) => (Number.isFinite(at) ? Math.max(0, now - at) : null);
-const statusLabel = {
+export const statusLabel = {
   running: '執行中',
   starting: '準備中',
   pending: '等待中',

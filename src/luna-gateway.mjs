@@ -44,7 +44,16 @@ const waitSchema = eventWait =>
 
 function createMcpServer(
   bridge,
-  {geminiOnly = false, allowCodex = false, editGoal, resumeGoal, continueConversation, readContext, rooms} = {}
+  {
+    geminiOnly = false,
+    allowCodex = false,
+    nestedWorker = false,
+    editGoal,
+    resumeGoal,
+    continueConversation,
+    readContext,
+    rooms
+  } = {}
 ) {
   const processOnly = geminiOnly && !allowCodex;
   const prefix = geminiOnly ? 'gemini' : 'luna';
@@ -295,7 +304,7 @@ function createMcpServer(
   const selectionGuidance = processOnly
     ? '此入口可派 Gemini 或 Claude 原生訂閱工人；GPT 子代理使用原生派工，不從本入口轉派。明確提供原生模型及其支援的 effort；無推理設定時傳 null。'
     : policy.model === 'auto'
-      ? `AI 自動選擇目前啟用：每次派工都必須明確提供原生目錄的 model 與 effort（沒有推理設定時為 null）；一般工人優先 Flash，Sol 為日常技術主腦，可交付規劃、架構、除錯與複查，但此入口派出的 Sol 子代理不能再派工；Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
+      ? `AI 自動選擇目前啟用：每次派工都必須明確提供原生目錄的 model 與 effort（沒有推理設定時為 null）；一般工人優先 Flash（雜事與大量實作），Sol 負責後端、抓 bug 與搜尋；Claude 主對話派出的 Claude 工人可再派一層小工人（Fable 討論 → Opus 統籌 → Sol／Flash），其他工人仍不能再派工；Luna 僅用於規則遵守要求極高的小任務。當輪明確指定優先，推理程度依官方支援清單。`
       : policy.model.startsWith('api:')
         ? `已保存 API 諮詢模型 ${policy.model}（推理程度 ${policy.effort ?? 'null'}）：只在本人明確要求諮詢時使用，且每次都要明確提供這個 model 與 effort，不可省略；它不是一般工作的預設工人。`
         : `目前預設為 ${policy.model} / ${policy.effort}；可省略欄位沿用預設；除非本人當輪或明確任務規則指定，否則遵守手動選擇，不因自己認為更適合而改選。`;
@@ -384,7 +393,7 @@ function createMcpServer(
     );
   register(
     `${prefix}_start`,
-    `${processOnly ? 'Start one bounded task with native subscription Gemini or Claude, including Opus / Sonnet / Haiku, or a read-only consult with an API model (model api:<connectionId>/<model>, only when the human explicitly asks to consult it). GPT workers use Codex native agents.' : 'Start one bounded task with native subscription GPT, Claude (including Opus / Sonnet / Haiku) or Gemini.'} Flash 是使用者優先的一般工人，也適合文章、審美及提出方向，不限機械性工作；依目前 K 分工與明確指定選擇。Sol 寫碼後必須交真正的 Opus 5.5 審核；無審查管道則標示待審，不冒稱完成。模型與 effort 依這台原生目錄，無 effort 模型傳 null。Gemini／Claude 非完整存取模式不能跑指令；workspace-write 寫檔不得超出工作區，唯讀不能寫檔；Claude 原生核准沿用主對話。GPT 權限保持 Codex 原生模式。 ${selectionGuidance} Effort must be supported by the selected official model. K automatically delivers completion to this conversation after your current turn. Do other useful work; when only waiting under an active native goal, use ${prefix}_wait with timeoutMs=null instead of ending and repeatedly restarting goal turns. Do not poll. The tool call returning does not prove a worker launched: dispatch=not-started + scheduling=waiting means K is waiting, not executing the task. Reuse the requestId only for the identical task.`,
+    `${processOnly ? 'Start one bounded task with native subscription Gemini or Claude, including Opus / Sonnet / Haiku, or a read-only consult with an API model (model api:<connectionId>/<model>, only when the human explicitly asks to consult it). GPT workers use Codex native agents.' : 'Start one bounded task with native subscription GPT, Claude (including Opus / Sonnet / Haiku) or Gemini.'} Flash 是使用者優先的一般工人，也適合文章、審美及提出方向，不限機械性工作；依目前 K 分工與明確指定選擇。Sol 寫碼後必須交真正的 Opus 5.5 審核；無審查管道則標示待審，不冒稱完成。模型與 effort 依這台原生目錄，無 effort 模型傳 null。Gemini／Claude 非完整存取模式不能跑指令；workspace-write 寫檔不得超出工作區，唯讀不能寫檔；Claude 原生核准沿用主對話。GPT 權限保持 Codex 原生模式。 ${selectionGuidance} Effort must be supported by the selected official model. ${nestedWorker ? `You are a K worker: K delivers NO completion event to you. Before your final answer, call ${prefix}_wait with timeoutMs=null for every sub-worker until it is settled, then inspect its actual results; any sub-worker still running when you finish is cancelled.` : `K automatically delivers completion to this conversation after your current turn. Do other useful work; when only waiting under an active native goal, use ${prefix}_wait with timeoutMs=null instead of ending and repeatedly restarting goal turns. Do not poll.`} The tool call returning does not prove a worker launched: dispatch=not-started + scheduling=waiting means K is waiting, not executing the task. Reuse the requestId only for the identical task.`,
     processOnly ? geminiTaskSchema : taskSchema,
     args => bridge.start(args),
     {readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false}
@@ -445,6 +454,7 @@ export async function createLunaGateway({
   bridge,
   geminiOnly = false,
   allowCodex = false,
+  nestedWorker = false,
   editGoal,
   resumeGoal,
   continueConversation,
@@ -457,6 +467,7 @@ export async function createLunaGateway({
   const mcp = createMcpServer(bridge, {
     geminiOnly,
     allowCodex,
+    nestedWorker,
     editGoal,
     resumeGoal,
     continueConversation,

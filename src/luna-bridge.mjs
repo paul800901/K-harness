@@ -32,6 +32,7 @@ export async function lunaResult(record) {
       'effort',
       'status',
       'settled',
+      'subWorkers',
       'executionUnowned',
       'reconciliation',
       'acceptance',
@@ -205,7 +206,8 @@ export async function createLunaBridge({
   onRequest,
   onChange = () => {},
   onGeminiHandoff = () => {},
-  watchOptions = {}
+  watchOptions = {},
+  nested
 }) {
   if (!root || !path.isAbsolute(workspace ?? '') || !safeId(parentId))
     throw new Error('root、workspace 與 parentId 必須有效。');
@@ -694,6 +696,7 @@ export async function createLunaBridge({
         model,
         effort,
         ...(provider === 'claude' ? {threadId: randomUUID()} : {}),
+        ...(provider === 'claude' && nested ? {subWorkers: []} : {}),
         ...(accountId ? {requestedAccountId: accountId} : {}),
         ...(handoffFrom ? {handoffFrom} : {}),
         status: 'starting',
@@ -714,7 +717,33 @@ export async function createLunaBridge({
       const operation = (async () => {
         await persist(record);
         changed(record);
+        let nestedContext = null;
         try {
+          // Claude main only: this Claude worker gets its own one-layer k_luna gateway.
+          if (provider === 'claude' && nested) {
+            nestedContext = await nested({
+              requestId,
+              accessMode: record.accessMode,
+              onChange: subRecord => {
+                if (!subRecord) return;
+                const entry = {
+                  requestId: subRecord.requestId,
+                  provider: subRecord.provider,
+                  model: subRecord.model,
+                  effort: subRecord.effort ?? null,
+                  status: subRecord.status,
+                  settled: subRecord.settled === true,
+                  startedAt: subRecord.startedAt,
+                  endedAt: subRecord.endedAt
+                };
+                record.subWorkers ??= [];
+                const idx = record.subWorkers.findIndex(item => item.requestId === entry.requestId);
+                if (idx >= 0) record.subWorkers[idx] = entry;
+                else record.subWorkers.push(entry);
+                void persist(record).then(() => changed(record)).catch(() => {});
+              }
+            });
+          }
           const worker =
             provider === 'gemini'
               ? (gemini ??= geminiFactory({...geminiOptions, root, workspace, accessMode}))
@@ -732,6 +761,8 @@ export async function createLunaBridge({
                 accountId,
                 parentId,
                 requestId,
+                mcpConfig: nestedContext?.mcpConfig,
+                instructions: nestedContext?.instructions,
                 onHandoff: event => receiveHandoff(event, epoch),
                 handoffCurrent: () => !closed && !closing && !record.cancelRequested && epoch === handoffEpoch,
                 signal: controller.signal,
@@ -794,6 +825,15 @@ export async function createLunaBridge({
               });
             })
             .then(async () => {
+              if (nestedContext) {
+                try {
+                  await nestedContext.close();
+                } catch (closeError) {
+                  record.status = 'unresolved';
+                  record.settled = false;
+                  record.error = `${record.error ? `${record.error}；` : ''}小工人停止狀態未確認：${closeError.message}`;
+                }
+              }
               record.acceptance = 'not-reviewed';
               record.endedAt = new Date().toISOString();
               await persist(record);
@@ -806,6 +846,9 @@ export async function createLunaBridge({
           // returns before agy emits output. No task retry or provider fallback.
           void handle.completion.catch(() => {});
         } catch (error) {
+          if (nestedContext) {
+            await nestedContext.close().catch(() => {});
+          }
           record.status = 'failed';
           record.settled = true;
           record.error = error.message;

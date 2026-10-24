@@ -35,6 +35,7 @@ async function fixture({models = rows, closeError = false} = {}) {
       pid: 4242,
       async start(prompt) {
         starts++;
+        handlers.prompt = prompt;
         this.prompt = prompt;
       },
       async interrupt() {
@@ -182,4 +183,55 @@ test('the worker reports the Claude Code process id when it starts', async () =>
   f.handlers().onMessage({type: 'result', result: 'done'});
   await run;
   assert.deepEqual(started, [4242]);
+});
+
+test('without mcpConfig, Claude worker has empty MCP servers, default instructions, and denies re-delegation', async () => {
+  const f = await fixture();
+  const run = f.worker().run({task: 'bounded task', model: 'claude-opus-5-5', effort: 'low'});
+  await new Promise(r => setImmediate(r));
+  const options = f.handlers();
+  assert.deepEqual(options.mcpConfig, {mcpServers: {}});
+  assert.equal(options.nestedWorker, false);
+  assert.match(options.prompt, /不再派工/);
+  assert.doesNotMatch(options.prompt, /k_luna/);
+  assert.equal((await options.onPermission({toolName: 'mcp__k_luna__luna_start', input: {}})).behavior, 'deny');
+  for (const toolName of ['ExitPlanMode', 'Agent', 'Task', 'TaskOutput', 'TaskStop']) {
+    assert.equal((await options.onPermission({toolName, input: {}})).behavior, 'deny');
+  }
+  options.onMessage({type: 'result', result: 'done'});
+  await run;
+});
+
+test('with mcpConfig, Claude worker receives gateway MCP, allows mcp__k_luna__*, and denies native Agent/Task', async () => {
+  const f = await fixture();
+  const fakeGatewayMcp = {mcpServers: {k_luna: {command: 'node', args: ['gateway']}}};
+  const run = f.worker().run({
+    task: 'nested task',
+    model: 'claude-opus-5-5',
+    effort: 'high',
+    mcpConfig: fakeGatewayMcp
+  });
+  await new Promise(r => setImmediate(r));
+  const options = f.handlers();
+  assert.deepEqual(options.mcpConfig, fakeGatewayMcp);
+  assert.equal(options.nestedWorker, true);
+  assert.match(options.prompt, /統籌工人/);
+  assert.match(options.prompt, /k_luna/);
+  assert.match(options.prompt, /luna_wait/);
+  assert.match(options.prompt, /小工人不能再派工/);
+  assert.equal(
+    (await options.onPermission({toolName: 'mcp__k_luna__luna_start', input: {task: 'sub'}})).behavior,
+    'allow'
+  );
+  assert.equal(
+    (await options.onPermission({toolName: 'mcp__k_luna__luna_wait', input: {requestId: 'sub-1'}})).behavior,
+    'allow'
+  );
+  for (const toolName of ['ExitPlanMode', 'Agent', 'Task', 'TaskOutput', 'TaskStop']) {
+    assert.equal((await options.onPermission({toolName, input: {}})).behavior, 'deny');
+  }
+  options.onMessage({type: 'result', result: 'nested done'});
+  const res = await run;
+  assert.equal(res.status, 'completed');
+  assert.equal(res.output, 'nested done');
 });

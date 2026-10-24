@@ -17,6 +17,7 @@ async function fixture({
   accessMode = 'workspace-write',
   onChange = () => {},
   onRequest,
+  nested,
   workerPolicy = {model: 'claude-opus-5-5', effort: null}
 } = {}) {
   const root = path.join(scratchBase, 'claude-bridge-tests', randomUUID());
@@ -31,6 +32,7 @@ async function fixture({
     claudeFactory,
     onChange,
     onRequest,
+    nested,
     workerPolicy
   });
   return {root, workspace, bridge};
@@ -318,5 +320,89 @@ test('cancel releases an unconfirmed Claude stop only after its root process is 
       assert.match(result.error, /子代理主程序已確認結束/);
       await f.bridge.close();
     }
+  }
+});
+
+test('when nested is passed, Claude worker gets mcpConfig, updates subWorkers, and closes second layer before settling', async () => {
+  let nestedCalledWith = null;
+  let subChangeCallback = null;
+  let closedCalled = 0;
+  let receivedMcp = null,
+    receivedInstructions = null;
+  const fakeGatewayMcp = {mcpServers: {k_luna: {command: 'test'}}};
+  const f = await fixture({
+    nested: async options => {
+      nestedCalledWith = options;
+      subChangeCallback = options.onChange;
+      return {
+        mcpConfig: fakeGatewayMcp,
+        instructions: 'worker catalog',
+        async close() {
+          closedCalled++;
+        }
+      };
+    },
+    claudeFactory: () => ({
+      async run(args) {
+        receivedMcp = args.mcpConfig;
+        receivedInstructions = args.instructions;
+        subChangeCallback?.({
+          requestId: 'sub-1',
+          provider: 'codex',
+          model: 'gpt-6.1-sol',
+          effort: 'high',
+          status: 'running',
+          settled: false,
+          task: 'do not include this secret task text',
+          startedAt: '2026-10-24T00:00:00Z'
+        });
+        return {status: 'completed', settled: true, output: 'parent done', outputFiles: []};
+      }
+    })
+  });
+  try {
+    const start = await f.bridge.start({requestId: 'parent-job', task: 'orchestrate', model: 'claude-opus-5-5', effort: 'high'});
+    assert.equal(start.requestId, 'parent-job');
+    const result = await f.bridge.wait({requestId: 'parent-job', timeoutMs: 2000});
+    assert.equal(result.status, 'completed');
+    assert.equal(result.settled, true);
+    assert.equal(closedCalled, 1);
+    assert.deepEqual(receivedMcp, fakeGatewayMcp);
+    assert.equal(receivedInstructions, 'worker catalog');
+    assert.equal(nestedCalledWith.requestId, 'parent-job');
+    assert.equal(nestedCalledWith.accessMode, 'workspace-write');
+    assert.ok(Array.isArray(result.subWorkers));
+    assert.equal(result.subWorkers.length, 1);
+    assert.equal(result.subWorkers[0].requestId, 'sub-1');
+    assert.equal(result.subWorkers[0].model, 'gpt-6.1-sol');
+    assert.equal(result.subWorkers[0].task, undefined);
+  } finally {
+    await f.bridge.close();
+  }
+});
+
+test('when second-layer close fails, parent worker settles as unresolved with settled false', async () => {
+  const f = await fixture({
+    nested: async () => ({
+      mcpConfig: {mcpServers: {}},
+      async close() {
+        throw new Error('sub-worker stop unconfirmed');
+      },
+      list: async () => []
+    }),
+    claudeFactory: () => ({
+      async run() {
+        return {status: 'completed', settled: true, output: 'done', outputFiles: []};
+      }
+    })
+  });
+  try {
+    await f.bridge.start({requestId: 'failing-close', task: 'parent', model: 'claude-opus-5-5', effort: 'high'});
+    const result = await f.bridge.wait({requestId: 'failing-close', timeoutMs: 2000});
+    assert.equal(result.status, 'unresolved');
+    assert.equal(result.settled, false);
+    assert.match(result.error, /小工人停止狀態未確認/);
+  } finally {
+    await assert.rejects(f.bridge.close(), /尚未確認停止/);
   }
 });

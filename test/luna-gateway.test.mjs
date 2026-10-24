@@ -846,3 +846,27 @@ test('the process-only gateway accepts an api: worker model and lists unfinished
     await gateway.close();
   }
 });
+
+test('a nested-worker gateway tells the worker it receives no completion events and must wait', async () => {
+  for (const nestedWorker of [false, true]) {
+    const gateway = await createLunaGateway({bridge: fixture().bridge, nestedWorker});
+    try {
+      const config = gateway.mcpConfig.mcpServers.k_luna,
+        token = config.headers.Authorization.slice(7);
+      await post(config.url, token, {
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {protocolVersion: '2025-11-25', capabilities: {}, clientInfo: {name: 'test', version: '1'}}
+      });
+      const listed = await body(await post(config.url, token, {jsonrpc: '2.0', id: 2, method: 'tools/list', params: {}}));
+      const description = listed.result.tools.find(tool => tool.name === 'luna_start').description;
+      if (nestedWorker) {
+        assert.match(description, /K delivers NO completion event to you/);
+        assert.doesNotMatch(description, /automatically delivers completion/);
+      } else assert.match(description, /K automatically delivers completion to this conversation/);
+    } finally {
+      await gateway.close();
+    }
+  }
+});
