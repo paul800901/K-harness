@@ -1725,7 +1725,7 @@ function App() {
       error ||
       (hasInlineError ? null : state.error) ||
       (isUpdatingDisconnect
-        ? 'K 更新中，約 2～3 分鐘後會自動重新連線，不用重新整理或重開 K。'
+        ? 'K 更新中，大概要 2～3 分鐘。這個畫面留著不用動，K 回來會自己重新整理；先離開也可以，等一下再開。'
         : '介面暫時斷線；電腦可能仍在工作。恢復連線只讀回狀態，不會重送。'),
     alertText = localizeNativeNotice(alertRaw, stateProvider, state.turnError?.error);
   return (

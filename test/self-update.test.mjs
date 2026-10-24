@@ -253,7 +253,8 @@ async function runScript(updateLines, launcherPid, files = {}) {
         '-Ref',
         READY,
         '-LauncherPid',
-        String(launcherPid)
+        String(launcherPid),
+        '-NoWindow'
       ],
       {stdio: 'ignore', timeout: 120000}
     );

@@ -115,7 +115,9 @@ try {
   // updating, then exactly one reload once it is back and finished, with the marker cleared.
   update = {available: true, updating: true, failed: null};
   const waiting = await open({width: 390, height: 844}, {disconnected: true});
-  await waiting.getByText('K 更新中，約 2～3 分鐘後會自動重新連線，不用重新整理或重開 K。').waitFor();
+  await waiting
+    .getByText('K 更新中，大概要 2～3 分鐘。這個畫面留著不用動，K 回來會自己重新整理；先離開也可以，等一下再開。')
+    .waitFor();
   await waiting.waitForTimeout(6000);
   assert.equal(await waiting.evaluate(() => localStorage.getItem('probe-loads')), '1', 'no reload while updating');
   // K is finished, but the first status read after it answers again fails: the next one still reloads.

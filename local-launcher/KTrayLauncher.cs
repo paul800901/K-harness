@@ -473,7 +473,7 @@ internal sealed class KLauncherContext : ApplicationContext
         if (!Mutex.TryOpenExisting("Local\\KHarnessSelfUpdate", out updating)) return false;
         updating.Dispose();
         Log("start refused: self-update in progress");
-        MessageBox.Show("K 更新中，約 2～3 分鐘後會自動重新開啟，不用再開。", "K", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        MessageBox.Show("K 更新中，大概 2～3 分鐘後會自動重新開啟，不用再開。", "K", MessageBoxButtons.OK, MessageBoxIcon.Information);
         return true;
     }
 
