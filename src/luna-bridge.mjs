@@ -383,9 +383,9 @@ export async function createLunaBridge({
         record.executionUnowned = true;
         record.status = 'unresolved';
         record.error ??= 'K 重啟後子代理程序與完成結果無法確認；未重播。';
-        // A saved sub-worker snapshot is not evidence that it is still running; its second layer is never reloaded.
-        for (const sub of record.subWorkers ?? []) if (!sub.settled) sub.status = 'unresolved';
       }
+      // A saved sub-worker snapshot is not evidence that it is still running; its second layer is never reloaded.
+      for (const sub of record.subWorkers ?? []) if (!sub.settled) sub.status = 'unresolved';
       records.set(requestId, record);
       return record;
     } catch (error) {
@@ -868,7 +868,9 @@ export async function createLunaBridge({
           record.settled = true;
           record.error = error.message;
           if (error.settled === false || nestedError) {
-            if (nestedError) nestedCleanups.set(requestId, {context: nestedContext, status: 'failed', settled: true});
+            // A second layer that failed while being created hands back its own cleanup for a later retry.
+            const context = nestedError ? nestedContext : error.nestedCleanup;
+            if (context) nestedCleanups.set(requestId, {context, status: 'failed', settled: true});
             record.status = 'unresolved';
             record.settled = false;
             if (nestedError) record.error += `；小工人停止狀態未確認：${nestedError.message}`;

@@ -483,3 +483,63 @@ test('after a restart an unsettled sub-worker snapshot is shown as unresolved, n
     await bridge.close();
   }
 });
+
+test('a second layer that fails during creation hands back its cleanup for a later cancel to retry', async () => {
+  let retried = 0;
+  const f = await fixture({
+    nested: async () => {
+      throw Object.assign(Error('gateway failed; close unconfirmed'), {
+        settled: false,
+        nestedCleanup: {
+          async close() {
+            retried++;
+          }
+        }
+      });
+    },
+    claudeFactory: () => ({
+      run: async () => assert.fail('the worker must not start without its gateway')
+    })
+  });
+  try {
+    const started = await f.bridge.start({requestId: 'gateway-fail', task: 'parent', model: 'claude-opus-5-5'});
+    assert.equal(started.status, 'unresolved');
+    assert.equal(started.settled, false);
+    const result = await f.bridge.cancel({requestId: 'gateway-fail'});
+    assert.equal(retried, 1);
+    assert.equal(result.status, 'failed');
+    assert.equal(result.settled, true);
+  } finally {
+    await f.bridge.close();
+  }
+});
+
+test('after a restart a settled parent with a stale running sub-worker snapshot shows it unresolved', async () => {
+  const root = path.join(scratchBase, 'claude-bridge-tests', randomUUID());
+  const workspace = path.join(root, 'workspace');
+  const directory = path.join(root, '.runtime', 'luna-bridge', 'parent');
+  await mkdir(workspace, {recursive: true});
+  await mkdir(directory, {recursive: true});
+  await writeFile(
+    path.join(directory, 'done-parent.json'),
+    JSON.stringify({
+      requestId: 'done-parent',
+      parentId: 'parent',
+      provider: 'claude',
+      model: 'claude-opus-5-5',
+      status: 'completed',
+      settled: true,
+      task: 'orchestrate',
+      workspace,
+      subWorkers: [{requestId: 'stale', model: 'gemini-3.8-flash', status: 'running', settled: false}]
+    })
+  );
+  const bridge = await createLunaBridge({root, workspace, parentId: 'parent', geminiOnly: true});
+  try {
+    const record = await bridge.inspect({requestId: 'done-parent'});
+    assert.equal(record.status, 'completed');
+    assert.equal(record.subWorkers[0].status, 'unresolved');
+  } finally {
+    await bridge.close();
+  }
+});

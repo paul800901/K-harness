@@ -1380,7 +1380,8 @@ export function createClaudeController({
             // No sub-worker can exist yet; an unconfirmed close still keeps the parent unresolved.
             await subBridge.close().catch(closeError => {
               throw Object.assign(Error(`${error.message}；第二層派工關閉未確認：${closeError.message}`), {
-                settled: false
+                settled: false,
+                nestedCleanup: {close: () => subBridge.close()}
               });
             });
             throw error;
