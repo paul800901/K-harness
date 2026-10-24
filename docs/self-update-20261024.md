@@ -109,11 +109,36 @@ Astra 確認第二輪 7 項中：子代理背景命令（主路徑）、讀本�
 - 修正（`26619d6`，Opus）：包裝層先設 `$ProgressPreference = 'SilentlyContinue'`；擷取原因時排除 `#< CLIXML` 與 `<Objs` 開頭的行。測試改由假安裝器在真正原因之後印出與部署記錄相同的 CLIXML 行；以修正前腳本執行該測試會失敗（重現部署時的同一結果），修正後通過。完整測試 1888/1888。改動只有過濾與一行設定、且有直接證明的測試，未再交 Astra 複查。
 - 該次失敗留下的建置暫存 `prepare-1792805526143`（可由 Git 重建）已移到資源回收筒。
 
+## 第一次按鈕實測失敗與修正（2026-10-24 下午）
+
+- 13:55:55（臺灣時間）本人從手機按下「更新」，目標 `3a870b7`。`launcher.log`：13:55:56 K 正常關閉、交棒給 `scripts/Self-Update-K.ps1`、啟動器結束。更新腳本建置成功、更新器內完整測試 **1917/1917**（`.local/self-update.log`），卻在套用前的 `assertStopped()`（連 127.0.0.1:47831）失敗，`.local/self-update-result.json` 記「請先「離開並停止 K」，更新不會強制結束工作。」；正式版本仍為 `26619d6`，啟動器與資料未變。
+- 原因：`launcher.log` 13:57:39「starting isolated K supervisor」。啟動器程序（PID 47228）建立於 13:57:39、父程序是 explorer.exe，即本人在更新還在跑測試時從桌面點開 K，比套用早 8 秒。腳本 finally 於 13:57:47 再開啟動器，被單一實例 mutex 擋下、只送出 open 訊號（13:57:47「native isolated workbench opened」）。本人看到的是「後台自動關了、沒重開、沒更新」，加上失敗訊息在按鈕流程裡誤導。手機的 Chrome 502 頁是手動重新整理造成；前端只在後端回報不在更新中才重整，核對無提前重整。
+- 設計缺口：更新約 2 分鐘內沒有任何東西擋住手動開 K；手機提示沒寫要等多久；更新器那句「請先離開並停止 K」對按鈕流程沒有意義。
+- 修正：
+  - `scripts/Self-Update-K.ps1`：一開始就建立具名 mutex `Local\KHarnessSelfUpdate`（不取擁有權，只靠名稱存在代表更新中；程序結束名稱即消失，當機不會把 K 鎖死）；finally 寫完結果後先 `Dispose()` 再重開啟動器。`Get-FailureLine` 把含「離開並停止 K」的原因改寫為「更新進行中 K 又被開啟了，這次沒有套用；再按一次更新即可。」腳本由啟動器從 repo root 讀取，下一次按鈕就生效。
+  - `local-launcher/KTrayLauncher.cs`：`Main` 先查該 mutex，存在就記 `launcher.log`（start refused: self-update in progress）、顯示「K 更新中，約 2～3 分鐘後會自動重新開啟，不用再開。」並結束，不建立 tray mutex、不啟動 K；`Start-K-Desktop.ps1` 也經啟動器，同樣被擋。`root`／`logPath`／`Log` 改為 static 供 `Main` 使用。啟動器 exe 要等這版部署後才換新，所以**下一次按鈕更新期間仍不能手動開 K**。
+  - `frontend/main.jsx`：更新斷線提示改為「K 更新中，約 2～3 分鐘後會自動重新連線，不用重新整理或重開 K。」；`test/self-update-ui-probe.mjs` 同步。
+  - `test/self-update.test.mjs` 新增兩個 PowerShell 5.1 實跑：假 `Update-K.ps1` 內以 `TryOpenExisting` 觀察 mutex 存在；假安裝器印出更新器原句時原因被改寫。刻意不斷言 mutex「不存在」：正式更新時更新器內的 npm test 就在這把鎖底下跑。
+  - `scripts/install-runtime.mjs`（Opus 第一輪意見）：套用時先把現有啟動器 exe 以 `rename` 移到退版目錄的 `launcher.exe`（執行中的 exe 不能覆寫、但可以改名），再放入新版；退版與失敗還原讀的都是這個檔。新增測試：以執行中的 PING.EXE 複本放在啟動器路徑，證明覆寫被拒（EBUSY）後，套用與退版都成功。
+- 已知邊界：腳本啟動前（啟動器交棒後約 3 秒內）由舊啟動器的 tray mutex 擋住手動開啟，點了只會把 open 訊號送給正在結束的舊啟動器；非啟動器開的 47831（例如開發用伺服器）仍會讓套用失敗，只是訊息改為上述那句。以不同權限等級執行時 `TryOpenExisting` 會丟例外（既有 tray mutex 同樣），正式情況腳本由啟動器以同權限啟動。跑測試時鎖名稱會在同一工作階段短暫出現（每次約 2 秒），當時點 K 會看到更新中提示，接受。
+- 清理：這次失敗的建置暫存 `prepare-1792821361345` 已移到資源回收筒（讀回確認）。另有 10-16～10-19 留下的四個 `prepare-*`（`1792138940127`、`1792161324050`、`1792162188836`、`1792438853003`）未動，待本人決定。
+- Opus 5.5 第一輪複查（high）：同意根因（時間線、父程序、其他入口都經啟動器），結論「需修改」：
+
+| 項目 | 處理 |
+|---|---|
+| 中：被拒絕的啟動器若提示框一直沒按掉，程序還在、exe 被占用，套用時 `copyFile` 得 EBUSY，更新失敗（會退回舊版、K 照常重開） | 採建議 (a)：`activateRuntime` 先 `rename` 舊 exe 到退版目錄再放新版；新增執行中 exe 的測試 |
+| 低：鎖建立太晚，舊啟動器結束到建鎖之間約 250 ms 空窗 | 採納：移到主 try 第一行；60 秒內啟動器沒結束時 finally 一樣 `Dispose`、不重開，行為不變 |
+| 低：權限等級不一致時 `TryOpenExisting` 丟 `UnauthorizedAccessException` | 不改，記入已知邊界 |
+| 低：測試期間鎖名稱在同一工作階段出現約 2 秒 ×4 | 不改（加 root 雜湊要讓腳本與啟動器各多一段程式），記入已知邊界 |
+| 低：改寫後的失敗訊息只在部分情況準確 | 保留：部署這一版的那次更新機器上仍是舊啟動器，正好需要 |
+
+- 驗證（處理第一輪意見後）：`test/install-runtime.test.mjs`＋`test/self-update.test.mjs` 29/29；完整 `npm test` **1920/1920**（原 1917 加新增 3 項）；`npm run build:ui` 後 `npm run test:ui` **51/51**（`self-update-ui-probe` 以新提示文字通過）；啟動器以 `Build-K-Launcher.ps1` 在暫存目錄編譯成功（84,992 bytes，未執行，暫存已刪）。真實按鈕端到端仍待本人按下一次確認。
+- Opus 5.5 第二輪複查（high）：結論「可部署」。核對套用交易的成功、`rename` 失敗、新版 `copyFile` 失敗與後續步驟失敗的 catch 還原都不會留下沒有啟動器的狀態（交易前那份 `backup/launcher.exe` 副本必須保留）；退版在舊 exe 仍執行中也能成功；`pruneReleases` 只警告；鎖提前後「啟動器 60 秒沒結束」「Update-K 例外」「腳本當掉」三種情況行為不變；新測試真實、不留程序。另提一項低：建鎖本身若丟例外，`$launcherGone` 仍為 false、K 不會重開——已採納建議改為 `try { … } catch {}` 盡力建鎖，建不成就與修正前相同、更新照跑。
+
 ## 審核與部署狀態
 
 - Gemini 3.8 Flash 起頭；Opus 5.5 接手完成、簡化並逐輪修正；GPT-6 Astra（xhigh）共六輪後端抓錯，最終「可部署」。
 - 程式版本 `26619d67816e9f2f63650d28d4f8a9b0e0ad8a77`（`acb5756` 部署嘗試失敗後的修正，見上節）。這一版本身須由 K 外代理部署一次（執行中的舊啟動器不認得更新訊號）；之後的版本即可用按鈕。
 - **南區已部署**：2026-10-24 09:45:32–09:47:28（臺灣時間）由 K 外 Codex 執行 `Update-K.ps1 -Ref 26619d67816e9f2f63650d28d4f8a9b0e0ad8a77`，結束碼 0，更新器測試 **1888/1888**（上次失敗的 CLIXML 項目通過）。讀回：`version` 為該 SHA、`previous` 指向 `before-1792806440017`；更新功能檔案、`/api/self-update`、`writesInProgress`、`owner-self-update`、介面重連文字皆在；啟動器已更新（09:45:56，84,480 bytes）；`Self-Update-K.ps1` 有 BOM 與 `ProgressPreference`／`CLIXML`；`Update-K.ps1` 未變；前幾版修正仍在；資料路徑、受保護檔案與語音設定未變。退版三份：`before-1792765732003`、`before-1792771586476`、`before-1792806440017`，最舊者進資源回收筒。push 讀回 `1ba95e3a6e58931e2356fd4ca51de09a8bfe46ad`。證據：`.runtime/archive/deployment-26619d67816e9f2f63650d28d4f8a9b0e0ad8a77/`。
 - 部署後本人回報看不到按鈕：符合設計，目前沒有比正式版本更新的已驗收版本，也沒有 `.local/update-ready.json`。
-- 尚未做：真實按下按鈕的端到端（下一批程式驗收後寫標記，由本人按鈕實測）。東區未更新。
-- 未部署、未合回 main、未 push。
+- 2026-10-24 13:56 本人第一次按鈕實測失敗（手動開 K 擋下套用，見上節），修正為程式版本 `407b574027467105ac7949e1b834c42da4da7d64`（含定時喚醒 `4fdd5f0`～`8cbd69a` 與多一層派工 `3177927`～`3a870b7` 兩批）。已寫 `.local/update-ready.json` 指向該版本，由本人再按一次「更新」部署；**這次更新期間機器上仍是舊啟動器，不能手動開 K**，手機看到「K 更新中」就等約 2～3 分鐘，之後的啟動器才會自己擋住手動開啟。部署成功後需正式讀回並 push（main 領先 origin 的提交含上述兩批與本修正）。東區未更新。
