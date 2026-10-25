@@ -124,7 +124,6 @@ export function createDesktopController({
     viewEpoch = 0,
     hostEpoch = 0,
     browserRecoveryThreadId = null,
-    hostDesktop = false,
     flashBridge = null,
     flashBridgeInit = null,
     flashGateway = null,
@@ -136,6 +135,8 @@ export function createDesktopController({
   const items = new Map(),
     pending = new Map(),
     unsentSessions = new Map(),
+    // Thread id → whether the current host loaded it with k_desktop.
+    hostDesktop = new Map(),
     reasoningParts = new Map(),
     fileChangePatches = new Map();
   const activity = createWorkActivity(state),
@@ -3059,7 +3060,11 @@ export function createDesktopController({
           const desktop = await desktopControlMcp({root, fullAccess: access === 'danger-full-access'});
           // Resuming a thread already loaded on this app-server keeps its MCP processes,
           // so adding or removing desktop control needs a fresh host; history stays native.
-          if (host && threadId && (relocation || browserRecoveryThreadId === threadId || hostDesktop !== !!desktop)) {
+          if (
+            host &&
+            threadId &&
+            (relocation || browserRecoveryThreadId === threadId || hostDesktop.get(threadId) === !desktop)
+          ) {
             await closeFlashGateway();
             const previous = host;
             host = null;
@@ -3074,6 +3079,7 @@ export function createDesktopController({
           }
           if (!host) {
             unsentSessions.clear();
+            hostDesktop.clear();
             const connectionEpoch = ++hostEpoch;
             state.capabilities.compactionAssist = false;
             signal.throwIfAborted();
@@ -3353,7 +3359,6 @@ export function createDesktopController({
           if (!geminiServer?.url || !geminiServer?.headers?.Authorization)
             throw new Error('子代理 MCP gateway 未提供有效的專案限定連線設定。');
           const googleOps = await googleOpsMcp(workspace, {root});
-          hostDesktop = !!desktop;
           const mcpServers = withBrowserMcp(
             {
               k_desktop: desktop ? {...desktop, startup_timeout_sec: 30} : disabledCodexMcpServer(),
@@ -3387,6 +3392,7 @@ export function createDesktopController({
             continuationCreationAttempted = true;
             session = await call('thread/start', config);
             createdContinuationId = session.thread.id;
+            hostDesktop.set(createdContinuationId, !!desktop);
             state.threadId = createdContinuationId;
             state.title = `新對話 · ${freshSource.parentTitle || '接續工作'}`.slice(0, 120);
             // Save the new native identity before MCP readiness or the first submission.
@@ -3410,6 +3416,7 @@ export function createDesktopController({
               lastTurnId: forkSource.throughTurnId
             });
             createdContinuationId = session.thread.id;
+            hostDesktop.set(createdContinuationId, !!desktop);
             state.threadId = createdContinuationId;
             state.parentThreadId = forkSource.forkFrom;
             state.parentTitle = forkSource.parentTitle ?? '';
@@ -3461,6 +3468,7 @@ export function createDesktopController({
               session = localRefs(session);
             }
           }
+          hostDesktop.set(session.thread.id, !!desktop);
           if (typeof host.waitForMcp === 'function')
             await abortable(host.waitForMcp(session.thread.id, 'k_gemini'), signal);
           signal.throwIfAborted();

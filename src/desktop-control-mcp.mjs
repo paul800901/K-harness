@@ -13,7 +13,7 @@ const ARGS = [
   'stdio',
   '--no-control',
   '--exclude-tools',
-  'PowerShell,FileSystem,Registry,Process,Scrape,ControlStatus'
+  'PowerShell,FileSystem,Registry,Process,Scrape'
 ];
 
 // The owner binds the existing installation once in private state. An editable

@@ -59,7 +59,7 @@ test('desktopControlMcp returns correct command, args and env when valid', async
       'stdio',
       '--no-control',
       '--exclude-tools',
-      'PowerShell,FileSystem,Registry,Process,Scrape,ControlStatus'
+      'PowerShell,FileSystem,Registry,Process,Scrape'
     ],
     env: {ANONYMIZED_TELEMETRY: 'false'}
   });

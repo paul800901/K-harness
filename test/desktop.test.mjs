@@ -1767,6 +1767,41 @@ test('Codex gives Desktop Control only in full access and replaces the host when
   }
 });
 
+test('a read-only Codex fork does not hide that its full-access parent is still loaded with Desktop Control', async () => {
+  const f = await fixture();
+  try {
+    const exe = path.join(f.root, 'windows-mcp.exe');
+    await writeFile(exe, 'fixture');
+    await mkdir(path.join(f.root, '.runtime'), {recursive: true});
+    await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
+    await f.c.open({model: 'gpt-6-astra', accessMode: 'danger-full-access', permissionConfirmed: true});
+    f.c.state.messages = [{id: 'fork-point', role: 'assistant', turnId: 'turn-fork', partial: false}];
+    const request = f.host.request;
+    f.host.request = async (method, p) => {
+      if (method === 'thread/fork') return (f.calls.push({method, p}), {thread: {id: 'fork-child'}});
+      if (method === 'thread/read')
+        return {
+          thread: {
+            turns: [
+              {id: 'turn-fork', status: 'completed', items: [{id: 'fork-point', type: 'agentMessage', text: '完成'}]}
+            ]
+          }
+        };
+      return request(method, p);
+    };
+    await f.c.fork({messageId: 'fork-point', accessMode: 'read-only'});
+    assert.equal(f.calls.find(c => c.method === 'thread/fork').p.config.mcp_servers.k_desktop.enabled, false);
+
+    const hosts = f.hostFactoryCalls;
+    await f.c.open({model: 'gpt-6-astra', threadId: 'test-thread', accessMode: 'read-only'});
+    assert.equal(f.hostFactoryCalls, hosts + 1);
+    const reopen = f.calls.findLast(c => c.method === 'thread/start' || c.method === 'thread/resume').p;
+    assert.equal(reopen.config.mcp_servers.k_desktop.enabled, false);
+  } finally {
+    await f.c.close();
+  }
+});
+
 test('native child activity survives status reads while its parent stays idle and never starts another turn', async () => {
   const f = await fixture();
   const original = f.host.request;
