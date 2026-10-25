@@ -890,9 +890,11 @@ test('shutdown route returns partial failure and a later request can complete sh
 });
 
 
-test('Python local-dictation helper passes all GPU mutex, sampling, and fallback unit tests', () => {
+test('Python local-dictation helper passes all GPU mutex, sampling, and fallback unit tests', t => {
   const scriptPath = fileURLToPath(new URL('test_local_dictation_gpu.py', import.meta.url));
-  const result = spawnSync('python', [scriptPath], {encoding: 'utf8'});
+  // -B: no __pycache__ left in scripts/.
+  const result = spawnSync('python', ['-B', scriptPath], {encoding: 'utf8'});
+  if (result.error?.code === 'ENOENT') return t.skip('python is not on PATH');
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
