@@ -99,14 +99,20 @@
 
 ## 部署
 
-（待補）
+- 合回：分支 rebase 到含瀏覽器連線回報批（`5f8b7e0`）的最新 main `799475b`，兩批合併完整 `npm test` 1952/1952；快轉 main 到 `5e540dc`（程式 `8eab458343945e7f931e714df9d8022de2a45622`）。
+- 私有狀態登記：`vault/private-state/.runtime/desktop-control.json` → `D:K-harness.runtimedesktop-control.venvScriptswindows-mcp.exe`（讀回執行檔存在）。
+- 2026-10-25 12:40 寫 `.local/update-ready.json` 指向 `8eab458`；本人按「更新」，12:54（臺灣時間）完成：`self-update-result.json` ok、943c44d→8eab458，更新器內完整測試 1952/1952，退版保留三份（`before-1792904067892` 為 previous）。`self-update-error.log` 只有 Vite 的 chunk 大小與 outDir 警告。
+- 正式讀回（本 Claude 主對話，略過權限提示）：K 重開後出現 `mcp__k_desktop__*` 16 個工具；`ControlStatus` 回 `state: disabled`（無鍵鼠 hook）；`DisplayInventory` 讀到 1920×1080 單螢幕。程序列表確認 Claude 啟動的 windows-mcp 參數為 `serve --transport stdio --no-control --exclude-tools PowerShell,FileSystem,Registry,Process,Scrape`；每個完整存取權 Claude 主對話一份，實測工作集約 170 MB（兩個 Claude 聊天室各一份）。
+- push：`b15dc81..5e540dc`，遠端讀回 `5e540dce9d285616da9d76b7ec46faf3b0edcf49`（含先前已部署未推的檔案連結、心跳修正與瀏覽器回報批）。push 前掃描差異無秘密字樣。
+- 瀏覽器批擴充：執行 `scripts/Setup-K-Browser.ps1`，`installed/k-browser-assistant` 由 0.1.4 換為 0.1.5，備份於 `vault/k-browser-assistant-backups/setup-20261025-130952-416`；待本人在 K 專用 Chrome 擴充頁按「重新載入」後實測一般／無痕連線。
+- GPT、Gemini 主對話的正式實測（含 Codex 是否跳 MCP 核准）尚未做。
 
 ## 已知限制與未完成
 
 - **K 沒有按 Esc 停止 AI**：停手用聊天室停止鍵或傳訊息（手機也可）。
 - 電腦鎖定或睡眠時無法操作；本人離開時要保持解鎖，尚未實測。
 - Codex 完整存取下呼叫 `k_desktop` 是否會跳 MCP 工具核准未實測；若會，本人不在時工作會停在核准。部署後以無副作用的工具（如 `DisplayInventory`）實測。
-- 每個完整存取權主對話各啟動一個 windows-mcp 程序（啟動約 2 秒）；工具定義約 17 KB 會進入各核心的上下文。
+- 每個完整存取權主對話各啟動一個 windows-mcp 程序（啟動約 2 秒、實測約 170 MB）；工具定義約 17 KB 會進入各核心的上下文。
 - 多個聊天室理論上可同時控制桌面，靠「本人該次明確要求才用」約束，K 不另加鎖。
 - Gemini 主對話的 windows-mcp 繼承 agy 的白名單環境（沒有 `APPDATA`），開程式時可能找不到只在使用者私人開始選單的捷徑。
 - 用的是 GitHub 未發布 commit；Windows-MCP 下一個正式版包含 `--no-control` 後可改回正式版（需本人授權的更新）。
