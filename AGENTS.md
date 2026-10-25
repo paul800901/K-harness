@@ -8,7 +8,7 @@
 
 - 名稱 K HARNESS，介面顯示「K 執行中樞」、副標「通用工作台」，以 Codex CLI／Claude Code／Antigravity CLI 三家原生核心為基底。不與舊 KAI、DSH 正式環境混為一談，不修改 DSH／KAI。
 - 本人個人、非商業使用，不是工程師。「通用」指能處理不同工作，不是為廣大使用者設計；參考 Codex App／Claude Code 的成熟能力，不照搬全部人類控制介面。日常由 K 取代官方 Antigravity 介面，不為兩邊同時使用另建協調。
-- 臨床相關工作（含 CaseAgent）不再排除；進入該專案時依其 AGENTS.md。
+- 臨床相關工作（含 CaseAgent）依該專案 AGENTS.md。
 - K 是薄接頭：原生核心負責模型執行、歷史、壓縮、權限語意與重試；K 負責共用呈現與必要協調，不重造模型核心、統一目標核心或記憶系統（不引入舊 L0／L1／L2；共享知識只留實驗，沒有新要求不部署）。各家沒有等價能力就明確標示，不硬湊、不假造。
 - 優先用各核心公開協定／擴充入口；觀察到具體限制才改上游或新增抽象。不把 Codex App 專屬能力當成可外接 SDK。
 - 既有對話綁定供應商；跨供應商接續用分支新對話＋明確交接，不偽裝成原生歷史搬移。
@@ -18,7 +18,7 @@
 ## 二、工作區、版本與發布
 
 - `D:\K-harness` 的 `main` 是原始碼主工作樹，須與最新已驗收版本一致，不留未提交修改。分支／工作樹完成後合回 `main`，工程紀錄提交在所屬分支一起合回；已合併分支刪除。多個聊天室同時開發時協調單一部署者，以當時最新正式版本為基礎，不互相覆蓋。
-- 正式 K 執行於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/trusted-runtime`（目錄名是歷史遺留，不需 Sandboxie）；同層 `agent-home`、`vault`、`workspace`、`browser-output` 是帳號、對話、瀏覽器與輸出，`releases` 是程式退版；`.local/runtime.json` 記本機路徑與目前版本。改原始碼不等於更新正式 K。
+- 正式 K 執行於 `.runtime/isolation-pilot/sandboxie-candidate-3b6c43ee/trusted-runtime`；同層 `agent-home`、`vault`、`workspace`、`browser-output` 是帳號、對話、瀏覽器與輸出，`releases` 是程式退版；`.local/runtime.json` 記本機路徑與目前版本。改原始碼不等於更新正式 K。
 - 在 K 內執行的 AI 無法停止或更新自己所在的 K；正式更新須 K 完全停止後在 K 外執行 `Update-K.ps1`。本人可按側欄「更新」（AI 驗收合回 `main` 後寫 `.local/update-ready.json` 才出現；見 `docs/self-update-20261024.md`）。
 - 發布流程：完成一批 → 實測與完整測試（`npm test`；改介面時先 `npm run build:ui` 再跑 `npm run test:ui`）→ 主代理與真正 Opus 5.5 複查並處理意見 → 固定 Git 版本 → 確認正式 K 閒置、保留退版 → 部署與正式讀回 → push 並讀回遠端 SHA。已交代的範圍內條件都通過就接續部署與 push，不逐次詢問；當輪「只讀／不部署／不 push／先停」優先；Opus 不可用、重大問題未解、權限／計費／資料格式變更或無法確認閒置時停在相應步驟。不強制停止工作、不重播。
 - 部署指向完整 commit SHA 或已核對的既有 tag；不移動舊 tag；文件與程式 commit 分開。純文件修改不重啟正式 K。
@@ -36,7 +36,7 @@
 - Claude／GPT 登入失效時，K 自動以預設瀏覽器開官方登入頁（只開網址，不讀或控制日常 Chrome），不重送；設定頁刷新須重查。
 - 保留 K 專用 `CODEX_HOME`、`CLAUDE_CONFIG_DIR`、Antigravity profile（覆寫 USERPROFILE／HOME／LOCALAPPDATA）及對話／瀏覽器資料位置；不改真實 `~/.gemini` 或全域 Codex／Claude 設定。唯一全域例外：Codex 全域設定登記 `D:\K-harness` 為 `trust_level = "trusted"`。
 - K 專用 Codex 家目錄缺 `config.toml` 時補上 `[windows] sandbox = "unelevated"`；已有設定檔不覆寫。
-- 不自動安裝套件、升級環境、改全域模型設定或切換計費。已授權的專案內安裝：MCP SDK 與相依、`croner@10.0.1`、`@playwright/mcp@0.0.82`、`.runtime/playwright-browsers` 的 Chromium。三家核心只在本人按設定頁「更新」後才下載到 K 專用目錄，保留舊版，完整重開才生效；平常不查新版。
+- 不自動安裝套件、升級環境、改全域模型設定或切換計費。已授權的專案內安裝：MCP SDK 與相依、`croner@10.0.1`、`@playwright/mcp@0.0.82`、`.runtime/playwright-browsers` 的 Chromium、`.runtime/desktop-control` 的 Windows-MCP `0db91ff`。三家核心只在本人按設定頁「更新」後才下載到 K 專用目錄，保留舊版，完整重開才生效；平常不查新版。
 - 歷史遺留原地保留、不再使用：`.env.local` 金鑰檔保持 Git 排除、禁止輸出；Sandboxie 元件與已停用的 `KAgentSandbox` 帳號不卸載、不刪除、不重新啟用。
 
 ## 四、權限
@@ -100,8 +100,8 @@
 
 ## 九、瀏覽器、連接器與外部服務
 
-- 瀏覽器：用 K 專用 Chrome、K 瀏覽器助手擴充（`installed/k-browser-assistant`）與原生訊息連接程式；不接管日常 Chrome、不讀其登入資料，不設開機啟動或系統服務；內嵌瀏覽器已移除。K Chrome 沒開時由 K 開啟並立即縮小、焦點還給本人（可能閃一下，已接受）；已開就不重開；缺所要模式（一般／無痕）的視窗時由助手縮小開啟。K Chrome 由 AI 在背景控制，不設人類接手模式：本人按停止或傳訊息即停手（經 MCP 標準取消），要自己用就直接操作；中斷後 AI 下次建新連線，不自動重做被中斷的動作。
-- AI 不得搶 OS 前景視窗或鍵鼠焦點，不用強制切前景修背景點擊或截圖逾時（開 K Chrome 的閃現除外）。Computer Use 須該次明確要求才用。不做人工活動自動暫停，是否暫停由 AI 依任務與本人訊息判斷。登入與驗證由本人接手。
+- 瀏覽器：用 K 專用 Chrome、K 瀏覽器助手擴充（`installed/k-browser-assistant`）與原生訊息連接程式；不接管日常 Chrome、不讀其登入資料，不設開機啟動或系統服務。K Chrome 沒開時由 K 開啟並立即縮小、焦點還給本人；已開就不重開；缺所要模式（一般／無痕）的視窗時由助手縮小開啟。K Chrome 由 AI 在背景控制，不設人類接手模式：本人按停止或傳訊息即停手（經 MCP 標準取消），要自己用就直接操作；中斷後 AI 下次建新連線，不自動重做被中斷的動作。
+- AI 不得搶 OS 前景視窗或鍵鼠焦點，不用強制切前景修背景點擊或截圖逾時（開 K Chrome 的閃現除外）。Computer Use（`k_desktop`，只接完整存取權主對話）會接管前景與鍵鼠，須本人該次明確要求才用。不做人工活動自動暫停，是否暫停由 AI 依任務與本人訊息判斷。登入與驗證由本人接手。
 - 瀏覽器尺寸與縮放由 AI 依任務調整，不加人用解析度設定；右側只顯示瀏覽器狀態，不重複顯示網頁。
 - Gemini 可用原生搜尋與 `read_url`，但 `read_url` 可能回傳快取；需要即時或動態頁面時改用 K Chrome。
 - 官方帳號連接器是長期保留的 AI 能力，不因精簡介面而停用；這不代表可任意讀寫或新增帳號連結，需要本人確認的操作仍要確認。
