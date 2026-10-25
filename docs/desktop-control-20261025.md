@@ -105,13 +105,14 @@
 - 正式讀回（本 Claude 主對話，略過權限提示）：K 重開後出現 `mcp__k_desktop__*` 16 個工具；`ControlStatus` 回 `state: disabled`（無鍵鼠 hook）；`DisplayInventory` 讀到 1920×1080 單螢幕。程序列表確認 Claude 啟動的 windows-mcp 參數為 `serve --transport stdio --no-control --exclude-tools PowerShell,FileSystem,Registry,Process,Scrape`；每個完整存取權 Claude 主對話一份，實測工作集約 170 MB（兩個 Claude 聊天室各一份）。
 - push：`b15dc81..5e540dc`，遠端讀回 `5e540dce9d285616da9d76b7ec46faf3b0edcf49`（含先前已部署未推的檔案連結、心跳修正與瀏覽器回報批）。push 前掃描差異無秘密字樣。
 - 瀏覽器批擴充：執行 `scripts/Setup-K-Browser.ps1`，`installed/k-browser-assistant` 由 0.1.4 換為 0.1.5，備份於 `vault/k-browser-assistant-backups/setup-20261025-130952-416`；待本人在 K 專用 Chrome 擴充頁按「重新載入」後實測一般／無痕連線。
-- GPT、Gemini 主對話的正式實測（含 Codex 是否跳 MCP 核准）尚未做。
+- 13:18～13:19 本人在完整存取權的 GPT-6.1-Sol 與 Gemini 3.8 Flash 主對話各送「用 k_desktop 的 DisplayInventory 看一下螢幕」，兩邊都讀回 1920×1080 單螢幕（GPT 約 8 秒、Gemini 約 16 秒），GPT 未出現核准（本人截圖）。
+- 注意：`DisplayInventory` 標為 `readOnlyHint`；會改變狀態的工具（Click、Type、Move、Shortcut、App、MultiSelect、MultiEdit、Notification 為 `destructiveHint`）在 Codex 是否要求核准仍未實測。最無害的驗證是 `Notification`（只跳一則 Windows 通知）。
 
 ## 已知限制與未完成
 
 - **K 沒有按 Esc 停止 AI**：停手用聊天室停止鍵或傳訊息（手機也可）。
 - 電腦鎖定或睡眠時無法操作；本人離開時要保持解鎖，尚未實測。
-- Codex 完整存取下呼叫 `k_desktop` 是否會跳 MCP 工具核准未實測；若會，本人不在時工作會停在核准。部署後以無副作用的工具（如 `DisplayInventory`）實測。
+- Codex 完整存取下呼叫 `k_desktop`：唯讀工具（DisplayInventory）實測不需核准；`destructiveHint` 工具是否跳 MCP 核准未實測，若會，本人不在時工作會停在核准。
 - 每個完整存取權主對話各啟動一個 windows-mcp 程序（啟動約 2 秒、實測約 170 MB）；工具定義約 17 KB 會進入各核心的上下文。
 - 多個聊天室理論上可同時控制桌面，靠「本人該次明確要求才用」約束，K 不另加鎖。
 - Gemini 主對話的 windows-mcp 繼承 agy 的白名單環境（沒有 `APPDATA`），開程式時可能找不到只在使用者私人開始選單的捷徑。
