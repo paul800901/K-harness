@@ -164,7 +164,9 @@ try {
       await page.getByText('假資料：原生 compact/stream 已最終失敗', {exact: false}).count(),
       'main failure remains visible'
     );
-    assert.equal(await page.locator('.app.inspector-hidden').count(), 1, 'no forced panel');
+    await update({artifacts: ['result.txt']});
+    await page.waitForTimeout(150);
+    assert.equal(await page.locator('.app.inspector-hidden').count(), 1, 'no forced panel, even for new results');
     await page.screenshot({path: path.join(output, width + '-' + scale + '-' + theme + '.png')});
     await page.evaluate(() => window.testStream.onerror());
     await page.evaluate(() => window.testFocus({focused: true}));

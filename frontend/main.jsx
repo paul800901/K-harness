@@ -1045,26 +1045,16 @@ function App() {
     if (state.status === 'connecting') return;
     const key = state.threadId ?? '',
       previous = panelByThread.current.get(key);
-    const artifacts = state.artifacts ?? [];
-    const added = previous && artifacts.some(name => !previous.seenArtifacts.has(name));
-    const open = mobile
-      ? key === shownPanelThread.current && previous?.open === true
-      : added
-        ? true
-        : (previous?.open ?? (artifacts.length > 0 || hasBrowserPanel));
-    // Keep seen names across temporary omissions, so restored files do not reopen a closed panel.
-    const seenArtifacts = new Set([...(previous?.seenArtifacts ?? []), ...artifacts]);
-    panelByThread.current.set(key, {open, seenArtifacts});
+    // Results never open the panel by themselves; only a browser panel does on first view.
+    const open = mobile ? key === shownPanelThread.current && previous === true : (previous ?? hasBrowserPanel);
+    panelByThread.current.set(key, open);
     shownPanelThread.current = key;
     setInspector(open);
-    if (added) setPanel('artifacts');
-  }, [state.threadId, state.status, state.artifacts, hasBrowserPanel, mobile]);
+  }, [state.threadId, state.status, hasBrowserPanel, mobile]);
   const chooseInspector = open => {
     if (mobile && open) setSidebar(false);
     if (!open) setRoundtableReader(null);
-    const key = state.threadId ?? '',
-      previous = panelByThread.current.get(key);
-    panelByThread.current.set(key, {open, seenArtifacts: previous?.seenArtifacts ?? new Set(state.artifacts ?? [])});
+    panelByThread.current.set(state.threadId ?? '', open);
     setInspector(open);
   };
   const openRoundtable = useCallback(
