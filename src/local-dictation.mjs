@@ -176,11 +176,13 @@ export function createLocalDictation({
   ) {
     throw new TypeError('Absolute Python/helper paths and a positive timeout are required.');
   }
-  let active = null;
+  const MAX_CONCURRENT_JOBS = 3;
+  const jobs = new Map();
   let closed = false;
 
   function newJob(fields) {
     return {
+      id: null,
       child: null,
       childClosed: false,
       responseSettled: false,
@@ -205,9 +207,11 @@ export function createLocalDictation({
     clearTimeout(job.leaseTimer);
     job.signal?.removeEventListener('abort', job.onAbort);
     job.prepareSignal?.removeEventListener('abort', job.onPrepareAbort);
-    if (!job.child || job.childClosed) if (active === job) active = null;
+    if (!job.child || job.childClosed) {
+      if (job.id && jobs.get(job.id) === job) jobs.delete(job.id);
+    }
     // A warm helper that never received audio only reports that it was not used.
-    if (!job.adopted) job.prepareResolve({ok: true, prepared: false});
+    if (!job.adopted) job.prepareResolve?.({ok: true, prepared: false});
     else if (error) job.reject(error);
     else job.resolve(value);
   }
@@ -298,7 +302,7 @@ export function createLocalDictation({
     child.once('close', (code, childSignal) => {
       job.childClosed = true;
       clearTimeout(job.stopTimer);
-      if (active === job) active = null;
+      if (job.id && jobs.get(job.id) === job) jobs.delete(job.id);
       if (!job.adopted) {
         finish(job);
         return;
@@ -387,10 +391,19 @@ export function createLocalDictation({
   // Starts the helper while the user is still speaking so the model is loaded when the audio
   // arrives. The signal is the lease: aborting it before transcribe() adopts the helper releases
   // it. Best-effort; transcribe() falls back to a fresh helper whenever none is ready.
-  async function prepare({signal} = {}) {
-    if (closed || active || signal?.aborted) return {ok: true, prepared: false};
-    const job = newJob({adopted: false, prepareSignal: signal});
-    active = job;
+  async function prepare({id, signal} = {}) {
+    if (closed || signal?.aborted) return {ok: true, prepared: false};
+    if (typeof id !== 'string' || !id.trim() || id.length > 128) {
+      throw new LocalDictationError('預先載入要求格式無效。', {code: 'INVALID_REQUEST', statusCode: 400});
+    }
+    if (jobs.has(id)) {
+      const existing = jobs.get(id);
+      if (!existing.childClosed) return {ok: true, prepared: false};
+      jobs.delete(id);
+    }
+    if (jobs.size >= MAX_CONCURRENT_JOBS) return {ok: true, prepared: false};
+    const job = newJob({id, adopted: false, prepareSignal: signal});
+    jobs.set(id, job);
     job.prepareResult = new Promise(resolve => {
       job.prepareResolve = resolve;
     });
@@ -408,20 +421,33 @@ export function createLocalDictation({
     return job.prepareResult;
   }
 
-  async function transcribe(audioBase64, {signal} = {}) {
-    // A recording that starts right after a cancel can arrive while the released helper is still
-    // exiting; wait for that (bounded by the stop timeout) instead of rejecting it as busy.
-    if (active && !active.adopted && active.stopReason) await active.prepareResult;
+  async function transcribe(audioBase64, {id, signal} = {}) {
     if (closed)
       throw new LocalDictationError('本機語音辨識正在關閉。', {code: 'LOCAL_DICTATION_CLOSED', statusCode: 503});
-    const warm = active && !active.adopted && !active.stopReason ? active : null;
-    if (active && !warm)
+    if (id !== undefined && (typeof id !== 'string' || !id.trim() || id.length > 128)) {
+      throw new LocalDictationError('請提供有效的 id。', {code: 'INVALID_REQUEST', statusCode: 400});
+    }
+    const jobId = id || crypto.randomUUID();
+    let warm = jobs.get(jobId);
+    // A recording that starts right after a cancel can arrive while the released helper is still
+    // exiting; wait for that (bounded by the stop timeout) instead of rejecting it as busy.
+    if (warm && !warm.adopted && warm.stopReason) {
+      await warm.prepareResult;
+      if (closed)
+        throw new LocalDictationError('本機語音辨識正在關閉。', {code: 'LOCAL_DICTATION_CLOSED', statusCode: 503});
+      warm = jobs.get(jobId);
+    }
+    const canAdopt = warm && !warm.adopted && !warm.stopReason && !warm.childClosed;
+    if (warm && !canAdopt)
+      throw new LocalDictationError('這筆語音辨識已在進行中。', {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
+    if (!canAdopt && jobs.size >= MAX_CONCURRENT_JOBS) {
       throw new LocalDictationError('已有一筆語音辨識工作進行中。', {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
+    }
     const wav = decodePcm16Mono16kWav(audioBase64);
     if (signal?.aborted)
       throw new LocalDictationError('語音辨識要求已取消。', {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
     // Long audio has no fixed total deadline; the request's abort (cancel/disconnect) or close() stops it.
-    if (warm) {
+    if (canAdopt) {
       clearTimeout(warm.leaseTimer);
       warm.prepareSignal?.removeEventListener('abort', warm.onPrepareAbort);
       warm.prepareResolve({ok: true, prepared: true});
@@ -430,8 +456,8 @@ export function createLocalDictation({
       attachAudio(warm, wav);
       return done;
     }
-    const job = newJob({});
-    active = job;
+    const job = newJob({id: jobId});
+    jobs.set(jobId, job);
     const done = settleOnRequest(job, signal);
     startChild(job, wav);
     return done;
@@ -439,25 +465,34 @@ export function createLocalDictation({
 
   async function close() {
     closed = true;
-    if (active) {
-      const job = active;
+    const activeJobs = Array.from(jobs.values()).filter(j => !j.childClosed);
+    for (const job of activeJobs) {
       stopChild(
         job,
         'shutdown',
         new LocalDictationError('本機語音辨識已關閉。', {code: 'LOCAL_DICTATION_SHUTDOWN', statusCode: 503})
       );
-      await new Promise(resolve => {
-        if (job.childClosed) return resolve();
-        job.child?.once('close', resolve);
-        job.closeWaitTimer = setTimeout(resolve, stopTimeoutMs);
-      });
+    }
+    await Promise.all(
+      activeJobs.map(
+        job =>
+          new Promise(resolve => {
+            if (job.childClosed) return resolve();
+            job.child?.once('close', resolve);
+            job.closeWaitTimer = setTimeout(resolve, stopTimeoutMs);
+          })
+      )
+    );
+    for (const job of activeJobs) {
       clearTimeout(job.closeWaitTimer);
-      if (!job.childClosed)
-        throw new LocalDictationError('本機辨識程序尚未結束，仍保留工作鎖。', {
-          code: 'LOCAL_DICTATION_STOP_UNCONFIRMED',
-          statusCode: 503,
-          diagnostic: job.killDiagnostic
-        });
+    }
+    const unconfirmed = activeJobs.find(j => !j.childClosed);
+    if (unconfirmed) {
+      throw new LocalDictationError('本機辨識程序尚未結束，仍保留工作鎖。', {
+        code: 'LOCAL_DICTATION_STOP_UNCONFIRMED',
+        statusCode: 503,
+        diagnostic: unconfirmed.killDiagnostic
+      });
     }
   }
 
@@ -465,8 +500,9 @@ export function createLocalDictation({
     prepare,
     transcribe,
     close,
+    // Any helper still running (including one whose stop is unconfirmed) keeps K from updating.
     get busy() {
-      return !!active;
+      return jobs.size > 0;
     }
   };
 }

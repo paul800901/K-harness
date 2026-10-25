@@ -312,6 +312,70 @@ test('invalid transcription success is an error and never returns send intent', 
   assert.equal(session.getState(), 'idle');
 });
 
+test('a failed transcription hands back its audio; retry resends it under a new id with the same lifecycle', async () => {
+  const audio = fakeAudio();
+  const calls = [];
+  const results = [];
+  const failures = [];
+  const states = [];
+  let fail = true;
+  const session = createNativeDictationSession({
+    acquireStream: async () => audio.stream,
+    createAudioContext: () => audio.context,
+    prepareTranscription: (_signal, id) => calls.push(['prepare', id]),
+    requestTranscription: async (audioBase64, _signal, id) => {
+      calls.push(['transcribe', id, audioBase64]);
+      if (fail) throw new Error('忙碌');
+      return {ok: true, text: '第二次成功'};
+    },
+    onState: state => states.push(state),
+    onResult: result => results.push(result),
+    onError: (message, failed) => failures.push([message, failed])
+  });
+  await session.start();
+  audio.emit();
+  await session.stop(true);
+  assert.equal(failures.length, 1);
+  const [message, failed] = failures[0];
+  assert.equal(message, '忙碌');
+  assert.equal(failed.send, true);
+  assert.equal(failed.audioBase64, calls[1][2]);
+  assert.equal(calls[0][1], calls[1][1], 'prepare and transcribe share one id');
+
+  fail = false;
+  states.length = 0;
+  await session.retry(failed.audioBase64, failed.send);
+  assert.deepEqual(states, ['transcribing', 'idle']);
+  assert.equal(calls[2][2], failed.audioBase64);
+  assert.notEqual(calls[2][1], calls[1][1], 'a retry uses a new id');
+  assert.deepEqual(results, [{text: '第二次成功', send: true}]);
+});
+
+test('retry is ignored unless idle and cancel aborts it without callbacks', async () => {
+  const results = [];
+  const errors = [];
+  const signals = [];
+  const session = createNativeDictationSession({
+    requestTranscription: (_audio, signal) => {
+      signals.push(signal);
+      return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted'))));
+    },
+    onResult: result => results.push(result),
+    onError: error => errors.push(error)
+  });
+  void session.retry('UklGRg==', false);
+  assert.equal(session.getState(), 'transcribing');
+  void session.retry('UklGRg==', false);
+  await delay(0);
+  assert.equal(signals.length, 1, 'a second retry while transcribing is ignored');
+  await session.cancel();
+  await delay(0);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(session.getState(), 'idle');
+  assert.deepEqual(results, []);
+  assert.deepEqual(errors, []);
+});
+
 test('prepareTranscription is called on start, retained during transcribe, and aborted on settlement or cancel or zero samples', async () => {
   const audio = fakeAudio();
   let prepareSignals = [];

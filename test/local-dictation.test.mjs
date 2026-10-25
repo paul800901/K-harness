@@ -12,6 +12,9 @@ import {
   LOCAL_DICTATION_MODEL
 } from '../src/local-dictation.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
+import {spawnSync} from 'node:child_process';
+import {readFileSync} from 'node:fs';
+import {fileURLToPath} from 'node:url';
 
 function wavChunk(id, data) {
   const header = Buffer.alloc(8);
@@ -203,17 +206,35 @@ test('Windows dictation uses the built-in recognizer helper and keeps WAV, cance
   await cancelable.close();
 });
 
-test('local dictation rejects concurrent job and abort kills only its child', async () => {
+test('local dictation permits up to 3 concurrent jobs, rejects the 4th with BUSY, and abort kills only its child', async () => {
   const audio = makeWav().toString('base64');
-  const child = new FakeChild({hold: true});
-  const backend = createLocalDictation({spawnImpl: () => child});
+  const children = [
+    new FakeChild({hold: true}),
+    new FakeChild({hold: true}),
+    new FakeChild({hold: true}),
+    new FakeChild({hold: true})
+  ];
+  let spawnIndex = 0;
+  const backend = createLocalDictation({spawnImpl: () => children[spawnIndex++]});
   const abort = new AbortController();
-  const first = backend.transcribe(audio, {signal: abort.signal});
+  const first = backend.transcribe(audio, {id: 'job-1', signal: abort.signal});
+  const second = backend.transcribe(audio, {id: 'job-2'});
+  const third = backend.transcribe(audio, {id: 'job-3'});
   await new Promise(resolve => setImmediate(resolve));
-  await assert.rejects(backend.transcribe(audio), {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
+  await assert.rejects(backend.transcribe(audio, {id: 'job-4'}), {code: 'LOCAL_DICTATION_BUSY', statusCode: 409});
   abort.abort();
   await assert.rejects(first, {code: 'LOCAL_DICTATION_ABORTED', statusCode: 499});
-  assert.equal(child.kills, 1);
+  assert.equal(children[0].kills, 1);
+  assert.equal(children[1].kills, 0);
+  assert.equal(children[2].kills, 0);
+
+  const fourth = backend.transcribe(audio, {id: 'job-4'});
+  children[1].finish(0, JSON.stringify({ok: true, text: '2nd done'}));
+  children[2].finish(0, JSON.stringify({ok: true, text: '3rd done'}));
+  children[3].finish(0, JSON.stringify({ok: true, text: '4th done'}));
+  assert.deepEqual(await second, {ok: true, text: '2nd done'});
+  assert.deepEqual(await third, {ok: true, text: '3rd done'});
+  assert.deepEqual(await fourth, {ok: true, text: '4th done'});
   await backend.close();
 });
 
@@ -227,21 +248,30 @@ test('local dictation close terminates the in-flight child without a box operati
   assert.equal(child.kills, 1);
 });
 
-test('local dictation retains active lock after unconfirmed stop and permits close retry after late exit', async () => {
+test('local dictation retains active lock after unconfirmed stop and does not lock other slots up to max', async () => {
   const child = new FakeChild({hold: true, ignoreKill: true});
-  const backend = createLocalDictation({spawnImpl: () => child, stopTimeoutMs: 20});
+  const normalChild = new FakeChild({response: {ok: true, text: 'normal done'}});
+  let spawnCalls = 0;
+  const backend = createLocalDictation({
+    spawnImpl: () => {
+      spawnCalls += 1;
+      return spawnCalls === 1 ? child : normalChild;
+    },
+    stopTimeoutMs: 20
+  });
   const abort = new AbortController();
-  const pending = backend.transcribe(makeWav().toString('base64'), {signal: abort.signal});
+  const pending = backend.transcribe(makeWav().toString('base64'), {id: 'job-unconf', signal: abort.signal});
   pending.catch(() => {});
   await new Promise(resolve => setImmediate(resolve));
   abort.abort();
   await assert.rejects(pending, {code: 'LOCAL_DICTATION_STOP_UNCONFIRMED', statusCode: 503});
   assert.equal(child.kills, 1);
-  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {
-    code: 'LOCAL_DICTATION_BUSY',
-    statusCode: 409
-  });
   assert.equal(child.exitCode, null, 'unconfirmed process remains alive and tracked');
+
+  // Unconfirmed stop does not lock other slots: another job can proceed!
+  const normal = await backend.transcribe(makeWav().toString('base64'), {id: 'job-other'});
+  assert.deepEqual(normal, {ok: true, text: 'normal done'});
+
   child.finish(1, '', 'late exit');
   await backend.close();
 });
@@ -270,11 +300,11 @@ test('prepare spawns exactly one child before audio; transcribe adopts it', asyn
     }
   });
   try {
-    const prep = backend.prepare();
+    const prep = backend.prepare({id: 'warm-job'});
     assert.equal(spawnCalls, 1);
     assert.equal(child.input.length, 0);
     const audio = makeWav();
-    const resultPromise = backend.transcribe(audio.toString('base64'));
+    const resultPromise = backend.transcribe(audio.toString('base64'), {id: 'warm-job'});
     const prepResult = await prep;
     assert.deepEqual(prepResult, {ok: true, prepared: true});
     assert.equal(spawnCalls, 1);
@@ -297,7 +327,7 @@ test('prepare abort before audio kills child and resolves prepared:false; later 
   });
   try {
     const controller = new AbortController();
-    const prep = backend.prepare({signal: controller.signal});
+    const prep = backend.prepare({id: 'prep-abort-job', signal: controller.signal});
     assert.equal(spawnCalls, 1);
     controller.abort();
     const prepResult = await prep;
@@ -305,7 +335,7 @@ test('prepare abort before audio kills child and resolves prepared:false; later 
     assert.equal(children[0].kills, 1);
 
     const audio = makeWav();
-    const result = await backend.transcribe(audio.toString('base64'));
+    const result = await backend.transcribe(audio.toString('base64'), {id: 'prep-abort-job'});
     assert.equal(spawnCalls, 2);
     assert.deepEqual(result, {ok: true, text: '第二隻'});
     assert.deepEqual(Buffer.concat(children[1].input), audio);
@@ -316,22 +346,27 @@ test('prepare abort before audio kills child and resolves prepared:false; later 
 
 test('prepare while another job is active resolves prepared:false without spawning', async () => {
   let spawnCalls = 0;
-  const child = new FakeChild({hold: true});
+  const children = [
+    new FakeChild({hold: true}),
+    new FakeChild({hold: true}),
+    new FakeChild({hold: true})
+  ];
   const backend = createLocalDictation({
-    spawnImpl: () => {
-      spawnCalls += 1;
-      return child;
-    }
+    spawnImpl: () => children[spawnCalls++]
   });
   try {
     const audio = makeWav();
-    const trans = backend.transcribe(audio.toString('base64'));
-    assert.equal(spawnCalls, 1);
-    const prepResult = await backend.prepare();
+    const trans1 = backend.transcribe(audio.toString('base64'), {id: 'j1'});
+    const trans2 = backend.transcribe(audio.toString('base64'), {id: 'j2'});
+    const trans3 = backend.transcribe(audio.toString('base64'), {id: 'j3'});
+    assert.equal(spawnCalls, 3);
+    const prepResult = await backend.prepare({id: 'j-extra'});
     assert.deepEqual(prepResult, {ok: true, prepared: false});
-    assert.equal(spawnCalls, 1);
-    child.finish(0, JSON.stringify({ok: true, text: '完成'}));
-    await trans;
+    assert.equal(spawnCalls, 3);
+    children[0].finish(0, JSON.stringify({ok: true, text: '完成1'}));
+    children[1].finish(0, JSON.stringify({ok: true, text: '完成2'}));
+    children[2].finish(0, JSON.stringify({ok: true, text: '完成3'}));
+    await Promise.all([trans1, trans2, trans3]);
   } finally {
     await backend.close();
   }
@@ -345,14 +380,14 @@ test('warm child exits on its own before audio: prepare resolves prepared:false,
     spawnImpl: () => (spawnCalls++ === 0 ? child1 : child2)
   });
   try {
-    const prep = backend.prepare();
+    const prep = backend.prepare({id: 'self-exit'});
     assert.equal(spawnCalls, 1);
     child1.finish(1, '', 'simulated load failure');
     const prepResult = await prep;
     assert.deepEqual(prepResult, {ok: true, prepared: false});
 
     const audio = makeWav();
-    const result = await backend.transcribe(audio.toString('base64'));
+    const result = await backend.transcribe(audio.toString('base64'), {id: 'self-exit'});
     assert.equal(spawnCalls, 2);
     assert.deepEqual(result, {ok: true, text: '冷啟動成果'});
   } finally {
@@ -405,11 +440,11 @@ test('a recording right after a cancel waits for the released helper to exit ins
   const backend = createLocalDictation({spawnImpl: () => children[spawnCalls++]});
   try {
     const controller = new AbortController();
-    const prep = backend.prepare({signal: controller.signal});
+    const prep = backend.prepare({id: 're-rec', signal: controller.signal});
     controller.abort();
     assert.equal(children[0].kills, 1);
     assert.equal(children[0].exitCode, null, 'the released helper has not exited yet');
-    const result = await backend.transcribe(makeWav().toString('base64'));
+    const result = await backend.transcribe(makeWav().toString('base64'), {id: 're-rec'});
     assert.deepEqual(await prep, {ok: true, prepared: false});
     assert.equal(spawnCalls, 2);
     assert.deepEqual(result, {ok: true, text: '重錄成功'});
@@ -420,20 +455,26 @@ test('a recording right after a cancel waits for the released helper to exit ins
 
 test('a released helper whose exit is unconfirmed keeps the lock after the stop timeout', async () => {
   const child = new FakeChild({hold: true, ignoreKill: true});
+  const normalChild = new FakeChild({response: {ok: true, text: 'other ok'}});
   let spawnCalls = 0;
   const backend = createLocalDictation({
     spawnImpl: () => {
       spawnCalls += 1;
-      return child;
+      return spawnCalls === 1 ? child : normalChild;
     },
     stopTimeoutMs: 20
   });
   const controller = new AbortController();
-  const prep = backend.prepare({signal: controller.signal});
+  const prep = backend.prepare({id: 'unconf-prep', signal: controller.signal});
   controller.abort();
-  await assert.rejects(backend.transcribe(makeWav().toString('base64')), {code: 'LOCAL_DICTATION_BUSY'});
   assert.deepEqual(await prep, {ok: true, prepared: false});
   assert.equal(spawnCalls, 1);
+
+  // Unconfirmed helper does not block another id
+  const other = await backend.transcribe(makeWav().toString('base64'), {id: 'other-id'});
+  assert.deepEqual(other, {ok: true, text: 'other ok'});
+  assert.equal(spawnCalls, 2);
+
   child.finish(1, '', 'late exit');
   await backend.close();
 });
@@ -441,15 +482,15 @@ test('a released helper whose exit is unconfirmed keeps the lock after the stop 
 test('an unused preloaded helper is released after its lease, and adoption clears the lease', {timeout: 5000}, async () => {
   const idle = new FakeChild({hold: true});
   const idleBackend = createLocalDictation({spawnImpl: () => idle, prepareLeaseMs: 20});
-  assert.deepEqual(await idleBackend.prepare(), {ok: true, prepared: false});
+  assert.deepEqual(await idleBackend.prepare({id: 'idle-job'}), {ok: true, prepared: false});
   assert.equal(idle.kills, 1);
   await idleBackend.close();
 
   const used = new FakeChild({hold: true});
   const usedBackend = createLocalDictation({spawnImpl: () => used, prepareLeaseMs: 20});
   try {
-    const prep = usedBackend.prepare();
-    const pending = usedBackend.transcribe(makeWav().toString('base64'));
+    const prep = usedBackend.prepare({id: 'used-job'});
+    const pending = usedBackend.transcribe(makeWav().toString('base64'), {id: 'used-job'});
     assert.deepEqual(await prep, {ok: true, prepared: true});
     await new Promise(resolve => setTimeout(resolve, 60));
     assert.equal(used.kills, 0, 'an adopted helper is not released by the lease');
@@ -470,10 +511,10 @@ test('transcribe abort after adoption kills the adopted child and rejects ABORTE
     }
   });
   try {
-    const prep = backend.prepare();
+    const prep = backend.prepare({id: 'adopt-abort'});
     const audio = makeWav();
     const controller = new AbortController();
-    const trans = backend.transcribe(audio.toString('base64'), {signal: controller.signal});
+    const trans = backend.transcribe(audio.toString('base64'), {id: 'adopt-abort', signal: controller.signal});
     const prepResult = await prep;
     assert.deepEqual(prepResult, {ok: true, prepared: true});
     assert.equal(child.kills, 0);
@@ -495,7 +536,7 @@ test('close() during prepare kills the warm child and resolves prepare prepared:
       return child;
     }
   });
-  const prep = backend.prepare();
+  const prep = backend.prepare({id: 'close-job'});
   assert.equal(spawnCalls, 1);
   const closePromise = backend.close();
   const prepResult = await prep;
@@ -548,20 +589,22 @@ test('prepare route propagates client abort to signal and rejects non-{} body wi
     const cookie = page.headers.get('set-cookie').split(';')[0];
     const headers = {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'};
 
-    // Test non-{} bodies -> 400
-    const nonObject = await fetch(`${app.origin}/api/dictation/prepare`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({invalid: true})
-    });
-    assert.equal(nonObject.status, 400);
-
-    const arrayBody = await fetch(`${app.origin}/api/dictation/prepare`, {
-      method: 'POST',
-      headers,
-      body: '[]'
-    });
-    assert.equal(arrayBody.status, 400);
+    // Test invalid bodies -> 400
+    for (const bad of [
+      '{}',
+      JSON.stringify({invalid: true}),
+      JSON.stringify({id: ''}),
+      JSON.stringify({id: 123}),
+      JSON.stringify({id: 'a', extra: 'b'}),
+      '[]'
+    ]) {
+      const res = await fetch(`${app.origin}/api/dictation/prepare`, {
+        method: 'POST',
+        headers,
+        body: bad
+      });
+      assert.equal(res.status, 400);
+    }
 
     // Test client disconnect propagation
     const target = new URL(`${app.origin}/api/dictation/prepare`);
@@ -570,7 +613,7 @@ test('prepare route propagates client abort to signal and rejects non-{} body wi
       headers
     });
     request.on('error', () => {});
-    request.end('{}');
+    request.end(JSON.stringify({id: 'client-abort-prep'}));
     await entered;
     request.destroy(new Error('synthetic client close'));
     await Promise.race([
@@ -612,7 +655,7 @@ test('transcribe route retains cookie, same-origin, request-header and route-loc
   });
   try {
     const url = `${app.origin}/api/dictation/transcribe`;
-    const body = JSON.stringify({audioBase64: 'FAKE_WAV'});
+    const body = JSON.stringify({id: 'trans-desktop', audioBase64: 'FAKE_WAV'});
     const headers = {'Content-Type': 'application/json', 'X-K-Request': '1'};
     assert.equal((await fetch(url, {method: 'POST', headers, body})).status, 403);
     assert.equal((await fetch(`${app.origin}/api/state`, {headers: {host: 'wrong.example'}})).status, 403);
@@ -646,6 +689,17 @@ test('transcribe route retains cookie, same-origin, request-header and route-loc
     const invalidJson = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body: '{'});
     assert.equal(invalidJson.status, 400);
     assert.equal((await invalidJson.json()).ok, false);
+    // Test missing id or extra fields -> 400
+    for (const bad of [
+      JSON.stringify({audioBase64: 'FAKE_WAV'}),
+      JSON.stringify({id: '', audioBase64: 'FAKE_WAV'}),
+      JSON.stringify({id: 't', audioBase64: 'FAKE_WAV', extra: 1}),
+      JSON.stringify({id: 't'})
+    ]) {
+      const res = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body: bad});
+      assert.equal(res.status, 400);
+    }
+
     const failedJob = await fetch(url, {method: 'POST', headers: {...headers, cookie}, body});
     assert.equal(failedJob.status, 500);
     assert.deepEqual(await failedJob.json(), {
@@ -706,7 +760,7 @@ test('transcribe route propagates client abort and server shutdown to the job si
       headers: {cookie, 'Content-Type': 'application/json', 'X-K-Request': '1'}
     });
     request.on('error', () => {});
-    request.end(JSON.stringify({audioBase64: 'FAKE_WAV'}));
+    request.end(JSON.stringify({id: 'abort-job-test', audioBase64: 'FAKE_WAV'}));
     await entered;
     request.destroy(new Error('synthetic client close'));
     await Promise.race([
@@ -833,4 +887,46 @@ test('shutdown route returns partial failure and a later request can complete sh
   assert.deepEqual(closes, {claude: 1, codex: 1});
   assert.equal(controllerCloses, 1);
   await app.close();
+});
+
+
+test('Python local-dictation helper passes all GPU mutex, sampling, and fallback unit tests', () => {
+  const scriptPath = fileURLToPath(new URL('test_local_dictation_gpu.py', import.meta.url));
+  const result = spawnSync('python', [scriptPath], {encoding: 'utf8'});
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
+
+test('prepare and transcribe id pairing: matching id adopts, mismatching id cold-spawns, and cancel of id A only affects A', async () => {
+  let spawnCalls = 0;
+  const childA = new FakeChild({response: {ok: true, text: 'A done'}});
+  const childB = new FakeChild({response: {ok: true, text: 'B done'}});
+  const childC = new FakeChild({response: {ok: true, text: 'C done'}});
+  const backend = createLocalDictation({
+    spawnImpl: () => [childA, childB, childC][spawnCalls++]
+  });
+  try {
+    const ctrlA = new AbortController();
+    const prepA = backend.prepare({id: 'id-A', signal: ctrlA.signal});
+    const prepB = backend.prepare({id: 'id-B'});
+    assert.equal(spawnCalls, 2);
+
+    // Cancel id-A only affects childA
+    ctrlA.abort();
+    assert.deepEqual(await prepA, {ok: true, prepared: false});
+    assert.equal(childA.kills, 1);
+    assert.equal(childB.kills, 0);
+
+    // Transcribe with id-B adopts childB without new spawn
+    const transB = backend.transcribe(makeWav().toString('base64'), {id: 'id-B'});
+    assert.deepEqual(await prepB, {ok: true, prepared: true});
+    assert.equal(spawnCalls, 2);
+    assert.deepEqual(await transB, {ok: true, text: 'B done'});
+
+    // Transcribe with id-C has no warm helper, cold-spawns childC
+    const transC = backend.transcribe(makeWav().toString('base64'), {id: 'id-C'});
+    assert.equal(spawnCalls, 3);
+    assert.deepEqual(await transC, {ok: true, text: 'C done'});
+  } finally {
+    await backend.close();
+  }
 });

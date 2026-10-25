@@ -870,9 +870,14 @@ const ChatView = React.memo(function ChatView({
                 </div>
               </ComposerPrimitive.Root>
             </>
-            {(voice.notice || state.workerConnection === 'failed') && (
+            {(voice.notice || state.workerConnection === 'failed' || voice.canRetry) && (
               <div className="composer-note">
-                <span role="status">{voice.notice || '子代理目前不可用；主代理工作仍可繼續。'}</span>
+                <span role="status">{voice.notice || (state.workerConnection === 'failed' ? '子代理目前不可用；主代理工作仍可繼續。' : '')}</span>
+                {voice.canRetry && (
+                  <button type="button" className="voice-retry-btn" onClick={voice.retry}>
+                    重新辨識
+                  </button>
+                )}
               </div>
             )}
           </div>

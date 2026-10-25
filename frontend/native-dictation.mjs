@@ -104,6 +104,9 @@ export function createNativeDictationSession({
   let pendingResolve = null;
   let maxSampleCount = Infinity;
   let limitReported = false;
+  // Pairs this recording's preload with its transcription on the backend, which runs several at once.
+  let recordingId = null;
+  const newRecordingId = () => crypto.randomUUID();
 
   const setState = next => {
     state = next;
@@ -175,11 +178,12 @@ export function createNativeDictationSession({
     sampleCount = 0;
     limitReported = false;
     setState('starting');
+    recordingId = newRecordingId();
     // Best-effort: let the backend load the recognizer while the user is speaking.
     if (prepareTranscription) {
       prepareController = new AbortController();
       try {
-        Promise.resolve(prepareTranscription(prepareController.signal)).catch(() => {});
+        Promise.resolve(prepareTranscription(prepareController.signal, recordingId)).catch(() => {});
       } catch {}
     }
     try {
@@ -271,6 +275,20 @@ export function createNativeDictationSession({
       onError(error instanceof Error ? error.message : String(error));
       return completion;
     }
+    return transcribeAudio(audioBase64);
+  };
+
+  // Sends a previously failed recording again, only when the person asks; same lifecycle as stop().
+  const retry = (audioBase64, send = false) => {
+    if (state !== 'idle') return completion;
+    generation += 1;
+    sendIntent = Boolean(send);
+    recordingId = newRecordingId();
+    setState('transcribing');
+    return transcribeAudio(audioBase64);
+  };
+
+  const transcribeAudio = audioBase64 => {
     abortController = new AbortController();
     const controller = abortController;
     const token = generation;
@@ -280,18 +298,20 @@ export function createNativeDictationSession({
       resolveCompletion = resolve;
       pendingResolve = resolve;
     });
+    const currentId = recordingId;
+    // A failed transcription hands its audio back so the room can offer to recognize it again.
     const settleFailure = error => {
       if (settled || token !== generation) return;
       settled = true;
       abortController = null;
       pendingResolve = null;
       setState('idle');
-      onError(error instanceof Error ? error.message : String(error));
+      onError(error instanceof Error ? error.message : String(error), {audioBase64, send: sendIntent});
       resolveCompletion();
     };
     // No fixed total deadline: long audio may take a while; cancel, disconnect or a real error ends it.
     Promise.resolve()
-      .then(() => requestTranscription(audioBase64, controller.signal))
+      .then(() => requestTranscription(audioBase64, controller.signal, currentId))
       .then(result => {
         if (settled || token !== generation) return;
         if (result?.ok !== true || typeof result.text !== 'string') {
@@ -322,5 +342,5 @@ export function createNativeDictationSession({
     return completion;
   };
 
-  return {start, stop, cancel, getState: () => state};
+  return {start, stop, retry, cancel, getState: () => state};
 }

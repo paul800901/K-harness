@@ -639,7 +639,15 @@ export async function startDesktop({
       if (url.pathname === '/api/dictation/prepare') {
         // The request stays open until transcription adopts the preloaded helper or it ends: the
         // connection is the lease, so cancel, a closed page or a dropped network releases the GPU.
-        if (!data || typeof data !== 'object' || Array.isArray(data) || Object.keys(data).length !== 0)
+        if (
+          !data ||
+          typeof data !== 'object' ||
+          Array.isArray(data) ||
+          Object.keys(data).length !== 1 ||
+          typeof data.id !== 'string' ||
+          !data.id.trim() ||
+          data.id.length > 128
+        )
           throw new LocalDictationError('預先載入要求格式無效。', {code: 'INVALID_REQUEST', statusCode: 400});
         const abort = new AbortController();
         const disconnected = () => {
@@ -648,7 +656,7 @@ export async function startDesktop({
         res.once('close', disconnected);
         req.once('aborted', disconnected);
         try {
-          const result = await localDictation.prepare({signal: abort.signal});
+          const result = await localDictation.prepare({id: data.id, signal: abort.signal});
           if (abort.signal.aborted || res.destroyed) return;
           return json(200, result);
         } finally {
@@ -661,10 +669,13 @@ export async function startDesktop({
           !data ||
           typeof data !== 'object' ||
           Array.isArray(data) ||
-          Object.keys(data).length !== 1 ||
+          Object.keys(data).length !== 2 ||
+          typeof data.id !== 'string' ||
+          !data.id.trim() ||
+          data.id.length > 128 ||
           typeof data.audioBase64 !== 'string'
         )
-          throw new LocalDictationError('請提供 audioBase64 音訊資料。', {code: 'INVALID_REQUEST', statusCode: 400});
+          throw new LocalDictationError('請提供有效的 id 與 audioBase64 音訊資料。', {code: 'INVALID_REQUEST', statusCode: 400});
         const abort = new AbortController();
         const disconnected = () => {
           if (!res.writableEnded) abort.abort();
@@ -672,7 +683,7 @@ export async function startDesktop({
         res.once('close', disconnected);
         req.once('aborted', disconnected);
         try {
-          const result = await localDictation.transcribe(data.audioBase64, {signal: abort.signal});
+          const result = await localDictation.transcribe(data.audioBase64, {id: data.id, signal: abort.signal});
           if (abort.signal.aborted || res.destroyed) return;
           return json(200, result);
         } finally {

@@ -817,7 +817,7 @@ test('remote dictation uses only authenticated audio requests, preserves dedup a
   t.after(() => app.close());
   const url = route => `http://127.0.0.1:${port}${route}`,
     route = '/api/dictation/transcribe',
-    body = {audioBase64: 'FAKE_WAV'};
+    body = {id: 'remote-trans', audioBase64: 'FAKE_WAV'};
   const headers = {
     host: new URL(origin).host,
     'tailscale-user-login': login,
@@ -848,13 +848,13 @@ test('remote dictation uses only authenticated audio requests, preserves dedup a
       await request(url(route), {
         method: 'POST',
         headers: authenticated,
-        body: {audioBase64: 'a'.repeat(16 * 1024 * 1024)}
+        body: {id: 'remote-large', audioBase64: 'a'.repeat(16 * 1024 * 1024)}
       })
     ).status,
     413
   );
   assert.equal(calls, 0);
-  const prep = await request(url('/api/dictation/prepare'), {method: 'POST', headers: authenticated, body: {}});
+  const prep = await request(url('/api/dictation/prepare'), {method: 'POST', headers: authenticated, body: {id: 'remote-prep'}});
   assert.equal(prep.status, 200);
   assert.deepEqual(await prep.json(), {ok: true, prepared: false});
   const commandId = randomUUID();

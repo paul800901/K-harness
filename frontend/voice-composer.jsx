@@ -4,10 +4,12 @@ import {createDictationSession} from './dictation-session.mjs';
 import {createNativeDictationSession} from './native-dictation.mjs';
 
 // Only stopped, in-flight main-composer transcripts outlive their room's view or a hidden window,
-// keeping the stop/send intent chosen in that room. Audio stays in the existing request; this is
-// not a retry or a recording queue.
+// keeping the stop/send intent chosen in that room. A main-composer recording whose transcription
+// failed stays in memory for that room until the person recognizes it again, cancels or records anew;
+// nothing retries by itself.
 const backgroundTranscriptions = new Map(),
-  backgroundNotices = new Map();
+  backgroundNotices = new Map(),
+  retainedRecordings = new Map();
 
 // Capture stays in memory. Native audio is sent only to K's local transcription endpoint.
 function paintWaveform(canvas, levels) {
@@ -31,7 +33,8 @@ function paintWaveform(canvas, levels) {
 export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActiveChange = () => {}, sessionKey}) {
   const [phase, setPhaseState] = useState('idle'),
     [notice, setNotice] = useState(''),
-    [consent, setConsent] = useState(false);
+    [consent, setConsent] = useState(false),
+    [hasRetained, setHasRetained] = useState(false);
   const canvas = useRef(null),
     job = useRef(null),
     callback = useRef(onResult),
@@ -59,17 +62,23 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
   };
   const cancel = () => {
     const entry = job.current;
-    if (!entry) return;
-    job.current = null;
-    entry.view = null;
-    if (backgroundTranscriptions.get(entry.scope) === entry) backgroundTranscriptions.delete(entry.scope);
-    entry.session?.cancel();
-    release(entry);
+    if (entry) {
+      job.current = null;
+      entry.view = null;
+      if (backgroundTranscriptions.get(entry.scope) === entry) backgroundTranscriptions.delete(entry.scope);
+      entry.session?.cancel();
+      release(entry);
+    }
+    if (onBackgroundResult) retainedRecordings.delete(scope.current);
+    setHasRetained(false);
     setPhase('idle');
     setNotice('已取消這段聽寫，原草稿保留。');
   };
   const attach = entry => {
     entry.view = {
+      retained: () => {
+        if (entry.scope === scope.current) setHasRetained(retainedRecordings.has(scope.current));
+      },
       state: next => {
         if (job.current === entry && entry.scope === scope.current) setPhase(next);
       },
@@ -91,11 +100,16 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       }
     };
   };
-  const finishNative = (entry, result, error) => {
+  const finishNative = (entry, result, error, failed) => {
     if (backgroundTranscriptions.get(entry.scope) === entry) backgroundTranscriptions.delete(entry.scope);
     const view = entry.view;
     entry.view = null;
     release(entry);
+    // Only the main composer keeps a failed recording; a quote annotation shares the room key.
+    if (error && failed?.audioBase64 && entry.backgroundResult) {
+      retainedRecordings.set(entry.scope, {audioBase64: failed.audioBase64, send: failed.send});
+      view?.retained();
+    }
     if (view?.finish(result, error)) return;
     if (!entry.backgroundResult) return;
     if (error) backgroundNotices.set(entry.scope, `${error} 未送出；原草稿保留。`);
@@ -144,6 +158,7 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       setNotice(backgroundNotices.get(sessionKey));
       backgroundNotices.delete(sessionKey);
     }
+    setHasRetained(Boolean(onBackgroundResult) && retainedRecordings.has(sessionKey));
     return () => {
       const entry = job.current;
       job.current = null;
@@ -163,6 +178,49 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       activity.current?.(false);
     };
   }, [sessionKey]);
+  const post = (url, body, signal) =>
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-K-Request': '1',
+        ...(remote ? {'X-K-Command': crypto.randomUUID()} : {})
+      },
+      body: JSON.stringify(body),
+      signal
+    });
+  const beginNative = phase => {
+    const entry = {scope: scope.current, levels: Array(70).fill(0), backgroundResult: onBackgroundResult};
+    job.current = entry;
+    attach(entry);
+    setPhase(phase);
+    setNotice('');
+    const current = () => job.current === entry && entry.scope === scope.current;
+    entry.session = createNativeDictationSession({
+      ...(remote ? {createAudioContext: () => new AudioContext()} : {}),
+      prepareTranscription: (signal, id) => post('/api/dictation/prepare', {id}, signal),
+      requestTranscription: async (audioBase64, signal, id) => {
+        const response = await post('/api/dictation/transcribe', {id, audioBase64}, signal);
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload?.error || '本機語音辨識失敗。');
+        return payload;
+      },
+      onState: state => entry.view?.state(state),
+      onLevel: level => {
+        if (current()) {
+          entry.levels.shift();
+          entry.levels.push(Math.min(1, level * 5));
+        }
+      },
+      onLimit: () => {
+        entry.hitLimit = true;
+        entry.view?.notice('已達 5 分鐘上限，正在轉錄；完成後不會自動送出。');
+      },
+      onResult: result => finishNative(entry, result, null),
+      onError: (message, failed) => finishNative(entry, null, message, failed)
+    });
+    return entry;
+  };
   const start = async () => {
     if (disabled || job.current) return;
     if (!native && sessionStorage.getItem(consentKey) !== 'yes') {
@@ -171,59 +229,14 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       return;
     }
     if (native) {
+      if (onBackgroundResult) retainedRecordings.delete(scope.current);
+      setHasRetained(false);
       if (typeof navigator === 'undefined' || typeof navigator.mediaDevices?.getUserMedia !== 'function') {
         setNotice('目前無法存取此裝置的麥克風；原草稿保留。');
         activity.current?.(false);
         return;
       }
-      const entry = {scope: scope.current, levels: Array(70).fill(0), backgroundResult: onBackgroundResult};
-      job.current = entry;
-      attach(entry);
-      setPhase('starting');
-      setNotice('');
-      const current = () => job.current === entry && entry.scope === scope.current;
-      entry.session = createNativeDictationSession({
-        ...(remote ? {createAudioContext: () => new AudioContext()} : {}),
-        prepareTranscription: signal =>
-          fetch('/api/dictation/prepare', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-K-Request': '1',
-              ...(remote ? {'X-K-Command': crypto.randomUUID()} : {})
-            },
-            body: '{}',
-            signal
-          }),
-        requestTranscription: async (audioBase64, signal) => {
-          const response = await fetch('/api/dictation/transcribe', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-K-Request': '1',
-              ...(remote ? {'X-K-Command': crypto.randomUUID()} : {})
-            },
-            body: JSON.stringify({audioBase64}),
-            signal
-          });
-          const payload = await response.json();
-          if (!response.ok) throw new Error(payload?.error || '本機語音辨識失敗。');
-          return payload;
-        },
-        onState: state => entry.view?.state(state),
-        onLevel: level => {
-          if (current()) {
-            entry.levels.shift();
-            entry.levels.push(Math.min(1, level * 5));
-          }
-        },
-        onLimit: () => {
-          entry.hitLimit = true;
-          entry.view?.notice('已達 5 分鐘上限，正在轉錄；完成後不會自動送出。');
-        },
-        onResult: result => finishNative(entry, result),
-        onError: message => finishNative(entry, null, message)
-      });
+      const entry = beginNative('starting');
       void entry.session.start().then(() => {
         const draw = () => {
           if (job.current !== entry || entry.session.getState() !== 'recording') return;
@@ -316,6 +329,18 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
     entry.send ||= Boolean(send);
     return entry.session.stop(send);
   };
+  // Recognizes the room's failed recording again through the same session lifecycle as a fresh one,
+  // so leaving the room, cancel and background delivery behave the same.
+  const retry = () => {
+    const retained = retainedRecordings.get(scope.current);
+    if (disabled || !retained || job.current) return;
+    retainedRecordings.delete(scope.current);
+    setHasRetained(false);
+    const entry = beginNative('transcribing');
+    entry.send = retained.send;
+    void entry.session.retry(retained.audioBase64, retained.send);
+  };
+
   return {
     phase,
     notice,
@@ -332,7 +357,9 @@ export function useVoiceComposer({onResult, onBackgroundResult, disabled, onActi
       setConsent(false);
       void start();
     },
-    active: phase !== 'idle'
+    active: phase !== 'idle',
+    canRetry: hasRetained && phase === 'idle',
+    retry
   };
 }
 
