@@ -107,12 +107,12 @@
 - 瀏覽器批擴充：執行 `scripts/Setup-K-Browser.ps1`，`installed/k-browser-assistant` 由 0.1.4 換為 0.1.5，備份於 `vault/k-browser-assistant-backups/setup-20261025-130952-416`；待本人在 K 專用 Chrome 擴充頁按「重新載入」後實測一般／無痕連線。
 - 13:18～13:19 本人在完整存取權的 GPT-6.1-Sol 與 Gemini 3.8 Flash 主對話各送「用 k_desktop 的 DisplayInventory 看一下螢幕」，兩邊都讀回 1920×1080 單螢幕（GPT 約 8 秒、Gemini 約 16 秒），GPT 未出現核准（本人截圖）。
 - 注意：`DisplayInventory` 標為 `readOnlyHint`；會改變狀態的工具（Click、Type、Move、Shortcut、App、MultiSelect、MultiEdit、Notification 為 `destructiveHint`）在 Codex 是否要求核准仍未實測。最無害的驗證是 `Notification`（只跳一則 Windows 通知）。
+- 13:23 本人在同一 GPT-6.1-Sol 完整存取權主對話送「用 k_desktop 的 Notification 發一則測試通知」：約 10 秒直接跳出 Windows 通知「K 測試通知」，**沒有出現核准**（本人截圖）；通知來源顯示 PowerShell 7，是 Windows-MCP 內部以 PowerShell 發送（排除的是 PowerShell 工具，套件內部仍會用）。Gemini 主對話也確認同一則通知。結論：Codex 完整存取權下 `destructiveHint` 的 k_desktop 工具不需本人核准，本人不在時可代管。
 
 ## 已知限制與未完成
 
 - **K 沒有按 Esc 停止 AI**：停手用聊天室停止鍵或傳訊息（手機也可）。
 - 電腦鎖定或睡眠時無法操作；本人離開時要保持解鎖，尚未實測。
-- Codex 完整存取下呼叫 `k_desktop`：唯讀工具（DisplayInventory）實測不需核准；`destructiveHint` 工具是否跳 MCP 核准未實測，若會，本人不在時工作會停在核准。
 - 每個完整存取權主對話各啟動一個 windows-mcp 程序（啟動約 2 秒、實測約 170 MB）；工具定義約 17 KB 會進入各核心的上下文。
 - 多個聊天室理論上可同時控制桌面，靠「本人該次明確要求才用」約束，K 不另加鎖。
 - Gemini 主對話的 windows-mcp 繼承 agy 的白名單環境（沒有 `APPDATA`），開程式時可能找不到只在使用者私人開始選單的捷徑。
