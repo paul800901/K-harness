@@ -732,6 +732,9 @@ export function createClaudeController({
     let worker = state.workers.find(item => item.provider === 'claude-native' && item.requestId === parentToolUseId);
     if (!worker) {
       const parentTool = state.tools.find(item => item.id === parentToolUseId);
+      // Tool progress heartbeats or known non-agent parent tools do not create child workers.
+      if (message.type === 'tool_progress' || (parentTool && !/^(Agent|Task)$/i.test(parentTool.name ?? '')))
+        return true;
       worker = {
         provider: 'claude-native',
         requestId: parentToolUseId,

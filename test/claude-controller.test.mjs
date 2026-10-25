@@ -248,6 +248,73 @@ test('Claude work telemetry ignores replay, child output and elapsed tool heartb
   }
 });
 
+test('Claude native child workers ignore tool progress heartbeats and non-agent parent tools', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'fake work'});
+    const emit = f.hostOptions.onMessage;
+    emit({
+      type: 'assistant',
+      uuid: 'tool-bash',
+      message: {
+        id: 'model-output-bash',
+        content: [{type: 'tool_use', id: 'bash-long', name: 'Bash', input: {command: 'sleep 120'}}]
+      }
+    });
+    emit({
+      type: 'tool_progress',
+      tool_use_id: 'hb-1',
+      tool_name: 'Bash',
+      parent_tool_use_id: 'bash-long',
+      heartbeat: true,
+      elapsed_time_seconds: 30
+    });
+    assert.equal(
+      f.controller.state.workers.find(w => w.requestId === 'bash-long'),
+      undefined
+    );
+    emit({
+      type: 'tool_progress',
+      tool_use_id: 'hb-2',
+      tool_name: 'Unknown',
+      parent_tool_use_id: 'unknown-parent',
+      heartbeat: true,
+      elapsed_time_seconds: 10
+    });
+    assert.equal(
+      f.controller.state.workers.find(w => w.requestId === 'unknown-parent'),
+      undefined
+    );
+    emit({
+      type: 'assistant',
+      uuid: 'tool-agent',
+      message: {
+        id: 'model-output-agent',
+        content: [{type: 'tool_use', id: 'agent-x', name: 'Agent', input: {prompt: 'subtask'}}]
+      }
+    });
+    emit({
+      type: 'stream_event',
+      parent_tool_use_id: 'agent-x',
+      event: {type: 'content_block_delta', delta: {type: 'text_delta', text: 'agent working'}}
+    });
+    const agentWorker = f.controller.state.workers.find(w => w.requestId === 'agent-x');
+    assert.ok(agentWorker);
+    assert.equal(agentWorker.status, 'running');
+    emit({
+      type: 'user',
+      message: {content: [{type: 'tool_result', tool_use_id: 'bash-long', content: 'fake bash output'}]}
+    });
+    assert.equal(
+      f.controller.state.workers.find(w => w.requestId === 'bash-long'),
+      undefined
+    );
+  } finally {
+    await f.controller.close();
+  }
+});
+
 test('Claude sends and steers more than eight scoped attachments without expanding the user bubble', async () => {
   const f = await fixture();
   try {
