@@ -1802,6 +1802,49 @@ test('a read-only Codex fork does not hide that its full-access parent is still 
   }
 });
 
+test('a cancelled full-access Codex resume still counts as loaded with Desktop Control', async () => {
+  const f = await fixture();
+  try {
+    const exe = path.join(f.root, 'windows-mcp.exe');
+    await writeFile(exe, 'fixture');
+    await mkdir(path.join(f.root, '.runtime'), {recursive: true});
+    await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
+    await f.c.open({model: 'gpt-6-astra'});
+    await saveMainSession(f.root, {
+      threadId: 'saved-b',
+      model: 'gpt-6-astra',
+      workspace: f.root,
+      title: 'B',
+      accessMode: 'danger-full-access',
+      codexSession: {nativeThreadId: 'saved-b', hasSubmitted: true}
+    });
+    let sent, release;
+    const request = f.host.request;
+    f.host.request = async (method, p) => {
+      if (method !== 'thread/resume' || p.threadId !== 'saved-b' || release) return request(method, p);
+      f.calls.push({method, p});
+      await new Promise(r => {
+        release = r;
+        sent();
+      });
+      return {thread: {id: 'saved-b'}};
+    };
+    const resumeSent = new Promise(r => (sent = r));
+    const opening = f.c.open({model: 'gpt-6-astra', threadId: 'saved-b'});
+    await resumeSent;
+    await f.c.stop();
+    await assert.rejects(opening, /已取消連線/);
+    release();
+
+    // The native side may have finished loading B with k_desktop after the cancel.
+    const hosts = f.hostFactoryCalls;
+    await f.c.open({model: 'gpt-6-astra', threadId: 'saved-b', accessMode: 'read-only'});
+    assert.equal(f.hostFactoryCalls, hosts + 1);
+  } finally {
+    await f.c.close();
+  }
+});
+
 test('native child activity survives status reads while its parent stays idle and never starts another turn', async () => {
   const f = await fixture();
   const original = f.host.request;

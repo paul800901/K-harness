@@ -3447,6 +3447,8 @@ export function createDesktopController({
             await onCreated?.({threadId: state.threadId});
           } else if (unsent && unsent.selection === selection) session = unsent.session;
           else if (threadId && !prepared) {
+            // A cancelled resume may still load natively; recording first only risks one extra host swap.
+            hostDesktop.set(threadId, !!desktop);
             try {
               session = await call('thread/resume', {...config, threadId});
             } catch (e) {
