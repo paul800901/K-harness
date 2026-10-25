@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import {mkdir, mkdtemp, writeFile} from 'node:fs/promises';
-import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
+import {desktopControlMcp} from '../src/desktop-control-mcp.mjs';
 import {geminiSettings, geminiMcpConfig} from '../src/gemini-worker.mjs';
 import {scratchBase} from './scratch.mjs';
 
@@ -53,22 +53,20 @@ test('desktopControlMcp returns correct command, args and env when valid', async
   const result = await desktopControlMcp({root: f.root, fullAccess: true});
   assert.deepEqual(result, {
     command: exe,
-    args: ['serve', '--exclude-tools', 'PowerShell,FileSystem,Registry,Process,Scrape'],
+    args: [
+      'serve',
+      '--transport',
+      'stdio',
+      '--no-control',
+      '--exclude-tools',
+      'PowerShell,FileSystem,Registry,Process,Scrape,ControlStatus'
+    ],
     env: {ANONYMIZED_TELEMETRY: 'false'}
   });
 });
 
-test('DESKTOP_CONTROL_GUIDANCE contains expected guidance text', () => {
-  assert.ok(DESKTOP_CONTROL_GUIDANCE.includes('k_desktop 是 Windows 桌面控制'));
-  assert.ok(DESKTOP_CONTROL_GUIDANCE.includes('Ctrl+Alt+Shift+Backspace'));
-});
-
 test('Gemini geminiSettings and geminiMcpConfig include k_desktop when desktop is provided', () => {
-  const desktop = {
-    command: 'C:\\fake\\windows-mcp.exe',
-    args: ['serve', '--exclude-tools', 'PowerShell,FileSystem,Registry,Process,Scrape'],
-    env: {ANONYMIZED_TELEMETRY: 'false'}
-  };
+  const desktop = {command: 'C:\\fake\\windows-mcp.exe', args: ['serve'], env: {ANONYMIZED_TELEMETRY: 'false'}};
   const settings = geminiSettings('D:\\fake\\workspace', 'danger-full-access', [], null, null, {allow: []}, {desktop});
   assert.ok(settings.permissions.allow.includes('mcp(k_desktop/*)'));
   assert.ok(!settings.permissions.deny.includes('mcp(*)'));

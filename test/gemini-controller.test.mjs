@@ -8,7 +8,7 @@ import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {GEMINI_MEDIA_GUIDANCE, geminiToolGuidance} from '../src/gemini-worker.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
-import {DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
+import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 import {scratchBase} from './scratch.mjs';
 
 const names = [
@@ -418,13 +418,7 @@ test('Gemini main conversation receives Desktop Control MCP in danger-full-acces
     await f.controller.open({model: 'gemini-3.8-flash', accessMode: 'danger-full-access', permissionConfirmed: true});
     const home = path.join(f.root, 'agent-home/gemini/main', f.controller.state.threadId, '.gemini');
     const mcpConfig = JSON.parse(await readFile(path.join(home, 'config/mcp_config.json'), 'utf8'));
-    assert.equal(mcpConfig.mcpServers.k_desktop.command, exe);
-    assert.deepEqual(mcpConfig.mcpServers.k_desktop.args, [
-      'serve',
-      '--exclude-tools',
-      'PowerShell,FileSystem,Registry,Process,Scrape'
-    ]);
-    assert.deepEqual(mcpConfig.mcpServers.k_desktop.env, {ANONYMIZED_TELEMETRY: 'false'});
+    assert.deepEqual(mcpConfig.mcpServers.k_desktop, await desktopControlMcp({root: f.root, fullAccess: true}));
     const settings = JSON.parse(await readFile(path.join(home, 'antigravity-cli/settings.json'), 'utf8'));
     assert.ok(settings.permissions.allow.includes('mcp(k_desktop/*)'));
     assert.ok(!settings.permissions.deny.includes('mcp(*)'));

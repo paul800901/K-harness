@@ -12,7 +12,7 @@ import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
 import {scratchBase} from './scratch.mjs';
-import {DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
+import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 
 test('Claude close drains result persistence before a durable immutable parent fork snapshot', async t => {
   const f = await fixture();
@@ -3436,15 +3436,8 @@ test('Claude receives Desktop Control MCP in bypass permissions mode only and in
     await mkdir(path.join(f.root, '.runtime'), {recursive: true});
     await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
     await f.controller.open({accessMode: 'claude-bypassPermissions'});
-    const config = f.hostOptions.mcpConfig.mcpServers;
-    assert.equal(config.k_desktop.type, 'stdio');
-    assert.equal(config.k_desktop.command, exe);
-    assert.deepEqual(config.k_desktop.args, [
-      'serve',
-      '--exclude-tools',
-      'PowerShell,FileSystem,Registry,Process,Scrape'
-    ]);
-    assert.deepEqual(config.k_desktop.env, {ANONYMIZED_TELEMETRY: 'false'});
+    const desktop = await desktopControlMcp({root: f.root, fullAccess: true});
+    assert.deepEqual(f.hostOptions.mcpConfig.mcpServers.k_desktop, {type: 'stdio', ...desktop});
     assert.ok(f.hostOptions.workspaceInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
     await f.controller.close();
 

@@ -124,6 +124,7 @@ export function createDesktopController({
     viewEpoch = 0,
     hostEpoch = 0,
     browserRecoveryThreadId = null,
+    hostDesktop = false,
     flashBridge = null,
     flashBridgeInit = null,
     flashGateway = null,
@@ -3055,7 +3056,10 @@ export function createDesktopController({
         changed();
         try {
           const workspace = await validateWorkspace(relocation?.workspace ?? saved?.workspace ?? state.workspace);
-          if (host && threadId && (relocation || browserRecoveryThreadId === threadId)) {
+          const desktop = await desktopControlMcp({root, fullAccess: access === 'danger-full-access'});
+          // Resuming a thread already loaded on this app-server keeps its MCP processes,
+          // so adding or removing desktop control needs a fresh host; history stays native.
+          if (host && threadId && (relocation || browserRecoveryThreadId === threadId || hostDesktop !== !!desktop)) {
             await closeFlashGateway();
             const previous = host;
             host = null;
@@ -3349,7 +3353,7 @@ export function createDesktopController({
           if (!geminiServer?.url || !geminiServer?.headers?.Authorization)
             throw new Error('子代理 MCP gateway 未提供有效的專案限定連線設定。');
           const googleOps = await googleOpsMcp(workspace, {root});
-          const desktop = await desktopControlMcp({root, fullAccess: access === 'danger-full-access'});
+          hostDesktop = !!desktop;
           const mcpServers = withBrowserMcp(
             {
               k_desktop: desktop ? {...desktop, startup_timeout_sec: 30} : disabledCodexMcpServer(),

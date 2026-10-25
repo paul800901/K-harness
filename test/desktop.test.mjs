@@ -10,7 +10,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {listMainSessions, saveMainSession} from '../src/main-sessions.mjs';
 import {scratchBase} from './scratch.mjs';
-import {DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
+import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 async function fixture({catalog, modelPages, browser = false, browserState, selfHosted} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
@@ -1730,42 +1730,40 @@ test('Codex receives Google Ops connector without replacing Flash MCP or native 
   }
 });
 
-test('Codex receives Desktop Control MCP in danger-full-access mode only and includes guidance', async () => {
+test('Codex gives Desktop Control only in full access and replaces the host when a switch changes it', async () => {
   const f = await fixture();
   try {
     const exe = path.join(f.root, 'windows-mcp.exe');
     await writeFile(exe, 'fixture');
     await mkdir(path.join(f.root, '.runtime'), {recursive: true});
     await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
+    const desktop = await desktopControlMcp({root: f.root, fullAccess: true});
 
     await f.c.open({model: 'gpt-6-astra', accessMode: 'danger-full-access', permissionConfirmed: true});
-    const callFull = f.calls.find(c => c.method === 'thread/start').p;
-    assert.equal(callFull.config.mcp_servers.k_desktop.command, exe);
-    assert.deepEqual(callFull.config.mcp_servers.k_desktop.args, [
-      'serve',
-      '--exclude-tools',
-      'PowerShell,FileSystem,Registry,Process,Scrape'
-    ]);
-    assert.deepEqual(callFull.config.mcp_servers.k_desktop.env, {ANONYMIZED_TELEMETRY: 'false'});
-    assert.equal(callFull.config.mcp_servers.k_desktop.startup_timeout_sec, 30);
-    assert.ok(callFull.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
-    await f.c.close();
+    const start = f.calls.find(c => c.method === 'thread/start').p;
+    assert.deepEqual(start.config.mcp_servers.k_desktop, {...desktop, startup_timeout_sec: 30});
+    assert.ok(start.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f.c.send({text: 'fixture prior turn'});
+    await f.c.stop();
+    f.c.state.status = 'completed';
 
-    const f2 = await fixture();
-    await writeFile(path.join(f2.root, 'windows-mcp.exe'), 'fixture');
-    await mkdir(path.join(f2.root, '.runtime'), {recursive: true});
-    await writeFile(
-      path.join(f2.root, '.runtime/desktop-control.json'),
-      JSON.stringify({executable: path.join(f2.root, 'windows-mcp.exe')})
-    );
+    // A loaded thread keeps its MCP processes on resume, so the downgrade must use a new app-server.
+    const hosts = f.hostFactoryCalls,
+      closes = f.hostCloseCalls;
+    await f.c.send({text: '改唯讀', accessMode: 'read-only'});
+    assert.equal(f.hostFactoryCalls, hosts + 1);
+    assert.equal(f.hostCloseCalls, closes + 1);
+    const resume = f.calls.findLast(c => c.method === 'thread/resume').p;
+    assert.equal(resume.config.mcp_servers.k_desktop.enabled, false);
+    assert.ok(!resume.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f.c.stop();
+    f.c.state.status = 'completed';
 
-    await f2.c.open({model: 'gpt-6-astra', accessMode: 'read-only'});
-    const callReadOnly = f2.calls.find(c => c.method === 'thread/start').p;
-    assert.equal(callReadOnly.config.mcp_servers.k_desktop.enabled, false);
-    assert.ok(!callReadOnly.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
-    await f2.c.close();
+    // A switch that leaves desktop control unchanged keeps the existing host.
+    await f.c.send({text: '改要求核准', accessMode: 'workspace-write'});
+    assert.equal(f.hostFactoryCalls, hosts + 1);
   } finally {
-    await f.c.close().catch(() => {});
+    await f.c.close();
   }
 });
 
