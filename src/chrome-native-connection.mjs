@@ -3,6 +3,11 @@ import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {WebSocket} from 'ws';
 
+function cleanText(text, max = 200) {
+  if (typeof text !== 'string') return '';
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/gu, '').slice(0, max);
+}
+
 // Only the trusted K owner reads this descriptor from its protected vault.
 // Chrome is started only by k-chrome-launcher; this module never launches it,
 // changes the foreground window or retries a command.
@@ -108,10 +113,16 @@ async function nativeRequest(descriptor, request, timeoutMs) {
         return finish(Error('K 瀏覽器助手回覆格式無效。'));
       }
       if (message.id !== id) return finish(Error('K 瀏覽器助手回覆不符本次工作。'));
+      // The extension and native host report fixed step names, never URLs.
+      const reason = cleanText(message.error);
       finish(
         message.ok === true
           ? undefined
-          : Error('K 瀏覽器助手無法在背景建立連線頁。請確認專用 Chrome 的擴充已啟用。'),
+          : Error(
+              reason
+                ? `K 瀏覽器助手無法在背景建立連線頁：${reason}`
+                : 'K 瀏覽器助手無法在背景建立連線頁。請確認專用 Chrome 的擴充已啟用。'
+            ),
         message
       );
     });

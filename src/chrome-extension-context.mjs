@@ -6,6 +6,11 @@ import {chromium} from 'playwright';
 
 const require = createRequire(import.meta.url);
 
+function cleanText(text, max = 200) {
+  if (typeof text !== 'string') return '';
+  return text.replace(/[\x00-\x1f\x7f-\x9f]/gu, '').slice(0, max);
+}
+
 // Chrome remains the owner of its tabs and login state. Closing this bridge
 // detaches the debugger; it must never close the user's browser or erase data.
 export async function createChromeExtensionContext({
@@ -26,6 +31,10 @@ export async function createChromeExtensionContext({
   let extension,
     cdp,
     browser,
+    statusWs,
+    lastStage,
+    disconnectReason,
+    isReady = false,
     closed = false,
     nextId = 0,
     readyResolve,
@@ -41,18 +50,21 @@ export async function createChromeExtensionContext({
   void ready.catch(() => {});
   const sendCommand = (method, params) =>
     new Promise((resolve, reject) => {
-      if (closed || extension?.readyState !== 1) return reject(Error('K browser extension disconnected.'));
+      if (closed || extension?.readyState !== 1) return reject(disconnected());
       const id = ++nextId;
       pending.set(id, {resolve, reject});
       extension.send(JSON.stringify({id, method, params}));
     });
   const handler = protocolFactory ? protocolFactory(sendCommand) : new ExtensionProtocolV2(sendCommand);
+  const disconnected = () =>
+    Error(`K browser extension disconnected${disconnectReason ? `: ${disconnectReason}` : ''}.`);
   function stop() {
     if (closed) return;
     closed = true;
-    readyReject(Error('K browser extension disconnected.'));
-    for (const item of pending.values()) item.reject(Error('K browser extension disconnected.'));
+    readyReject(disconnected());
+    for (const item of pending.values()) item.reject(disconnected());
     pending.clear();
+    statusWs?.terminate();
     extension?.terminate();
     cdp?.terminate();
     wsServer.close();
@@ -64,12 +76,32 @@ export async function createChromeExtensionContext({
       req.url === `/extension/${nonce}` && req.headers.origin === `chrome-extension://${extensionId}` && !extension;
     const cdpRequest =
       req.url === `/cdp/${nonce}` && req.headers.authorization === `Bearer ${cdpToken}` && extension && !cdp;
-    if (closed || !local || (!extensionRequest && !cdpRequest)) {
+    const statusRequest =
+      req.url === `/status/${nonce}` && req.headers.origin === `chrome-extension://${extensionId}` && !statusWs;
+    if (closed || !local || (!extensionRequest && !cdpRequest && !statusRequest)) {
       socket.end('HTTP/1.1 403 Forbidden\r\n\r\n');
       return;
     }
     wsServer.handleUpgrade(req, socket, head, ws => {
-      if (extensionRequest) {
+      if (statusRequest) {
+        // Progress side channel from the connect page. Its own failure or
+        // close never stops the bridge; only a reported error before ready does.
+        statusWs = ws;
+        ws.on('error', () => {});
+        ws.on('message', data => {
+          let message;
+          try {
+            message = JSON.parse(data.toString());
+          } catch {
+            return;
+          }
+          if (cleanText(message?.stage)) lastStage = cleanText(message.stage);
+          if (typeof message?.error === 'string' && !isReady) {
+            readyReject(Error(`K 瀏覽器助手回報連線失敗：${cleanText(message.error)}`));
+            stop();
+          }
+        });
+      } else if (extensionRequest) {
         extension = ws;
         ws.on('message', async data => {
           try {
@@ -84,7 +116,15 @@ export async function createChromeExtensionContext({
             stop();
           }
         });
-        Promise.resolve(handler.ready()).then(readyResolve, readyReject);
+        ws.on('close', (_code, reason) => {
+          disconnectReason = cleanText(reason?.toString()).trim() || undefined;
+          stop();
+        });
+        ws.on('error', stop);
+        Promise.resolve(handler.ready()).then(() => {
+          isReady = true;
+          readyResolve();
+        }, readyReject);
       } else {
         cdp = ws;
         handler.connectOverCDP(message => {
@@ -126,13 +166,16 @@ export async function createChromeExtensionContext({
             if (message?.method === 'Runtime.enable') frameTreeResponses.delete(message.sessionId);
           }
         });
+        ws.on('close', stop);
+        ws.on('error', stop);
       }
-      ws.on('close', stop);
-      ws.on('error', stop);
     });
   });
   const timer = setTimeout(() => {
-    readyReject(Error('K 與 Chrome 擴充連線逾時，尚未開始操作網頁。請查看擴充連線頁的錯誤；沒有自動重試。'));
+    const timeoutMsg = lastStage
+      ? `K 與 Chrome 擴充連線逾時（最後停在：${lastStage}）。若停在擴充背景程式這一步，可在 chrome://extensions 重新載入 K 瀏覽器助手後再試；沒有自動重試。`
+      : 'K 與 Chrome 擴充連線逾時，連線頁沒有回報任何進度（可能未開啟，或擴充是舊版）。沒有自動重試。';
+    readyReject(Error(timeoutMsg));
     stop();
   }, timeoutMs);
   try {

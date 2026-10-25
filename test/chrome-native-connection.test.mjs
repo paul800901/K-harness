@@ -84,3 +84,16 @@ test('native opener rejects missing and non-loopback descriptors without network
   );
   await assert.rejects(openChromeConnectPageViaNative({descriptorPath}, 'fixture'), /無效/);
 });
+test('native opener surfaces error string when ok is false', async () => {
+  const f = await fixture((s, m) =>
+    s.send(JSON.stringify({id: m.id, ok: false, error: '開啟連線頁失敗'}))
+  );
+  try {
+    await assert.rejects(
+      openChromeConnectPageViaNative(f, 'fixture-connect-url'),
+      /K 瀏覽器助手無法在背景建立連線頁：開啟連線頁失敗/
+    );
+  } finally {
+    await f.close();
+  }
+});

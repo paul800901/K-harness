@@ -90,19 +90,29 @@ export class NativeConnection {
     const request = input as Partial<NativeRequest> | null;
     if (!request || typeof request.id !== 'string' || request.id.length === 0 || request.id.length > 128)
       return;
+    let step = '驗證連線要求';
+    let incognitoDenied = false;
     try {
       if (request.type !== 'openConnectPage' || typeof request.url !== 'string')
         throw new Error('invalid request');
       const target = this._validateConnectUrl(request.url);
+      step = '讀取 Chrome 視窗';
       const normalWindows = await this._chrome.windows.getAll({ windowTypes: ['normal'] });
       const regularWindow = normalWindows.find(window => !window.incognito && Number.isInteger(window.id));
-      if (target.mode === 'incognito' && !await this._chrome.extension.isAllowedIncognitoAccess())
-        throw new Error('incognito permission denied');
+      if (target.mode === 'incognito') {
+        step = '檢查無痕權限';
+        const allowed = await this._chrome.extension.isAllowedIncognitoAccess();
+        if (!allowed) {
+          incognitoDenied = true;
+          throw new Error('incognito permission denied');
+        }
+      }
 
       // Keep the selector page in a regular window for both modes; the background
       // worker opens the actual target window when needed. With no regular window
       // open, the selector gets its own minimized window: a regular request then
       // works in that window, an incognito one leaves it to close with the selector.
+      step = '開啟連線頁';
       if (regularWindow?.id === undefined)
         await this._chrome.windows.create({ url: target.url, state: 'minimized' });
       else
@@ -110,7 +120,8 @@ export class NativeConnection {
       this._reply(port, { id: request.id, ok: true });
     } catch {
       // Never echo a URL, relay path, nonce, or Chrome exception text to host.
-      this._reply(port, { id: request.id, ok: false, error: 'K could not open the validated background connection page.' });
+      // Only these fixed step names are reported.
+      this._reply(port, { id: request.id, ok: false, error: incognitoDenied ? '無痕模式未允許' : `${step}失敗` });
     }
   }
 

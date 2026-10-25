@@ -186,7 +186,7 @@ test('native handoff reports a window Chrome refused to open without echoing its
   assert.deepEqual(mock.port.messages[0], {
     id: 'req-refused',
     ok: false,
-    error: 'K could not open the validated background connection page.'
+    error: '開啟連線頁失敗'
   });
 });
 
@@ -216,7 +216,7 @@ test('native handoff rejects non-K, non-loopback, malformed, and unauthorized in
     invalid.map(() => false)
   );
   for (const message of mock.port.messages) {
-    assert.match(message.error, /validated background connection page/);
+    assert.match(message.error, /^(驗證連線要求失敗|無痕模式未允許)$/);
     assert.equal(message.error.includes('127.0.0.1'), false);
     assert.equal(message.error.includes('/extension/'), false);
   }
@@ -268,4 +268,73 @@ test('failed local storage identity is not cached forever; explicit reconnect ca
   await waitFor(() => mock.calls.hellos.length === 1);
   assert.match(mock.calls.hellos[0].profileId, /^[a-f0-9]{32}$/);
   assert.equal(mock.calls.hosts.length, 2);
+});
+
+test('native handoff failure responses include step names and never leak URLs, ws relay or nonce', async () => {
+  const {NativeConnection} = await nativeConnectionModule();
+  const nonce = 'f'.repeat(64);
+  const url = connectUrl({relay: `ws://127.0.0.1:43127/extension/${nonce}`});
+
+  // Step 1: 驗證連線要求 (invalid request format)
+  {
+    const mock = mockChrome();
+    new NativeConnection(mock.chrome);
+    mock.port.onMessage.emit({id: 'fail-val', type: 'openConnectPage', url: 'invalid-url'});
+    await waitFor(() => mock.port.messages.length === 1);
+    const msg = mock.port.messages[0];
+    assert.equal(msg.ok, false);
+    assert.equal(msg.error, '驗證連線要求失敗');
+    assert.equal(msg.error.includes('chrome-extension://'), false);
+    assert.equal(msg.error.includes('ws://'), false);
+    assert.equal(msg.error.includes(nonce), false);
+  }
+
+  // Step 2: 讀取 Chrome 視窗 (windows.getAll throws)
+  {
+    const mock = mockChrome();
+    mock.chrome.windows.getAll = async () => {
+      throw new Error('Chrome windows query error');
+    };
+    new NativeConnection(mock.chrome);
+    mock.port.onMessage.emit({id: 'fail-win', type: 'openConnectPage', url});
+    await waitFor(() => mock.port.messages.length === 1);
+    const msg = mock.port.messages[0];
+    assert.equal(msg.ok, false);
+    assert.equal(msg.error, '讀取 Chrome 視窗失敗');
+    assert.equal(msg.error.includes('chrome-extension://'), false);
+    assert.equal(msg.error.includes('ws://'), false);
+    assert.equal(msg.error.includes(nonce), false);
+  }
+
+  // Step 3: 檢查無痕權限 (incognito mode without permission)
+  {
+    const incognitoUrl = connectUrl({mode: 'incognito', relay: `ws://127.0.0.1:43127/extension/${nonce}`});
+    const mock = mockChrome({windows: [{id: 8, incognito: false}], incognitoAllowed: false});
+    new NativeConnection(mock.chrome);
+    mock.port.onMessage.emit({id: 'fail-incog', type: 'openConnectPage', url: incognitoUrl});
+    await waitFor(() => mock.port.messages.length === 1);
+    const msg = mock.port.messages[0];
+    assert.equal(msg.ok, false);
+    assert.equal(msg.error, '無痕模式未允許');
+    assert.equal(msg.error.includes('chrome-extension://'), false);
+    assert.equal(msg.error.includes('ws://'), false);
+    assert.equal(msg.error.includes(nonce), false);
+  }
+
+  // Step 4: 開啟連線頁 (tabs.create throws)
+  {
+    const mock = mockChrome({windows: [{id: 8, incognito: false}], incognitoAllowed: true});
+    mock.chrome.tabs.create = async () => {
+      throw new Error('Chrome tabs.create failed');
+    };
+    new NativeConnection(mock.chrome);
+    mock.port.onMessage.emit({id: 'fail-open', type: 'openConnectPage', url});
+    await waitFor(() => mock.port.messages.length === 1);
+    const msg = mock.port.messages[0];
+    assert.equal(msg.ok, false);
+    assert.equal(msg.error, '開啟連線頁失敗');
+    assert.equal(msg.error.includes('chrome-extension://'), false);
+    assert.equal(msg.error.includes('ws://'), false);
+    assert.equal(msg.error.includes(nonce), false);
+  }
 });

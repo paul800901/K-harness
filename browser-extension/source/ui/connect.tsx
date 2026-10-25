@@ -16,6 +16,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createConnectReporter } from './connectReport';
 
 type Status =
   | { type: 'connecting'; message: string }
@@ -48,6 +49,7 @@ const ConnectApp: React.FC = () => {
 
   useEffect(() => {
     const runAsync = async () => {
+      let reporter: ReturnType<typeof createConnectReporter> | undefined;
       try {
         const params = new URLSearchParams(window.location.search);
         const relayUrl = params.get('mcpRelayUrl');
@@ -66,6 +68,9 @@ const ConnectApp: React.FC = () => {
         if (new URL(relayUrl).protocol !== 'ws:')
           throw new Error('K 僅允許透過本機 WebSocket relay 連線。');
 
+        reporter = createConnectReporter(relayUrl);
+        reporter.stage(`連線頁已開啟（擴充 ${chrome.runtime.getManifest().version}）`);
+
         setStatus({
           type: 'connecting',
           message: `「${clientInfo}」正在連線至 K 瀏覽器助手，並建立專用的${browserMode === 'incognito' ? '無痕' : '一般'}空白分頁。`
@@ -76,21 +81,29 @@ const ConnectApp: React.FC = () => {
         if (requestedVersion > SUPPORTED_PROTOCOL_VERSION) {
           const extensionVersion = chrome.runtime.getManifest().version;
           setStatus({ type: 'error', versionMismatch: { extensionVersion } });
+          reporter.fail(`K 瀏覽器助手需要較新版本（目前版本：${extensionVersion}）。請更新專案候選版本後重新連線。`);
+          reporter.close();
           return;
         }
         if (requestedVersion < SUPPORTED_PROTOCOL_VERSION)
           throw new Error('K 瀏覽器助手版本不相容，請更新專案內候選版本。');
 
+        reporter.stage('等待擴充背景程式驗證連線要求');
         const request = await chrome.runtime.sendMessage({ type: 'connectionRequested', mcpRelayUrl: relayUrl, mode: browserMode, newTab: true });
         if (!request?.success)
           throw new Error(request?.error || 'K 本機連線驗證失敗。');
 
+        reporter.stage(`等待擴充背景程式建立${browserMode === 'incognito' ? '無痕' : '一般'}分頁並接上`);
         const connected = await chrome.runtime.sendMessage({ type: 'connectToNewTab', clientName: clientInfo, mode: browserMode });
         if (!connected?.success)
           throw new Error(connected?.error || '無法建立專用空白分頁連線。');
         setStatus({ type: 'connected', message: `「${clientInfo}」已連線至專用的${browserMode === 'incognito' ? '無痕' : '一般'}分頁。` });
+        reporter.close();
       } catch (error) {
-        setError(error instanceof Error ? error.message : String(error));
+        const message = error instanceof Error ? error.message : String(error);
+        setError(message);
+        reporter?.fail(message);
+        reporter?.close();
       }
     };
     void runAsync();

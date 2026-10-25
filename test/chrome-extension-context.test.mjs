@@ -191,3 +191,167 @@ test('Runtime.enable waits for its session frame tree response without blocking 
     extensionSocket?.close();
   }
 });
+
+test('status connection error rejects createChromeExtensionContext immediately without waiting for timeout', async () => {
+  const extensionId = 'd'.repeat(32);
+  const start = Date.now();
+  await assert.rejects(
+    createChromeExtensionContext({
+      mode: 'regular',
+      extensionId,
+      timeoutMs: 60000,
+      protocolFactory: () => ({ready: async () => {}}),
+      openConnectPage: async url => {
+        const connectUrl = new URL(url);
+        const relayUrl = new URL(connectUrl.searchParams.get('mcpRelayUrl'));
+        const statusUrl = new URL(relayUrl);
+        statusUrl.pathname = statusUrl.pathname.replace('/extension/', '/status/');
+        const socket = new WebSocket(statusUrl.href, {origin: `chrome-extension://${extensionId}`});
+        await once(socket, 'open');
+        socket.send(JSON.stringify({error: '擴充背景程式分頁建立失敗'}));
+      }
+    }),
+    /K 瀏覽器助手回報連線失敗：擴充背景程式分頁建立失敗/
+  );
+  assert.ok(Date.now() - start < 5000, 'must not wait for 60s timeout');
+});
+
+test('status stage is included in timeout message', async () => {
+  const extensionId = 'e'.repeat(32);
+  await assert.rejects(
+    createChromeExtensionContext({
+      mode: 'regular',
+      extensionId,
+      timeoutMs: 50,
+      protocolFactory: () => ({ready: async () => {}}),
+      openConnectPage: async url => {
+        const connectUrl = new URL(url);
+        const relayUrl = new URL(connectUrl.searchParams.get('mcpRelayUrl'));
+        const statusUrl = new URL(relayUrl);
+        statusUrl.pathname = statusUrl.pathname.replace('/extension/', '/status/');
+        const socket = new WebSocket(statusUrl.href, {origin: `chrome-extension://${extensionId}`});
+        await once(socket, 'open');
+        socket.send(JSON.stringify({stage: '等待擴充背景程式驗證連線要求'}));
+      }
+    }),
+    error => {
+      assert.match(error.message, /逾時/);
+      assert.match(error.message, /最後停在：等待擴充背景程式驗證連線要求/);
+      return true;
+    }
+  );
+});
+
+test('timeout without status reports indicates no progress reported', async () => {
+  const extensionId = 'f'.repeat(32);
+  await assert.rejects(
+    createChromeExtensionContext({
+      mode: 'regular',
+      extensionId,
+      timeoutMs: 50,
+      protocolFactory: () => ({ready: async () => {}}),
+      openConnectPage: async () => {}
+    }),
+    error => {
+      assert.match(error.message, /逾時/);
+      assert.match(error.message, /沒有回報任何進度/);
+      return true;
+    }
+  );
+});
+
+test('status connection requires matching origin and only allows a single connection', async () => {
+  const extensionId = 'g'.repeat(32);
+  let statusWs;
+  await assert.rejects(
+    createChromeExtensionContext({
+      mode: 'regular',
+      extensionId,
+      timeoutMs: 80,
+      protocolFactory: () => ({ready: async () => {}}),
+      openConnectPage: async url => {
+        const connectUrl = new URL(url);
+        const relayUrl = new URL(connectUrl.searchParams.get('mcpRelayUrl'));
+        const statusUrl = new URL(relayUrl);
+        statusUrl.pathname = statusUrl.pathname.replace('/extension/', '/status/');
+
+        const badOriginWs = new WebSocket(statusUrl.href, {origin: 'https://untrusted.example'});
+        const [badErr] = await once(badOriginWs, 'error');
+        assert.match(badErr.message, /403/);
+
+        statusWs = new WebSocket(statusUrl.href, {origin: `chrome-extension://${extensionId}`});
+        await once(statusWs, 'open');
+
+        const secondWs = new WebSocket(statusUrl.href, {origin: `chrome-extension://${extensionId}`});
+        const [secondErr] = await once(secondWs, 'error');
+        assert.match(secondErr.message, /403/);
+      }
+    }),
+    /逾時/
+  );
+});
+
+test('a failing or closed status channel neither crashes K nor disconnects the bridge', async () => {
+  const extensionId = 'h'.repeat(32);
+  let send, statusWs, extensionWs;
+  const context = await createChromeExtensionContext({
+    mode: 'regular',
+    extensionId,
+    protocolFactory: command => {
+      send = command;
+      return {ready: async () => {}, handleExtensionEvent() {}};
+    },
+    openConnectPage: async url => {
+      const relayUrl = new URL(new URL(url).searchParams.get('mcpRelayUrl'));
+      const statusUrl = new URL(relayUrl);
+      statusUrl.pathname = statusUrl.pathname.replace('/extension/', '/status/');
+      statusWs = new WebSocket(statusUrl.href, {origin: `chrome-extension://${extensionId}`});
+      await once(statusWs, 'open');
+      extensionWs = new WebSocket(relayUrl.href, {origin: `chrome-extension://${extensionId}`});
+      extensionWs.on('message', data => {
+        const {id} = JSON.parse(data);
+        extensionWs.send(JSON.stringify({id, result: {ok: true}}));
+      });
+      await once(extensionWs, 'open');
+    },
+    connectBrowser: async () => ({on() {}, contexts: () => [{}], close: async () => {}})
+  });
+  try {
+    // An invalid UTF-8 text frame makes the server-side socket emit 'error'.
+    statusWs.on('error', () => {});
+    statusWs.send(Buffer.from([0xff, 0xfe]), {binary: false});
+    await once(statusWs, 'close');
+    assert.deepEqual(await send('after.status.failure', {}), {ok: true});
+  } finally {
+    await context.close();
+  }
+});
+
+test('extension closing with reason includes reason in pending command errors', async () => {
+  const extensionId = 'i'.repeat(32);
+  let send, extensionWs;
+  const context = await createChromeExtensionContext({
+    mode: 'regular',
+    extensionId,
+    protocolFactory: command => {
+      send = command;
+      return {ready: async () => {}, handleExtensionEvent() {}};
+    },
+    openConnectPage: async url => {
+      extensionWs = new WebSocket(new URL(url).searchParams.get('mcpRelayUrl'), {
+        origin: `chrome-extension://${extensionId}`
+      });
+      await once(extensionWs, 'open');
+    },
+    connectBrowser: async () => ({on() {}, contexts: () => [{}], close: async () => {}})
+  });
+
+  const pendingPromise = send('some.pending.command', {});
+  extensionWs.close(1000, 'Tab was manually closed by user');
+  await assert.rejects(pendingPromise, error => {
+    assert.match(error.message, /Tab was manually closed by user/);
+    assert.match(error.message, /K browser extension disconnected: Tab was manually closed by user\./);
+    return true;
+  });
+  await context.close();
+});
