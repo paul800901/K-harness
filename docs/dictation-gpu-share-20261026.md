@@ -75,5 +75,5 @@ Sol 複核：6 項通過；第 3 項批次端遺漏例外鏈（`raise … from`�
 
 - K 程式：分支 `dictation-gpu-share-20261026` 以 squash 合回 main `df53745`（接在 [成果欄不自動打開](results-panel-no-autoopen-20261026.md) `e949bf1` 之後，兩批一起更新）。
 - 錄音轉文字：分支 `gpu-share-20261026` 快轉合回其 main `16df134`；該資料夾原有未提交的 `AGENTS.md`、`TOOL_INDEX.md`、`scripts/transcribe_desktop_audio.ps1` 未動。批次程式下次執行即生效，不需部署。
-- 已寫 `.local/update-ready.json` 指向 `df53745`（取代原本指向 `e949bf1` 的標記），待本人按側欄「更新」；push 待部署讀回後處理。
+- 已寫 `.local/update-ready.json` 指向 `dec52f8`（main `df53745` 加上讓 Python 測試不留 `__pycache__`、沒有 python 時略過的測試修正；取代原本指向 `e949bf1` 的標記），待本人按側欄「更新」；push 待部署讀回後處理。
 - 東區未更新。
