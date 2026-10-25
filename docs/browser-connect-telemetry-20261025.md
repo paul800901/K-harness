@@ -42,8 +42,9 @@
 
 程式版本 `5f8b7e058aaca6cf0b440d50a42440c610d34da8`，已合回 `main`。因另一聊天室（desktop-control）同時改 K，依多房規則不寫更新標記，由後完成的一方 rebase、統合驗收後寫標記，本人按一次「更新」兩批一起部署（已留協調訊息）。擴充變更的部署步驟：K 外 `Update-K.ps1`（或本人按「更新」）建置正式 runtime 的擴充 → 執行 `scripts/Setup-K-Browser.ps1` 把建置複製到 `installed/k-browser-assistant`（先備份、重套同一 native host 登記）→ 本人在 K 專用 Chrome 擴充頁按「重新載入」→ 讀回擴充版本 0.1.5 並實測一般／無痕連線。
 
+**已部署（2026-10-25，與 [desktop-control](desktop-control-20261025.md) 同批）：** desktop-control 分支 rebase 到含本批的 main，兩批合併完整 1952/1952 後寫標記 `8eab458`；本人 12:54（臺灣時間）按「更新」，更新器 1952/1952、退版三份。13:09 執行 `scripts/Setup-K-Browser.ps1`：`installed/k-browser-assistant` 0.1.4→0.1.5，備份於 `vault/k-browser-assistant-backups/setup-20261025-130952-416`。當時 K 專用 Chrome 未開，由 `browser_session` 新開時直接載入 0.1.5，不需按「重新載入」（本人在擴充頁也看到 0.1.5）。真 Chrome 實測：一般模式連線並開 `https://example.com/` 成功，經 `chrome-extension://…/manifest.json` 讀回 `version: 0.1.5`；無痕模式連線並開同頁成功；測試分頁已關閉。push 讀回 `5e540dc`。
+
 ## 未完成
 
-- 真 Chrome 實測尚未進行。
 - 10-25 無痕卡住的根因仍未知；下次再發生時，新的回報會指出停在哪一步。
 - 東區未更新。
