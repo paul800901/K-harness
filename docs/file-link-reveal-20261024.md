@@ -46,4 +46,6 @@
 
 ## 部署狀態
 
+**2026-10-24 18:01（臺灣時間）已由本人按「更新」部署：** `.local/self-update-result.json` 記 `ok: true`，`4873890` → `3921e9f`，正式 `.local/runtime.json` 版本讀回 `3921e9f543612063dcabc78b1110ab20eac555bb`。部署後未 push，由 2026-10-25 [長指令心跳修正](native-child-heartbeat-20261025.md)部署後一併 push。以下為當時停在重啟前的原紀錄。
+
 依本人指示**停在重啟前**：未部署、未 push，東區未更新。程式 `3921e9f` 與本文件已快轉合回 `main`，並寫入 `.local/update-ready.json`（`ref` 為程式版本完整 SHA），本人按側欄「更新」才會套用；只關掉再開 K 不會套用新版。套用後由 AI 讀回 `.local/self-update-result.json` 再 push 並讀回遠端。
