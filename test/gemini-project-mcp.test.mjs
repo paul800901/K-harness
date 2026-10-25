@@ -62,6 +62,7 @@ test('K binding loader ignores project files; owner config cannot override K too
   for (const binding of [
     {mcpServers: {k_browser: server}},
     {mcpServers: {k_google_ops: server}},
+    {mcpServers: {k_desktop: server}},
     {mcpServers: {fixture: server}, allowReadOnly: ['command(*)']},
     {mcpServers: {fixture: server}, allowReadOnly: ['mcp(other/*)']}
   ]) {

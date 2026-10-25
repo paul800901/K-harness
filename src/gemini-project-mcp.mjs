@@ -33,7 +33,7 @@ export async function geminiProjectMcp(root, workspace, accessMode) {
   for (const [name, server] of Object.entries(mcpServers)) {
     if (
       !/^[\w-]+$/u.test(name) ||
-      ['k_browser', 'k_google_ops'].includes(name) ||
+      ['k_browser', 'k_google_ops', 'k_desktop'].includes(name) ||
       !server ||
       typeof server !== 'object' ||
       Array.isArray(server)

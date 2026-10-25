@@ -10,6 +10,7 @@ import {createDesktopController} from '../src/desktop-controller.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
 import {listMainSessions, saveMainSession} from '../src/main-sessions.mjs';
 import {scratchBase} from './scratch.mjs';
+import {DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 async function fixture({catalog, modelPages, browser = false, browserState, selfHosted} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
@@ -1726,6 +1727,45 @@ test('Codex receives Google Ops connector without replacing Flash MCP or native 
     assert.equal(call.sandbox, 'read-only');
   } finally {
     await f.c.close();
+  }
+});
+
+test('Codex receives Desktop Control MCP in danger-full-access mode only and includes guidance', async () => {
+  const f = await fixture();
+  try {
+    const exe = path.join(f.root, 'windows-mcp.exe');
+    await writeFile(exe, 'fixture');
+    await mkdir(path.join(f.root, '.runtime'), {recursive: true});
+    await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
+
+    await f.c.open({model: 'gpt-6-astra', accessMode: 'danger-full-access', permissionConfirmed: true});
+    const callFull = f.calls.find(c => c.method === 'thread/start').p;
+    assert.equal(callFull.config.mcp_servers.k_desktop.command, exe);
+    assert.deepEqual(callFull.config.mcp_servers.k_desktop.args, [
+      'serve',
+      '--exclude-tools',
+      'PowerShell,FileSystem,Registry,Process,Scrape'
+    ]);
+    assert.deepEqual(callFull.config.mcp_servers.k_desktop.env, {ANONYMIZED_TELEMETRY: 'false'});
+    assert.equal(callFull.config.mcp_servers.k_desktop.startup_timeout_sec, 30);
+    assert.ok(callFull.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f.c.close();
+
+    const f2 = await fixture();
+    await writeFile(path.join(f2.root, 'windows-mcp.exe'), 'fixture');
+    await mkdir(path.join(f2.root, '.runtime'), {recursive: true});
+    await writeFile(
+      path.join(f2.root, '.runtime/desktop-control.json'),
+      JSON.stringify({executable: path.join(f2.root, 'windows-mcp.exe')})
+    );
+
+    await f2.c.open({model: 'gpt-6-astra', accessMode: 'read-only'});
+    const callReadOnly = f2.calls.find(c => c.method === 'thread/start').p;
+    assert.equal(callReadOnly.config.mcp_servers.k_desktop.enabled, false);
+    assert.ok(!callReadOnly.developerInstructions.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f2.c.close();
+  } finally {
+    await f.c.close().catch(() => {});
   }
 });
 

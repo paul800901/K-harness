@@ -284,6 +284,7 @@ test('normal GPT conversations wait for only the Flash gateway and keep native A
     const resume = f.activeHost.calls.find(call => call.method === 'thread/resume').p;
     const disabled = {enabled: false, command: process.execPath, args: ['--version']};
     assert.deepEqual(resume.config.mcp_servers, {
+      k_desktop: disabled,
       k_google_ops: disabled,
       k_flash: disabled,
       k_gemini: {

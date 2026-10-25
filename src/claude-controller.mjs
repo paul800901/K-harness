@@ -10,6 +10,7 @@ import {
   geminiHandoffText
 } from './gemini-handoff.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
+import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from './desktop-control-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {quotaZeroUntil, quotaZeroRecheckDue} from './quota-zero.mjs';
 import {createHash, randomUUID} from 'node:crypto';
@@ -1503,10 +1504,18 @@ export function createClaudeController({
       await browserConfig({appRoot: root, conversationId, accessMode, provider: 'claude'})
     );
     const googleOps = await googleOpsMcp(state.workspace, {root});
+    const desktop = await desktopControlMcp({
+      root,
+      fullAccess: claudePermissionMode(accessMode) === 'bypassPermissions'
+    });
     return {
       ...gateway.mcpConfig,
       mcpServers: withBrowserMcp(
-        {...gateway.mcpConfig?.mcpServers, ...(googleOps ? {k_google_ops: {type: 'stdio', ...googleOps}} : {})},
+        {
+          ...gateway.mcpConfig?.mcpServers,
+          ...(googleOps ? {k_google_ops: {type: 'stdio', ...googleOps}} : {}),
+          ...(desktop ? {k_desktop: {type: 'stdio', ...desktop}} : {})
+        },
         browserServer
       )
     };
@@ -1914,7 +1923,11 @@ export function createClaudeController({
           model,
           signal,
           cwd: state.workspace,
-          workspaceInstructions: workspaceGuidance(state) + '\n' + workerInstructions,
+          workspaceInstructions:
+            workspaceGuidance(state) +
+            '\n' +
+            workerInstructions +
+            (mcpConfig?.mcpServers?.k_desktop ? '\n\n' + DESKTOP_CONTROL_GUIDANCE : ''),
           sessionId: id,
           resume: !!(threadId && saved.nativeStarted === true),
           ...(source ? {forkFrom: source.nativeSessionId} : {}),
@@ -2118,7 +2131,11 @@ export function createClaudeController({
                 commandSpec,
                 model: state.model,
                 cwd: state.workspace,
-                workspaceInstructions: workspaceGuidance(state) + '\n' + workerInstructions,
+                workspaceInstructions:
+                  workspaceGuidance(state) +
+                  '\n' +
+                  workerInstructions +
+                  (mcpConfig?.mcpServers?.k_desktop ? '\n\n' + DESKTOP_CONTROL_GUIDANCE : ''),
                 sessionId: nativeId(state.threadId),
                 resume: recordBeforeRestart?.nativeStarted === true,
                 mcpConfig,

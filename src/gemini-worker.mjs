@@ -32,7 +32,7 @@ export function geminiSettings(
   browserServer = null,
   googleOpsServer = null,
   projectMcp = {allow: []},
-  {writable = [], gateway = false} = {}
+  {writable = [], gateway = false, desktop = null} = {}
 ) {
   geminiProfile(workspace, accessMode);
   const root = path.resolve(workspace);
@@ -72,13 +72,14 @@ export function geminiSettings(
       ask: []
     }
   };
-  if (browserServer || googleOpsServer || projectMcp.allow.length || gateway) {
+  if (browserServer || googleOpsServer || projectMcp.allow.length || gateway || desktop) {
     // Native deny takes precedence over allow. Only the configured K owner
     // endpoint is preapproved; other MCP tools retain native Ask/denial.
     settings.permissions.deny = settings.permissions.deny.filter(rule => rule !== 'mcp(*)');
     settings.permissions.allow.push(...projectMcp.allow);
     if (browserServer) settings.permissions.allow.push('mcp(k_browser/*)');
     if (gateway) settings.permissions.allow.push('mcp(k_luna/*)');
+    if (desktop) settings.permissions.allow.push('mcp(k_desktop/*)');
     if (googleOpsServer) {
       settings.permissions.allow.push('mcp(k_google_ops/*)');
       if (accessMode !== 'danger-full-access') {
@@ -104,12 +105,19 @@ export const geminiAccessArgs = accessMode =>
     : accessMode === 'workspace-write'
       ? ['--sandbox']
       : [];
-export const geminiMcpConfig = (server, googleOpsServer = null, projectMcp = {mcpServers: {}}, gateway = null) => ({
+export const geminiMcpConfig = (
+  server,
+  googleOpsServer = null,
+  projectMcp = {mcpServers: {}},
+  gateway = null,
+  desktop = null
+) => ({
   mcpServers: {
     ...projectMcp.mcpServers,
     ...(server ? {k_browser: {serverUrl: server.url, headers: server.http_headers ?? server.headers}} : {}),
     ...(googleOpsServer ? {k_google_ops: googleOpsServer} : {}),
-    ...(gateway ? {k_luna: {serverUrl: gateway.url, headers: gateway.headers}} : {})
+    ...(gateway ? {k_luna: {serverUrl: gateway.url, headers: gateway.headers}} : {}),
+    ...(desktop ? {k_desktop: desktop} : {})
   }
 });
 export function geminiEnvironment(source, home) {

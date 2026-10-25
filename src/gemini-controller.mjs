@@ -14,6 +14,7 @@ import path from 'node:path';
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
+import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from './desktop-control-mcp.mjs';
 import {geminiProjectMcp} from './gemini-project-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
@@ -639,10 +640,12 @@ export function createGeminiController({
       .filter(([key]) => /^(TEMP|TMP)$/iu.test(key))
       .map(([, value]) => value);
     const googleOps = await googleOpsMcp(state.workspace, {root});
+    const desktop = await desktopControlMcp({root, fullAccess: state.accessMode === 'danger-full-access'});
     const projectMcp = await geminiProjectMcp(root, state.workspace, state.accessMode);
     const settings = geminiSettings(state.workspace, state.accessMode, temps, browserServer, googleOps, projectMcp, {
       writable: [sharedRules],
-      gateway: !!lunaServer
+      gateway: !!lunaServer,
+      desktop
     });
     // The sandbox's AppContainer data lives under this HOME's LOCALAPPDATA (geminiEnvironment).
     await mkdir(path.join(home(), 'AppData', 'Local'), {recursive: true});
@@ -652,12 +655,12 @@ export function createGeminiController({
     });
     await atomicWrite(
       path.join(home(), '.gemini/config/mcp_config.json'),
-      JSON.stringify(geminiMcpConfig(browserServer, googleOps, projectMcp, lunaServer), null, 2)
+      JSON.stringify(geminiMcpConfig(browserServer, googleOps, projectMcp, lunaServer, desktop), null, 2)
     );
     await atomicWrite(path.join(home(), '.gemini/antigravity-cli/settings.json'), JSON.stringify(settings, null, 2));
     await atomicWrite(
       path.join(home(), '.gemini/config/rules/k-model-roles.md'),
-      `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules, state.accessMode)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
+      `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules, state.accessMode)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}${desktop ? `${DESKTOP_CONTROL_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
     );
     state.browserAccess = {
       enabled: !!browserServer,

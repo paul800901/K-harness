@@ -8,6 +8,7 @@ import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {GEMINI_MEDIA_GUIDANCE, geminiToolGuidance} from '../src/gemini-worker.mjs';
 import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
+import {DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 import {scratchBase} from './scratch.mjs';
 
 const names = [
@@ -403,6 +404,53 @@ test('Gemini full access requires confirmation, never maps auto-review and uses 
     assert.doesNotMatch(await rules(), /完整存取：|工作區寫入：|約 30 分鐘/);
   } finally {
     await c.close();
+  }
+});
+
+test('Gemini main conversation receives Desktop Control MCP in danger-full-access mode only and includes guidance', async () => {
+  const f = await fixture();
+  try {
+    const exe = path.join(f.root, 'windows-mcp.exe');
+    await writeFile(exe, 'fixture');
+    await mkdir(path.join(f.root, '.runtime'), {recursive: true});
+    await writeFile(path.join(f.root, '.runtime/desktop-control.json'), JSON.stringify({executable: exe}));
+
+    await f.controller.open({model: 'gemini-3.8-flash', accessMode: 'danger-full-access', permissionConfirmed: true});
+    const home = path.join(f.root, 'agent-home/gemini/main', f.controller.state.threadId, '.gemini');
+    const mcpConfig = JSON.parse(await readFile(path.join(home, 'config/mcp_config.json'), 'utf8'));
+    assert.equal(mcpConfig.mcpServers.k_desktop.command, exe);
+    assert.deepEqual(mcpConfig.mcpServers.k_desktop.args, [
+      'serve',
+      '--exclude-tools',
+      'PowerShell,FileSystem,Registry,Process,Scrape'
+    ]);
+    assert.deepEqual(mcpConfig.mcpServers.k_desktop.env, {ANONYMIZED_TELEMETRY: 'false'});
+    const settings = JSON.parse(await readFile(path.join(home, 'antigravity-cli/settings.json'), 'utf8'));
+    assert.ok(settings.permissions.allow.includes('mcp(k_desktop/*)'));
+    assert.ok(!settings.permissions.deny.includes('mcp(*)'));
+    const rules = await readFile(path.join(home, 'config/rules/k-model-roles.md'), 'utf8');
+    assert.ok(rules.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f.controller.close();
+
+    const f2 = await fixture();
+    await writeFile(path.join(f2.root, 'windows-mcp.exe'), 'fixture');
+    await mkdir(path.join(f2.root, '.runtime'), {recursive: true});
+    await writeFile(
+      path.join(f2.root, '.runtime/desktop-control.json'),
+      JSON.stringify({executable: path.join(f2.root, 'windows-mcp.exe')})
+    );
+
+    await f2.controller.open({model: 'gemini-3.8-flash', accessMode: 'workspace-write'});
+    const home2 = path.join(f2.root, 'agent-home/gemini/main', f2.controller.state.threadId, '.gemini');
+    const mcpConfig2 = JSON.parse(await readFile(path.join(home2, 'config/mcp_config.json'), 'utf8'));
+    assert.equal(mcpConfig2.mcpServers.k_desktop, undefined);
+    const settings2 = JSON.parse(await readFile(path.join(home2, 'antigravity-cli/settings.json'), 'utf8'));
+    assert.ok(!settings2.permissions.allow.includes('mcp(k_desktop/*)'));
+    const rules2 = await readFile(path.join(home2, 'config/rules/k-model-roles.md'), 'utf8');
+    assert.ok(!rules2.includes(DESKTOP_CONTROL_GUIDANCE));
+    await f2.controller.close();
+  } finally {
+    await f.controller.close().catch(() => {});
   }
 });
 
