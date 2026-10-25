@@ -248,68 +248,74 @@ test('Claude work telemetry ignores replay, child output and elapsed tool heartb
   }
 });
 
-test('Claude native child workers ignore tool progress heartbeats and non-agent parent tools', async () => {
+test('Claude native child workers ignore tool heartbeats and non-agent parent tools', async () => {
   const f = await fixture();
   try {
     await f.controller.open({});
     await f.controller.send({text: 'fake work'});
     const emit = f.hostOptions.onMessage;
+    const toolUse = (id, name) =>
+      emit({
+        type: 'assistant',
+        uuid: `use-${id}`,
+        message: {id: `out-${id}`, content: [{type: 'tool_use', id, name, input: {}}]}
+      });
+    const heartbeat = parent =>
+      emit({
+        type: 'tool_progress',
+        tool_use_id: `hb-${parent}`,
+        parent_tool_use_id: parent,
+        heartbeat: true,
+        elapsed_time_seconds: 30
+      });
+    const childText = parent =>
+      emit({
+        type: 'stream_event',
+        parent_tool_use_id: parent,
+        event: {type: 'content_block_delta', delta: {type: 'text_delta', text: 'child'}}
+      });
+    const worker = id => f.controller.state.workers.find(w => w.requestId === id);
+
+    // The incident: a long foreground Bash sends heartbeats, then moves to the background and ends.
+    toolUse('bash-long', 'Bash');
+    heartbeat('bash-long');
+    childText('bash-long');
+    assert.equal(worker('bash-long'), undefined, 'a known non-agent parent never becomes a subagent');
     emit({
-      type: 'assistant',
-      uuid: 'tool-bash',
-      message: {
-        id: 'model-output-bash',
-        content: [{type: 'tool_use', id: 'bash-long', name: 'Bash', input: {command: 'sleep 120'}}]
-      }
+      type: 'system',
+      subtype: 'task_started',
+      task_type: 'local_bash',
+      task_id: 'bg-bash',
+      tool_use_id: 'bash-long'
     });
-    emit({
-      type: 'tool_progress',
-      tool_use_id: 'hb-1',
-      tool_name: 'Bash',
-      parent_tool_use_id: 'bash-long',
-      heartbeat: true,
-      elapsed_time_seconds: 30
-    });
-    assert.equal(
-      f.controller.state.workers.find(w => w.requestId === 'bash-long'),
-      undefined
-    );
-    emit({
-      type: 'tool_progress',
-      tool_use_id: 'hb-2',
-      tool_name: 'Unknown',
-      parent_tool_use_id: 'unknown-parent',
-      heartbeat: true,
-      elapsed_time_seconds: 10
-    });
-    assert.equal(
-      f.controller.state.workers.find(w => w.requestId === 'unknown-parent'),
-      undefined
-    );
-    emit({
-      type: 'assistant',
-      uuid: 'tool-agent',
-      message: {
-        id: 'model-output-agent',
-        content: [{type: 'tool_use', id: 'agent-x', name: 'Agent', input: {prompt: 'subtask'}}]
-      }
-    });
-    emit({
-      type: 'stream_event',
-      parent_tool_use_id: 'agent-x',
-      event: {type: 'content_block_delta', delta: {type: 'text_delta', text: 'agent working'}}
-    });
-    const agentWorker = f.controller.state.workers.find(w => w.requestId === 'agent-x');
-    assert.ok(agentWorker);
-    assert.equal(agentWorker.status, 'running');
     emit({
       type: 'user',
-      message: {content: [{type: 'tool_result', tool_use_id: 'bash-long', content: 'fake bash output'}]}
+      message: {content: [{type: 'tool_result', tool_use_id: 'bash-long', content: 'moved to background'}]}
     });
-    assert.equal(
-      f.controller.state.workers.find(w => w.requestId === 'bash-long'),
-      undefined
+    emit({type: 'system', subtype: 'task_notification', task_id: 'bg-bash', status: 'completed'});
+    assert.deepEqual(
+      f.controller.state.workers.map(w => [w.requestId, w.kind, w.settled]),
+      [['bash-long', 'command', true]]
     );
+
+    heartbeat('unknown-parent');
+    assert.equal(worker('unknown-parent'), undefined, 'a heartbeat alone is not evidence of a subagent');
+
+    // A known Agent may report a heartbeat first; it must still own and settle its worker.
+    toolUse('agent-x', 'Agent');
+    heartbeat('agent-x');
+    assert.equal(worker('agent-x')?.status, 'running');
+    emit({
+      type: 'user',
+      tool_use_result: {status: 'completed'},
+      message: {content: [{type: 'tool_result', tool_use_id: 'agent-x', content: 'done'}]}
+    });
+    childText('agent-x');
+    assert.equal(worker('agent-x').status, 'completed');
+
+    toolUse('skill-x', 'Skill');
+    childText('skill-x');
+    assert.equal(worker('skill-x')?.status, 'running', 'official stream-json also parents subagent events to Skill');
   } finally {
     await f.controller.close();
   }
