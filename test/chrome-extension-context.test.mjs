@@ -327,6 +327,37 @@ test('a failing or closed status channel neither crashes K nor disconnects the b
   }
 });
 
+test('an extension hang-up while the CDP bridge connects reports its close reason', async () => {
+  const extensionId = 'j'.repeat(32);
+  let extensionWs;
+  await assert.rejects(
+    createChromeExtensionContext({
+      mode: 'regular',
+      extensionId,
+      protocolFactory: () => ({ready: async () => {}, handleExtensionEvent() {}, connectOverCDP() {}}),
+      openConnectPage: async url => {
+        extensionWs = new WebSocket(new URL(url).searchParams.get('mcpRelayUrl'), {
+          origin: `chrome-extension://${extensionId}`
+        });
+        await once(extensionWs, 'open');
+      },
+      // As with Playwright: the CDP socket is open, the extension hangs up, K
+      // tears the CDP socket down, and only then does the connect call fail.
+      connectBrowser: async (endpoint, options) => {
+        const cdpWs = new WebSocket(endpoint, {headers: options.headers});
+        await once(cdpWs, 'open');
+        extensionWs.close(1000, 'All controlled tabs detached');
+        await once(cdpWs, 'close');
+        throw Error(`browserType.connectOverCDP: Target page, context or browser has been closed ${endpoint}`);
+      }
+    }),
+    error => {
+      assert.equal(error.message, 'K browser extension disconnected: All controlled tabs detached.');
+      return true;
+    }
+  );
+});
+
 test('extension closing with reason includes reason in pending command errors', async () => {
   const extensionId = 'i'.repeat(32);
   let send, extensionWs;

@@ -228,7 +228,8 @@ export async function createChromeExtensionContext({
     return context;
   } catch (error) {
     stop();
-    throw error;
+    // Playwright's own error hides why the extension hung up mid-connect.
+    throw disconnectReason ? disconnected() : error;
   } finally {
     clearTimeout(timer);
   }
