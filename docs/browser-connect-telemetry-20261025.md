@@ -40,7 +40,7 @@
 
 ## 部署
 
-程式版本 `5f8b7e058aaca6cf0b440d50a42440c610d34da8`，已合回 `main` 並寫更新標記，待本人按「更新」。擴充變更的部署步驟：K 外 `Update-K.ps1`（或本人按「更新」）建置正式 runtime 的擴充 → 執行 `scripts/Setup-K-Browser.ps1` 把建置複製到 `installed/k-browser-assistant`（先備份、重套同一 native host 登記）→ 本人在 K 專用 Chrome 擴充頁按「重新載入」→ 讀回擴充版本 0.1.5 並實測一般／無痕連線。
+程式版本 `5f8b7e058aaca6cf0b440d50a42440c610d34da8`，已合回 `main`。因另一聊天室（desktop-control）同時改 K，依多房規則不寫更新標記，由後完成的一方 rebase、統合驗收後寫標記，本人按一次「更新」兩批一起部署（已留協調訊息）。擴充變更的部署步驟：K 外 `Update-K.ps1`（或本人按「更新」）建置正式 runtime 的擴充 → 執行 `scripts/Setup-K-Browser.ps1` 把建置複製到 `installed/k-browser-assistant`（先備份、重套同一 native host 登記）→ 本人在 K 專用 Chrome 擴充頁按「重新載入」→ 讀回擴充版本 0.1.5 並實測一般／無痕連線。
 
 ## 未完成
 
