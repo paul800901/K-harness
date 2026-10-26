@@ -15,7 +15,7 @@
 
 同版本完全不經 K 的 `codex debug prompt-input` 預設也顯示四個含主代理的 slots，也就是三個子代理。程序內設定 `agents.max_concurrent_threads_per_session=64` 後顯示 65 slots，沒有啟動工人或推論。這是可調的原生預設，不是模型分工能力測驗，也不是 K 硬設三個。容量不代表必須派滿，總派工量與巢狀深度是另外的概念；本次不改深度。
 
-臨時 home 的低層設定疊上 K 同形 `agents={enabled=true}` 高層 override，預覽仍顯示 65 slots。同層 CLI 旗標整段替換 agents 的結果不能當成 home 跨層被覆蓋的證據。K 實際以 thread/start 的 config.agents 傳入設定；空 thread RPC 沒有暴露合併後的 slots，需新 K 房間讀回才能確認這條路徑生效。原生預覽不等於 K 新房實測，也不是六十四個工人的負載測試。
+臨時 home 的低層設定疊上 K 同形 `agents={enabled=true}` 高層 override，預覽仍顯示 65 slots。同層 CLI 旗標整段替換 agents 的結果不能當成 home 跨層被覆蓋的證據。K 實際以 thread/start 的 config.agents 傳入設定；部署前空 thread RPC 沒有暴露合併後的 slots。2026-10-27 重啟後，本主對話原生 metadata 已回報 65 個含主代理名額，補完 K 端生效驗收；沒有進行六十四個工人的負載測試。
 
 返工較早時段的原生日誌沒有實際壓縮事件，後續長串查核才在臺灣時間 01:04:22 首次自然壓縮。實際單輪可用視窗為 475,000 tokens，auto-compaction 門檻為 450,000；不能把累計輸入當成單輪長度或訂閱扣款。這次不猜改模型 context window，也不把後來的自然壓縮倒算成前面低效率的原因。
 
@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | CaseAgent `.codex/config.toml` | `project_doc_max_bytes = 65536` | 新原生 host 的 config/read 已確認；不改模型或推理程度。專案檔會隨既有 Drive 通道同步。 |
 | K 專用 `.codex/skills` | workflow、guardrails 兩個 junction 指向既有正本 | 原生 skills/list 三個 CaseAgent 入口皆 enabled、errors 空；不是複製。依賴 `C:\Users\Paulus\.codex\skills\caseagent-workflows` 與 `caseagent-guardrails`，搬移前需檢查。 |
-| K 專用 `.codex/config.toml` | `[agents] max_concurrent_threads_per_session = 64` | 現用 home 的原生預覽 65 slots，疊 K 同形 agents override 仍 65；保留其他鍵；thread/start 合併後 slots 尚未讀回，需新 K 房間確認，原有核心不保證熱載入。 |
+| K 專用 `.codex/config.toml` | `[agents] max_concurrent_threads_per_session = 64` | 原生預覽 65；2026-10-27 重啟後 K 主對話實際回報 65（主代理 1＋子代理 64），其餘鍵保留。 |
 | 同上 | `[features] memories = true` | 官方 stable 原生功能，保留為試用；沒有匯入 Claude 記憶、切帳號或改 API 計費。 |
 
 本機設定的 before 副本、SHA 與原生查核報告留在 `D:\scratch\k-gpt-native-parity-20261027`，不把 native session、登入或病例資料送入儲存庫。原 home 設定 SHA 為 `17e7359ea088ac99e660ba1f798c186efd3a537a47183cb7fd3035a2084b847f`；只啟用 memories 後為 `f179e5b3e0edfd47a61ad46c4a5356d9a340e2a195f9c4bb1ba4c2124cc482aa`；再加並行設定後為 `5ddffff10023af66b876849e9f3530934bc25e258b063e000a492480f8ae69fc`。
@@ -50,7 +50,7 @@ Astra xhigh 以原生設定、渲染及日誌獨立查核。真正 Opus 5.5 第�
 - 統合後在 main 重新建置並驗證畫面：`npm run build:ui`、`npm run test:ui` 52/52（combined-ui-test.log）；本輪沒有再改程式。
 - K AGENTS 以 CRLF 計算 23,991 bytes，符合小於 24,000 閘門；未改畫面，不新增 UI 驗證矩陣。
 
-設定讀回不等於模型行為改善已實測；本次沒有以真實病例重跑存入，也沒有啟動大量工人。既有聊天室不保證重載設定，需在新原生核心／房間確認。
+本輪已確認新核心實際載入 65 個名額；病例討論、分工與跨房記憶的行為改善仍待日常使用觀察。本次沒有重跑任何真實病例存入，也沒有啟動大量工人。
 
 ## 部署與回復
 
