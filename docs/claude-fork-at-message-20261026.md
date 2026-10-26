@@ -47,7 +47,7 @@
 
 ## 部署狀態
 
-未部署。
+南區已部署：程式 `04193bd296ccc55c6c5ed28eb76a19b2efdeb156`，2026-10-26 15:12 由本人按側欄「更新」部署（從 `dec52f8`）；更新時測試 1961/1961，`self-update-result.json` ok，正式 `trusted-runtime` 讀回含 `--resume-session-at` 與 `nativeUuid` 記錄。東區未更新。
 
 ## 未完成事項
 
