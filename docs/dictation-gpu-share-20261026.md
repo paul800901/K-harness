@@ -76,4 +76,5 @@ Sol 複核：6 項通過；第 3 項批次端遺漏例外鏈（`raise … from`�
 - K 程式：分支 `dictation-gpu-share-20261026` 以 squash 合回 main `df53745`（接在 [成果欄不自動打開](results-panel-no-autoopen-20261026.md) `e949bf1` 之後，兩批一起更新）。
 - 錄音轉文字：分支 `gpu-share-20261026` 快轉合回其 main `16df134`；該資料夾原有未提交的 `AGENTS.md`、`TOOL_INDEX.md`、`scripts/transcribe_desktop_audio.ps1` 未動。批次程式下次執行即生效，不需部署。
 - 已寫 `.local/update-ready.json` 指向 `dec52f8`（main `df53745` 加上讓 Python 測試不留 `__pycache__`、沒有 python 時略過的測試修正；取代原本指向 `e949bf1` 的標記），待本人按側欄「更新」；push 待部署讀回後處理。
+- 2026-10-26 12:07:47 本人按側欄「更新」，啟動器交棒更新腳本，12:10:41 K 重新啟動（launcher.log）。讀回：.local/runtime.json 的 ersion 為 dec52f8e0c3b7174f0d555efc08dc596bd33c029，previous 指向存在的 efore-1792987826253，退版保留三份；正式 runtime 的 scripts/local-dictation.py 含 WhisperGpuShared-v1、src/local-dictation.mjs 含 MAX_CONCURRENT_JOBS、建置後介面含「重新辨識」。push 前檢查待發布內容只有兩批程式、測試與文件，秘密樣式掃描只命中程式變數 	oken。
 - 東區未更新。
