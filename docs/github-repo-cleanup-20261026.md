@@ -36,9 +36,23 @@
 - **界線**：BodyAlign 資料庫該筆姓名電話為空，但其他識別與日期欄位有值，只能說「沒有姓名電話」。覺醒水晶「未發布工作坊」只由 GitHub release 推知，未直接查 Steam。
 - **建議（未做）**：`7834ac0` 有 17 檔含建置／遊戲路徑（如 `D:\PalSkillDPSAnalyzer`、Steam 安裝路徑），兩庫較早的 Blender 檔與舊 README 含使用者資料夾路徑；未見金鑰、權杖或病患資料。都是既有公開內容，非憑證，暫不改寫歷史。
 
-## 未完成／待本人
+## DSH／KAI 第二輪（10-26 下午）
 
-- DSH／KAI 五庫：本人晚點再決定（建議封存；dsh-official 本機 0.2.1 有 10-05 未上傳提交，封存前要先決定是否保留）。
-- antigravity2.0-zh-tw：可封存或保持不動，待本人一句話。
+本人決定：
+- maixu-linchang-custom、kai-work-host、gpt-web-codex 沒用，封存（kai-work-host 先關 5 個 Dependabot PR）。已做。
+- **dsh-official-zh-tw 與 kai-harness 保留，是「學習用」的兩個獨立專案，不是封存**：DSH 偶爾開來測 DeepSeek 新模型能力、追蹤開源第一的做法；KAI 是 DSH 版的 K（K 的前身），日後部署開源方案時參考其做法。要寫清楚、不要亂。
+- antigravity2.0-zh-tw 放著不動。
+
+處理：
+- 兩庫 GitHub 說明改為上述用途；關閉 Dependabot PR 共 20 個（DSH 11、KAI 9）。
+- 第一次盤點誤判更正：KAI 最終版（`D:\DSH架構\DeepSeekHarness-0.1.2-alpha.3-KAI-exact-20260905`，9/1–9/5，含 candidate 線）、`D:\KAI\kai-harness` 的 phase-1-1 領先 13 筆、DSH 10-05 的 0.2.1 升級，**原本都只在本機**（初次盤點的比對把 gh 404 錯誤輸出誤當成存在；之後改用退出碼判斷）。
+- 上傳被 DSH 官方原始碼自帶的 lefthook pre-push 檢查擋下（需要 pnpm；`postinstall` 自動掛上）。本人確認上傳目的地是自己的私人庫、等於雙重備份後同意略過；本人另說可裝套件，但裝 pnpm 後仍要在 DSH 資料夾裝整套相依才能跑檢查，對純備份不划算，故以 `--no-verify` 推送。
+- kai-harness 關閉 Actions（原本每天跑 Dependabot，推送也會觸發 20 組 CI）；DSH 原本已關。兩庫刪 `.github/dependabot.yml`（本機各一筆提交 `9a25311`、`7b686aa`）。
+- KAI 最終版推為 `kai-final-20260905` 並設為預設分支；phase-1-1 推上；DSH main 推到 `7b686aa`。遠端 SHA 全部讀回一致；本機未提交檔數不變（KAI exact 25、DSH 0.2.1 10）。
+
+## 未完成／待本人（依本人順序，前面處理完再做）
+
+- 官方 DSH 已到 `dsh-v0.2.1-rc.3`，本機「官方桌面版」是 10/18 的 rc.2。
+- 本機 `D:\DSH架構`、`D:\KAI` 資料夾整理（多個版本副本、KAI candidate 366 檔未提交等）。同日另一聊天室已把脈序臨場移到 `D:\封存\脈序臨場_20261026`，整理前先確認它已結束。
 - 覺醒水晶轉換器客戶端燈號、資源工廠多人開房（分支 `listen-host-test`）、帕魯 DPS 野外 Boss 基地帕魯（分支 `field-boss-base-workers-wip`）：都要遊戲內實測後才可合入或發布。
 - 純外部儲存庫與本機整理，K 程式未改、不需部署。
