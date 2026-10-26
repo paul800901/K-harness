@@ -47,6 +47,7 @@ Astra xhigh 以原生設定、渲染及日誌獨立查核。真正 Opus 5.5 第�
 - 針對測試：`node --test test/worker-policy.test.mjs`，10/10；新增回歸覆蓋 GPT、Claude、Gemini 等待工具及 active goal 分流。
 - 第一次完整測試 1,964/1,966：新 worktree 缺少 dist-ui，兩項 UI 檔案服務測試失敗；建置 `npm run build:ui` 後完整 1,966/1,966。
 - 採納最終審核建議字句後完整測試 1,966/1,966（full-test-reviewed.log），86.8 秒；Opus 5.5 最終複核程式可合併；必修文件補記已依建議完成。
+- 統合後在 main 重新建置並驗證畫面：`npm run build:ui`、`npm run test:ui` 52/52（combined-ui-test.log）；本輪沒有再改程式。
 - K AGENTS 以 CRLF 計算 23,991 bytes，符合小於 24,000 閘門；未改畫面，不新增 UI 驗證矩陣。
 
 設定讀回不等於模型行為改善已實測；本次沒有以真實病例重跑存入，也沒有啟動大量工人。既有聊天室不保證重載設定，需在新原生核心／房間確認。
@@ -54,5 +55,7 @@ Astra xhigh 以原生設定、渲染及日誌獨立查核。真正 Opus 5.5 第�
 ## 部署與回復
 
 程式 commit 為 `bb0b28b9998da5dbb5d90ea9b90fdf1f430d44ef`；文件分開提交，合併前核對最新 main。runtime 尚未套用；完成審核後交既有側欄更新按鈕，不從 K 內停止或覆蓋正在執行的自己。使用者按更新後才記錄部署讀回；東區另計。
+
+2026-10-27 本人指定由本輪主代理統合另一聊天室的排程頁更新並接手收尾。已核對排程頁 `f2f172c`、GPT 修正 `bb0b28b` 均為更新目標的祖先；排程頁程式與原驗收 snapshot `79366ea` 相同。本人只需按一次更新；重新開啟後在接手對話確認 runtime 版本、兩批適用讀回，再依既有流程 push 及讀回遠端 SHA。統合目標與驗證依據保存於 `D:\scratch\k-gpt-native-parity-20261027\combined-update-plan.json`；這是工程交接收據，不是已部署證明。
 
 程式可依既有版本回復；本機設定按保存副本／精確鍵回復，移除本次兩個 junction 不動其正本。不得用舊副本整檔蓋掉之後其他房間新增的設定。
