@@ -41,13 +41,18 @@ const nextTime = (value, timezone, from) => timing(value, timezone).nextRun(from
 // The next three times for the schedule page; a one-time or paused/finished schedule shows its own or none.
 export function computeUpcoming(s) {
   if (s.paused || s.done || !s.nextRunAt) return [];
-  if (!s.cron) return [s.nextRunAt];
-  return [
-    s.nextRunAt,
-    ...timing(s.cron, s.timezone)
-      .nextRuns(2, new Date(s.nextRunAt))
-      .map(d => d.toISOString())
-  ];
+  const runs = [s.nextRunAt];
+  try {
+    // Same spacing as the tick, so the preview never lists a slot the tick would skip.
+    while (s.cron && runs.length < 3) {
+      const next = nextTime(s.cron, s.timezone, new Date(Date.parse(runs.at(-1)) + MIN_CRON_INTERVAL_MS - 1));
+      if (!next) break;
+      runs.push(next.toISOString());
+    }
+  } catch {
+    // An old or hand-edited entry with a bad rule still lists, so it can be paused or deleted.
+  }
+  return runs;
 }
 
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u,

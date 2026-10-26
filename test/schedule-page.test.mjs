@@ -45,6 +45,15 @@ test('upcoming calculation: cron, one-off, paused, and done', () => {
 
   // 5. Missing or null nextRunAt returns []
   assert.deepEqual(computeUpcoming({...cronSchedule, nextRunAt: null}), []);
+
+  // 6. Follows the tick's 10-minute spacing: 11:55 is skipped after 11:50, as the tick would.
+  assert.deepEqual(
+    computeUpcoming({...cronSchedule, cron: '0 0,10,20,30,40,50,55 11 * * *', nextRunAt: '2026-10-31T03:40:00.000Z'}),
+    ['2026-10-31T03:40:00.000Z', '2026-10-31T03:50:00.000Z', '2026-11-01T03:00:00.000Z']
+  );
+
+  // 7. A bad stored rule still lists its own next time instead of failing the whole page.
+  assert.deepEqual(computeUpcoming({...cronSchedule, cron: 'not a rule'}), ['2026-10-31T03:00:00.000Z']);
 });
 
 test('scheduleRevision increments on add, update, and remove in conversation-controller', async () => {

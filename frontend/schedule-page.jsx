@@ -1,4 +1,4 @@
-import React, {useState, useEffect} from 'react';
+import React, {useState, useEffect, useRef} from 'react';
 import {PanelLeft} from 'lucide-react';
 import {api, IconButton} from './app-common.jsx';
 import './schedule-page.css';
@@ -24,14 +24,19 @@ export function SchedulePage({scheduleRevision, sessions, onOpenSession, sidebar
     [confirmId, setConfirmId] = useState(null),
     [busy, setBusy] = useState(false);
 
-  const load = () =>
-    api('schedules').then(
+  // Reads can overlap (an action's readback and a revision refetch); only the latest may update the page.
+  const sequence = useRef(0);
+  const load = () => {
+    const current = ++sequence.current;
+    return api('schedules').then(
       r => {
+        if (current !== sequence.current) return;
         setSchedules(r.schedules);
         setError('');
       },
-      e => setError(e.message)
+      e => current === sequence.current && setError(e.message)
     );
+  };
   useEffect(() => void load(), [scheduleRevision]);
 
   const act = async (route, data) => {

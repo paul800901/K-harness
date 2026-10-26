@@ -977,7 +977,7 @@ function App() {
     for (const group of list) group.latestAssistant = [...group.messages].reverse().find(m => m.role === 'assistant');
     return new Map(list.flatMap(group => group.messages.map(message => [message.id, group])));
   }, [state.messages]);
-  useCompletionAttention(state, {online, covered: !!modal || !!state.connectionOpening, api});
+  useCompletionAttention(state, {online, covered: !!modal || !!state.connectionOpening || page !== 'chat', api});
   const lastAssistantId = useMemo(
     () => [...(state.messages ?? [])].reverse().find(message => message.role === 'assistant')?.id,
     [state.messages]
@@ -1794,6 +1794,7 @@ function App() {
               className={`sidebar-schedule-button${page === 'schedules' ? ' selected' : ''}`}
               onClick={() => {
                 setPage('schedules');
+                chooseInspector(false);
                 if (mobile) setSidebar(false);
               }}
             >
@@ -1907,8 +1908,10 @@ function App() {
               )}
             </div>
           </aside>
-          {page === 'schedules' && (
-            <main>
+          <main>
+            {/* Covers the chat instead of replacing it: the chat keeps its size, so drafts, dictation and the
+                reading position survive the visit. */}
+            {page === 'schedules' && (
               <SchedulePage
                 scheduleRevision={state.scheduleRevision}
                 sessions={sessions}
@@ -1918,10 +1921,7 @@ function App() {
                 mobile={mobile}
                 setInspector={setInspector}
               />
-            </main>
-          )}
-          {/* Kept mounted while the schedule page shows, so drafts, dictation and scroll survive the visit. */}
-          <main style={page === 'schedules' ? {display: 'none'} : undefined}>
+            )}
             {state.connectionOpening && (
               <div role="status" className="connection-loading">
                 {state.historyReady ? '對話已顯示，正在準備連線…' : '正在載入對話…'}{' '}

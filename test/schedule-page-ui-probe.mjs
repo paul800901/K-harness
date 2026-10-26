@@ -82,7 +82,13 @@ try {
     model: 'gpt-6.1-sol',
     status: 'ready',
     busy: false,
-    messages: [],
+    messages: Array.from({length: 40}, (_, i) => ({
+      id: `m${i}`,
+      role: i % 2 ? 'assistant' : 'user',
+      text: `第 ${i + 1} 則測試訊息。
+
+${'這段只用來撐出捲動高度。'.repeat(8)}`
+    })),
     tools: [],
     questions: [],
     notices: [],
@@ -149,6 +155,12 @@ try {
   await scheduleBtn.waitFor({state: 'visible'});
   assert.equal(await scheduleBtn.innerText(), '排程');
 
+  // Reading an older message: the visit to the schedule page must not move this position.
+  const viewport = page.locator('main .viewport');
+  await viewport.evaluate(n => (n.scrollTop = 300));
+  await page.waitForTimeout(100);
+  const readingAt = await viewport.evaluate(n => n.scrollTop);
+
   // 2. Click schedule button to show schedule page in main area (not a dialog)
   await scheduleBtn.click();
 
@@ -212,6 +224,8 @@ try {
   // Verify schedule page is gone and chat view is active
   await schedulePage.waitFor({state: 'detached'});
   await page.locator('main .thread').waitFor({state: 'visible'});
+  await page.waitForTimeout(100);
+  assert(Math.abs((await viewport.evaluate(n => n.scrollTop)) - readingAt) < 2, 'reading position must survive');
   assert.ok(
     !(await scheduleBtn.evaluate(el => el.classList.contains('selected'))),
     'Sidebar schedule button should lose selected class after returning to chat'
