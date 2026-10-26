@@ -30,7 +30,7 @@
 
 本機設定的 before 副本、SHA 與原生查核報告留在 `D:\scratch\k-gpt-native-parity-20261027`，不把 native session、登入或病例資料送入儲存庫。原 home 設定 SHA 為 `17e7359ea088ac99e660ba1f798c186efd3a537a47183cb7fd3035a2084b847f`；只啟用 memories 後為 `f179e5b3e0edfd47a61ad46c4a5356d9a340e2a195f9c4bb1ba4c2124cc482aa`；再加並行設定後為 `5ddffff10023af66b876849e9f3530934bc25e258b063e000a492480f8ae69fc`。
 
-memories 目前沒有已產生的整合內容，不能宣稱跨房記憶已修好。它可能以現有 Codex 訂閱做背景萃取，範圍包含共用 home 的 GPT 工人，實際消耗未知；歷史 thread 數不是已處理量。摘要位於本機 dedicated home，東區不會自動取得。關閉方式為設回 `memories = false`。確定性的分工偏好直接保留在共用入口，不依賴背景萃取何時完成。
+啟用時尚無整合內容；本輪只讀檢查已見四筆初步萃取結果，MEMORY.md 與 memory_summary.md 均有內容，確認開始產生記憶，跨房取用效果仍待實際觀察。它可能以現有 Codex 訂閱做背景萃取，範圍包含共用 home 的 GPT 工人，實際消耗未知；歷史 thread 數不是已處理量。摘要位於本機 dedicated home，東區不會自動取得。關閉方式為設回 `memories = false`。確定性的分工偏好直接保留在共用入口，不依賴背景萃取何時完成。
 
 skills junction、K home 設定都是南區本機差異；東區需另外核對，不能因推送程式就宣稱同步完成。既有 runtime 更新保留 native home 設定，不在啟動時覆寫使用者選擇。
 
@@ -48,9 +48,15 @@ Astra xhigh 以原生設定、渲染及日誌獨立查核。真正 Opus 5.5 第�
 - 第一次完整測試 1,964/1,966：新 worktree 缺少 dist-ui，兩項 UI 檔案服務測試失敗；建置 `npm run build:ui` 後完整 1,966/1,966。
 - 採納最終審核建議字句後完整測試 1,966/1,966（full-test-reviewed.log），86.8 秒；Opus 5.5 最終複核程式可合併；必修文件補記已依建議完成。
 - 統合後在 main 重新建置並驗證畫面：`npm run build:ui`、`npm run test:ui` 52/52（combined-ui-test.log）；本輪沒有再改程式。
-- K AGENTS 以 CRLF 計算 23,991 bytes，符合小於 24,000 閘門；未改畫面，不新增 UI 驗證矩陣。
+- 初次 GPT 原生修正時 K AGENTS 以 CRLF 計算 23,991 bytes，符合小於 24,000 閘門；未改畫面，不新增 UI 驗證矩陣。
 
 本輪已確認新核心實際載入 65 個名額；病例討論、分工與跨房記憶的行為改善仍待日常使用觀察。本次沒有重跑任何真實病例存入，也沒有啟動大量工人。
+
+## 各原生核心與 K 通用記憶的界線
+
+2026-10-27 本人明確裁決：K 是多核心；Codex、Claude Code、Antigravity 及未來新增核心，各自保存原生記憶。K 通用記憶／規則與原生記憶分開；單一核心的經驗不自動混入、搬到其他核心或升格通用，升格須本人明示。Gemini 多帳號共用自身 learned-rules 仍屬 Gemini 範圍，不等於跨核心通用記憶。既有授權的專案正式資料仍按專案來源讀取，與自動搬用核心記憶有別。
+
+本次只將界線併入 K AGENTS，精簡導言與重複用語以維持 agy 24,000 bytes 門檻；不改 runtime、各核心設定、原生記憶內容或帳號，不建立共用記憶服務，不需要再次更新 K。驗證：AGENTS 以 CRLF 計 23,994 bytes、git diff --check 通過、完整 npm test 1966/1966；真正 Opus 5.5 審核可提交，無必要修正。選擇性建議的專案資料共用說明已在本節保留，不再增加入口長度。
 
 ## 部署與回復
 
