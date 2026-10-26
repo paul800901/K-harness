@@ -54,8 +54,9 @@ Astra xhigh 以原生設定、渲染及日誌獨立查核。真正 Opus 5.5 第�
 
 ## 部署與回復
 
-程式 commit 為 `bb0b28b9998da5dbb5d90ea9b90fdf1f430d44ef`；文件分開提交，合併前核對最新 main。runtime 尚未套用；完成審核後交既有側欄更新按鈕，不從 K 內停止或覆蓋正在執行的自己。使用者按更新後才記錄部署讀回；東區另計。
+程式 commit 為 `bb0b28b9998da5dbb5d90ea9b90fdf1f430d44ef`。南區已由本人按鈕於 2026-10-27 01:47:28 部署統合版本 `04d0b96222f8ee2ae213ddf2568f2edf3ed4535b`（前版 `04193bd`）；self-update-result 為 ok，更新器完整測試 1966/1966，runtime 版本相符。東區未更新。
 
-2026-10-27 本人指定由本輪主代理統合另一聊天室的排程頁更新並接手收尾。已核對排程頁 `f2f172c`、GPT 修正 `bb0b28b` 均為更新目標的祖先；排程頁程式與原驗收 snapshot `79366ea` 相同。本人只需按一次更新；重新開啟後在接手對話確認 runtime 版本、兩批適用讀回，再依既有流程 push 及讀回遠端 SHA。統合目標與驗證依據保存於 `D:\scratch\k-gpt-native-parity-20261027\combined-update-plan.json`；這是工程交接收據，不是已部署證明。
+2026-10-27 本人指定由本輪主代理統合排程頁並接手部署讀回及 GitHub 收尾。已核對 `f2f172c` 與 `bb0b28b` 均包含於本次版本；五個適用後端原始檔與部署 commit 一致，目前頁面引用的 JS、CSS、圖示與驗收建置逐檔 SHA 相符，授權 gateway 可讀回四筆排程。更新前畫面驗證為 52/52；部署後以實際檔案及清單讀回確認。
+重啟後本主對話的原生 multi_agent_role 已實際回報 65 個含主代理名額（64 子代理），完成先前保留的 K 原生設定讀回；未做 64 工人負載測試。project_doc_max_bytes=65536、三個 CaseAgent skills 入口與 memories=true 均仍在；memories 內容效果仍屬試用。工程收據與精確遠端 SHA 留在 `D:\scratch\k-gpt-native-parity-20261027\combined-update-plan.json`，原始碼與本次文件統一推送 main 並讀回；此純文件收尾不再觸發更新。
 
 程式可依既有版本回復；本機設定按保存副本／精確鍵回復，移除本次兩個 junction 不動其正本。不得用舊副本整檔蓋掉之後其他房間新增的設定。
