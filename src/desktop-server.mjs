@@ -6,6 +6,7 @@ import {readFile} from 'node:fs/promises';
 import {pipeline} from 'node:stream/promises';
 import {randomBytes, timingSafeEqual} from 'node:crypto';
 import {createConversationController} from './conversation-controller.mjs';
+import {computeUpcoming} from './room-schedules.mjs';
 import {createClaudeLogin} from './claude-login.mjs';
 import {createCodexLogin} from './codex-login.mjs';
 import {onAuthExpired} from './auth-expiry.mjs';
@@ -484,6 +485,10 @@ export async function startDesktop({
         return record ? json(200, {[kind]: record}) : json(404, {error: '這筆紀錄目前無法讀取；未重開或重送工作。'});
       }
       if (req.method === 'GET' && url.pathname === '/api/state') return json(200, publicState());
+      if (req.method === 'GET' && url.pathname === '/api/schedules') {
+        const {schedules} = await controller.schedules.list();
+        return json(200, {schedules: schedules.map(s => ({...s, upcoming: computeUpcoming(s)}))});
+      }
       if (req.method === 'GET' && url.pathname === '/api/browser/state') {
         const threadId = url.searchParams.get('threadId'),
           session = controller.state.browserAccess?.sessionKey;
@@ -753,6 +758,12 @@ export async function startDesktop({
       if (url.pathname === '/api/projects/metadata')
         return json(200, await updateProject(root, data, (await controller.sessions()).sessions));
       if (url.pathname === '/api/attention/read') return json(200, controller.markViewed(data));
+      // The page only pauses, resumes or deletes; edits to timing or text go through the AI tools.
+      if (url.pathname === '/api/schedules/update') {
+        if (typeof data.paused !== 'boolean') throw Error('排程更新只接受暫停或恢復。');
+        return json(200, await controller.schedules.update({id: data.id, paused: data.paused}));
+      }
+      if (url.pathname === '/api/schedules/remove') return json(200, await controller.schedules.remove({id: data.id}));
       const routes = {
         '/api/discussion/message': 'discussionMessage',
         '/api/fork': 'fork',

@@ -37,8 +37,10 @@ import {
   Activity,
   ShieldCheck,
   ArrowDown,
-  Mic
+  Mic,
+  Clock
 } from 'lucide-react';
+import {SchedulePage} from './schedule-page.jsx';
 import './style.css';
 import {useVoiceComposer, VoiceWaveform} from './voice-composer.jsx';
 import {ResponseQuotes, ResponseSelectionPopover} from './response-annotations.jsx';
@@ -934,6 +936,7 @@ function App() {
     [panelTabsByThread, setPanelTabsByThread] = useState(() => ({['']: ['artifacts']})),
     [browserInfo, setBrowserInfo] = useState(null),
     [modal, setModal] = useState(null),
+    [page, setPage] = useState('chat'),
     [models, setModels] = useState([]),
     [uploadsByThread, setUploadsByThread] = useState({}),
     [effort, setEffort] = useState(''),
@@ -1387,7 +1390,10 @@ function App() {
       }
     }
   };
+  // Any switch of the shown chat leaves the schedule page; open() also covers re-picking the same chat.
+  useEffect(() => setPage('chat'), [state.threadId]);
   const open = async s => {
+    setPage('chat');
     if (mobile) setSidebar(false);
     if (
       s.threadId === state.threadId &&
@@ -1784,6 +1790,15 @@ function App() {
                 <Plus size={19} /> 新對話
               </button>
             </div>
+            <button
+              className={`sidebar-schedule-button${page === 'schedules' ? ' selected' : ''}`}
+              onClick={() => {
+                setPage('schedules');
+                if (mobile) setSidebar(false);
+              }}
+            >
+              <Clock size={19} /> 排程
+            </button>
             <div className="workspace-tools">
               <div className="workspace-heading">
                 <span>工作區</span>
@@ -1844,7 +1859,14 @@ function App() {
               </div>
             </div>
             <ProjectSidebar
-              {...{projects, sessions, state, disabled, modelName, order: manualOrder}}
+              {...{
+                projects,
+                sessions,
+                state: page === 'schedules' ? {...state, threadId: null} : state,
+                disabled,
+                modelName,
+                order: manualOrder
+              }}
               openDisabled={!online}
               conversationActivity={
                 state.conversationActivity ??
@@ -1885,7 +1907,21 @@ function App() {
               )}
             </div>
           </aside>
-          <main>
+          {page === 'schedules' && (
+            <main>
+              <SchedulePage
+                scheduleRevision={state.scheduleRevision}
+                sessions={sessions}
+                onOpenSession={open}
+                sidebar={sidebar}
+                setSidebar={setSidebar}
+                mobile={mobile}
+                setInspector={setInspector}
+              />
+            </main>
+          )}
+          {/* Kept mounted while the schedule page shows, so drafts, dictation and scroll survive the visit. */}
+          <main style={page === 'schedules' ? {display: 'none'} : undefined}>
             {state.connectionOpening && (
               <div role="status" className="connection-loading">
                 {state.historyReady ? '對話已顯示，正在準備連線…' : '正在載入對話…'}{' '}

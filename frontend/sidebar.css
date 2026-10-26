@@ -63,3 +63,10 @@
 .sidebar .self-update-button:disabled{opacity:.5;cursor:default}
 .sidebar .self-update-notice{font-size:var(--k-text-xs);color:var(--k-ink-2);margin-top:5px;padding:0 4px;line-height:1.4;word-break:break-all}
 .sidebar .self-update-failed{font-size:var(--k-text-xs);color:var(--k-danger);margin-top:5px;padding:0 4px;line-height:1.4;word-break:break-all}
+
+.sidebar-schedule-button{position:relative;width:100%;min-height:36px;display:flex;align-items:center;gap:8px;justify-content:flex-start;padding:6px 8px;margin-bottom:8px;border:0;border-radius:var(--k-radius-sm);background:transparent;box-shadow:none;font-size:var(--k-text-md);font-weight:400;color:var(--k-ink);cursor:pointer;transition:background-color .15s ease-out}
+.sidebar-schedule-button:hover{background:var(--k-hover)}
+.sidebar-schedule-button.selected{background:var(--k-selected);color:var(--k-ink)}
+.sidebar-schedule-button.selected::before{content:"";position:absolute;left:0;top:7px;bottom:7px;width:3px;border-radius:2px;background:var(--k-brass);pointer-events:none}
+.sidebar-schedule-button svg{color:var(--k-ink-2);flex-shrink:0}
+@media(pointer:coarse){.sidebar-schedule-button{min-height:44px}}

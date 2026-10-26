@@ -248,6 +248,7 @@ const reads = new Set([
   '/api/attachment',
   '/api/message-file',
   '/api/browser/state',
+  '/api/schedules',
   '/api/self-update'
 ]);
 const writes = new Set([
@@ -276,6 +277,8 @@ const writes = new Set([
   '/api/fork',
   '/api/native/files/search',
   '/api/native/review',
+  '/api/schedules/update',
+  '/api/schedules/remove',
   '/api/self-update'
 ]);
 export const remoteRouteAllowed = (method, pathname) =>

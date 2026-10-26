@@ -38,6 +38,18 @@ const timing = (value, timezone) => {
 };
 const nextTime = (value, timezone, from) => timing(value, timezone).nextRun(from) ?? null;
 
+// The next three times for the schedule page; a one-time or paused/finished schedule shows its own or none.
+export function computeUpcoming(s) {
+  if (s.paused || s.done || !s.nextRunAt) return [];
+  if (!s.cron) return [s.nextRunAt];
+  return [
+    s.nextRunAt,
+    ...timing(s.cron, s.timezone)
+      .nextRuns(2, new Date(s.nextRunAt))
+      .map(d => d.toISOString())
+  ];
+}
+
 const ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/u,
   CRON_FIELDS = /^\S+(\s+\S+){4,5}$/u;
 

@@ -959,12 +959,17 @@ export function createConversationController({
       throw error;
     }
   };
+  // The schedule page refetches when this changes instead of polling.
+  let scheduleRevision = 0;
   roomSchedules = createRoomSchedules({
     root,
     deliver: deliverScheduled,
     listSessions: listMainSessions,
     ...scheduleClock,
-    onChange: () => !closing && onChange()
+    onChange: () => {
+      scheduleRevision++;
+      if (!closing) onChange();
+    }
   });
 
   const api = {
@@ -1000,7 +1005,8 @@ export function createConversationController({
         conversationActivity: [...rooms.values()].map(activity),
         workerActivity: workerActivity(),
         workerDetails: workerDetails(),
-        completionAttention: attention.state
+        completionAttention: attention.state,
+        scheduleRevision
       };
     },
     markViewed(data) {
