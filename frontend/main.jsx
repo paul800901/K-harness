@@ -1062,6 +1062,11 @@ function App() {
     shownPanelThread.current = key;
     setInspector(open);
   }, [state.threadId, state.status, hasBrowserPanel, mobile]);
+  // The schedule page hides the panel without changing this chat's saved choice; coming back restores it,
+  // so the chat returns at the same width and reading position.
+  useEffect(() => {
+    if (page === 'chat') setInspector(panelByThread.current.get(state.threadId ?? '') ?? false);
+  }, [page]);
   const chooseInspector = open => {
     if (mobile && open) setSidebar(false);
     if (!open) setRoundtableReader(null);
@@ -1794,7 +1799,7 @@ function App() {
               className={`sidebar-schedule-button${page === 'schedules' ? ' selected' : ''}`}
               onClick={() => {
                 setPage('schedules');
-                chooseInspector(false);
+                setInspector(false);
                 if (mobile) setSidebar(false);
               }}
             >

@@ -155,7 +155,9 @@ ${'這段只用來撐出捲動高度。'.repeat(8)}`
   await scheduleBtn.waitFor({state: 'visible'});
   assert.equal(await scheduleBtn.innerText(), '排程');
 
-  // Reading an older message: the visit to the schedule page must not move this position.
+  // Reading an older message with the side panel open: the visit must change neither.
+  await page.locator('button[title="切換工具與成果面板"]').click();
+  await page.locator('.app:not(.inspector-hidden)').waitFor();
   const viewport = page.locator('main .viewport');
   await viewport.evaluate(n => (n.scrollTop = 300));
   await page.waitForTimeout(100);
@@ -163,6 +165,9 @@ ${'這段只用來撐出捲動高度。'.repeat(8)}`
 
   // 2. Click schedule button to show schedule page in main area (not a dialog)
   await scheduleBtn.click();
+
+  // The covered chat leaves focus order, so Tab or Enter cannot reach its composer.
+  assert.equal(await page.locator('main textarea').evaluate(n => getComputedStyle(n).visibility), 'hidden');
 
   // Verify no modal/dialog is opened
   assert.equal(await page.locator('dialog[open]').count(), 0, 'Schedule view should not open as a dialog');
@@ -225,13 +230,16 @@ ${'這段只用來撐出捲動高度。'.repeat(8)}`
   await schedulePage.waitFor({state: 'detached'});
   await page.locator('main .thread').waitFor({state: 'visible'});
   await page.waitForTimeout(100);
+  await page.locator('.app:not(.inspector-hidden)').waitFor();
   assert(Math.abs((await viewport.evaluate(n => n.scrollTop)) - readingAt) < 2, 'reading position must survive');
   assert.ok(
     !(await scheduleBtn.evaluate(el => el.classList.contains('selected'))),
     'Sidebar schedule button should lose selected class after returning to chat'
   );
 
-  // 8. Mobile scenario (e.g. 390px width)
+  // 8. Mobile scenario (e.g. 390px width), starting like a phone: the side panel closed.
+  await page.locator('button[title="切換工具與成果面板"]').click();
+  await page.locator('.app.inspector-hidden').waitFor();
   await page.setViewportSize({width: 390, height: 844});
   await page.waitForTimeout(100);
 
