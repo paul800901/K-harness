@@ -1903,6 +1903,176 @@ test('native Claude fork requests new session with source history and preserves 
   }
 });
 
+test('native Claude fork from earlier conclusion truncates history and passes forkAt', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'TURN 1'});
+    const firstUuid = 'aaaaaaaa-0000-4000-8000-000000000001';
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: firstUuid,
+      message: {content: [{type: 'text', text: 'conclusion 1'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    await f.controller.send({text: 'TURN 2'});
+    const secondUuid = 'bbbbbbbb-0000-4000-8000-000000000002';
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: secondUuid,
+      message: {content: [{type: 'text', text: 'conclusion 2'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    const parent = f.controller.state.threadId;
+    const r = await f.controller.fork({messageId: firstUuid, accessMode: 'claude-auto'});
+    assert.notEqual(r.threadId, parent);
+    assert.equal(f.hostOptions.forkFrom, parent.slice(7));
+    assert.equal(f.hostOptions.forkAt, firstUuid);
+    assert.equal(f.controller.state.messages.length, 2);
+    assert.equal(f.controller.state.messages.at(-1).id, firstUuid);
+    assert.equal(f.controller.state.messages.at(-1).text, 'conclusion 1');
+
+    const original = JSON.parse(
+      await readFile(path.join(f.root, '.runtime/claude-sessions', parent + '.json'), 'utf8')
+    );
+    assert.equal(original.messages.length, 4);
+    assert.equal(original.messages.at(-1).text, 'conclusion 2');
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude fork from earlier conclusion without nativeUuid rejects and does not open host', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'TURN 1'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'first-msg-without-native-uuid',
+      message: {content: [{type: 'text', text: 'conclusion 1'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    delete f.controller.state.messages.find(m => m.id === 'first-msg-without-native-uuid').nativeUuid;
+
+    await f.controller.send({text: 'TURN 2'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'bbbbbbbb-0000-4000-8000-000000000002',
+      message: {content: [{type: 'text', text: 'conclusion 2'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    const currentHost = f.hostOptions;
+    await assert.rejects(
+      f.controller.fork({messageId: 'first-msg-without-native-uuid'}),
+      /這則結論是較早版本留下的紀錄，沒有原生訊息位置；請從最新結論分支，或改用跨供應商交接。/
+    );
+    assert.equal(f.hostOptions, currentHost);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('native Claude fork from latest conclusion keeps forkAt undefined', async () => {
+  const f = await fixture();
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'TURN 1'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'aaaaaaaa-0000-4000-8000-000000000001',
+      message: {content: [{type: 'text', text: 'conclusion 1'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    await f.controller.send({text: 'TURN 2'});
+    const secondUuid = 'bbbbbbbb-0000-4000-8000-000000000002';
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: secondUuid,
+      message: {content: [{type: 'text', text: 'conclusion 2'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+
+    await f.controller.fork({messageId: secondUuid, accessMode: 'claude-auto'});
+    assert.equal(f.hostOptions.forkAt, undefined);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude streamed earlier conclusion forks after reopen, drops later background tools and restores the source on failure', async () => {
+  let refuse = false;
+  const f = await fixture({
+    waitForHost: options => {
+      if (refuse && options.forkAt) throw Error('native refused');
+    }
+  });
+  let reopened;
+  try {
+    await f.controller.open({});
+    await f.controller.send({text: 'TURN 1'});
+    const firstUuid = 'aaaaaaaa-0000-4000-8000-000000000001';
+    f.hostOptions.onMessage({type: 'stream_event', event: {type: 'message_start', message: {id: 'msg_1'}}});
+    f.hostOptions.onMessage({
+      type: 'stream_event',
+      event: {type: 'content_block_delta', index: 0, delta: {type: 'text_delta', text: 'conclusion 1'}}
+    });
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: firstUuid,
+      message: {id: 'msg_1', content: [{type: 'text', text: 'conclusion 1'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const first = f.controller.state.messages.at(-1);
+    assert.equal(first.id, 'claude-stream-msg_1');
+    assert.equal(first.nativeUuid, firstUuid);
+    await new Promise(resolve => setTimeout(resolve, 5));
+    // A native background follow-up runs a tool under the same K group, after the conclusion.
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'cccccccc-0000-4000-8000-000000000003',
+      message: {id: 'msg_bg', content: [{type: 'tool_use', id: 'later-tool', name: 'Bash', input: {}}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    await f.controller.send({text: 'TURN 2'});
+    f.hostOptions.onMessage({
+      type: 'assistant',
+      uuid: 'bbbbbbbb-0000-4000-8000-000000000002',
+      message: {content: [{type: 'text', text: 'conclusion 2'}]}
+    });
+    f.hostOptions.onMessage({type: 'result', is_error: false});
+    const parent = f.controller.state.threadId;
+    await f.controller.close();
+
+    reopened = f.createController();
+    await reopened.open({threadId: parent});
+    assert.equal(reopened.state.messages.find(m => m.id === first.id).nativeUuid, firstUuid);
+
+    refuse = true;
+    await assert.rejects(reopened.fork({messageId: first.id, accessMode: 'claude-auto'}), /native refused/);
+    assert.equal(reopened.state.threadId, parent);
+    assert.equal(reopened.state.messages.at(-1).text, 'conclusion 2');
+
+    refuse = false;
+    const r = await reopened.fork({messageId: first.id, accessMode: 'claude-auto'});
+    assert.notEqual(r.threadId, parent);
+    assert.equal(f.hostOptions.forkAt, firstUuid);
+    assert.equal(reopened.state.messages.at(-1).id, first.id);
+    assert.equal(
+      reopened.state.tools.some(t => t.id === 'later-tool'),
+      false
+    );
+  } finally {
+    await f.controller.close();
+    await reopened?.close();
+  }
+});
+
 test('Claude inherited attachment preview and download survive reopen, second fork and workspace move without granting send', async () => {
   const f = await fixture();
   try {

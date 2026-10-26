@@ -872,7 +872,10 @@ const ChatView = React.memo(function ChatView({
             </>
             {(voice.notice || state.workerConnection === 'failed' || voice.canRetry) && (
               <div className="composer-note">
-                <span role="status">{voice.notice || (state.workerConnection === 'failed' ? '子代理目前不可用；主代理工作仍可繼續。' : '')}</span>
+                <span role="status">
+                  {voice.notice ||
+                    (state.workerConnection === 'failed' ? '子代理目前不可用；主代理工作仍可繼續。' : '')}
+                </span>
                 {voice.canRetry && (
                   <button type="button" className="voice-retry-btn" onClick={voice.retry}>
                     重新辨識
@@ -1482,8 +1485,9 @@ function App() {
     message => {
       if (state.connectionOpening) return;
       const sourceProvider = state.provider ?? providerOf(state.model),
-        group = groups.get(message?.id),
-        isLatestConclusion = sourceProvider !== 'claude' || group?.conclusion?.id === latestConclusionId;
+        // The branch button only appears on conclusions; Claude can cut at any recorded native position.
+        claudeNativeFork =
+          sourceProvider !== 'claude' || message?.id === latestConclusionId || Boolean(message?.nativeUuid);
       setModal({
         type: 'branch',
         threadId: state.threadId,
@@ -1492,15 +1496,15 @@ function App() {
         targetProvider:
           sourceProvider === 'gemini'
             ? 'codex'
-            : isLatestConclusion
+            : claudeNativeFork
               ? sourceProvider
               : sourceProvider === 'claude'
                 ? 'codex'
                 : 'claude',
-        isLatestConclusion
+        claudeNativeFork
       });
     },
-    [state.connectionOpening, state.provider, state.model, state.threadId, groups, latestConclusionId]
+    [state.connectionOpening, state.provider, state.model, state.threadId, latestConclusionId]
   );
   const forkConversation = selection =>
     action(async () => {

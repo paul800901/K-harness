@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {EventEmitter} from 'node:events';
+import {PassThrough, Writable} from 'node:stream';
 import {mkdtemp, mkdir, writeFile, readFile, access} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import {scratchBase} from './scratch.mjs';
@@ -360,4 +362,86 @@ test('authorized Fable models retain native IDs, efforts and billing description
   }
   assert.deepEqual(nativeCapabilitiesFrom({}).models, []);
   assert.equal(Object.hasOwn(nativeCapabilitiesFrom({}), 'efforts'), false);
+});
+
+function fakeSubprocess() {
+  const child = new EventEmitter();
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      try {
+        const msg = JSON.parse(String(chunk).trim());
+        if (msg.type === 'control_request' && msg.request?.subtype === 'initialize') {
+          child.stdout.write(
+            JSON.stringify({
+              type: 'control_response',
+              response: {subtype: 'success', request_id: msg.request_id, response: {models: []}}
+            }) + '\n'
+          );
+        }
+      } catch {}
+      callback();
+    }
+  });
+  child.kill = () => {
+    process.nextTick(() => {
+      child.emit('exit', 0, null);
+      child.emit('close', 0, null);
+    });
+    return true;
+  };
+  process.nextTick(() => child.emit('spawn'));
+  return child;
+}
+
+test('openClaudeHost forwards --resume-session-at when forkAt is provided and validates parameters', async () => {
+  const fake = await fakeCli();
+  const parentUuid = '11111111-2222-4333-8444-555555555555';
+  const forkAtUuid = 'aaaaaaaa-0000-4000-8000-000000000001';
+  const sessionId = '22222222-3333-4444-8555-666666666666';
+
+  let capturedArgs;
+  const host = await openClaudeHost({
+    commandSpec: fake.commandSpec,
+    cwd: fake.dir,
+    sessionId,
+    forkFrom: parentUuid,
+    forkAt: forkAtUuid,
+    spawnImpl: (_cmd, args) => {
+      capturedArgs = args;
+      return fakeSubprocess();
+    }
+  });
+  try {
+    assert.ok(capturedArgs.includes('--resume-session-at'));
+    assert.equal(capturedArgs[capturedArgs.indexOf('--resume-session-at') + 1], forkAtUuid);
+    assert.equal(capturedArgs[capturedArgs.indexOf('--resume') + 1], parentUuid);
+    assert.ok(capturedArgs.includes('--fork-session'));
+  } finally {
+    await host.close();
+  }
+
+  await assert.rejects(
+    openClaudeHost({
+      commandSpec: fake.commandSpec,
+      cwd: fake.dir,
+      sessionId,
+      forkFrom: parentUuid,
+      forkAt: '-'.repeat(36),
+      spawnImpl: () => fakeSubprocess()
+    }),
+    /Invalid native fork\./
+  );
+
+  await assert.rejects(
+    openClaudeHost({
+      commandSpec: fake.commandSpec,
+      cwd: fake.dir,
+      sessionId,
+      forkAt: forkAtUuid,
+      spawnImpl: () => fakeSubprocess()
+    }),
+    /Invalid native fork\./
+  );
 });

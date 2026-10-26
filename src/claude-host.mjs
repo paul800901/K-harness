@@ -472,6 +472,7 @@ export async function openClaudeHost({
   sessionId,
   resume = false,
   forkFrom,
+  forkAt,
   mcpConfig,
   accessMode = 'claude-manual',
   effort,
@@ -563,9 +564,13 @@ export async function openClaudeHost({
     if (workerAccessMode === 'read-only') denied.push('Write', 'Edit', 'MultiEdit', 'NotebookEdit');
     args.push('--strict-mcp-config', '--disallowedTools', denied.join(','));
   }
+  if (forkAt && (!forkFrom || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(forkAt)))
+    throw new Error('Invalid native fork.');
   if (forkFrom) {
     if (!/^[0-9a-f-]{36}$/i.test(forkFrom) || !sessionId || resume) throw new Error('Invalid native fork.');
-    args.push('--resume', forkFrom, '--fork-session', '--session-id', sessionId);
+    args.push('--resume', forkFrom, '--fork-session');
+    if (forkAt) args.push('--resume-session-at', forkAt);
+    args.push('--session-id', sessionId);
   } else if (sessionId) args.push(resume ? '--resume' : '--session-id', sessionId);
   signal?.throwIfAborted();
   let modelCatalog;

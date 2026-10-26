@@ -1123,6 +1123,7 @@ export function createClaudeController({
           assistant.partial = true;
           delete assistant.streaming;
           activeAssistantId = assistant.id;
+          if (typeof message.uuid === 'string' && message.uuid) assistant.nativeUuid = message.uuid;
           if (message.message?.model === '<synthetic>' && typeof message.error === 'string' && message.error)
             assistant.nativeError = message.error;
         }
@@ -1819,7 +1820,7 @@ export function createClaudeController({
       return updated;
     },
     async open(
-      {model = CLAUDE_MODEL, threadId, accessMode = 'claude-manual', effort, forkFrom, workerPolicy} = {},
+      {model = CLAUDE_MODEL, threadId, accessMode = 'claude-manual', effort, forkFrom, forkAt, workerPolicy} = {},
       {signal: outerSignal, relocation, onHistory} = {}
     ) {
       if (state.busy || opening || closing || stopping) throw new Error('請先停止目前工作，再切換對話。');
@@ -1881,6 +1882,17 @@ export function createClaudeController({
         state.goalPending = false;
         state.messages = clone(saved?.messages ?? source?.messages ?? []);
         state.tools = clone(saved?.tools ?? source?.tools ?? []);
+        const isTruncatedFork = Boolean(source && forkAt);
+        if (isTruncatedFork) {
+          // Keep the K projection in step with the native --resume-session-at cut.
+          const pointIndex = state.messages.findIndex(m => m.role === 'assistant' && m.nativeUuid === forkAt);
+          if (pointIndex < 0) throw Error('找不到原生分支位置；分支未建立。');
+          const point = state.messages[pointIndex];
+          state.messages = state.messages.slice(0, pointIndex + 1);
+          const kept = new Set(state.messages.map(m => m.groupId).filter(Boolean));
+          // A native background follow-up keeps the conclusion's group, so also cut by time.
+          state.tools = state.tools.filter(t => kept.has(t.groupId) && !(t.createdAt > point.createdAt));
+        }
         currentGroupId = state.messages.at(-1)?.groupId ?? null;
         activeAssistantId = null;
         currentTurnId = state.messages.findLast(m => m.role === 'user')?.id ?? null;
@@ -1897,11 +1909,12 @@ export function createClaudeController({
         state.workers = [];
         state.questions = [];
         state.busy = false;
-        const compactions = (saved ?? source)?.compactions;
+        const compactions = isTruncatedFork ? null : (saved ?? source)?.compactions;
         compactionIds = new Set((compactions?.ids ?? []).filter(id => typeof id === 'string' && id));
         state.progress.compaction = 'idle';
         state.progress.compactionsComplete =
-          (!saved && !source) || (compactions?.complete === true && compactions.inFlight !== true);
+          !isTruncatedFork &&
+          ((!saved && !source) || (compactions?.complete === true && compactions.inFlight !== true));
         state.progress.compactions = compactions || state.progress.compactionsComplete ? compactionIds.size : null;
         state.previousWorkspaces =
           relocation?.previousWorkspaces ?? commonSaved?.previousWorkspaces ?? source?.previousWorkspaces ?? [];
@@ -1931,6 +1944,7 @@ export function createClaudeController({
           sessionId: id,
           resume: !!(threadId && saved.nativeStarted === true),
           ...(source ? {forkFrom: source.nativeSessionId} : {}),
+          ...(source && forkAt ? {forkAt} : {}),
           mcpConfig,
           accessMode: state.accessMode,
           effort: state.effort,
@@ -2006,7 +2020,8 @@ export function createClaudeController({
         state.browserAccess = {enabled: false, networkAccess: false};
         state.status = previousClosed ? 'error' : 'uncertain';
         state.error = error.message;
-        if (signal.aborted) {
+        // A failed fork must not leave the view on a new ID that was never created.
+        if (signal.aborted || forkFrom) {
           Object.assign(state, previousState);
           compactionIds = previousCompactionIds;
           if (previousClosed && state.threadId) {
@@ -2313,9 +2328,9 @@ export function createClaudeController({
     async fork({model = state.model, effort, accessMode, permissionConfirmed, messageId}) {
       if (state.busy || opening || closing || stopping || state.questions.length)
         throw Error('請先結束目前工作與核准。');
-      const point = state.messages.findLast(m => m.role === 'assistant');
-      if (point?.id !== messageId) throw Error('Claude 原生分支目前僅開放最新結論。');
-      if (point.partial) throw Error('最新助理訊息尚未完成，不能建立分支。');
+      const point = state.messages.find(m => m.id === messageId && m.role === 'assistant');
+      if (!point) throw Error('找不到可分支的 Claude 結論。');
+      if (point.partial) throw Error('這則助理訊息尚未完成，不能建立分支。');
       if ((await this.workers()).some(w => !w.settled)) throw Error('請先結束工人。');
       if (
         normalizeClaudeAccessMode(accessMode) === 'claude-bypassPermissions' &&
@@ -2323,7 +2338,11 @@ export function createClaudeController({
         permissionConfirmed !== true
       )
         throw Error('切換到 Claude 完整存取權前，必須明確確認 permissionConfirmed:true；分支未建立。');
-      return this.open({model, effort, accessMode, forkFrom: state.threadId});
+      const latest = state.messages.findLast(m => m.role === 'assistant');
+      if (point === latest) return this.open({model, effort, accessMode, forkFrom: state.threadId});
+      if (!point.nativeUuid)
+        throw Error('這則結論是較早版本留下的紀錄，沒有原生訊息位置；請從最新結論分支，或改用跨供應商交接。');
+      return this.open({model, effort, accessMode, forkFrom: state.threadId, forkAt: point.nativeUuid});
     },
     async goal({objective, clear = false, refresh = false, editOnly = false} = {}) {
       if (editOnly) throw Error('目前 Claude 原生介面不支援只修改目標文字；未重新啟動工作。');

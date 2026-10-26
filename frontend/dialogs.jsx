@@ -261,8 +261,9 @@ export function BranchDialog({modal, state, onClose, onFork}) {
   return (
     <Modal title="分支到新對話" onClose={onClose}>
       <p className="modal-description">
-        原對話保持不變。GPT 與自架模型使用 Codex 核心，可從指定結論原生分支；Claude 同供應商只支援最新結論，Gemini
-        尚未接入同供應商原生分支。跨供應商使用 K 的結論交接，不移轉原生歷史。
+        原對話保持不變。GPT 與自架模型使用 Codex 核心、Claude 使用 Claude Code 核心，可從指定結論原生分支（Claude
+        較早版本留下的舊紀錄只能從最新結論分支）；Gemini 尚未接入同供應商原生分支。跨供應商使用 K
+        的結論交接，不移轉原生歷史。
       </p>
       <label className="setting-row">
         <span>目標供應商</span>
@@ -278,7 +279,7 @@ export function BranchDialog({modal, state, onClose, onFork}) {
         >
           <option value="codex">GPT / Codex 訂閱</option>
           <option value="gemma">自架</option>
-          <option value="claude" disabled={!modal.isLatestConclusion && modal.sourceProvider === 'claude'}>
+          <option value="claude" disabled={!modal.claudeNativeFork && modal.sourceProvider === 'claude'}>
             Claude 訂閱
           </option>
           <option value="gemini" disabled={modal.sourceProvider === 'gemini'}>
