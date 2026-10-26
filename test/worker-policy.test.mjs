@@ -100,6 +100,16 @@ test('user model roles reach Codex instructions without changing manual defaults
   assert.match(MODEL_ROLE_GUIDANCE, /不同帳號不並行/);
 });
 
+test('scheduling waits preserve active goals and use each provider gateway', () => {
+  for (const [provider, waitTool] of [['codex', 'gemini_wait'], ['claude', 'luna_wait'], ['gemini', 'luna_wait']]) {
+    const config = workerPolicyConfig(undefined, {models, geminiGateway: true, provider});
+    assert.ok(config.developer_instructions.includes(`native goal is active and no independent work remains, use ${waitTool} on the returned waitId with timeoutMs omitted`), provider);
+    assert.match(config.developer_instructions, /without an active goal, finish the turn and rely on the registered completion event/);
+    assert.doesNotMatch(config.developer_instructions, /End the turn on scheduling.waiting;/);
+  }
+  assert.match(MODEL_ROLE_GUIDANCE, /派工前備齊定稿正文與來源/);
+});
+
 test('new worker policy defaults to AI auto and preserves explicit and null native settings', () => {
   assert.deepEqual(normalizeWorkerPolicy(), {model: 'auto', effort: 'auto'});
   assert.deepEqual(normalizeWorkerPolicy({model: 'gpt-6-luna', effort: 'high'}), {model: 'gpt-6-luna', effort: 'high'});
