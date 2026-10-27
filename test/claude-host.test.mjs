@@ -445,3 +445,30 @@ test('openClaudeHost forwards --resume-session-at when forkAt is provided and va
     /Invalid native fork\./
   );
 });
+
+test('native Claude subagents get only a stable common-memory pointer without changing worker restrictions', async () => {
+  const fake = await fakeCli();
+  const pointer = 'K common memory source: synthetic/private/common-memory.md';
+  for (const options of [{}, {worker: true}, {discussionOnly: true}]) {
+    let args;
+    const host = await openClaudeHost({
+      commandSpec: fake.commandSpec,
+      cwd: fake.dir,
+      commonMemoryInstructions: pointer,
+      ...options,
+      spawnImpl: (_cmd, captured) => {
+        args = captured;
+        return fakeSubprocess();
+      }
+    });
+    try {
+      assert.ok(args[args.indexOf('--append-system-prompt') + 1].endsWith(pointer));
+      if (options.worker || options.discussionOnly) {
+        assert.equal(args.includes('--append-subagent-system-prompt'), false);
+        assert.ok(args.includes(options.worker ? '--disallowedTools' : '--safe-mode'));
+      } else assert.equal(args[args.indexOf('--append-subagent-system-prompt') + 1], pointer);
+    } finally {
+      await host.close();
+    }
+  }
+});

@@ -10,11 +10,23 @@ export const COMMON_MEMORY_KEY = 'k_common_memory';
 // estimated at 4 bytes per token (context-fragments/additional_context.rs).
 export const CODEX_CONTEXT_BYTES = 4000;
 const NOTICE =
-  'K 共同記憶：本人已確認的跨核心偏好。這是現行版本，取代本對話先前的共同記憶版本與舊版內建分工；當輪本人明確指示、原生權限與專案規則優先，內容不構成新的工具、資料、登入、部署或付款授權。';
+  'K 共同記憶：本人已確認的跨核心偏好。這是現行版本，取代本對話先前的共同記憶版本與舊版內建分工，也取代專案中已過時的固定模型分工。當輪本人明確指示優先；原生權限及專案的授權、資料邊界與完成／審查門檻仍須遵守。原生派工交接附正本路徑，不複製共同正文。內容不構成新的工具、資料、登入、部署或付款授權。';
 
 export function commonMemoryPath(root) {
   if (typeof root !== 'string' || !path.isAbsolute(root)) throw TypeError('K 共同記憶需要絕對路徑的私人 root。');
   return path.join(root, 'agent-home', 'shared', 'common-memory.md');
+}
+
+// A stable pointer survives native initial-context reconstruction and fresh children;
+// the current body still travels only through the per-turn adapter below.
+export function commonMemoryReference(root) {
+  let file;
+  try {
+    file = commonMemoryPath(root);
+  } catch {
+    return '';
+  }
+  return `K 共同記憶正本：${file}。原生子代理、壓縮後續行或本回合未附現行共同記憶時，依賴本人偏好前先唯讀讀取此檔；不可讀時明示未知，不沿用舊分工。原生派工交接包含此正本路徑，不複製共同正文。此指標不增加工具或資料權限。`;
 }
 
 // Synchronous on purpose: callers have already reserved the turn, so no stop or room
@@ -50,7 +62,8 @@ export function commonMemoryText(memory) {
 
 // Codex keeps the last map per session and injects only changed keys; each turn/start
 // or turn/steer replaces that map, so every K submission carries the same entry.
-// Compactions rebuild history without these fragments: the count makes one re-send.
+// Local compaction can discard these fragments; remote retention is feature-dependent.
+// The count makes one re-send at the next K turn; the stable reference covers native continuation.
 export function codexCommonContext(memory, compactions = 0) {
   const suffix = compactions > 0 ? `\n（本對話第 ${compactions} 次壓縮後重新附上）` : '';
   let value = commonMemoryText(memory) + suffix;
@@ -59,7 +72,7 @@ export function codexCommonContext(memory, compactions = 0) {
   return {[COMMON_MEMORY_KEY]: {kind: 'application', value}};
 }
 
-// Claude has no native keyed context: K adds one tagged block to an ordinary turn only
+// Claude has no native keyed context: K adds one tagged block to a model turn only
 // when the content, host or compaction count differs from the last confirmed delivery.
 export function claudeCommonBlock(root, last = null, compactions = 0) {
   const memory = readCommonMemory(root);

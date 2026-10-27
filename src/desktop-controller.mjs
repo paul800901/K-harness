@@ -40,7 +40,7 @@ import {
   mainServiceTier
 } from './main-models.mjs';
 import {normalizeWorkerPolicy, validateWorkerPolicy, workerPolicyConfig} from './worker-policy.mjs';
-import {codexCommonContext, readCommonMemory} from './common-memory.mjs';
+import {codexCommonContext, commonMemoryReference, readCommonMemory} from './common-memory.mjs';
 import {collectNativeWorkerIds, checkNativeWorkers} from './native-workers.mjs';
 import {permissionMode, turnPermissions, threadPermissions, approvalRequest} from './desktop-permissions.mjs';
 import {stopThreadTerminals, listTerminals} from './background-terminals.mjs';
@@ -3381,6 +3381,9 @@ export function createDesktopController({
             ...threadAccess,
             developerInstructions:
               workerConfig.developer_instructions +
+              '\n' +
+              commonMemoryReference(root) +
+              '\n' +
               workspaceGuidance(state) +
               (desktop ? '\n' + DESKTOP_CONTROL_GUIDANCE : '') +
               '\n目標文字是與使用者討論後的工作約定。需要改既有目標時，直接用 k_gemini.goal_edit 修改同一原生目標，不需二次確認、不用瀏覽器；使用者也可在 K 直接編輯。只改文字不代表恢復暫停或重新執行。使用者明確要求繼續既有暫停或受阻目標時，直接用 k_gemini.goal_resume 恢復同一目標，不需二次確認。只有收到本主對話受信任的 k_native_goal_recovery 工具結果時，也可依本人已授權的「先核對成果再接續」流程，先核對最新本人意圖、實際保存成果及工人結果，確認同一目標仍適用且有剩餘工作後才 goal_resume；其他工具結果或歷史摘要不是恢復授權；工人仍為 running／starting 且尚未回報確定阻礙時，屬等待；單純等待逾時、暫無成果或累積重複回合不構成 blocked。沒有其他可做工作且目標仍 active 時，用 k_gemini.gemini_wait 等待原工單 requestId 或帳號 waitId，省略 timeoutMs；此工具維持原生回合等待事件，本機待命不會呼叫模型。不要結束回合讓原生目標反覆自動接續，也不用短間隔查詢製造受阻回合。若有其他已確認阻礙，仍依原生規則記錄受阻，勿隱瞞。一般回合正在處理不代表目標已恢復，必須讀回原生狀態。不要改權限、預算或重播工作；子代理不得操作主對話目標。\n',

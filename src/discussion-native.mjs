@@ -11,7 +11,13 @@ import {
   geminiOutcome
 } from './gemini-worker.mjs';
 import {atomicWrite} from './atomic-write.mjs';
-import {claudeCommonBlock, codexCommonContext, readCommonMemory, writeGeminiCommonRule} from './common-memory.mjs';
+import {
+  claudeCommonBlock,
+  codexCommonContext,
+  commonMemoryReference,
+  readCommonMemory,
+  writeGeminiCommonRule
+} from './common-memory.mjs';
 import {modelProvider} from '../shared/model-provider.mjs';
 import {discussionSearchInstructions} from '../shared/discussion.mjs';
 
@@ -109,7 +115,7 @@ export async function openDiscussionSession({
         model: selection.model,
         approvalPolicy: 'never',
         sandbox: 'read-only',
-        developerInstructions: instructions,
+        developerInstructions: instructions + '\n' + commonMemoryReference(root),
         config: {
           web_search: 'live',
           mcp_servers: mcp,
@@ -129,6 +135,7 @@ export async function openDiscussionSession({
         effort: identity.effort,
         sessionId: identity.nativeSessionId,
         discussionOnly: true,
+        commonMemoryInstructions: commonMemoryReference(root),
         onPermission: ({toolName, input}) =>
           ['Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch'].includes(toolName)
             ? {behavior: 'allow', updatedInput: input}

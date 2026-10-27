@@ -9,6 +9,7 @@ import {
   COMMON_MEMORY_KEY,
   claudeCommonBlock,
   codexCommonContext,
+  commonMemoryReference,
   commonMemoryPath,
   readCommonMemory,
   writeGeminiCommonRule
@@ -70,12 +71,25 @@ test('unavailable common memory is explicit and never falls back to older prefer
   assert.doesNotMatch(value, /Flash|Opus|Sol|Astra/);
 });
 
+test('native continuation reference uses the same private path without copying or requiring a body', async () => {
+  const root = await privateRoot();
+  const before = commonMemoryReference(root);
+  assert.ok(before.includes(commonMemoryPath(root)));
+  assert.match(before, /原生子代理、壓縮後續行/);
+  await writeMemory(root, '- reference-only synthetic body');
+  assert.equal(commonMemoryReference(root), before);
+  assert.doesNotMatch(before, /reference-only synthetic body/);
+  assert.equal(commonMemoryReference(undefined), '');
+});
+
 test('Codex context is one application entry, inline within the native budget and complete otherwise', async () => {
   const root = await privateRoot('# 合成\n- 短偏好\n');
   const context = codexCommonContext(readCommonMemory(root));
   assert.deepEqual(Object.keys(context), [COMMON_MEMORY_KEY]);
   assert.equal(context[COMMON_MEMORY_KEY].kind, 'application');
   assert.match(context[COMMON_MEMORY_KEY].value, /取代本對話先前的共同記憶版本與舊版內建分工/);
+  assert.match(context[COMMON_MEMORY_KEY].value, /取代專案中已過時的固定模型分工/);
+  assert.match(context[COMMON_MEMORY_KEY].value, /授權、資料邊界與完成／審查門檻仍須遵守/);
   assert.match(context[COMMON_MEMORY_KEY].value, /- 短偏好/);
   assert.deepEqual(codexCommonContext(readCommonMemory(root)), context, 'unchanged input yields an identical entry');
   const compacted = codexCommonContext(readCommonMemory(root), 2)[COMMON_MEMORY_KEY].value;
@@ -165,6 +179,7 @@ test('Codex discussion turns carry the current entry; Claude discussion repeats 
   await codex.close();
   const turns = calls.filter(c => c.method === 'turn/start').map(c => c.params);
   assert.doesNotMatch(calls.find(c => c.method === 'thread/start').params.developerInstructions, /討論假偏好/);
+  assert.ok(calls.find(c => c.method === 'thread/start').params.developerInstructions.includes(commonMemoryPath(root)));
   assert.match(turns[0].additionalContext[COMMON_MEMORY_KEY].value, /討論假偏好甲/);
   assert.match(turns[1].additionalContext[COMMON_MEMORY_KEY].value, /討論假偏好乙[\s\S]*第 1 次壓縮後/);
   assert.deepEqual(turns[1].input, [{type: 'text', text: '第二輪'}]);
@@ -176,6 +191,7 @@ test('Codex discussion turns carry the current entry; Claude discussion repeats 
     workspace: root,
     selection: {model: 'claude-opus-5-5'},
     claudeHost: async opts => {
+      assert.equal(opts.commonMemoryInstructions, commonMemoryReference(root));
       onMessage = opts.onMessage;
       return {
         closed: new Promise(() => {}),
@@ -233,7 +249,8 @@ test('leaf and nested Claude workers send the memory block before the unchanged 
     const worker = createClaudeWorker({
       root,
       workspace,
-      hostFactory: async () => {
+      hostFactory: async opts => {
+        assert.equal(opts.commonMemoryInstructions, commonMemoryReference(root));
         let done;
         const closed = new Promise(resolve => (done = resolve));
         return {

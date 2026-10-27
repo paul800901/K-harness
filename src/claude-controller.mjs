@@ -41,7 +41,7 @@ import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {claudeRateStatus} from './claude-rate-status.mjs';
 import {withBrowserMcp, toClaudeBrowserMcpServer, browserSessionKey} from './browser-mcp-config.mjs';
 import {reportAuthExpired as reportExpired} from './auth-expiry.mjs';
-import {claudeCommonBlock} from './common-memory.mjs';
+import {claudeCommonBlock, commonMemoryReference} from './common-memory.mjs';
 
 const SESSION_DIR = '.runtime/claude-sessions';
 const clone = value => structuredClone(value);
@@ -630,7 +630,9 @@ export function createClaudeController({
       event.summary = `${batch.every(r => r.provider === 'codex') ? 'Codex' : 'K'} 子代理${batch.some(r => !r.settled) ? '狀態待確認' : '工作完成'}：${batch.map(r => r.requestId).join('、')}`;
       sendAttempted = true;
       if (handoff) currentTurnId = event.id;
-      await active.start([{type: 'text', text}], handoff ? {uuid: event.id} : undefined);
+      const turn = withCommonMemory(active, [{type: 'text', text}]);
+      await active.start(turn.content, handoff ? {uuid: event.id} : undefined);
+      turn.delivered();
       sendCompleted = true;
       await saveCurrent();
     } catch (error) {
@@ -1943,6 +1945,7 @@ export function createClaudeController({
         signal.throwIfAborted();
         const candidate = await hostFactory({
           commandSpec,
+          commonMemoryInstructions: commonMemoryReference(root),
           model,
           signal,
           cwd: state.workspace,
@@ -2154,6 +2157,7 @@ export function createClaudeController({
               const mcpConfig = await nativeMcpConfig(nativeId(state.threadId), nextAccessMode);
               host = await hostFactory({
                 commandSpec,
+                commonMemoryInstructions: commonMemoryReference(root),
                 model: state.model,
                 cwd: state.workspace,
                 workspaceInstructions:

@@ -47,6 +47,7 @@ function fakeHost({
       if (method === 'initialize') return {};
       if (method === 'account/read') return {account: {type: accountType}};
       if (method === 'model/list') return {data: models};
+      if (method === 'config/read') return {config: {developer_instructions: 'Existing worker boundary.'}};
       if (method === 'thread/start') {
         count++;
         await onStart?.(host, p);
@@ -498,6 +499,7 @@ test('uncertain turn-start outcome is not retried; cancellation interrupts an ac
     if (method === 'initialize') return {};
     if (method === 'account/read') return {account: {type: 'chatgpt'}};
     if (method === 'model/list') return {data: catalog};
+    if (method === 'config/read') return {config: {}};
     if (method === 'thread/start') return {thread: {id: 'uncertain-thread'}};
     if (method === 'turn/start') throw Error('Codex turn/start timed out; do not replay automatically.');
     if (method === 'thread/read') throw Error('offline');
@@ -1416,6 +1418,10 @@ test('a K GPT worker turn carries the private common memory as native context, n
     const {bridge, fixture} = await make();
     await bridge.start({requestId: 'common-memory', task: '合成任務'});
     const turn = fixture.calls.find(c => c.method === 'turn/start').p;
+    const thread = fixture.calls.find(c => c.method === 'thread/start').p;
+    assert.match(thread.developerInstructions, /^Existing worker boundary\./);
+    assert.ok(thread.developerInstructions.includes(file));
+    assert.doesNotMatch(thread.developerInstructions, /GPT 工人假偏好/);
     assert.equal(turn.additionalContext.k_common_memory.kind, 'application');
     assert.match(turn.additionalContext.k_common_memory.value, /GPT 工人假偏好/);
     assert.doesNotMatch(turn.input[0].text, /GPT 工人假偏好/);

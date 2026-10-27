@@ -1071,6 +1071,7 @@ test('every K-submitted Codex turn carries the current private common memory as 
     });
   try {
     await f.c.open({model: 'gpt-6-astra'});
+    assert.ok(f.calls.find(call => call.method === 'thread/start').params.developerInstructions.includes(file));
     assert.doesNotMatch(
       f.calls.find(call => call.method === 'thread/start').params.developerInstructions,
       /GPT 假偏好/,

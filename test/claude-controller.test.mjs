@@ -119,10 +119,12 @@ async function fixture({
     return {
       startCalls: [],
       commonBlocks: [],
+      startOptions: [],
       closed: new Promise(resolve => {
         resolveClosed = resolve;
       }),
-      async start(content) {
+      async start(content, options) {
+        this.startOptions.push(options);
         // The K common memory block is asserted separately; keep the user content positions.
         const common = Array.isArray(content) && content[0]?.text?.startsWith('<k_common_memory>');
         this.commonBlocks.push(common ? content[0].text : null);
@@ -1339,8 +1341,14 @@ for (const [provider, model] of [
   test(`${provider} completion wakes the original Claude once after the current turn; no wait or inspect`, async () => {
     const f = await fixture();
     try {
+      const file = commonMemoryPath(f.root);
+      await mkdir(path.dirname(file), {recursive: true});
+      await writeFile(file, '- 通知前假偏好甲');
       await f.controller.open({});
       await f.controller.send({text: 'delegate bounded work'});
+      assert.ok(f.hostOptions.commonMemoryInstructions.includes(file));
+      assert.match(f.host.commonBlocks[0], /通知前假偏好甲/);
+      await writeFile(file, '- 通知時假偏好乙');
       await f.gatewayOptions.bridge.start({requestId: 'notify', model, task: 'bounded'});
       const record = {
         provider,
@@ -1357,6 +1365,9 @@ for (const [provider, model] of [
       f.hostOptions.onMessage({type: 'result', is_error: false});
       await waitFor(() => f.host.startCalls.length === 2);
       assert.equal(f.host.startCalls.length, 2);
+      assert.match(f.host.commonBlocks[1], /通知時假偏好乙/);
+      assert.doesNotMatch(f.host.commonBlocks[1], /通知前假偏好甲/);
+      assert.equal(f.host.startOptions[1], undefined, 'notification UUID behavior stays unchanged');
       assert.match(f.host.startCalls[1][0].text, /K 工人完成通知/);
       const notification = JSON.parse(f.host.startCalls[1][0].text.split('\n').slice(1).join('\n'));
       assert.equal(notification[0].provider, provider);
@@ -1368,6 +1379,8 @@ for (const [provider, model] of [
         await readFile(path.join(f.root, '.runtime/claude-sessions', `${f.controller.state.threadId}.json`), 'utf8')
       );
       assert.equal(saved.workerNotifications.notify, 'delivery-attempted');
+      await f.controller.send({text: 'after notification'});
+      assert.equal(f.host.commonBlocks[2], null, 'confirmed notification counts as the current delivery');
     } finally {
       await f.controller.close();
     }

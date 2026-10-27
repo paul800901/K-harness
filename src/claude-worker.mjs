@@ -3,7 +3,7 @@ import {openClaudeHost} from './claude-host.mjs';
 import {createWorkActivity, claudeWorkActivity} from './work-activity.mjs';
 import {validateWorkerPolicy} from './worker-policy.mjs';
 import {realpath} from 'node:fs/promises';
-import {claudeCommonBlock} from './common-memory.mjs';
+import {claudeCommonBlock, commonMemoryReference} from './common-memory.mjs';
 
 // One bounded native Claude session. The existing bridge owns its work ID,
 // persistence, completion delivery and cancellation; no second agent framework.
@@ -129,6 +129,7 @@ export function createClaudeWorker({
         signal?.throwIfAborted();
         host = await hostFactory({
           commandSpec,
+          commonMemoryInstructions: commonMemoryReference(root),
           env,
           cwd: workspace,
           model,
