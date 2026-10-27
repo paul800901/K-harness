@@ -13,6 +13,13 @@ const seatColor = i =>
     'var(--k-brass)',
     'var(--k-danger)'
   ][i % 6];
+const statusTone = {回覆中: 'active', 等待安排: 'active', 等待主代理: 'active', 已完成: 'done', 額度已用完: 'danger'};
+const Status = ({text}) => (
+  <small className="discussion-roundtable-status" data-tone={statusTone[text] ?? 'idle'}>
+    {text}
+  </small>
+);
+const targetLabel = '＋ 補充給此人';
 
 function InterjectionRows({messages, run}) {
   return messages.map(m => {
@@ -47,7 +54,9 @@ export function DiscussionEntry({record, state, onOpen}) {
         {data.inferred ? '推估 ' : ''}第 {data.last} 批 · {data.statusText}
       </p>
       {data.notice && <p className="discussion-run-notice">{data.notice}</p>}
-      <button onClick={() => onOpen?.(record.runId)}>開啟圓桌</button>
+      <button className="primary" onClick={() => onOpen?.(record.runId)}>
+        開啟圓桌
+      </button>
     </section>
   );
 }
@@ -74,15 +83,15 @@ function FullText({cell, label, onRead}) {
     >
       <header>
         {onRead ? (
-          <button onClick={onRead}>
-            {label} · {cell.name}
+          <button className="secondary" onClick={onRead}>
+            {label} · {cell.name} ›
           </button>
         ) : (
           <strong>
             {label} · {cell.name}
           </strong>
         )}
-        <small>{cell.status}</small>
+        <Status text={cell.status} />
       </header>
       <div className="discussion-roundtable-markdown">
         <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.text || '尚無發言。'}</ReactMarkdown>
@@ -144,7 +153,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
           {discussionModes[run.mode] ?? '歷史討論'} · {data.statusText}
         </span>
         {live && (
-          <button disabled={run.status === 'stopping'} onClick={() => onStop(run.id)}>
+          <button className="secondary danger" disabled={run.status === 'stopping'} onClick={() => onStop(run.id)}>
             停止討論
           </button>
         )}
@@ -154,17 +163,27 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
       {cell ? (
         <div className="discussion-roundtable-reader">
           <nav aria-label="閱讀導覽">
-            <button onClick={() => onReader(null)}>回到格子</button>
-            <button disabled={row.cells.indexOf(cell) === 0} onClick={() => move(0, -1)}>
+            <button className="secondary" onClick={() => onReader(null)}>
+              回到格子
+            </button>
+            <button
+              className="secondary"
+              disabled={row.cells.indexOf(cell) === 0}
+              onClick={() => move(0, -1)}
+            >
               上一位
             </button>
-            <button disabled={row.cells.indexOf(cell) === row.cells.length - 1} onClick={() => move(0, 1)}>
+            <button
+              className="secondary"
+              disabled={row.cells.indexOf(cell) === row.cells.length - 1}
+              onClick={() => move(0, 1)}
+            >
               下一位
             </button>
-            <button disabled={row.round === 0} onClick={() => move(-1, 0)}>
+            <button className="secondary" disabled={row.round === 0} onClick={() => move(-1, 0)}>
               上一批
             </button>
-            <button disabled={row.round === data.last} onClick={() => move(1, 0)}>
+            <button className="secondary" disabled={row.round === data.last} onClick={() => move(1, 0)}>
               下一批
             </button>
           </nav>
@@ -175,9 +194,17 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
           {!mobile && (
             <details className="discussion-roundtable-summary" open>
               <summary>討論整理（AI 產生）</summary>
-              <p>{data.summary?.text ?? '尚未產生整理。'}</p>
-              <button onClick={() => open(data.zero.cells[1])}>閱讀整理全文</button>
-              <button onClick={() => open(data.zero.cells[0])}>閱讀任務書</button>
+              <p data-empty={!data.summary}>{data.summary?.text ?? '尚未產生整理。'}</p>
+              <div className="discussion-roundtable-actions">
+                {data.summary && (
+                  <button className="secondary" onClick={() => open(data.zero.cells[1])}>
+                    閱讀整理全文
+                  </button>
+                )}
+                <button className="secondary" onClick={() => open(data.zero.cells[0])}>
+                  閱讀任務書
+                </button>
+              </div>
             </details>
           )}
           {!mobile && (
@@ -185,7 +212,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
               <table>
                 <thead>
                   <tr>
-                    <th>
+                    <th className="discussion-roundtable-host">
                       主持人
                       <br />
                       {run.facilitator?.displayName ?? run.facilitator?.model ?? '原聊天室主代理'}
@@ -194,7 +221,11 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                       <th key={p.id}>
                         <i style={{background: seatColor(i)}} />
                         {p.displayName ?? p.model}
-                        {live && <button onClick={() => onTarget(run.id, p.id)}>補充給此人</button>}
+                        {live && (
+                          <button className="secondary discussion-roundtable-target" onClick={() => onTarget(run.id, p.id)}>
+                            {targetLabel}
+                          </button>
+                        )}
                       </th>
                     ))}
                   </tr>
@@ -205,20 +236,28 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                     <React.Fragment key={r.round}>
                       <tr>
                         {r.cells.map(c => (
-                          <td key={c.id} data-status={c.status}>
+                          <td
+                            key={c.id}
+                            data-status={c.status}
+                            className={c.id === 'host' ? 'discussion-roundtable-host' : undefined}
+                            style={{'--seat': seatColor(run.participants.findIndex(p => p.id === c.id))}}
+                          >
                             <button className="discussion-roundtable-cell" onClick={() => open(c)}>
                               <span className="discussion-roundtable-cell-name">{c.name}</span>
-                              <strong>{label(r.round)}</strong>
-                              <small>{c.status}</small>
+                              <span className="discussion-roundtable-cell-head">
+                                <strong>{label(r.round)}</strong>
+                                <Status text={c.status} />
+                              </span>
                               <p>{c.text || '尚無發言。'}</p>
+                              <span className="discussion-roundtable-more">看全文 ›</span>
                             </button>
                             {live && r.round === data.last && c.id !== 'host' && (
                               <button
-                                className="discussion-roundtable-card-target"
+                                className="secondary discussion-roundtable-target discussion-roundtable-card-target"
                                 aria-label={`補充給 ${c.name}`}
                                 onClick={() => onTarget(run.id, c.id)}
                               >
-                                補充給此人
+                                {targetLabel}
                               </button>
                             )}
                           </td>
@@ -246,6 +285,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                   {chosen.cells.map(c => (
                     <button
                       key={c.id}
+                      className="secondary"
                       title={`${c.name}：${c.status}`}
                       aria-label={`翻到 ${c.name}`}
                       onClick={() =>
@@ -271,7 +311,9 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                     key={c.id}
                   >
                     {live && c.id !== 'host' && chosen.round > 0 && (
-                      <button onClick={() => onTarget(run.id, c.id)}>補充給此人</button>
+                      <button className="secondary discussion-roundtable-target" onClick={() => onTarget(run.id, c.id)}>
+                        {targetLabel}
+                      </button>
                     )}
                     <FullText cell={c} label={label(chosen.round)} onRead={() => open(c)} />
                   </div>
