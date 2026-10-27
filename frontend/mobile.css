@@ -46,7 +46,8 @@
  .composer-options{min-width:0;flex:1;gap:2px;flex-wrap:nowrap}
  .composer-options>.composer-model,.composer-options>.permission-picker,.composer-options>.composer-effort,.composer-options>small{display:none}
  .mobile-composer-options{display:inline-flex;min-width:0;max-width:100%;font-size:var(--k-text-sm);gap:8px;padding:8px;color:var(--k-ink-2)}
- .mobile-composer-options>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mobile-composer-options>svg{flex:none}
+ .mobile-composer-options>span{min-width:0;text-align:left}.mobile-composer-options>svg{flex:none}
+ .mobile-model-name{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.mobile-model-effort{display:block;white-space:normal;overflow-wrap:anywhere;font-size:var(--k-text-xs)}
  .mobile-access-warning{color:var(--k-danger)}
  .composer-send-actions{margin-left:auto;flex:none}.composer-send-actions .send-button{height:44px;width:44px;min-width:44px}
  .composer-send-actions .send-button:disabled{background:var(--k-sunken);color:var(--k-ink-3);opacity:1}

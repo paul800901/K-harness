@@ -244,6 +244,13 @@ const ChatView = React.memo(function ChatView({
     if (quotePopover?.mode === 'comment' && !activeQuote) setQuotePopover(null);
   }, [quotePopover?.mode, quotePopover?.quoteId, activeQuote]);
   const provider = state.provider ?? providerOf(state.model);
+  const displayedEffort = provider === 'claude' || state.busy ? state.effort : effort || state.effort;
+  const effortLabel = displayedEffort
+    ? (effortName[displayedEffort] ?? displayedEffort)
+    : state.efforts?.length
+      ? '原生預設'
+      : null;
+  const modelSummary = `${modelLabel}${effortLabel ? ` · 推理程度：${effortLabel}` : ''}`;
   const capabilities = state.capabilities ?? {};
   const effectiveAccessMode =
     provider === 'claude'
@@ -716,10 +723,14 @@ const ChatView = React.memo(function ChatView({
                           type="button"
                           className="mobile-composer-options"
                           aria-label="對話設定"
+                          title={modelSummary}
                           disabled={!state.threadId || blocked}
                           onClick={onOptions}
                         >
-                          <span>{modelButtonLabel}</span>
+                          <span>
+                            <span className="mobile-model-name">{modelButtonLabel}</span>
+                            {effortLabel && <span className="mobile-model-effort">推理：{effortLabel}</span>}
+                          </span>
                           <SlidersHorizontal size={16} />
                           {/danger-full-access|bypassPermissions/.test(effectiveAccessMode) && (
                             <ShieldCheck size={15} className="mobile-access-warning" aria-label="完整存取權" />
@@ -730,11 +741,12 @@ const ChatView = React.memo(function ChatView({
                         type="button"
                         className="composer-model"
                         aria-label="選擇主代理模型"
-                        title={modelLabel}
+                        title={modelSummary}
                         disabled={!state.threadId || blocked || state.busy || state.status === 'connecting'}
                         onClick={onChooseModel}
                       >
                         {modelButtonLabel}
+                        {provider === 'claude' && effortLabel && <span>· {effortLabel}</span>}
                         <ChevronDown size={12} />
                       </button>
                       <PermissionPicker
