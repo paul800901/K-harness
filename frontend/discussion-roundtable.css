@@ -1,4 +1,5 @@
-.discussion-roundtable{display:flex;flex-direction:column;min-width:0;height:100%;flex:1;min-height:0;overflow:hidden;gap:10px;color:var(--k-ink);font-size:var(--k-text-md)}
+/* Room for the shared 4px focus ring: this panel clips overflow. */
+.discussion-roundtable{display:flex;flex-direction:column;min-width:0;height:100%;flex:1;min-height:0;overflow:hidden;padding:4px;gap:10px;color:var(--k-ink);font-size:var(--k-text-md)}
 .discussion-roundtable button,.discussion-roundtable select,.discussion-roundtable-entry button{font:inherit;min-height:36px;padding:6px 10px;cursor:pointer}
 .discussion-roundtable-entry{padding:16px;border:1px solid var(--k-line);border-radius:10px;overflow-wrap:anywhere}
 .discussion-roundtable-entry>strong{display:block;white-space:pre-wrap}
