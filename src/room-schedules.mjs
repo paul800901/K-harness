@@ -155,14 +155,21 @@ export function createRoomSchedules({
       );
       if (!rows.length) return [];
       const before = rows.map(s => ({...s}));
-      const items = rows.map(s => {
+      const items = rows.flatMap(s => {
         const planned = new Date(s.nextRunAt),
           late = at - planned > OVERDUE_THRESHOLD_MS,
           label = formatScheduleTime(planned, s.timezone);
         // Missed slots (K closed, sleep) collapse into this one late send; the next slot counts from now
         // and is never sooner than the minimum spacing after this one.
-        const from = new Date(Math.max(at.getTime(), planned.getTime() + MIN_CRON_INTERVAL_MS - 1)),
+        const from = new Date(Math.max(at.getTime(), planned.getTime()) + MIN_CRON_INTERVAL_MS - 1);
+        let next;
+        try {
           next = s.cron ? nextTime(s.cron, s.timezone, from) : null;
+        } catch (error) {
+          // Keep the bad rule visible for correction without stranding unrelated due work.
+          Object.assign(s, {lastStatus: 'failed', lastError: `${error.message}未送出，請修正排程。`, nextRunAt: null});
+          return [];
+        }
         Object.assign(s, {
           lastRunAt: s.nextRunAt,
           lastStatus: 'sending',
@@ -171,15 +178,17 @@ export function createRoomSchedules({
           done: !next
         });
         firing.add(s.id);
-        return {
-          id: s.id,
-          threadId: s.threadId,
-          title: s.title,
-          scheduledLabel: label,
-          text:
-            `（K 定時排程「${s.title}」：本人先前設定的提醒，不是本人此刻輸入；原定 ${label}` +
-            `${late ? '，K 當時未開或電腦休眠，現在補送一次' : ''}）\n\n${s.text}`
-        };
+        return [
+          {
+            id: s.id,
+            threadId: s.threadId,
+            title: s.title,
+            scheduledLabel: label,
+            text:
+              `（K 定時排程「${s.title}」：本人先前設定的提醒，不是本人此刻輸入；原定 ${label}` +
+              `${late ? '，K 當時未開或電腦休眠，現在補送一次' : ''}）\n\n${s.text}`
+          }
+        ];
       });
       try {
         await save();

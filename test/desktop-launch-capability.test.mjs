@@ -30,7 +30,7 @@ test('isolated desktop does not grant human session via public GET or forged hea
     assert.equal((await fetch(url, {redirect: 'manual'})).status, 403);
     const state = await fetch(desktop.origin + '/api/state', {headers: {Cookie: cookie}});
     assert.equal(state.status, 200);
-    assert.deepEqual(await state.json(), {threadId: 'fake'});
+    assert.deepEqual(await state.json(), {threadId: 'fake', sidebarPreferences: null, sidebarPreferencesError: null});
     const anonymous = await fetch(desktop.origin, {redirect: 'manual'});
     assert.equal(anonymous.status, 403);
     assert.equal(anonymous.headers.get('set-cookie'), null);

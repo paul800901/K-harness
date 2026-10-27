@@ -841,12 +841,12 @@ test('fired cron slots keep the minimum spacing and cron/at kinds are not interc
     currentTime = new Date('2026-10-24T00:50:05.000Z');
     await schedules.tick(); // late catch-up of the 00:10 slot
     const row = (await schedules.list()).schedules.find(s => s.id === schedule.id);
-    assert.equal(row.nextRunAt, '2026-10-24T00:51:00.000Z');
+    assert.equal(row.nextRunAt, '2026-10-24T01:10:00.000Z', 'catch-up cannot trigger a second send a minute later');
     currentTime = new Date('2026-10-24T00:51:05.000Z');
     await schedules.tick();
     const after = (await schedules.list()).schedules.find(s => s.id === schedule.id);
     assert.equal(after.nextRunAt, '2026-10-24T01:10:00.000Z', 'next slot is at least 10 minutes after 00:51');
-    assert.equal(sent.length, 2);
+    assert.equal(sent.length, 1, 'the 00:51 slot is skipped after the 00:50 catch-up');
 
     await assert.rejects(
       schedules.add({title: 't', text: 'x', at: '*/1 * * * * *', targetThreadId: 'room-a'}),
@@ -936,6 +936,51 @@ test('a tick whose save fails puts its rows back and leaves other in-flight send
     assert.equal(b.nextRunAt, '2026-10-24T04:00:00.000Z', 'B was put back unchanged');
     await schedules.tick();
     assert.deepEqual(sent, ['A', 'B'], 'the next tick sends B');
+  } finally {
+    await schedules.close();
+  }
+});
+
+test('one malformed stored cron cannot strand another due schedule', async () => {
+  const root = await tempRoot('bad-cron');
+  const file = path.join(root, '.runtime/room-schedules.json');
+  await mkdir(path.dirname(file));
+  const record = {
+    threadId: 'room-a',
+    text: 'x',
+    timezone: 'UTC',
+    nextRunAt: '2026-10-24T03:00:00Z',
+    lastStatus: null,
+    paused: false,
+    done: false
+  };
+  await writeFile(
+    file,
+    JSON.stringify({
+      schedules: [
+        {...record, id: 'valid', title: 'valid', cron: null},
+        {...record, id: 'bad', title: 'bad', cron: 'not a cron'}
+      ]
+    })
+  );
+  const sent = [];
+  const schedules = createRoomSchedules({
+    root,
+    listSessions: knownRooms,
+    now: () => new Date('2026-10-24T03:00:01Z'),
+    deliver: async item => {
+      sent.push(item.id);
+      return {sent: true};
+    }
+  });
+  try {
+    await schedules.tick();
+    await schedules.tick();
+    assert.deepEqual(sent, ['valid']);
+    const bad = (await schedules.list()).schedules.find(s => s.id === 'bad');
+    assert.equal(bad.lastStatus, 'failed');
+    assert.match(bad.lastError, /排程時間格式無效/);
+    assert.equal(bad.cron, 'not a cron', 'retain the broken rule for inspection/correction');
   } finally {
     await schedules.close();
   }

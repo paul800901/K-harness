@@ -9,6 +9,8 @@ export function createInputQueue({root, getController, onChange = () => {}, send
     paused = false,
     chain = Promise.resolve(),
     draining = false,
+    changing = false,
+    writing = 0,
     closed = false,
     timer,
     stopEpoch = 0;
@@ -17,17 +19,24 @@ export function createInputQueue({root, getController, onChange = () => {}, send
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id ?? '')) throw Error('Invalid queue conversation.');
     return path.join(root, '.runtime/input-queues', id + '.json');
   };
-  const save = () => {
-    const id = threadId,
-      data = JSON.stringify({rows, paused});
+  const save = (rollback = () => {}) => {
+    const id = threadId;
     if (!id) return Promise.resolve();
+    writing++;
     const next = chain
       .catch(() => {})
       .then(async () => {
-        await atomicWrite(file(id), data);
+        // Capture after earlier operations have committed or rolled back; a queued write must not
+        // persist a failed edit/removal from an optimistic snapshot taken before that rollback.
+        try {
+          await atomicWrite(file(id), JSON.stringify({rows, paused}));
+        } catch (error) {
+          rollback();
+          throw error;
+        }
       });
     chain = next;
-    return next;
+    return next.finally(() => writing--);
   };
   const notify = () => onChange();
   const hasWorkers = s =>
@@ -49,6 +58,7 @@ export function createInputQueue({root, getController, onChange = () => {}, send
     return (
       !closed &&
       !draining &&
+      !changing &&
       !paused &&
       readyState(s, threadId) &&
       rows[0]?.status === 'queued' &&
@@ -61,6 +71,7 @@ export function createInputQueue({root, getController, onChange = () => {}, send
       epoch = stopEpoch;
     if (c.state.threadId !== id) throw Error('對話已切換。');
     if (draining) throw Error('已有訊息正在送出。');
+    if (changing) throw Error('待送訊息正在儲存，請稍候。');
     if (editingWrites.has(row) || row.status === 'editing') throw Error('請先完成這則訊息的編輯。');
     if (row.status !== 'queued') throw Error('送出狀態未確認，請先查明；不自動重送。');
     if (immediate && c.state.busy && c.state.capabilities?.steer === false)
@@ -118,7 +129,8 @@ export function createInputQueue({root, getController, onChange = () => {}, send
     // Loading after an explicit native open reuses the queue, never resumes saved rows.
     async load(id) {
       clearTimeout(timer);
-      await chain;
+      timer = null;
+      await chain.catch(() => {});
       threadId = id;
       rows = [];
       paused = false;
@@ -146,12 +158,9 @@ export function createInputQueue({root, getController, onChange = () => {}, send
         throw Error('附件格式無效。');
       const row = {id: randomUUID(), text, attachmentIds, createdAt: new Date().toISOString(), status: 'queued'};
       rows.push(row);
-      try {
-        await save();
-      } catch (e) {
+      await save(() => {
         rows = rows.filter(r => r !== row);
-        throw e;
-      }
+      });
       notify();
       api.schedule();
       return {queued: true, id: row.id};
@@ -164,16 +173,24 @@ export function createInputQueue({root, getController, onChange = () => {}, send
       }, 100);
     },
     async action({id, action, text}) {
+      if (changing) throw Error('待送訊息正在儲存，請稍候。');
       if (action === 'resume') {
         if (rows.some(r => r.status === 'uncertain')) throw Error('有送出未確認的訊息，請先查明並移除該筆。');
         const s = getController().state;
         if (!['ready', 'completed', 'working', 'failed', 'interrupted'].includes(s.status))
           throw Error(`目前對話狀態「${s.status}」無法繼續排隊。`);
+        changing = true;
         paused = false;
-        await save();
-        notify();
-        api.schedule();
-        return {resumed: true};
+        try {
+          await save(() => {
+            paused = true;
+          });
+          return {resumed: true};
+        } finally {
+          changing = false;
+          notify();
+          api.schedule();
+        }
       }
       const row = rows.find(r => r.id === id);
       if (!row) throw Error('找不到待送訊息，可能已經送出；未修改或重送。');
@@ -191,10 +208,7 @@ export function createInputQueue({root, getController, onChange = () => {}, send
         row.status = action === 'edit-start' ? 'editing' : 'queued';
         if (action === 'edit-save') row.text = text;
         try {
-          await save();
-        } catch (error) {
-          Object.assign(row, before);
-          throw error;
+          await save(() => Object.assign(row, before));
         } finally {
           editingWrites.delete(row);
         }
@@ -204,10 +218,17 @@ export function createInputQueue({root, getController, onChange = () => {}, send
       }
       if (action === 'remove') {
         if (row.status === 'sending') throw Error('訊息正在送出，不能撤回。');
+        const index = rows.indexOf(row);
+        changing = true;
         rows = rows.filter(r => r !== row);
-        await save();
-        notify();
-        return {removed: true};
+        try {
+          await save(() => rows.splice(index, 0, row));
+          return {removed: true};
+        } finally {
+          changing = false;
+          notify();
+          api.schedule();
+        }
       }
       if (action === 'send-now') return deliver(row, true);
       throw Error('未知的佇列操作。');
@@ -226,7 +247,7 @@ export function createInputQueue({root, getController, onChange = () => {}, send
       await chain;
     },
     get sending() {
-      return draining || editingWrites.size > 0;
+      return draining || changing || writing > 0 || editingWrites.size > 0;
     }
   };
   return api;

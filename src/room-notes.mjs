@@ -16,7 +16,8 @@ export function createRoomNotes({root, onChange = () => {}}) {
     chains = new Map(),
     // Claimed notes that may still be restored keep their slots until commit; memory only, so a
     // restart frees them while consumed rows stay consumed.
-    claimed = new Map();
+    claimed = new Map(),
+    restorable = new Set();
   const file = id => {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id ?? '')) throw Error('Invalid room note conversation.');
     return path.join(root, '.runtime/room-notes', id + '.json');
@@ -43,13 +44,13 @@ export function createRoomNotes({root, onChange = () => {}}) {
   };
   const save = async id => {
     let list = rows.get(id);
-    const settled = list.filter(n => n.status !== 'pending');
+    const settled = list.filter(n => n.status !== 'pending' && !restorable.has(n));
     if (settled.length > KEEP_SETTLED) {
       const drop = new Set(settled.slice(0, settled.length - KEEP_SETTLED));
       list = list.filter(n => !drop.has(n));
-      rows.set(id, list);
     }
     await atomicWrite(file(id), JSON.stringify({notes: list}));
+    rows.set(id, list);
   };
   const view = n => ({
     id: n.id,
@@ -119,11 +120,17 @@ export function createRoomNotes({root, onChange = () => {}}) {
         }
         if (!chosen.length) return null;
         const consumedAt = new Date().toISOString();
-        for (const note of chosen) Object.assign(note, {status: 'consumed', consumedAt});
+        for (const note of chosen) {
+          restorable.add(note);
+          Object.assign(note, {status: 'consumed', consumedAt});
+        }
         try {
           await save(id);
         } catch (error) {
-          for (const note of chosen) Object.assign(note, {status: 'pending', consumedAt: null});
+          for (const note of chosen) {
+            restorable.delete(note);
+            Object.assign(note, {status: 'pending', consumedAt: null});
+          }
           throw error;
         }
         claimed.set(id, (claimed.get(id) ?? 0) + chosen.length);
@@ -131,6 +138,7 @@ export function createRoomNotes({root, onChange = () => {}}) {
         const settle = () => {
           if (!open) return;
           open = false;
+          for (const note of chosen) restorable.delete(note);
           const left = claimed.get(id) - chosen.length;
           if (left > 0) claimed.set(id, left);
           else claimed.delete(id);

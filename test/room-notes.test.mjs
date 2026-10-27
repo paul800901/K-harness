@@ -18,6 +18,35 @@ const tempRoot = name => mkdtemp(path.join(scratchBase, `room-notes-${name}-`));
 const saved = async (root, id) =>
   JSON.parse(await readFile(path.join(root, '.runtime/room-notes', `${id}.json`), 'utf8'));
 
+test('retention never prunes a claimed note that a not-sent turn may restore', async () => {
+  const root = await tempRoot('retention-claim');
+  const file = path.join(root, '.runtime/room-notes/room-b.json');
+  await fs.mkdir(path.dirname(file), {recursive: true});
+  await fs.writeFile(
+    file,
+    JSON.stringify({
+      notes: [
+        {id: 'pending', ...from, text: 'still required', status: 'pending'},
+        ...Array.from({length: 100}, (_, i) => ({id: `old-${i}`, ...from, text: 'old', status: 'consumed'}))
+      ]
+    })
+  );
+  const notes = createRoomNotes({root});
+  const claim = await notes.claim('room-b');
+  assert.equal(claim.count, 1);
+  await claim.restore();
+  assert.deepEqual(
+    notes.pending('room-b').map(n => n.id),
+    ['pending']
+  );
+  const reopened = createRoomNotes({root});
+  await reopened.load('room-b');
+  assert.deepEqual(
+    reopened.pending('room-b').map(n => n.id),
+    ['pending']
+  );
+});
+
 test('inbox delivers a note once, restores it only before handoff, discards, limits and survives restart', async () => {
   const root = await tempRoot('store');
   let changes = 0;

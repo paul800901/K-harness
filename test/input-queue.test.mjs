@@ -31,6 +31,155 @@ function controller({busy = false, status = busy ? 'working' : 'ready', send, st
 }
 const queueFor = (root, active, onChange = () => {}) => createInputQueue({root, getController: () => active, onChange});
 
+test('an enqueue behind a failed removal persists the restored row instead of a stale snapshot', async t => {
+  const base = await root(),
+    active = controller({busy: true}),
+    queue = queueFor(base, active);
+  await queue.load('queue-session');
+  await queue.pause();
+  const first = await queue.enqueue({text: 'first'});
+  const target = path.join(base, '.runtime/input-queues/queue-session.json'),
+    rename = fs.rename;
+  let entered,
+    release,
+    fail = true;
+  const started = new Promise(r => {
+    entered = r;
+  });
+  const gate = new Promise(r => {
+    release = r;
+  });
+  const mock = t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === target && fail) {
+      fail = false;
+      entered();
+      await gate;
+      throw Object.assign(Error('remove failed'), {code: 'EIO'});
+    }
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  try {
+    const removal = assert.rejects(queue.action({action: 'remove', id: first.id}), /remove failed/);
+    await started;
+    const addition = queue.enqueue({text: 'second'});
+    assert.equal(queue.sending, true);
+    release();
+    await Promise.all([removal, addition]);
+    assert.deepEqual(
+      queue.state.queuedMessages.map(r => r.text),
+      ['first', 'second']
+    );
+    assert.deepEqual(
+      JSON.parse(await fs.readFile(target, 'utf8')).rows.map(r => r.text),
+      ['first', 'second']
+    );
+  } finally {
+    release();
+    mock.mock.restore();
+    syncBuiltinESMExports();
+    await queue.close();
+  }
+});
+
+test('loading while a queue timer is pending does not leave scheduling permanently disabled', async () => {
+  const base = await root(),
+    active = controller({busy: true}),
+    queue = queueFor(base, active);
+  try {
+    await queue.load('queue-session');
+    await queue.enqueue({text: 'first'});
+    await queue.load('queue-session');
+    active.state.busy = false;
+    active.state.status = 'ready';
+    await queue.action({action: 'resume'});
+    await until(() => active.calls.length === 1);
+    assert.deepEqual(active.calls, [['send', 'first']]);
+  } finally {
+    await queue.close();
+  }
+});
+
+test('resume waits for durable storage and a concurrent stop keeps the queue paused', async t => {
+  const base = await root(),
+    active = controller({busy: true}),
+    queue = queueFor(base, active);
+  await queue.load('queue-session');
+  await queue.pause();
+  await queue.enqueue({text: 'held'});
+  active.state.busy = false;
+  active.state.status = 'ready';
+  const target = path.join(base, '.runtime/input-queues/queue-session.json'),
+    rename = fs.rename;
+  let release,
+    entered,
+    held = true;
+  const gate = new Promise(r => {
+    release = r;
+  });
+  const started = new Promise(r => {
+    entered = r;
+  });
+  const mock = t.mock.method(fs, 'rename', async (from, to) => {
+    if (to === target && held) {
+      held = false;
+      entered();
+      await gate;
+    }
+    return rename(from, to);
+  });
+  syncBuiltinESMExports();
+  try {
+    const resume = queue.action({action: 'resume'});
+    await started;
+    queue.schedule();
+    await new Promise(r => setTimeout(r, 150));
+    assert.deepEqual(active.calls, []);
+    const stop = queue.pause();
+    release();
+    await Promise.all([resume, stop]);
+    await new Promise(r => setTimeout(r, 150));
+    assert.equal(queue.state.queuePaused, true);
+    assert.deepEqual(active.calls, []);
+    assert.equal(JSON.parse(await fs.readFile(target, 'utf8')).paused, true);
+  } finally {
+    release();
+    mock.mock.restore();
+    syncBuiltinESMExports();
+    await queue.close();
+  }
+});
+
+for (const action of ['remove', 'resume'])
+  test(`failed ${action} persistence retains the queued input and its paused state`, async t => {
+    const base = await root(),
+      active = controller({busy: true}),
+      queue = queueFor(base, active);
+    await queue.load('queue-session');
+    await queue.pause();
+    const row = await queue.enqueue({text: 'keep me'});
+    const target = path.join(base, '.runtime/input-queues/queue-session.json'),
+      rename = fs.rename;
+    const mock = t.mock.method(fs, 'rename', async (from, to) => {
+      if (to === target) throw Object.assign(Error('queue write failed'), {code: 'EIO'});
+      return rename(from, to);
+    });
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(queue.action({action, id: row.id}), /queue write failed/);
+      assert.equal(queue.state.queuePaused, true);
+      assert.deepEqual(
+        queue.state.queuedMessages.map(r => r.text),
+        ['keep me']
+      );
+      assert.deepEqual(active.calls, []);
+    } finally {
+      mock.mock.restore();
+      syncBuiltinESMExports();
+      await queue.close();
+    }
+  });
+
 for (const busy of [true, false])
   test(`send-now preserves more than eight attachments while ${busy ? 'busy' : 'idle'}`, async () => {
     const base = await root(),
