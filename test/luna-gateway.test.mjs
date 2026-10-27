@@ -445,11 +445,13 @@ test('worker list tools expose only unfinished summaries without acknowledging o
       pid: 322,
       accountId: 'private account'
     },
-    {requestId: 'gemini-settled', provider: 'gemini', status: 'completed', settled: true, task: 'private task'}
+    {requestId: 'gemini-settled', provider: 'gemini', status: 'completed', settled: true, task: 'private task'},
+    {requestId: 'codex-old', provider: 'codex', status: 'running', settled: false, executionUnowned: true},
+    {requestId: 'codex-settled', provider: 'codex', status: 'completed', settled: true, executionUnowned: true}
   ];
   for (const {geminiOnly, prefix, expectedIds} of [
-    {geminiOnly: false, prefix: 'luna', expectedIds: ['gemini-old', 'codex-live']},
-    {geminiOnly: true, prefix: 'gemini', expectedIds: ['gemini-old']}
+    {geminiOnly: false, prefix: 'luna', expectedIds: ['gemini-old', 'codex-live', 'codex-old']},
+    {geminiOnly: true, prefix: 'gemini', expectedIds: ['gemini-old', 'codex-old']}
   ]) {
     const f = fixture();
     f.setListRows(rows);

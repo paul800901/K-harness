@@ -4,10 +4,11 @@ import path from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {startDesktop} from '../src/desktop-server.mjs';
-import {readNativeMessageFile} from '../src/native-message-file.mjs';
+import {resolveNativeMessageFile} from '../src/native-message-file.mjs';
+import {scratchBase} from './scratch.mjs';
 const out = probeEvidenceDir('native-content-ui');
 await mkdir(out, {recursive: true});
-const root = await mkdtemp(path.join(out, 'fake-')),
+const root = await mkdtemp(path.join(scratchBase, 'native-content-ui-')),
   workspace = path.join(root, 'workspace');
 await mkdir(workspace);
 const file = path.join(root, '中文 交接.md'),
@@ -60,10 +61,10 @@ try {
         models: async () => ({models: []}),
         usage: async () => ({}),
         sessions: async () => ({sessions: []}),
-        messageFile: (href, context) => {
+        messageFilePath: (href, context) => {
           assert.equal(context.threadId, state.threadId);
           requests.push(href);
-          return readNativeMessageFile(state, href);
+          return resolveNativeMessageFile(state, href);
         },
         close: async () => {}
       })

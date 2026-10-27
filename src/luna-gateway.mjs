@@ -340,7 +340,11 @@ function createMcpServer(
         const workers = rows
           .filter(
             record =>
-              record && !record.settled && (!processOnly || ['gemini', 'claude', 'api'].includes(record.provider))
+              record &&
+              !record.settled &&
+              (!processOnly ||
+                ['gemini', 'claude', 'api'].includes(record.provider) ||
+                (record.provider === 'codex' && record.executionUnowned === true))
           )
           .map(record => ({
             ...Object.fromEntries(
