@@ -30,7 +30,7 @@ let seq = 0,
   nextBrief = '原始需求與重要修正已帶入。';
 const calls = [],
   pending = new Set();
-const nativeFactory = ({onChange}) => {
+const nativeFactory = ({onChange, prepareHumanSend}) => {
   const state = {
     status: 'idle',
     workspace: root,
@@ -72,6 +72,8 @@ const nativeFactory = ({onChange}) => {
       return {threadId: state.threadId};
     },
     async send(data) {
+      const prepared = await prepareHumanSend(data);
+      data = {...data, text: prepared?.text ?? data.text};
       calls.push({op: 'native-send', ...data});
       state.messages.push({
         id: `native-${calls.length}`,

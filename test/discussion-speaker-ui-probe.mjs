@@ -28,7 +28,7 @@ let seq = 0,
 const calls = [];
 const noMark = false,
   nextBrief = '這是帶日期的背景摘要，不是系統通知。';
-const nativeFactory = ({onChange}) => {
+const nativeFactory = ({onChange, prepareHumanSend}) => {
   const state = {
     status: 'idle',
     workspace: root,
@@ -70,6 +70,8 @@ const nativeFactory = ({onChange}) => {
       return {threadId: state.threadId};
     },
     async send(data) {
+      const prepared = await prepareHumanSend(data);
+      data = {...data, text: prepared?.text ?? data.text};
       calls.push({op: 'native-send', ...data});
       state.messages.push({
         id: `native-${calls.length}`,

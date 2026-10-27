@@ -242,8 +242,16 @@ const controller = {
     if (context.threadId !== file.threadId) throw Error('fake attachment belongs to another thread');
     return {name: file.name, path: path.join(root, file.path), size: file.size, contentType: file.contentType};
   },
-  async artifact() {
-    return {name: 'result.txt', contentType: 'text/plain', isText: true, bytes: Buffer.from('REMOTE_DOWNLOAD_OK')};
+  async artifactSource() {
+    const file = path.join(root, 'result.txt');
+    await writeFile(file, 'REMOTE_DOWNLOAD_OK');
+    return {
+      path: file,
+      name: 'result.txt',
+      contentType: 'text/plain',
+      isText: true,
+      size: Buffer.byteLength('REMOTE_DOWNLOAD_OK')
+    };
   },
   async close() {}
 };
@@ -289,12 +297,16 @@ const app = await startDesktop({
         new Promise(resolve => {
           if (signal?.aborted) return resolve({ok: true, prepared: false});
           warmResolve = resolve;
-          signal?.addEventListener('abort', () => {
-            if (warmResolve === resolve) {
-              warmResolve = null;
-              resolve({ok: true, prepared: false});
-            }
-          }, {once: true});
+          signal?.addEventListener(
+            'abort',
+            () => {
+              if (warmResolve === resolve) {
+                warmResolve = null;
+                resolve({ok: true, prepared: false});
+              }
+            },
+            {once: true}
+          );
         }),
       transcribe: async audio => {
         if (warmResolve) {
