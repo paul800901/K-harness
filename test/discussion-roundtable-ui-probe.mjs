@@ -43,6 +43,26 @@ async function checkLayout(page, compact, context) {
     assert(layout.names, 'compact cards must identify their speaker without hidden table headers');
   } else assert(layout.headersFit, 'wide comparison must fit host and up to two participant columns');
 }
+// The shared focus ring sits 4px outside a control; the roundtable clips overflow, so edge controls need room.
+async function checkFocusRoom(page, context) {
+  const clipped = await page.locator('.discussion-roundtable').evaluate(root => {
+    const zoom = Number(getComputedStyle(document.documentElement).getPropertyValue('--k-ui-scale')) || 1;
+    const ring = 4 * zoom,
+      box = root.getBoundingClientRect();
+    return [
+      ...root.querySelectorAll(
+        '.discussion-roundtable-title select, .discussion-roundtable-title button, .discussion-roundtable-summary summary, .discussion-roundtable-actions button, .discussion-roundtable-mobile nav select'
+      )
+    ]
+      .filter(e => e.getClientRects().length)
+      .filter(e => {
+        const r = e.getBoundingClientRect();
+        return r.top - ring < box.top - 0.5 || r.left - ring < box.left - 0.5 || r.right + ring > box.right + 0.5;
+      })
+      .map(e => e.getAttribute('aria-label') || e.textContent.trim());
+  });
+  assert.deepEqual(clipped, [], `focus rings must not be clipped at the roundtable edge: ${JSON.stringify(context)}`);
+}
 function snapshot(count, legacy = false) {
   const participants = Array.from({length: count}, (_, i) => ({
     id: `p${i + 1}`,
@@ -225,6 +245,7 @@ try {
       await page.waitForFunction(() => document.querySelector('.composer-input')?.value === '');
       await page.getByRole('button', {name: '開啟圓桌', exact: true}).click();
       await page.locator('.discussion-roundtable-pages').waitFor();
+      await checkFocusRoom(page, {count, legacy, width});
       await page.locator('.discussion-roundtable-map button').nth(1).click();
       await page.waitForFunction(() => {
         const n = document.querySelector('.discussion-roundtable-pages');
@@ -246,6 +267,7 @@ try {
         for (const status of ['回覆中', '已完成', '未完成', '本批未點名'])
           assert(await page.locator(`td[data-status="${status}"]`).count());
       await checkLayout(page, true, {count, legacy, scale: 100, panel: 420});
+      await checkFocusRoom(page, {count, legacy, panel: 420});
       await page.screenshot({path: path.join(output, `${count}-${width}-${legacy ? 'legacy' : 'new'}-compact.png`)});
       // Compact cards retain full-text navigation, vertical position and the run-bound target action.
       const lastCard = page
