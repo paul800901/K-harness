@@ -193,7 +193,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
         <>
           {!mobile && (
             <details className="discussion-roundtable-summary" open>
-              <summary>討論整理（AI 產生）</summary>
+              <summary className="secondary">討論整理（AI 產生）</summary>
               <p data-empty={!data.summary}>{data.summary?.text ?? '尚未產生整理。'}</p>
               <div className="discussion-roundtable-actions">
                 {data.summary && (
@@ -242,7 +242,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
                             className={c.id === 'host' ? 'discussion-roundtable-host' : undefined}
                             style={{'--seat': seatColor(run.participants.findIndex(p => p.id === c.id))}}
                           >
-                            <button className="discussion-roundtable-cell" onClick={() => open(c)}>
+                            <button className="secondary discussion-roundtable-cell" onClick={() => open(c)}>
                               <span className="discussion-roundtable-cell-name">{c.name}</span>
                               <span className="discussion-roundtable-cell-head">
                                 <strong>{label(r.round)}</strong>

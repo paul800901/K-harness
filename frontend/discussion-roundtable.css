@@ -6,7 +6,6 @@
 /* Every control in the roundtable must read as a button without hovering. */
 .discussion-roundtable .secondary{box-shadow:var(--k-shadow-1)}
 .discussion-roundtable .secondary:hover:not(:disabled){background:var(--k-hover);border-color:var(--k-ink-3)}
-.discussion-roundtable .secondary.danger{color:var(--k-danger)}
 .discussion-roundtable .secondary.danger:hover:not(:disabled){border-color:var(--k-danger);background:var(--k-danger-wash)}
 .discussion-roundtable .discussion-roundtable-target{align-self:flex-start;min-height:30px;padding:3px 10px;border-radius:999px;font-size:var(--k-text-sm)}
 .discussion-roundtable-actions{display:flex;flex-wrap:wrap;gap:8px}
@@ -23,7 +22,7 @@
 .discussion-roundtable-title span{flex:1}
 .discussion-roundtable-summary{flex-shrink:0;border:1px solid var(--k-line);padding:8px 10px 10px;border-radius:6px}
 .discussion-roundtable-summary p[data-empty="true"]{color:var(--k-ink-3);font-size:var(--k-text-sm);margin:0 0 8px}
-.discussion-roundtable-summary summary{cursor:pointer;min-height:36px}
+.discussion-roundtable-summary summary{cursor:pointer;min-height:36px;padding:6px 10px}
 .discussion-roundtable-summary p,.discussion-roundtable-cell p{display:-webkit-box;-webkit-line-clamp:5;-webkit-box-orient:vertical;overflow:hidden;white-space:pre-wrap;line-height:1.6;overflow-wrap:anywhere;margin:6px 0;text-align:left}
 .discussion-roundtable-grid{overflow:auto;min-height:0;flex:1;isolation:isolate;scrollbar-gutter:stable;container:roundtable / inline-size}
 .discussion-roundtable-grid table{border-collapse:separate;border-spacing:0;table-layout:fixed;width:max-content;min-width:100%}
@@ -35,7 +34,7 @@
 .discussion-roundtable-grid td{--seat:transparent;box-shadow:inset 3px 0 0 var(--seat)}
 .discussion-roundtable-grid .discussion-roundtable-host{background:var(--k-sunken)}
 .discussion-roundtable-grid i,.discussion-roundtable-map i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px}
-.discussion-roundtable-cell{display:block;width:100%;border:0;background:transparent;color:inherit;text-align:left}
+.discussion-roundtable-cell{display:block;width:100%;text-align:left}
 .discussion-roundtable-cell-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:4px 10px}
 .discussion-roundtable-cell-head small,.discussion-roundtable-full small{font-size:var(--k-text-sm)}
 .discussion-roundtable-full small{display:flex;margin-top:4px}
@@ -72,7 +71,7 @@
  .discussion-roundtable-mobile{display:flex;flex-direction:column;flex:1;min-height:0;gap:8px}
  .discussion-roundtable-mobile nav{display:flex;flex-direction:column}
  .discussion-roundtable .discussion-roundtable-target{min-height:44px}
- .discussion-roundtable-map{display:flex;gap:6px;overflow:auto;flex-shrink:0;padding:2px}
+ .discussion-roundtable-map{display:flex;gap:6px;overflow:auto;flex-shrink:0;padding:4px}
  .discussion-roundtable-map button{flex-shrink:0;padding:8px}
  .discussion-roundtable-map i{margin:0}
  .discussion-roundtable-pages{display:flex;flex:1;min-height:0;overflow-x:auto;scroll-snap-type:x mandatory;overscroll-behavior-x:contain}
