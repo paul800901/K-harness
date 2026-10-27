@@ -3,6 +3,7 @@
 .discussion-roundtable-entry{padding:16px;border:1px solid var(--k-line);border-radius:10px;overflow-wrap:anywhere}
 .discussion-roundtable-entry>strong{display:block;white-space:pre-wrap}
 .discussion-roundtable-entry>p{font-size:var(--k-text-sm);color:var(--k-ink-3)}
+.discussion-run-notice{white-space:pre-wrap;overflow-wrap:anywhere}
 .discussion-roundtable-title{height:auto;padding:0;display:flex;flex-wrap:wrap;align-items:center;gap:8px;flex-shrink:0}
 .discussion-roundtable-title select{width:100%;min-width:0;text-overflow:ellipsis}
 .discussion-roundtable-title span{flex:1}

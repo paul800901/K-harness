@@ -46,6 +46,7 @@ export function DiscussionEntry({record, state, onOpen}) {
         {discussionModes[run?.mode] ?? '歷史討論'} · {run?.participants?.length ?? 0} 人 ·{' '}
         {data.inferred ? '推估 ' : ''}第 {data.last} 批 · {discussionStatus[run?.status] ?? '歷史紀錄'}
       </p>
+      {run?.error && <p className="discussion-run-notice">{run.error}</p>}
       <button onClick={() => onOpen?.(record.runId)}>開啟圓桌</button>
     </section>
   );
@@ -148,7 +149,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
           </button>
         )}
       </header>
-      {run.error && <p role="alert">{run.error}</p>}
+      {run.error && <p className="discussion-run-notice">{run.error}</p>}
       {data.inferred && <small>舊紀錄：依時間與發言者推估批次；安排未記錄。</small>}
       {cell ? (
         <div className="discussion-roundtable-reader">

@@ -14,6 +14,7 @@ import {officialCodexLoginUrl} from '../shared/codex-login-url.mjs';
 import {createGeminiLogin} from './gemini-login.mjs';
 import {listProjects, addProject, updateProject} from './projects.mjs';
 import {readSelfUpdate} from './self-update.mjs';
+import {createSidebarPreferences} from './sidebar-preferences.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
@@ -65,6 +66,7 @@ export async function startDesktop({
   maxPendingEventBytes = 16 * 1024 * 1024,
   maxBehindMs = 15000
 }) {
+  const sidebarPreferences = await createSidebarPreferences(root);
   const remoteFile = path.join(root, '.local', 'remote-access.json');
   let remoteConfig = null,
     remoteError = null;
@@ -160,7 +162,11 @@ export async function startDesktop({
       .finally(() => recoveringLogin.delete(provider));
   });
   const publicState = () => {
-    const state = controller.state;
+    const state = {
+      ...controller.state,
+      sidebarPreferences: sidebarPreferences.value,
+      sidebarPreferencesError: sidebarPreferences.error
+    };
     return geminiAccounts?.cachedUsage
       ? {...state, usage: {...state.usage, gemini: geminiAccounts.cachedUsage}}
       : state;
@@ -680,7 +686,10 @@ export async function startDesktop({
           data.id.length > 128 ||
           typeof data.audioBase64 !== 'string'
         )
-          throw new LocalDictationError('請提供有效的 id 與 audioBase64 音訊資料。', {code: 'INVALID_REQUEST', statusCode: 400});
+          throw new LocalDictationError('請提供有效的 id 與 audioBase64 音訊資料。', {
+            code: 'INVALID_REQUEST',
+            statusCode: 400
+          });
         const abort = new AbortController();
         const disconnected = () => {
           if (!res.writableEnded) abort.abort();
@@ -757,6 +766,12 @@ export async function startDesktop({
       }
       if (url.pathname === '/api/projects/metadata')
         return json(200, await updateProject(root, data, (await controller.sessions()).sessions));
+      if (url.pathname === '/api/sidebar/preferences') {
+        if (isRemote && data.initialize) return json(403, {error: '首次排序沿用電腦已保存的設定。'});
+        const preferences = await sidebarPreferences.update(data);
+        publish();
+        return json(200, {preferences});
+      }
       if (url.pathname === '/api/attention/read') return json(200, controller.markViewed(data));
       // The page only pauses, resumes or deletes; edits to timing or text go through the AI tools.
       if (url.pathname === '/api/schedules/update') {

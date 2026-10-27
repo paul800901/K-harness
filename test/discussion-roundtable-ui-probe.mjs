@@ -382,6 +382,37 @@ try {
       await emit();
       await page.getByText('同場快照已更新', {exact: true}).waitFor();
       assert.equal(await mode.inputValue(), 'review', 'same-run snapshots must not erase an explicit new choice');
+      const issue = 'Gemini 3.8 Flash：agy no output produced（沒有最終回答）。';
+      state.discussion.error = issue;
+      state.discussion.runs[0].error = issue;
+      state.discussion.runs[0].status = 'failed';
+      await emit();
+      await page.locator('.discussion-roundtable-entry .discussion-run-notice').waitFor();
+      assert.equal(await page.locator('.discussion-controls').getByText(issue).count(), 0);
+      assert.equal(await page.locator('.discussion-roundtable-entry .discussion-run-notice').innerText(), issue);
+      state.discussion.runs.push({
+        id: 'clean-run',
+        question: '下一場討論',
+        mode: 'meeting',
+        status: 'completed',
+        participants: []
+      });
+      Object.assign(state.discussion, {id: 'clean-run', error: null});
+      state.messages.push({
+        id: 'clean-question',
+        runId: 'clean-run',
+        kind: 'discussion',
+        role: 'user',
+        text: '下一場討論'
+      });
+      await emit();
+      await page.waitForFunction(() => document.querySelectorAll('.discussion-roundtable-entry').length === 2);
+      assert.equal(await page.locator('.discussion-roundtable-entry').nth(1).getByText(issue).count(), 0);
+      assert.equal(await page.locator('.discussion-roundtable-entry').first().getByText(issue).count(), 1);
+      // Restore the fixture for the existing room-switch checks.
+      state.discussion.runs.pop();
+      state.messages.pop();
+      Object.assign(state.discussion, {id: 'run-one', error: issue});
       const original = structuredClone(state);
       // Switching rooms remounts the composer. An absent discussion snapshot must not consume saved intent.
       await page.evaluate(() =>

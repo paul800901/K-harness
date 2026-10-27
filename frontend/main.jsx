@@ -1,5 +1,6 @@
 import {DiscussionRoundtable} from './discussion-roundtable.jsx';
 import {DiscussionControls, useDiscussionConfig} from './discussion-controls.jsx';
+import {useSidebarPreferences} from './sidebar-preferences.jsx';
 import {uploadAttachment} from './attachment-upload.mjs';
 import {WorkStatus, WorkerHealthLabel, WorkerDetails, SubWorkersList} from './work-status.jsx';
 
@@ -99,8 +100,6 @@ import {
   convertMessage,
   emptyUploads,
   narrowScreen,
-  readSidebarOrder,
-  readSidebarPreference,
   remoteClient
 } from './app-common.jsx';
 import {Approval, ArchiveManager, BranchDialog, Rename} from './dialogs.jsx';
@@ -942,14 +941,13 @@ function App() {
     [effort, setEffort] = useState(''),
     [accessMode, setAccessMode] = useState('workspace-write'),
     [theme, setTheme] = useState(() => readTheme()),
-    [sidebarLayout, setSidebarLayout] = useState(() =>
-      readSidebarPreference('k-sidebar-layout', 'grouped', ['grouped', 'flat'])
-    ),
-    [sidebarSort, setSidebarSort] = useState(() =>
-      readSidebarPreference('k-sidebar-sort', 'manual', ['recent', 'manual'])
-    ),
-    [manualOrder, setManualOrder] = useState(() => readSidebarOrder()),
     [panelWidth, setPanelWidth] = useState(null);
+  const {
+    layout: sidebarLayout,
+    sort: sidebarSort,
+    order: manualOrder,
+    save: saveSidebar
+  } = useSidebarPreferences(receivedState, sessions, setError);
   const roundtableReaderRef = useRef(null),
     seenRuns = useRef(new Map());
   roundtableReaderRef.current = roundtableReader;
@@ -1346,20 +1344,6 @@ function App() {
       .querySelector('meta[name="theme-color"]')
       ?.setAttribute('content', getComputedStyle(root).getPropertyValue('--k-desk').trim());
   }, [theme]);
-  useEffect(() => {
-    try {
-      localStorage.setItem('k-sidebar-layout', sidebarLayout);
-      localStorage.setItem('k-sidebar-sort', sidebarSort);
-    } catch {}
-  }, [sidebarLayout, sidebarSort]);
-  useLayoutEffect(() => {
-    if (sidebarSort === 'manual') setManualOrder(order => completeSessionOrder(order, sessions));
-  }, [sidebarSort, sessions]);
-  useEffect(() => {
-    try {
-      localStorage.setItem('k-sidebar-manual-order', JSON.stringify(manualOrder));
-    } catch {}
-  }, [manualOrder]);
 
   const upload = async files => {
     if (!files.length) return;
@@ -1571,22 +1555,28 @@ function App() {
       await refresh();
     });
   const moveConversation = (session, list, direction) =>
-    setManualOrder(order =>
-      moveSessionOrder(
-        order,
-        sessions.filter(s => isVisibleMainSession(s) && !s.archived),
-        list,
-        session.threadId,
-        direction
-      )
+    action(() =>
+      saveSidebar({
+        order: moveSessionOrder(
+          manualOrder,
+          sessions.filter(s => isVisibleMainSession(s) && !s.archived),
+          list,
+          session.threadId,
+          direction
+        )
+      })
     );
-  const chooseView = (setter, value) => {
-    setter(value);
+  const chooseView = value => {
+    void action(() => saveSidebar({layout: value}));
     viewMenu.close();
   };
   const chooseSort = value => {
-    if (value === 'manual' && sidebarSort !== 'manual') setManualOrder(completeSessionOrder([], sessions));
-    setSidebarSort(value);
+    void action(() =>
+      saveSidebar({
+        sort: value,
+        ...(value === 'manual' && sidebarSort !== 'manual' ? {order: completeSessionOrder([], sessions)} : {})
+      })
+    );
     viewMenu.close();
   };
   const openPanel = id => {
@@ -1832,16 +1822,10 @@ function App() {
                     aria-label="檢視選項"
                   >
                     <strong>分組方式</strong>
-                    <button
-                      aria-pressed={sidebarLayout === 'grouped'}
-                      onClick={() => chooseView(setSidebarLayout, 'grouped')}
-                    >
+                    <button aria-pressed={sidebarLayout === 'grouped'} onClick={() => chooseView('grouped')}>
                       {sidebarLayout === 'grouped' && <Check size={14} />}依工作區
                     </button>
-                    <button
-                      aria-pressed={sidebarLayout === 'flat'}
-                      onClick={() => chooseView(setSidebarLayout, 'flat')}
-                    >
+                    <button aria-pressed={sidebarLayout === 'flat'} onClick={() => chooseView('flat')}>
                       {sidebarLayout === 'flat' && <Check size={14} />}單一清單
                     </button>
                     <span className="view-divider" />

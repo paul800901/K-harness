@@ -278,11 +278,6 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
           </small>
         </div>
       )}
-      {d?.error && (
-        <p className="discussion-error" role="alert">
-          {d.error}
-        </p>
-      )}
       {catalogError && (
         <p className="discussion-error" role="alert">
           {catalogError}

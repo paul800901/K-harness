@@ -252,6 +252,7 @@ const reads = new Set([
   '/api/self-update'
 ]);
 const writes = new Set([
+  '/api/sidebar/preferences',
   '/api/discussion/message',
   '/api/gemini/accounts/refresh-all',
   '/api/dictation/prepare',
