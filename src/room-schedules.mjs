@@ -159,8 +159,8 @@ export function createRoomSchedules({
         const planned = new Date(s.nextRunAt),
           late = at - planned > OVERDUE_THRESHOLD_MS,
           label = formatScheduleTime(planned, s.timezone);
-        // Missed slots (K closed, sleep) collapse into this one late send; the next slot counts from now
-        // and is never sooner than the minimum spacing after this one.
+        // Missed slots collapse into one late send, spaced from now. On-time ticks retain the planned
+        // cadence so a few seconds of polling delay cannot skip a legal ten-minute slot.
         const from = new Date((late ? at : planned).getTime() + MIN_CRON_INTERVAL_MS - 1);
         let next;
         try {

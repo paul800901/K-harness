@@ -112,13 +112,13 @@ export function createUnifiedController(options) {
       // resent but still releases its claimed slots.
       if (error.notSent === true) {
         await claim?.restore().catch(() => {});
-        await prepared?.rejected?.();
+        await prepared?.rejected?.().catch(() => {});
       } else await claim?.commit().catch(() => {});
       throw error;
     }
     if (result?.sent === false) {
       await claim?.restore().catch(() => {});
-      await prepared?.rejected?.();
+      await prepared?.rejected?.().catch(() => {});
     } else await claim?.commit(controller.state.messages?.findLast(m => m.role === 'user')?.id).catch(() => {});
     return result;
   };
@@ -193,6 +193,7 @@ export function createUnifiedController(options) {
         return await deleteArchivedRecords({root, threadIds, confirmed, currentThreadId: active.state.threadId});
       } finally {
         changing = false;
+        changed();
       }
     },
     async review(data = {}) {
@@ -344,6 +345,7 @@ export function createUnifiedController(options) {
         return await active.prepareContinuation(data);
       } finally {
         changing = false;
+        changed();
       }
     },
     async moveWorkspace({threadId, workspace}) {

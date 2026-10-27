@@ -9,7 +9,7 @@ import {createDiscussionReader, MAX_DISCUSSION_FILE_BYTES} from '../src/discussi
 import {scratchBase} from './scratch.mjs';
 import {saveMainSession} from '../src/main-sessions.mjs';
 
-async function fixture({sendFailure, metadata, prepareHumanSend, stop} = {}) {
+async function fixture({sendFailure, sendResult = {sent: true}, metadata, prepareHumanSend, stop} = {}) {
   const root = await mkdtemp(path.join(scratchBase, 'host-'));
   let change;
   const calls = [],
@@ -34,7 +34,7 @@ async function fixture({sendFailure, metadata, prepareHumanSend, stop} = {}) {
           change();
           await discussionTurn?.bind({groupId: id, messageId: id + '-u'});
           if (sendFailure) throw sendFailure;
-          return {sent: true};
+          return sendResult;
         },
         async interruptDiscussion(id) {
           calls.push({interrupt: id});
@@ -59,6 +59,34 @@ async function fixture({sendFailure, metadata, prepareHumanSend, stop} = {}) {
   return {root, controller, state, calls, finish, change: () => change()};
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('failed handoff rollback cannot replace a confirmed not-sent outcome with uncertainty', async () => {
+  for (const throws of [true, false]) {
+    const f = await fixture({
+      sendFailure: throws ? Object.assign(Error('native refused'), {notSent: true}) : null,
+      sendResult: {sent: false},
+      prepareHumanSend: async data => ({
+        text: data.text,
+        rejected: async () => {
+          throw Error('rollback disk failure');
+        }
+      })
+    });
+    try {
+      await f.controller.open({model: 'gpt-6-astra'});
+      f.state.busy = true;
+      f.state.status = 'working';
+      const queued = await f.controller.send({text: 'keep raw input'});
+      f.state.busy = false;
+      f.state.status = 'completed';
+      await assert.rejects(f.controller.queue({id: queued.id, action: 'send-now'}), e => e.notSent === true);
+      assert.equal(f.controller.state.queuedMessages[0].status, 'queued');
+      assert.equal(f.controller.state.queuePaused, true);
+    } finally {
+      await f.controller.close();
+    }
+  }
+});
 
 test('metadata changes wait before host submission and never invalidate a submitted host turn', async () => {
   for (const submitted of [false, true]) {

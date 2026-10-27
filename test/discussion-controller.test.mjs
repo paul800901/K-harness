@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {createDiscussionController} from '../src/discussion-controller.mjs';
 import {discussionDecision} from '../shared/discussion.mjs';
 import {scratchBase} from './scratch.mjs';
+import {formatRoomNotes, parseRoomNotes} from '../shared/room-notes.mjs';
 
 const base = scratchBase;
 const deferred = () => {
@@ -329,6 +330,28 @@ test('handoff retains the full native prompt but displays only the real user ins
   const reopened = createDiscussionController({root: f.root, threadId: 'room'});
   await reopened.load();
   assert.equal(reopened.project(native).at(-1).displayText, '繼續評估，不實作');
+});
+
+test('discussion handoff projection retains appended coordination notes separately from the real user instruction', async () => {
+  const f = await fixture();
+  await f.start();
+  await f.d.settled();
+  const handoff = await f.d.handoff('繼續評估\n'),
+    native = formatRoomNotes(handoff.text, [
+      {id: 'note', fromThreadId: 'other', fromTitle: '另一房', text: '協調原文'}
+    ]);
+  const shown = f.d.project([{id: 'with-note', role: 'user', text: native}]).find(m => m.id === 'with-note');
+  assert.equal(shown.discussionHandoff, true);
+  assert.equal(parseRoomNotes(shown.displayText).text, '繼續評估');
+  assert.equal(parseRoomNotes(shown.displayText).notes[0].text, '協調原文');
+  assert.doesNotMatch(shown.displayText, /K 多模型討論交接/);
+  assert.equal(shown.text, native);
+  const reopened = createDiscussionController({root: f.root, threadId: 'room'});
+  await reopened.load();
+  assert.equal(
+    reopened.project([{id: 'with-note', role: 'user', text: native}]).find(m => m.id === 'with-note').displayText,
+    shown.displayText
+  );
 });
 
 test('new untargeted facts in parallel comparison reach everyone independently without cross-review', async () => {

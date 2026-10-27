@@ -4,6 +4,7 @@ import path from 'node:path';
 import {launchProbeBrowser, probeEvidenceDir} from './ui-probe.mjs';
 import {preview} from 'vite';
 import {formatResponseAnnotations} from '../frontend/response-annotations.mjs';
+import {formatRoomNotes} from '../shared/room-notes.mjs';
 const out = probeEvidenceDir('user-message-copy-ui');
 await mkdir(out, {recursive: true});
 const server = await preview({preview: {host: '127.0.0.1', port: 5204, strictPort: true}}),
@@ -23,7 +24,7 @@ const fakeFiles = [{id: 'fake-file', name: '假附件.txt'}],
       role: 'user',
       text: 'INTERNAL_HANDOFF_CONTEXT',
       discussionHandoff: true,
-      displayText: '請接著討論',
+      displayText: formatRoomNotes('請接著討論', [{id: 'note', fromTitle: '另一房', text: '待核對的補充'}]),
       attachments: fakeFiles
     },
     {id: 'attachment', role: 'user', text: '', attachments: fakeFiles},
@@ -131,7 +132,12 @@ try {
       assert.equal(await page.evaluate(() => window.copyWrites.at(-1)), expectedQuote);
       await users.nth(2).getByRole('button', {name: '複製', exact: true}).click();
       await users.nth(2).getByRole('button', {name: '已複製', exact: true}).waitFor();
-      assert.equal(await page.evaluate(() => window.copyWrites.at(-1)), '請接著討論');
+      assert.equal(
+        await page.evaluate(() => window.copyWrites.at(-1)),
+        '請接著討論\n\n協調訊息（來自「另一房」）\n待核對的補充'
+      );
+      assert.equal(await users.nth(2).getByText('協調訊息 1 則', {exact: true}).count(), 1);
+      assert.doesNotMatch(await users.nth(2).innerText(), /INTERNAL_HANDOFF_CONTEXT|k-room-notes-v1/);
       assert.equal(await users.nth(3).getByRole('button', {name: '複製', exact: true}).count(), 0);
       await page.locator('.assistant-message').getByRole('button', {name: '複製', exact: true}).click();
       await page.locator('.assistant-message').getByRole('button', {name: '已複製', exact: true}).waitFor();

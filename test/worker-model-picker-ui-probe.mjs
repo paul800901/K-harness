@@ -223,7 +223,7 @@ try {
     assert.equal(rows[0].value, 'auto');
     assert.deepEqual(
       ['GPT', 'Claude', 'Gemini'].map(group => rows.filter(row => row.group === group).length),
-      [7, 12, 4]
+      [8, 12, 4]
     );
     await page.screenshot({path: path.join(out, `${label}-native-catalog.png`)});
 
@@ -250,7 +250,7 @@ try {
     assert.deepEqual(rows.at(-1), {value: apiId, label: 'DeepSeek · DeepSeek-V4-Pro', group: 'API'});
     assert.deepEqual(
       ['GPT', 'Claude', 'Gemini', 'API'].map(group => rows.filter(row => row.group === group).length),
-      [7, 12, 4, 1]
+      [8, 12, 4, 1]
     );
     await picker.selectOption(apiId);
     assert.deepEqual(await effortPicker.locator('option').evaluateAll(nodes => nodes.map(node => node.value)), [
@@ -347,9 +347,9 @@ try {
   const result = {
     passed: true,
     syntheticCatalogs: true,
-    modelsPerCore: {gpt: 7, claude: 12, gemini: 4},
+    modelsPerCore: {gpt: 8, claude: 12, gemini: 4},
     baseChoices: 24,
-    baseChoicesIncludingAuto: 24,
+    baseChoicesIncludingAuto: 25,
     futureAdded: 2,
     excluded: ['hidden', 'unavailable'],
     checks: [

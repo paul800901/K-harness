@@ -1147,8 +1147,8 @@ export function createConversationController({
           try {
             await controller.selectWorkspace({path: saved.workspace});
             await controller.open({threadId: saved.threadId, model: saved.model});
-            reindex(controller);
             await loadDiscussion(controller);
+            reindex(controller);
           } catch (error) {
             try {
               await controller.close();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdir, mkdtemp, readFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createConversationController} from '../src/conversation-controller.mjs';
@@ -216,6 +216,28 @@ test('cold workspace move loads discussion projection and failed whole-app close
     await reopened.moveWorkspace({...f.a, workspace: f.root});
     assert.equal(reopened.state.discussion.status, 'completed');
     assert.equal(reopened.state.messages.filter(m => m.summary).length, 2);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test('failed cold discussion load leaves no closed room owner and explicit reopening can recover', async () => {
+  const f = await fixture();
+  await f.start();
+  await settled(f);
+  await f.c.close();
+  const file = path.join(f.root, '.runtime/discussions', f.a.threadId + '.json'),
+    saved = await readFile(file, 'utf8');
+  await writeFile(file, 'broken json');
+  const reopened = createConversationController({root: f.root, sessionFactory: f.factory});
+  try {
+    await assert.rejects(reopened.moveWorkspace({...f.a, workspace: f.root}));
+    const closed = f.owners.at(-1);
+    assert.equal(closed.closed, 1);
+    await writeFile(file, saved);
+    await reopened.open({...f.a, model: 'gpt-6.1-sol'});
+    assert.notEqual(f.owners.at(-1), closed);
+    assert.equal(reopened.state.discussion.status, 'completed');
   } finally {
     await reopened.close();
   }

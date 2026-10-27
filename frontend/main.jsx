@@ -1437,9 +1437,9 @@ function App() {
           const e = await r.json();
           throw Error(e.error);
         }
-        const result = r.headers.get('content-type')?.startsWith('image/')
-          ? {name, image: true}
-          : {...(await r.json()), name};
+        const isImage = r.headers.get('content-type')?.startsWith('image/');
+        if (isImage) await r.body?.cancel();
+        const result = isImage ? {name, image: true} : {...(await r.json()), name};
         if (previewRequest.current === requestId && stateRef.current.threadId === threadId)
           setModal({type: 'preview', threadId, route, ...result});
       } catch (e) {

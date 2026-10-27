@@ -179,11 +179,33 @@ test('historical unowned Gemini reconciliation is scoped, bounded, correctable/i
   }
 });
 
-test('reconcile rejects non-Gemini, settled, and currently owned/live records', async () => {
+test('historical GPT reconciliation records checked evidence without settling, adopting or replaying its native work', async () => {
+  const paths = await makePaths(),
+    record = legacyRecord({...paths, provider: 'codex', requestId: 'old-gpt', threadId: 'native-old'});
+  const file = await writeRecord({...paths, record});
+  const bridge = await makeBridge(paths);
+  try {
+    const note = await bridge.reconcile({
+      requestId: record.requestId,
+      summary: '成果尚未查明',
+      evidence: '已檢查指定路徑；沒有完成收據'
+    });
+    assert.equal(note.settled, false);
+    assert.equal(note.executionUnowned, true);
+    assert.equal(note.status, 'unresolved');
+    assert.equal(note.acceptance, 'not-reviewed');
+    assert.equal(JSON.parse(await readFile(file, 'utf8')).reconciliation.summary, '成果尚未查明');
+    assert.equal((await bridge.inspect({requestId: record.requestId})).settled, false);
+  } finally {
+    await bridge.close();
+  }
+});
+
+test('reconcile rejects unsupported providers, settled, and currently owned/live records', async () => {
   const paths = await makePaths();
   await writeRecord({
     ...paths,
-    record: legacyRecord({...paths, requestId: 'wrong-provider', provider: 'codex', executionUnowned: true})
+    record: legacyRecord({...paths, requestId: 'wrong-provider', provider: 'unknown-provider', executionUnowned: true})
   });
   await writeRecord({
     ...paths,

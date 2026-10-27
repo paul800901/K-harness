@@ -926,13 +926,13 @@ export async function createLunaBridge({
       const record = await load(requestId);
       if (
         !record ||
-        !PROCESS_PROVIDERS.includes(record.provider) ||
+        (!PROCESS_PROVIDERS.includes(record.provider) && record.provider !== 'codex') ||
         record.executionUnowned !== true ||
         record.settled !== false ||
         ownedRequests.has(requestId) ||
         processRuns.has(requestId)
       )
-        throw new Error('只能核對本對話重啟後失去執行歸屬的程序型子代理舊工單；不能代替停止或完成。');
+        throw new Error('只能核對本對話重啟後失去執行歸屬的子代理舊工單；不能代替停止或完成。');
       const note = {summary: summary.trim(), evidence: evidence.trim()};
       if (record.reconciliation?.summary === note.summary && record.reconciliation?.evidence === note.evidence)
         return clone(record);

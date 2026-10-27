@@ -4,6 +4,7 @@ import {randomUUID} from 'node:crypto';
 import {atomicWrite} from './atomic-write.mjs';
 import {openDiscussionSession} from './discussion-native.mjs';
 import {discussionModes, discussionDecision, discussionTranscript} from '../shared/discussion.mjs';
+import {parseRoomNotes} from '../shared/room-notes.mjs';
 
 const now = () => new Date().toISOString();
 export function createDiscussionController({
@@ -382,8 +383,17 @@ export function createDiscussionController({
           append(item.id);
           continue;
         }
-        const handoff = record.handoffs?.find(h => item.role === 'user' && h.prompt === item.text);
-        result.push(handoff ? {...item, displayText: handoff.userText, discussionHandoff: true} : item);
+        const roomNotes = item.role === 'user' ? parseRoomNotes(item.text) : null,
+          body = roomNotes?.text ?? item.text,
+          handoff = record.handoffs?.find(
+            h => item.role === 'user' && (roomNotes ? h.prompt.replace(/\n+$/, '') === body : h.prompt === body)
+          );
+        // Keep the notes envelope so the human UI can render it as notes, while hiding only our known handoff.
+        result.push(
+          handoff
+            ? {...item, displayText: handoff.userText + item.text.slice(body.length), discussionHandoff: true}
+            : item
+        );
         append(item.id);
       }
       for (const run of record.runs)

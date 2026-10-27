@@ -182,16 +182,11 @@ export function UserContent({record}) {
     return (
       <>
         <small>已帶入前段討論，保留各模型原始意見與分歧。</small>
-        <UserMessageText>{record.displayText}</UserMessageText>
+        <UserContent record={{...record, text: record.displayText, discussionHandoff: false}} />
       </>
     );
   const envelope = parseResponseAnnotations(record?.text ?? '');
-  if (!envelope)
-    return (
-      <UserMessageText>
-        <MessagePrimitive.Parts />
-      </UserMessageText>
-    );
+  if (!envelope) return <UserMessageText>{record?.displayText ?? <MessagePrimitive.Parts />}</UserMessageText>;
   return (
     <>
       {envelope.text && (
@@ -231,8 +226,7 @@ export function UserContent({record}) {
   );
 }
 export function userCopyText(record) {
-  if (record?.discussionHandoff) return record.displayText ?? '';
-  const text = record?.text ?? '',
+  const text = (record?.discussionHandoff ? record.displayText : record?.text) ?? '',
     envelope = parseResponseAnnotations(text);
   return envelope
     ? [
