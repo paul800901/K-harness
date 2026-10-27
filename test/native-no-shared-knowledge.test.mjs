@@ -71,6 +71,10 @@ for (const provider of ['codex', 'claude'])
           /K_KNOWLEDGE_OBSERVATIONS|K maintains local, project-scoped shared knowledge/
         );
         assert.deepEqual(calls.find(row => row.method === 'turn/start').params.input, [{type: 'text', text}]);
+        // The only addition is the private K common memory entry; nothing is captured back.
+        assert.deepEqual(Object.keys(calls.find(row => row.method === 'turn/start').params.additionalContext), [
+          'k_common_memory'
+        ]);
         hooks.onEvent({
           method: 'item/started',
           params: {
@@ -85,7 +89,8 @@ for (const provider of ['codex', 'claude'])
         });
       } else {
         assert.equal(hooks.sharedKnowledgeInstructions, undefined);
-        assert.deepEqual(started, [{type: 'text', text}]);
+        assert.match(started[0].text, /^<k_common_memory>/);
+        assert.deepEqual(started.slice(1), [{type: 'text', text}]);
         hooks.onMessage({type: 'assistant', uuid: 'plain-answer', message: {content: [{type: 'text', text: answer}]}});
         hooks.onMessage({type: 'result', is_error: false});
       }

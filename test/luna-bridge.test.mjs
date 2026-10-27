@@ -1407,3 +1407,21 @@ test('lunaResult includes subWorkers array when present on record', async () => 
   });
   assert.equal(withoutSub.subWorkers, undefined);
 });
+
+test('a K GPT worker turn carries the private common memory as native context, not inside the delegated task', async () => {
+  const file = path.join(root, 'agent-home', 'shared', 'common-memory.md');
+  await mkdir(path.dirname(file), {recursive: true});
+  await writeFile(file, '- GPT 工人假偏好');
+  try {
+    const {bridge, fixture} = await make();
+    await bridge.start({requestId: 'common-memory', task: '合成任務'});
+    const turn = fixture.calls.find(c => c.method === 'turn/start').p;
+    assert.equal(turn.additionalContext.k_common_memory.kind, 'application');
+    assert.match(turn.additionalContext.k_common_memory.value, /GPT 工人假偏好/);
+    assert.doesNotMatch(turn.input[0].text, /GPT 工人假偏好/);
+    assert.match(turn.input[0].text, /不得再委派子代理/);
+    await bridge.close?.();
+  } finally {
+    await fs.rm(file);
+  }
+});

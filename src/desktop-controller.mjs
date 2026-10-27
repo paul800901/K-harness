@@ -40,6 +40,7 @@ import {
   mainServiceTier
 } from './main-models.mjs';
 import {normalizeWorkerPolicy, validateWorkerPolicy, workerPolicyConfig} from './worker-policy.mjs';
+import {codexCommonContext, readCommonMemory} from './common-memory.mjs';
 import {collectNativeWorkerIds, checkNativeWorkers} from './native-workers.mjs';
 import {permissionMode, turnPermissions, threadPermissions, approvalRequest} from './desktop-permissions.mjs';
 import {stopThreadTerminals, listTerminals} from './background-terminals.mjs';
@@ -379,8 +380,11 @@ export function createDesktopController({
     JSON.stringify([model, workspace, policy, effort ?? null, access, serviceTier]);
   const effectiveServiceTier = result =>
     typeof result?.serviceTier === 'string' && result.serviceTier.length ? result.serviceTier : null;
+  // Every K-submitted turn, including notifications, carries the same common memory entry.
+  const commonContext = () => codexCommonContext(readCommonMemory(root), compactionIds.size);
   const startNativeTurn = async (active, params) => {
     const tier = params.serviceTier ?? 'default';
+    params = {...params, additionalContext: commonContext()};
     try {
       const result = await active.request('turn/start', params);
       if (host === active && state.threadId === params.threadId) state.effectiveServiceTier = tier;
@@ -3881,7 +3885,12 @@ export function createDesktopController({
         const input = codexInput(acceptedText, attachments);
         attempt.inputText = input[0].text;
         cancelGeminiHandoff();
-        const result = await activeHost.request('turn/steer', {threadId, expectedTurnId: expected, input});
+        const result = await activeHost.request('turn/steer', {
+          threadId,
+          expectedTurnId: expected,
+          input,
+          additionalContext: commonContext()
+        });
         if (result.turnId !== expected) throw new Error('修正未套用到目前回合；未自動重送。');
         message(
           attempt.itemId ?? 'steer:' + randomUUID(),

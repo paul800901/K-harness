@@ -8,7 +8,7 @@ import {createLunaBridge} from '../src/luna-bridge.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {
   availableWorkerModels,
-  MODEL_ROLE_GUIDANCE,
+  MODEL_PROTOCOL_GUIDANCE,
   validateWorkerPolicy,
   workerPolicyConfig
 } from '../src/worker-policy.mjs';
@@ -141,8 +141,8 @@ test('API models are listed last with the connection and API billing, and are ne
   );
   const without = workerPolicyConfig(undefined, {models: nativeModels, geminiGateway: true, provider: 'gemini'});
   assert.doesNotMatch(without.developer_instructions, /API models (prefix api:)/);
-  assert.match(MODEL_ROLE_GUIDANCE, /DeepSeek 等 API 模型（api: 開頭）：只在本人明確要求諮詢該模型/);
-  assert.match(MODEL_ROLE_GUIDANCE, /API 計費、唯讀[^\n]*排最後，不作一般選項或失敗備援/);
+  assert.match(MODEL_PROTOCOL_GUIDANCE, /DeepSeek 等 API 模型（api: 開頭）：只在本人明確要求諮詢該模型/);
+  assert.match(MODEL_PROTOCOL_GUIDANCE, /API 計費、唯讀[^\n]*排最後，不作一般選項或失敗備援/);
 });
 
 test('a saved API choice is a consult model, never an ordinary default or a native GPT default', () => {

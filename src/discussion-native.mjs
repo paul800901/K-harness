@@ -11,6 +11,7 @@ import {
   geminiOutcome
 } from './gemini-worker.mjs';
 import {atomicWrite} from './atomic-write.mjs';
+import {claudeCommonBlock, codexCommonContext, readCommonMemory, writeGeminiCommonRule} from './common-memory.mjs';
 import {modelProvider} from '../shared/model-provider.mjs';
 import {discussionSearchInstructions} from '../shared/discussion.mjs';
 
@@ -40,6 +41,8 @@ export async function openDiscussionSession({
     closing,
     identityWrite,
     lease,
+    commonSent = null,
+    compactions = 0,
     geminiSettled = true;
   const settle = (error, text) => {
     const p = pending;
@@ -71,6 +74,7 @@ export async function openDiscussionSession({
             pending.text = [...pending.parts.values()].join('\n');
             pending.onText?.(pending.text);
           }
+          if (event.method === 'item/completed' && p.item?.type === 'contextCompaction') compactions++;
           if (event.method === 'turn/started') turnId = p.turn?.id;
           if (event.method === 'turn/completed') {
             turnId = null;
@@ -130,6 +134,7 @@ export async function openDiscussionSession({
             ? {behavior: 'allow', updatedInput: input}
             : {behavior: 'deny', message: '討論不授權工具操作。'},
         onMessage(event) {
+          if (event.type === 'system' && event.subtype === 'compact_boundary') compactions++;
           if (event.type === 'assistant' && pending) {
             for (const part of event.message?.content ?? [])
               if (part.type === 'text') pending.parts.set(event.message.id ?? event.uuid, part.text ?? '');
@@ -190,6 +195,7 @@ export async function openDiscussionSession({
             identity.accountId = lease?.accountId ?? null;
             await onIdentity({...identity});
           }
+          await writeGeminiCommonRule(identity.home, root);
           const parser = geminiStream(event => {
             const id = event.conversation_id ?? event.init?.conversation_id ?? event.result?.conversation_id;
             if (id && !identity.nativeSessionId) {
@@ -246,12 +252,17 @@ export async function openDiscussionSession({
             threadId: identity.nativeSessionId,
             model: selection.model,
             input: [{type: 'text', text}],
+            additionalContext: codexCommonContext(readCommonMemory(root), compactions),
             approvalPolicy: 'never',
             sandboxPolicy: {type: 'readOnly'},
             ...(identity.effort ? {effort: identity.effort} : {})
           });
           if (pending) turnId = response.turn.id;
-        } else await host.start(text);
+        } else {
+          const memory = claudeCommonBlock(root, commonSent, compactions);
+          await host.start(memory.block ? [memory.block, {type: 'text', text}] : text);
+          commonSent = memory.key;
+        }
       } catch (error) {
         settle(error);
       }

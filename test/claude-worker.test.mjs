@@ -33,10 +33,12 @@ async function fixture({models = rows, closeError = false} = {}) {
       models,
       closed,
       pid: 4242,
-      async start(prompt) {
+      async start(content) {
         starts++;
-        handlers.prompt = prompt;
-        this.prompt = prompt;
+        // [K common memory block, delegated task]; the block is covered by common-memory tests.
+        handlers.common = content[0].text;
+        handlers.prompt = content[1].text;
+        this.prompt = content[1].text;
       },
       async interrupt() {
         interrupts++;

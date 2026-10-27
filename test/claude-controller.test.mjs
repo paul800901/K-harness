@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir, readFile, writeFile} from 'node:fs/promises';
+import {mkdtemp, mkdir, readFile, rm, writeFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {createClaudeController} from '../src/claude-controller.mjs';
@@ -11,6 +11,7 @@ import {syncBuiltinESMExports} from 'node:module';
 import {observeAtomicWrite} from './fixtures/observe-atomic-write.mjs';
 
 import {fixtureBrowser} from './fixtures/owner-browser.mjs';
+import {commonMemoryPath} from '../src/common-memory.mjs';
 import {scratchBase} from './scratch.mjs';
 import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
 
@@ -117,10 +118,15 @@ async function fixture({
     let resolveClosed;
     return {
       startCalls: [],
+      commonBlocks: [],
       closed: new Promise(resolve => {
         resolveClosed = resolve;
       }),
       async start(content) {
+        // The K common memory block is asserted separately; keep the user content positions.
+        const common = Array.isArray(content) && content[0]?.text?.startsWith('<k_common_memory>');
+        this.commonBlocks.push(common ? content[0].text : null);
+        if (common) content = content.slice(1);
         this.startCalls.push(content);
       },
       async interrupt() {
@@ -4606,6 +4612,48 @@ test('long worker IDs that differ only in the middle get distinct second-layer r
     assert.equal(parentIds.length, 2);
     assert.notEqual(parentIds[0], parentIds[1]);
     for (const id of parentIds) assert.match(id, /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
+  } finally {
+    await f.controller.close();
+  }
+});
+
+test('Claude ordinary turns carry the private common memory only when it changes; native commands stay plain', async () => {
+  const f = await fixture();
+  const file = commonMemoryPath(f.root);
+  await mkdir(path.dirname(file), {recursive: true});
+  await writeFile(file, '- Claude 假偏好甲');
+  const finish = () => f.hostOptions.onMessage({type: 'result', is_error: false});
+  try {
+    await f.controller.open({});
+    assert.doesNotMatch(f.hostOptions.workspaceInstructions ?? '', /Claude 假偏好/, 'one path only');
+    await f.controller.send({text: '第一句'});
+    assert.match(f.host.commonBlocks[0], /Claude 假偏好甲/);
+    assert.equal(f.host.startCalls[0][0].text, '第一句', 'the user text stays its own block');
+    finish();
+    await f.controller.send({text: '第二句'});
+    assert.equal(f.host.commonBlocks[1], null, 'unchanged memory is not stacked into history');
+    finish();
+    await writeFile(file, '- Claude 假偏好乙');
+    await f.controller.send({text: '第三句'});
+    assert.match(f.host.commonBlocks[2], /Claude 假偏好乙/);
+    assert.doesNotMatch(f.host.commonBlocks[2], /假偏好甲/);
+    finish();
+    f.hostOptions.onMessage({
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: f.hostOptions.sessionId,
+      uuid: 'compact-1'
+    });
+    await f.controller.send({text: '第四句'});
+    assert.match(f.host.commonBlocks[3], /Claude 假偏好乙/, 'a compaction delivers it once more');
+    finish();
+    await f.controller.compact();
+    assert.equal(f.host.startCalls.at(-1), '/compact');
+    finish();
+    await rm(file);
+    await f.controller.send({text: '第五句'});
+    assert.match(f.host.commonBlocks.at(-1), /無法讀取（檔案不存在/);
+    assert.equal(f.host.startCalls.at(-1)[0].text, '第五句');
   } finally {
     await f.controller.close();
   }

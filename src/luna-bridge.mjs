@@ -15,6 +15,7 @@ import {randomUUID} from 'node:crypto';
 import {createWorkerWatch, workerObservation, workerNeedsAttention, workerNoticeKey} from './worker-watch.mjs';
 
 import {normalizeWorkerPolicy, validateWorkerPolicy} from './worker-policy.mjs';
+import {codexCommonContext, readCommonMemory} from './common-memory.mjs';
 const safeId = value =>
   typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) && value !== '.' && value !== '..';
 const clone = value => structuredClone(value);
@@ -619,6 +620,7 @@ export async function createLunaBridge({
         model: policy.model,
         effort: policy.effort,
         input: [{type: 'text', text: instruction}],
+        additionalContext: codexCommonContext(readCommonMemory(root)),
         ...turnPermissions(accessMode, workspace)
       });
       record.turnId = begun.turn.id;

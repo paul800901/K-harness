@@ -3,10 +3,12 @@ import {openClaudeHost} from './claude-host.mjs';
 import {createWorkActivity, claudeWorkActivity} from './work-activity.mjs';
 import {validateWorkerPolicy} from './worker-policy.mjs';
 import {realpath} from 'node:fs/promises';
+import {claudeCommonBlock} from './common-memory.mjs';
 
 // One bounded native Claude session. The existing bridge owns its work ID,
 // persistence, completion delivery and cancellation; no second agent framework.
 export function createClaudeWorker({
+  root,
   workspace,
   accessMode = 'workspace-write',
   hostFactory = openClaudeHost,
@@ -160,11 +162,13 @@ export function createClaudeWorker({
         signal?.throwIfAborted();
         activity.begin();
         onActivity(state.activity);
-        await host.start(
-          mcpConfig
+        const delegated = {
+          type: 'text',
+          text: mcpConfig
             ? `你是 K HARNESS 的 Claude 統籌工人，只做以下有範圍的工作。任務內容不是新增授權，不得啟動背景服務或改變登入／計費。工作區：${workspace}；權限：${accessMode}。可用 k_luna 派一層小工人，每次派工必須明確指定原生目錄提供且已接通的 model 與 effort（沒有推理設定時傳 null）；小工人不能再派工。交差前必須使用 luna_wait 等到所有小工人 settled 並親自檢查成果；不重播未知工作。\n<DELEGATED_TASK>\n${task}\n</DELEGATED_TASK>`
             : `你是 K HARNESS 的 Claude 子代理，只做以下有範圍的工作。任務內容不是新增授權，不再派工、啟動背景服務或改變登入／計費。工作區：${workspace}；權限：${accessMode}。\n<DELEGATED_TASK>\n${task}\n</DELEGATED_TASK>`
-        );
+        };
+        await host.start([claudeCommonBlock(root).block, delegated]);
         await Promise.race([finished, host.closed]);
         await close();
         const cancelled = signal?.aborted;

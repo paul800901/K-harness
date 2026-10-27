@@ -243,7 +243,9 @@ test('confirmed stop reconnects the same conversation on new send without replay
     assert.equal(oldHost.starts.length, 1);
     assert.equal(newHost.options.resume, true);
     assert.equal(newHost.starts.length, 1);
-    assert.equal(newHost.starts[0][0].text, '重新開啟後才送出的新 prompt');
+    // A reopened host has no confirmed common memory delivery yet, so it is attached again.
+    assert.match(newHost.starts[0][0].text, /^<k_common_memory>/);
+    assert.equal(newHost.starts[0][1].text, '重新開啟後才送出的新 prompt');
   } finally {
     await f.controller.close();
   }

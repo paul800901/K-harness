@@ -1,11 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp, mkdir} from 'node:fs/promises';
+import {mkdtemp, mkdir, rm, writeFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
 import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions, saveMainSession} from '../src/main-sessions.mjs';
-import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
+import {MODEL_PROTOCOL_GUIDANCE} from '../src/worker-policy.mjs';
+import {commonMemoryPath} from '../src/common-memory.mjs';
 import {scratchBase} from './scratch.mjs';
 
 const fakeWorkerProvider = model =>
@@ -253,7 +254,7 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
     await f.c.open({model: 'gpt-6-astra', workerPolicy: {model: 'gpt-6-luna', effort: 'high'}});
     const config = f.calls.find(x => x.method === 'thread/start').params.config;
     assert.ok(
-      f.calls.find(x => x.method === 'thread/start').params.developerInstructions.includes(MODEL_ROLE_GUIDANCE)
+      f.calls.find(x => x.method === 'thread/start').params.developerInstructions.includes(MODEL_PROTOCOL_GUIDANCE)
     );
     assert.deepEqual(config.mcp_servers.k_gemini, {
       url: 'http://127.0.0.1:43210/mcp',
@@ -1049,6 +1050,70 @@ test('fresh Flash activity removes a queued quiet warning before the parent is i
     });
     await new Promise(r => setTimeout(r, 40));
     assert.equal(f.calls.filter(x => x.params?.toolOutput).length, 0);
+  } finally {
+    await f.c.close();
+  }
+});
+
+test('every K-submitted Codex turn carries the current private common memory as one native context entry', async () => {
+  await mkdir(scratchBase, {recursive: true});
+  const root = await mkdtemp(path.join(scratchBase, 'codex common memory 私人-'));
+  const file = commonMemoryPath(root);
+  await mkdir(path.dirname(file), {recursive: true});
+  await writeFile(file, '# 合成\n- GPT 假偏好甲\n');
+  const f = await fixture({root});
+  const turns = () => f.calls.filter(call => call.method === 'turn/start').map(call => call.params);
+  const memory = params => params.additionalContext.k_common_memory;
+  const complete = id =>
+    f.hostOptions.at(-1).onEvent({
+      method: 'turn/completed',
+      params: {threadId: 'codex-parent', turn: {id, status: 'completed'}}
+    });
+  try {
+    await f.c.open({model: 'gpt-6-astra'});
+    assert.doesNotMatch(
+      f.calls.find(call => call.method === 'thread/start').params.developerInstructions,
+      /GPT 假偏好/,
+      'the body uses one path only'
+    );
+    await f.c.send({text: '第一句'});
+    assert.deepEqual(Object.keys(turns()[0].additionalContext), ['k_common_memory']);
+    assert.equal(memory(turns()[0]).kind, 'application');
+    assert.match(memory(turns()[0]).value, /GPT 假偏好甲/);
+    assert.deepEqual(turns()[0].input, [{type: 'text', text: '第一句'}]);
+    await assert.rejects(f.c.steer({text: '補充'}), /修正未套用/);
+    const steer = f.calls.find(call => call.method === 'turn/steer').params;
+    assert.deepEqual(steer.additionalContext, turns()[0].additionalContext, 'a steer must not clear the native map');
+    complete('turn-1');
+
+    await f.c.send({text: '第二句'});
+    assert.deepEqual(turns()[1].additionalContext, turns()[0].additionalContext, 'unchanged: native dedupe');
+    complete('turn-2');
+
+    await writeFile(file, '# 合成\n- GPT 假偏好乙\n');
+    f.hostOptions.at(-1).onEvent({
+      method: 'item/completed',
+      params: {threadId: 'codex-parent', item: {type: 'contextCompaction', id: 'compact-1'}}
+    });
+    await f.c.send({text: '第三句'});
+    assert.match(memory(turns()[2]).value, /GPT 假偏好乙[\s\S]*第 1 次壓縮後重新附上/);
+    assert.doesNotMatch(memory(turns()[2]).value, /假偏好甲/);
+    complete('turn-3');
+
+    await rm(file);
+    const bridge = f.gatewayOptions[0].bridge;
+    await bridge.start({requestId: 'common-memory-worker', model: 'gpt-6-luna', effort: 'high', task: '合成'});
+    const record = f.workerRecords.get('common-memory-worker');
+    Object.assign(record, {status: 'completed', settled: true, output: '合成輸出'});
+    f.bridgeOptions[0].onChange(record);
+    await f.toolOutputSent;
+    await new Promise(resolve => setImmediate(resolve));
+    const notice = turns().find(params => params.toolOutput);
+    assert.deepEqual(notice.input, []);
+    assert.equal(notice.toolOutput.name, 'gemini_start');
+    assert.match(notice.toolOutput.output, /合成輸出/);
+    assert.match(memory(notice).value, /K 共同記憶目前無法讀取（檔案不存在/);
+    assert.doesNotMatch(memory(notice).value, /假偏好/);
   } finally {
     await f.c.close();
   }

@@ -37,7 +37,8 @@ import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {validateWorkspace, listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
 import {sessionAttachment, sessionAttachmentSource, sessionArtifact, workspaceGuidance} from './session-workspace.mjs';
-import {normalizeWorkerPolicy, workerPolicyConfig, MODEL_ROLE_GUIDANCE} from './worker-policy.mjs';
+import {normalizeWorkerPolicy, workerPolicyConfig, MODEL_PROTOCOL_GUIDANCE} from './worker-policy.mjs';
+import {writeGeminiCommonRule} from './common-memory.mjs';
 import {browserSessionKey} from './browser-mcp-config.mjs';
 
 const sessionId = id => typeof id === 'string' && /^gemini-[0-9a-f-]{36}$/iu.test(id);
@@ -242,7 +243,7 @@ export function createGeminiController({
     gatewayServer = null,
     gatewayThread = null,
     stops = 0,
-    workerInstructions = MODEL_ROLE_GUIDANCE,
+    workerInstructions = MODEL_PROTOCOL_GUIDANCE,
     workerNotifications = {},
     notifying = false,
     turnEnds = 0,
@@ -662,6 +663,7 @@ export function createGeminiController({
       path.join(home(), '.gemini/config/rules/k-model-roles.md'),
       `---\ntrigger: always_on\n---\n${workerInstructions}\n${geminiToolGuidance(state.accessMode, googleOps)}\n${memoryGuidance(sharedRules, state.accessMode)}\n${state.inputModalities.includes('audio') ? GEMINI_MEDIA_GUIDANCE + '\n' : ''}${workspaceGuidance(state)}${browserServer ? `${GEMINI_BROWSER_GUIDANCE}\n` : ''}${desktop ? `${DESKTOP_CONTROL_GUIDANCE}\n` : ''}@[K 共用學習規則](${sharedRules})\n`
     );
+    await writeGeminiCommonRule(home(), root);
     state.browserAccess = {
       enabled: !!browserServer,
       networkAccess: !!browserServer,

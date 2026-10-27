@@ -41,6 +41,7 @@ import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {claudeRateStatus} from './claude-rate-status.mjs';
 import {withBrowserMcp, toClaudeBrowserMcpServer, browserSessionKey} from './browser-mcp-config.mjs';
 import {reportAuthExpired as reportExpired} from './auth-expiry.mjs';
+import {claudeCommonBlock} from './common-memory.mjs';
 
 const SESSION_DIR = '.runtime/claude-sessions';
 const clone = value => structuredClone(value);
@@ -226,6 +227,15 @@ export function createClaudeController({
   let compactionIds = new Set(),
     goalRefreshNeeded = false,
     goalSettled = Promise.resolve();
+  // Last confirmed common-memory delivery; a new host or compaction delivers it again.
+  let commonSent = null;
+  const withCommonMemory = (active, content) => {
+    const memory = claudeCommonBlock(root, commonSent?.host === active ? commonSent.key : null, compactionIds.size);
+    return {
+      content: memory.block ? [memory.block, ...content] : content,
+      delivered: () => (commonSent = {host: active, key: memory.key})
+    };
+  };
   const compactionSnapshot = () => ({
     ids: [...compactionIds],
     complete: state.progress.compactionsComplete,
@@ -2192,7 +2202,9 @@ export function createClaudeController({
           }
           attempted = true;
           try {
-            await hostAtSend.start(content, {uuid: sentMessage.id});
+            const turn = withCommonMemory(hostAtSend, content);
+            await hostAtSend.start(turn.content, {uuid: sentMessage.id});
+            turn.delivered();
           } catch (error) {
             if (error.notSent === true) {
               // The host had exited or was not ready: nothing was written, so this is not an unknown send.
@@ -2312,7 +2324,9 @@ export function createClaudeController({
         if (host !== active || state.threadId !== threadId || !state.busy || stopping || closing || opening)
           throw Error('立即送入前對話已停止或切換。');
         cancelGeminiHandoff();
-        await active.start(content, {uuid: record.id});
+        const turn = withCommonMemory(active, content);
+        await active.start(turn.content, {uuid: record.id});
+        turn.delivered();
         void saveCurrent(record.createdAt).catch(() => {});
         return {steered: true, delivery: record.delivery};
       } catch (error) {

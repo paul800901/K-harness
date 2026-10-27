@@ -9,6 +9,7 @@ import {mkdir, stat} from 'node:fs/promises';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {geminiProjectMcp} from './gemini-project-mcp.mjs';
 import {atomicWrite} from './atomic-write.mjs';
+import {writeGeminiCommonRule} from './common-memory.mjs';
 
 const exec = promisify(execFile);
 
@@ -614,6 +615,7 @@ export function createGeminiWorker({
       path.join(targetHome, '.gemini', 'config', 'mcp_config.json'),
       JSON.stringify(geminiMcpConfig(browserServer, googleOps, projectMcp), null, 2)
     );
+    await writeGeminiCommonRule(targetHome, root);
     return googleOps;
   }
   async function models() {

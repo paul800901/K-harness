@@ -1,14 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
+import {mkdir, mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import {createGeminiController, geminiModelsFrom} from '../src/gemini-controller.mjs';
 import {createUnifiedController} from '../src/unified-controller.mjs';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {GEMINI_MEDIA_GUIDANCE, geminiToolGuidance} from '../src/gemini-worker.mjs';
-import {MODEL_ROLE_GUIDANCE} from '../src/worker-policy.mjs';
+import {MODEL_PROTOCOL_GUIDANCE} from '../src/worker-policy.mjs';
 import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from '../src/desktop-control-mcp.mjs';
+import {commonMemoryPath} from '../src/common-memory.mjs';
 import {scratchBase} from './scratch.mjs';
 
 const names = [
@@ -287,7 +288,7 @@ test('Gemini sends only new input, reopens native history and retains provider m
     const rules = await readFile(path.join(last.params.env.HOME, '.gemini/config/rules/k-model-roles.md'), 'utf8'),
       shared = path.join(f.root, 'agent-home', 'gemini', 'shared', 'learned-rules.md');
     // Without a worker gateway the room still receives the shared role guidance, never a "cannot delegate" text.
-    assert.ok(rules.startsWith(`---\ntrigger: always_on\n---\n${MODEL_ROLE_GUIDANCE}\n`));
+    assert.ok(rules.startsWith(`---\ntrigger: always_on\n---\n${MODEL_PROTOCOL_GUIDANCE}\n`));
     assert.ok(rules.includes(`${geminiToolGuidance('workspace-write')}\n`));
     assert.ok(rules.includes(`${GEMINI_MEDIA_GUIDANCE}\n`));
     assert.doesNotMatch(rules, /不能派工|未開放斜線指令/);
@@ -1095,7 +1096,7 @@ test('Gemini main reaches K workers through k_luna and receives each completion 
     assert.ok(settings.permissions.allow.includes('mcp(k_luna/*)'));
     assert.ok(!settings.permissions.deny.includes('mcp(*)'));
     const rules = await readFile(path.join(home, '.gemini/config/rules/k-model-roles.md'), 'utf8');
-    assert.ok(rules.includes(MODEL_ROLE_GUIDANCE));
+    assert.ok(rules.includes(MODEL_PROTOCOL_GUIDANCE));
     assert.match(rules, /any provider use k_luna \/ luna_start/);
     assert.match(rules, /gpt-6\.1-sol: high; claude-opus-5-5: high; gemini-3\.8-flash: low/);
     // The model starts a worker through the gateway; the bridge is created lazily for this room only.
@@ -1375,5 +1376,33 @@ test('agy native subagents show as running in the turn and end, result unknown, 
     assert.equal(ended.settled, true);
   } finally {
     await f.controller.close();
+  }
+});
+
+test('Gemini room reads private common memory through a separate short native reference rule each turn', async () => {
+  const f = await fixture();
+  const c = f.controller;
+  const file = commonMemoryPath(f.root);
+  try {
+    await mkdir(path.dirname(file), {recursive: true});
+    await writeFile(file, '- Gemini 假偏好甲');
+    await c.open({model: 'gemini-3.8-flash'});
+    await c.send({text: '第一句'});
+    await finish(c);
+    const home = f.calls.at(-1).params.env.HOME;
+    const rule = path.join(home, '.gemini/config/rules/k-common-memory.md');
+    const roles = await readFile(path.join(home, '.gemini/config/rules/k-model-roles.md'), 'utf8');
+    assert.ok((await readFile(rule, 'utf8')).includes(`@[K 共同記憶](${file})`));
+    assert.doesNotMatch(roles, /K 共同記憶\]|Gemini 假偏好/, 'not at the tail of the long room rule, no copy');
+    assert.doesNotMatch(f.calls.at(-1).args[f.calls.at(-1).args.indexOf('-p') + 1], /Gemini 假偏好/);
+    await rm(file);
+    await c.send({text: '第二句'});
+    await finish(c);
+    const missing = await readFile(rule, 'utf8');
+    assert.match(missing, /K 共同記憶目前無法讀取（檔案不存在/);
+    assert.doesNotMatch(missing, /@\[/);
+    await assert.rejects(readFile(file), {code: 'ENOENT'});
+  } finally {
+    await c.close();
   }
 });

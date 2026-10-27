@@ -586,11 +586,11 @@ test('MCP start forwards both worker choices and an explicit effort to the bridg
     const start = listed.result.tools.find(t => t.name === 'luna_start');
     assert.equal(start.inputSchema.properties.model.type, 'string');
     assert.equal(start.inputSchema.properties.model.enum, undefined);
-    assert.match(start.description, /Flash 是使用者優先的一般工人/);
-    assert.match(start.description, /不限機械性工作/);
+    // 2026-10-27: role preferences live in the private K common memory, not in tool text.
+    assert.match(start.description, /依 K 共同記憶的本人分工偏好與當輪明確指定選擇模型/);
+    assert.match(start.description, /無審查管道則標示待審，不冒稱完成/);
     assert.match(start.description, /不能跑指令/);
-    assert.match(start.description, /Sol 寫碼後必須交真正的 Opus 5\.5 審核/);
-    assert.match(start.description, /Luna 僅用於規則遵守要求極高的小任務/);
+    assert.doesNotMatch(start.description, /Flash 是使用者優先|優先 Flash|Opus 統籌|Luna 僅用於|Sol 寫碼後/);
     let id = 3;
     for (const model of [
       'gpt-6.1-sol',
