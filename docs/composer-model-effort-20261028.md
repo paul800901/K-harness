@@ -26,4 +26,5 @@
 - 真正 Opus 5.5（high）第二輪 `composer-model-effort-opus-followup-20261028`：確認最小修法足夠、無新阻擋，最終建置的 UI 全套（含 modal-scroll）通過即可合回並準備更新。兩輪皆唯讀審查，未執行測試。
 - 工作樹 `D:\K-harness-worktrees\composer-model-effort`，基線 `925dffff2f91d07850d0224e469a4230d8a70258`。
 - 已驗收程式版本 `3c22535e4f7b8e80af41f197c99dda09068e036c`；程式與本工程紀錄分開提交，合回 main 後由既有 `.local/update-ready.json` 提供此版本。
+- 已快轉合回 main、主工作樹乾淨、已合併分支刪除；更新標記已寫入並讀回相同完整程式 SHA。未帶桌面登入的直連 `GET /api/self-update` 回覆「請從桌面啟動 K。」，未取得正式按鈕的即時畫面，未繞過登入要求。
 - 正式環境仍為 `9013efdb15d6e59e66cbd9bee9162026f87932a2`。K 內無法更新正在執行的自身，依既有流程待本人按側欄「更新」；未執行自我停止、正式部署或 push。正式畫面讀回與部署後 push 尚未完成；東區未更新。
