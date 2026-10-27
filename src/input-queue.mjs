@@ -26,6 +26,7 @@ export function createInputQueue({root, getController, onChange = () => {}, send
     const next = chain
       .catch(() => {})
       .then(async () => {
+        if (threadId !== id) return;
         // Capture after earlier operations have committed or rolled back; a queued write must not
         // persist a failed edit/removal from an optimistic snapshot taken before that rollback.
         try {

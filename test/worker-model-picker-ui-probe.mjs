@@ -20,7 +20,8 @@ const codexIds = [
   'gpt-6-luna',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
-  'gpt-5.6-luna'
+  'gpt-5.6-luna',
+  'gpt-6.1-terra'
 ];
 const codex = codexIds.map((model, index) => ({
   model,
@@ -79,7 +80,7 @@ assert.deepEqual(
   ['high', 'low']
 );
 const baseModels = [...codex, ...claude, ...gemini];
-assert.equal(baseModels.length, 23, 'native fixture has 7 GPT, 12 Claude, and 4 parser-aggregated Gemini choices');
+assert.equal(baseModels.length, 24, 'native fixture has 8 GPT, 12 Claude, and 4 parser-aggregated Gemini choices');
 const futureGPT = {
   model: 'gpt-future-manual',
   displayName: 'Future GPT',
@@ -218,7 +219,7 @@ try {
         }))
       );
     let rows = await options();
-    assert.equal(rows.length, 24, '23 native worker models plus AI Auto');
+    assert.equal(rows.length, 25, '24 native worker models plus AI Auto');
     assert.equal(rows[0].value, 'auto');
     assert.deepEqual(
       ['GPT', 'Claude', 'Gemini'].map(group => rows.filter(row => row.group === group).length),
@@ -245,7 +246,7 @@ try {
     await accountRefresh.click();
     await picker.locator(`option[value="${apiId}"]`).waitFor({state: 'attached'});
     rows = await options();
-    assert.equal(rows.length, 25, '23 native worker models, one API model and AI Auto');
+    assert.equal(rows.length, 26, '24 native worker models, one API model and AI Auto');
     assert.deepEqual(rows.at(-1), {value: apiId, label: 'DeepSeek · DeepSeek-V4-Pro', group: 'API'});
     assert.deepEqual(
       ['GPT', 'Claude', 'Gemini', 'API'].map(group => rows.filter(row => row.group === group).length),
@@ -270,7 +271,7 @@ try {
     await picker.locator('option[value="gpt-future-manual"]').waitFor({state: 'attached'});
     await picker.locator('option[value="gemini-future-flash"]').waitFor({state: 'attached'});
     rows = await options();
-    assert.equal(rows.length, 26, 'two new native models are added to the 23 base models and Auto');
+    assert.equal(rows.length, 27, 'two new native models are added to the 24 base models and Auto');
     for (const excluded of ['gpt-hidden-fixture', 'gpt-unavailable-fixture'])
       assert.equal(
         rows.some(row => row.value === excluded),
@@ -347,7 +348,7 @@ try {
     passed: true,
     syntheticCatalogs: true,
     modelsPerCore: {gpt: 7, claude: 12, gemini: 4},
-    baseChoices: 23,
+    baseChoices: 24,
     baseChoicesIncludingAuto: 24,
     futureAdded: 2,
     excluded: ['hidden', 'unavailable'],

@@ -123,6 +123,11 @@ async function fixture({
         async artifact(name) {
           return {name, bytes: Buffer.from(state.threadId), contentType: 'text/plain', isText: true};
         },
+        async artifactSource(name) {
+          const file = path.join(root, `${state.threadId}-${name}`);
+          await writeFile(file, state.threadId);
+          return {path: file, name, contentType: 'text/plain', isText: true, size: Buffer.byteLength(state.threadId)};
+        },
         async attachmentFile(id) {
           return this.artifact(id);
         },
@@ -194,7 +199,8 @@ const eventually = async check => {
 };
 
 test('desktop file menu resolves the original room after switching and rejects unrelated destinations', async () => {
-  const f = await fixture(), c = f.controller;
+  const f = await fixture(),
+    c = f.controller;
   try {
     const a = await c.open({model: codexModel});
     const file = path.join(f.root, 'original.md');

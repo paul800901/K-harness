@@ -195,9 +195,11 @@ test('desktop remote access keeps local bootstrap isolated and gates the remote 
       calls.push(['uploadStream', data, size]);
       return {ok: true, threadId: data.threadId, size};
     },
-    artifact: async (artifactPath, context) => {
+    artifactSource: async (artifactPath, context) => {
       calls.push(['artifact', artifactPath, context]);
-      return {name: 'fake.txt', contentType: 'text/plain', isText: true, bytes: Buffer.from('fake artifact')};
+      const file = path.join(root, 'fake.txt');
+      await writeFile(file, 'fake artifact');
+      return {path: file, name: 'fake.txt', contentType: 'text/plain', isText: true, size: 13};
     },
     close: async () => {}
   };
@@ -854,7 +856,11 @@ test('remote dictation uses only authenticated audio requests, preserves dedup a
     413
   );
   assert.equal(calls, 0);
-  const prep = await request(url('/api/dictation/prepare'), {method: 'POST', headers: authenticated, body: {id: 'remote-prep'}});
+  const prep = await request(url('/api/dictation/prepare'), {
+    method: 'POST',
+    headers: authenticated,
+    body: {id: 'remote-prep'}
+  });
   assert.equal(prep.status, 200);
   assert.deepEqual(await prep.json(), {ok: true, prepared: false});
   const commandId = randomUUID();

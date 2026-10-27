@@ -12,6 +12,7 @@ const server = await preview({preview: {host: '127.0.0.1', port: 5189, strictPor
 const output = probeEvidenceDir('compact-model-picker-20260930/connection-cancel');
 const models = [
   ['gpt-6.1-sol', 'GPT-6.1-Sol'],
+  ['gpt-6.1-terra', 'GPT-6.1 Terra'],
   ['gpt-6-astra', 'GPT-6-Astra'],
   ['gpt-6-sol', 'GPT-6-Sol'],
   ['gpt-6-luna', 'GPT-6-Luna'],
@@ -143,7 +144,13 @@ try {
   let menu = page.getByRole('menu', {name: '主代理模型選單', exact: true});
   await menu.waitFor({state: 'visible'});
   await menu.getByRole('menuitemradio', {name: 'GPT-6.1-Sol', exact: true}).waitFor();
-  assert.equal(await menu.getByRole('menuitemradio').count(), 5);
+  assert.equal(await menu.getByRole('menuitemradio').count(), 6);
+  await menu
+    .getByRole('group', {name: 'Terra', exact: true})
+    .getByRole('menuitemradio', {name: 'GPT-6.1 Terra', exact: true})
+    .click();
+  assert.match(await page.getByRole('button', {name: '主代理模型', exact: true}).innerText(), /GPT-6.1 Terra/);
+  await picker.click();
   await page.keyboard.press('Escape');
   await menu.waitFor({state: 'hidden'});
   await provider.getByRole('button', {name: 'Claude', exact: true}).click();
@@ -167,7 +174,10 @@ try {
   await menu.waitFor({state: 'visible'});
   assert.equal(await menu.getByRole('menuitemradio').count(), 3);
   assert.equal(
-    await menu.getByRole('group', {name: 'Qwen'}).getByRole('menuitemradio', {name: /^Qwen3\.8 27B/}).count(),
+    await menu
+      .getByRole('group', {name: 'Qwen'})
+      .getByRole('menuitemradio', {name: /^Qwen3\.8 27B/})
+      .count(),
     1,
     'self-hosted Qwen keeps its real name and family'
   );

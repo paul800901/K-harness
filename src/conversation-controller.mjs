@@ -52,7 +52,8 @@ export function createConversationController({
 }) {
   const rooms = new Map(),
     controllers = new Set(),
-    locked = new Set();
+    locked = new Set(),
+    sendingRooms = new Set();
   // A turn whose reply may start the armed discussion, and why a requested start did not happen.
   const armedDiscussions = new Map(),
     discussionNotices = new Map();
@@ -176,7 +177,11 @@ export function createConversationController({
       threadId: id,
       executable: options.executable,
       ...discussionOptions,
-      askHost: (prompt, metadata) => controller.askHost(prompt, metadata),
+      askHost: (prompt, metadata) => {
+        const owner = rooms.get(id);
+        if (!owner || owner.state.threadId !== id) throw Error('主 session 不可用；未另開主持 session。');
+        return owner.askHost(prompt, metadata);
+      },
       ...(discussionSessionFactory ? {sessionFactory: discussionSessionFactory} : {}),
       onChange() {
         const owner = rooms.get(id) ?? controller;
@@ -214,6 +219,7 @@ export function createConversationController({
       roomNotes,
       roomTools,
       workerApi: discussionApi,
+      prepareHumanSend: data => discussion(controller)?.handoff(data.text ?? '', data.discussionNote ?? ''),
       onContinueConversation: data => requestContinuation(controller, data),
       onConversationSettled: data => {
         const task = finishContinuation(controller, data);
@@ -337,11 +343,12 @@ export function createConversationController({
           };
         });
     });
-  const target = data => {
+  const target = (data, {allowSending = false} = {}) => {
     if (closing) throw Error('K 正在關閉。');
     const controller = typeof data?.threadId === 'string' ? rooms.get(data.threadId) : null;
     if (!controller) throw Error('請指定已開啟的聊天室；未送出操作。');
-    if (locked.has(controller)) throw Error('此聊天室正在重新連線或建立分支，請稍候。');
+    if (locked.has(controller) && !(allowSending && sendingRooms.has(controller)))
+      throw Error('此聊天室正在重新連線或建立分支，請稍候。');
     if (idleProbe?.controller === controller)
       idleProbe.abort.abort(new DOMException('已讓路給聊天室操作。', 'AbortError'));
     return controller;
@@ -727,20 +734,13 @@ export function createConversationController({
     // rooms independently of native history before the first submission.
     if (!(await read(listMainSessions(root))).sessions.some(row => row.threadId === s.threadId)) return false;
     const workers = await read(workerRows(controller));
-    if (
-      workers.some(workerMayBeLive)
-    )
-      return false;
+    if (workers.some(workerMayBeLive)) return false;
     if (s.browserAccess?.enabled) {
       // A registered external gateway with no selected mode has never started a
       // browser. Do not confuse that idle state with lost/unavailable control.
       const browser = await read(browserRequest(root, s, s.threadId, '/state'));
       const notStarted = browser?.external === true && browser.browserMode === null;
-      if (
-        browser?.busy !== false ||
-        (!notStarted && browser?.available !== true) ||
-        browser?.recoveryRequired === true
-      )
+      if (browser?.busy !== false || (!notStarted && browser?.available !== true) || browser?.recoveryRequired === true)
         return false;
     }
     const finalWorkers = await read(workerRows(controller)),
@@ -1148,6 +1148,7 @@ export function createConversationController({
             await controller.selectWorkspace({path: saved.workspace});
             await controller.open({threadId: saved.threadId, model: saved.model});
             reindex(controller);
+            await loadDiscussion(controller);
           } catch (error) {
             try {
               await controller.close();
@@ -1232,10 +1233,13 @@ export function createConversationController({
     artifact(name, context) {
       return target(context).artifact(name);
     },
+    artifactSource(name, context) {
+      return target(context).artifactSource(name);
+    },
     messageFile(href, context) {
       return readNativeMessageFile(projected(target(context)), href);
     },
-    // In-process desktop menu only; not exposed as an HTTP/remote action.
+    // Resolve an exact native link for desktop reveal or a streamed HTTP response; never expose the path alone.
     messageFilePath(href, context) {
       return resolveNativeMessageFile(projected(target(context)), href);
     },
@@ -1408,14 +1412,12 @@ export function createConversationController({
     const d = discussion(c);
     if (!d) return c.send(data);
     locked.add(c);
-    let handoff,
-      armed = false;
+    sendingRooms.add(c);
+    let armed = false;
     try {
-      handoff = await d.handoff(data.text, settings ? discussionNote(settings) : '');
       const after = c.state.messages?.length ?? 0;
-      const result = await c.send({...data, text: handoff.text});
-      if (result.sent === false && !result.queued) await handoff.rejected?.();
-      else if (!result.queued) {
+      const result = await c.send({...data, ...(settings ? {discussionNote: discussionNote(settings)} : {})});
+      if (result.sent !== false && !result.queued) {
         // A message that starts a new turn replaces any earlier armed turn; a queued addition keeps it.
         armedDiscussions.delete(c);
         if (settings) {
@@ -1424,10 +1426,8 @@ export function createConversationController({
         }
       }
       return result;
-    } catch (error) {
-      if (error.notSent === true) await handoff?.rejected?.();
-      throw error;
     } finally {
+      sendingRooms.delete(c);
       locked.delete(c);
       // A turn that already ended is checked now; otherwise the room's next change will check it.
       if (armed) void checkArmedDiscussion(c);
@@ -1464,7 +1464,7 @@ export function createConversationController({
       await cancelContinuation(source, '本人停止工作，換房要求已取消。');
       if (locked.has(source) && !source.state.busy) return {cancelled: true, continuationCancelled: true};
     }
-    const c = target(data);
+    const c = target(data, {allowSending: true});
     const d = discussion(c);
     if (d?.busy) throw Error('停止討論須指定目前場次。');
     if (d?.held) return d.stop({threadId: c.state.threadId, runId: d.state.id});

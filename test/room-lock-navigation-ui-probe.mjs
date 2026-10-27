@@ -124,7 +124,7 @@ for (const viewport of [
     assert.ok(owners.every(owner => owner.sent === 0));
     assert.deepEqual(errors, []);
     assert.deepEqual(
-      posts.filter(p => p !== '/api/open'),
+      posts.filter(p => !['/api/open', '/api/sidebar/preferences'].includes(p)),
       []
     );
     await page.screenshot({path: path.join(base, `navigation-${viewport.width}.png`)});

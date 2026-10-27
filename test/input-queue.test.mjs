@@ -31,6 +31,22 @@ function controller({busy = false, status = busy ? 'working' : 'ready', send, st
 }
 const queueFor = (root, active, onChange = () => {}) => createInputQueue({root, getController: () => active, onChange});
 
+test('a save queued across room loading never writes the new room rows over the old room', async () => {
+  const base = await root(),
+    active = controller({busy: true}),
+    queue = queueFor(base, active);
+  await queue.load('queue-session');
+  await queue.enqueue({text: 'A1'});
+  await queue.enqueue({text: 'A2'});
+  await Promise.all([queue.pause(), queue.load('room-b'), queue.pause()]);
+  const saved = JSON.parse(await fs.readFile(path.join(base, '.runtime/input-queues/queue-session.json'), 'utf8'));
+  assert.deepEqual(
+    saved.rows.map(r => r.text),
+    ['A1', 'A2']
+  );
+  await queue.close();
+});
+
 test('an enqueue behind a failed removal persists the restored row instead of a stale snapshot', async t => {
   const base = await root(),
     active = controller({busy: true}),

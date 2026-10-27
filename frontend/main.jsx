@@ -1555,28 +1555,24 @@ function App() {
       await refresh();
     });
   const moveConversation = (session, list, direction) =>
-    action(() =>
-      saveSidebar({
-        order: moveSessionOrder(
-          manualOrder,
-          sessions.filter(s => isVisibleMainSession(s) && !s.archived),
-          list,
-          session.threadId,
-          direction
-        )
-      })
-    );
+    saveSidebar({
+      order: moveSessionOrder(
+        manualOrder,
+        sessions.filter(s => isVisibleMainSession(s) && !s.archived),
+        list,
+        session.threadId,
+        direction
+      )
+    }).catch(e => setError(e.message));
   const chooseView = value => {
-    void action(() => saveSidebar({layout: value}));
+    void saveSidebar({layout: value}).catch(e => setError(e.message));
     viewMenu.close();
   };
   const chooseSort = value => {
-    void action(() =>
-      saveSidebar({
-        sort: value,
-        ...(value === 'manual' && sidebarSort !== 'manual' ? {order: completeSessionOrder([], sessions)} : {})
-      })
-    );
+    void saveSidebar({
+      sort: value,
+      ...(value === 'manual' && sidebarSort !== 'manual' ? {order: completeSessionOrder([], sessions)} : {})
+    }).catch(e => setError(e.message));
     viewMenu.close();
   };
   const openPanel = id => {

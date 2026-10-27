@@ -241,7 +241,9 @@ for (const viewport of [
       JSON.stringify(consoleErrors)
     );
     assert.ok(
-      posts.every(p => ['/api/open', '/api/send', '/api/stop', '/api/viewed'].includes(p.path)),
+      posts.every(p =>
+        ['/api/open', '/api/send', '/api/stop', '/api/viewed', '/api/sidebar/preferences'].includes(p.path)
+      ),
       JSON.stringify(posts)
     );
     assert.equal(posts.filter(p => p.path === '/api/stop' && p.data.cancelOpening !== true).length, 0);

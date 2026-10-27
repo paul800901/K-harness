@@ -1,6 +1,6 @@
 import path from 'node:path';
 import {access, stat} from 'node:fs/promises';
-import {loadAttachment, readPresentedFile} from './desktop-files.mjs';
+import {loadAttachment, readPresentedFile, readPresentedPath} from './desktop-files.mjs';
 import {checkedPath} from './files.mjs';
 
 const inside = (root, file) => {
@@ -76,6 +76,15 @@ export async function sessionArtifact(workspace, previousWorkspaces, name) {
   const root = [workspace, ...(previousWorkspaces ?? [])].find(root => inside(root, name));
   if (!root) throw Error('成果不在這個對話使用過的工作區內。');
   return readPresentedFile(root, path.relative(root, name));
+}
+
+export async function sessionArtifactSource(workspace, previousWorkspaces, name) {
+  const root = path.isAbsolute(name)
+    ? [workspace, ...(previousWorkspaces ?? [])].find(root => inside(root, name))
+    : workspace;
+  if (!root) throw Error('成果不在這個對話使用過的工作區內。');
+  const target = await checkedPath(root, path.isAbsolute(name) ? path.relative(root, name) : name, false);
+  return {path: target, ...(await readPresentedPath(target, {maxBytes: 0}))};
 }
 
 export function workspaceGuidance(state) {

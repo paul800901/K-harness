@@ -17,6 +17,7 @@ import {
   sessionAttachmentSource,
   messageAttachment,
   sessionArtifact,
+  sessionArtifactSource,
   workspaceGuidance
 } from './session-workspace.mjs';
 import path from 'node:path';
@@ -2932,6 +2933,10 @@ export function createDesktopController({
     async artifact(name) {
       if (!state.artifacts.includes(name)) throw new Error('只開啟本對話已記錄的成果。');
       return sessionArtifact(state.workspace, state.previousWorkspaces, name);
+    },
+    async artifactSource(name) {
+      if (!state.artifacts.includes(name)) throw new Error('只開啟本對話已記錄的成果。');
+      return sessionArtifactSource(state.workspace, state.previousWorkspaces, name);
     },
     async metadata({threadId, title, archived, pinned}) {
       if (title !== undefined && (typeof title !== 'string' || !title.trim() || title.length > 120))

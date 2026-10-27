@@ -161,7 +161,7 @@ export function createRoomSchedules({
           label = formatScheduleTime(planned, s.timezone);
         // Missed slots (K closed, sleep) collapse into this one late send; the next slot counts from now
         // and is never sooner than the minimum spacing after this one.
-        const from = new Date(Math.max(at.getTime(), planned.getTime()) + MIN_CRON_INTERVAL_MS - 1);
+        const from = new Date((late ? at : planned).getTime() + MIN_CRON_INTERVAL_MS - 1);
         let next;
         try {
           next = s.cron ? nextTime(s.cron, s.timezone, from) : null;

@@ -31,7 +31,8 @@ export function createUnifiedController(options) {
     gemmaConnections = [],
     workerApi,
     inspect = inspectClaude,
-    roomNotes
+    roomNotes,
+    prepareHumanSend
   } = options;
   let active,
     changing = false,
@@ -89,26 +90,36 @@ export function createUnifiedController(options) {
   // directly and never carry coordination notes.
   const sendWithNotes = async (controller, data) => {
     const id = controller.state.threadId,
-      epoch = stopEpoch,
-      claim = roomNotes && id ? await roomNotes.claim(id, data.text ?? '') : null;
-    // A stop or room switch while the claim waited owns the send: nothing reaches the core.
-    if (epoch !== stopEpoch || changing || active !== controller || controller.state.threadId !== id) {
-      await claim?.restore().catch(() => {});
-      throw Object.assign(Error('送出前已停止或切換對話；訊息未送出。'), {notSent: true});
-    }
-    if (!claim) return controller.send(data);
-    let result;
+      epoch = stopEpoch;
+    let prepared,
+      claim,
+      result,
+      attempted = false;
     try {
-      result = await controller.send({...data, text: claim.text});
+      // Claim discussion context only when a human message actually leaves the queue.
+      // Queue edits/removals retain the person's original text and consume no handoff.
+      prepared = prepareHumanSend ? await prepareHumanSend(data) : undefined;
+      const text = prepared?.text ?? data.text ?? '';
+      claim = roomNotes && id ? await roomNotes.claim(id, text) : null;
+      if (epoch !== stopEpoch || changing || active !== controller || controller.state.threadId !== id)
+        throw Object.assign(Error('送出前已停止或切換對話；訊息未送出。'), {notSent: true});
+      const {discussionNote, ...input} = data;
+      attempted = true;
+      result = await controller.send({...input, text: claim?.text ?? text});
     } catch (error) {
+      if (!attempted) error.notSent = true;
       // Only a send that never reached the native core returns its notes; an unknown outcome is never
       // resent but still releases its claimed slots.
-      if (error.notSent === true) await claim.restore().catch(() => {});
-      else await claim.commit().catch(() => {});
+      if (error.notSent === true) {
+        await claim?.restore().catch(() => {});
+        await prepared?.rejected?.();
+      } else await claim?.commit().catch(() => {});
       throw error;
     }
-    if (result?.sent === false) await claim.restore().catch(() => {});
-    else await claim.commit(controller.state.messages?.findLast(m => m.role === 'user')?.id).catch(() => {});
+    if (result?.sent === false) {
+      await claim?.restore().catch(() => {});
+      await prepared?.rejected?.();
+    } else await claim?.commit(controller.state.messages?.findLast(m => m.role === 'user')?.id).catch(() => {});
     return result;
   };
   queue = createInputQueue({
@@ -171,6 +182,7 @@ export function createUnifiedController(options) {
         return await codex.metadata(data);
       } finally {
         changing = false;
+        changed();
       }
     },
     async deleteArchived({threadIds, confirmed} = {}) {
@@ -510,6 +522,7 @@ export function createUnifiedController(options) {
     'attachmentFile',
     'attachmentSource',
     'artifact',
+    'artifactSource',
     'steer',
     'goal',
     'compact',
@@ -560,7 +573,6 @@ export function createUnifiedController(options) {
         if (
           owner !== active ||
           threadId !== state.threadId ||
-          changing ||
           ['offline', 'error', 'uncertain', 'idle'].includes(state.status)
         ) {
           finish(
@@ -571,6 +583,7 @@ export function createUnifiedController(options) {
         if (!attempted) {
           if (signal?.aborted) return abort();
           if (
+            changing ||
             state.busy ||
             state.goalPending ||
             state.completionPending ||

@@ -148,6 +148,105 @@ async function make({
 }
 const noWrite = () => ({status: 'not-written'});
 
+test(
+  'cancelling a scheduled but not-started Gemini job wakes its event wait and removes live waiting state',
+  {timeout: 4000},
+  async () => {
+    const parentId = randomUUID();
+    let cancellations = 0;
+    const bridge = await createLunaBridge({
+      root,
+      workspace,
+      parentId,
+      geminiOnly: true,
+      geminiOptions: {
+        accounts: {
+          cancelWorkerHandoff: () => {
+            cancellations++;
+          }
+        }
+      },
+      geminiFactory: () => ({
+        run: async ({onHandoff, requestId}) => {
+          onHandoff({parentId, requestIds: [requestId], status: 'waiting'});
+          throw Object.assign(Error('waiting'), {
+            dispatch: 'not-started',
+            scheduling: {status: 'waiting', notificationRegistered: true}
+          });
+        }
+      })
+    });
+    try {
+      await bridge.start({requestId: 'waiting-cancel', task: 'fake', model: 'gemini-3.8-flash', effort: 'high'});
+      const initial = await bridge.wait({requestId: 'waiting-cancel', timeoutMs: 20});
+      assert.equal(initial.scheduling.status, 'waiting');
+      const waiting = bridge.wait({requestId: 'waiting-cancel', timeoutMs: null});
+      await bridge.cancel({requestId: 'waiting-cancel'});
+      const result = await waiting;
+      assert.equal(result.scheduling.notificationRegistered, false);
+      assert.notEqual(result.scheduling.status, 'waiting');
+      assert.equal(result.dispatch, 'not-started');
+      assert.equal(cancellations, 1);
+    } finally {
+      await bridge.close();
+    }
+  }
+);
+
+test('historical GPT records use their original workspace and unowned unfinished records do not block hostless close', async () => {
+  for (const hostAvailable of [true, false]) {
+    const parentId = randomUUID(),
+      directory = path.join(root, '.runtime/luna-bridge', parentId);
+    await mkdir(directory, {recursive: true});
+    const record = {
+      requestId: 'historical-gpt',
+      parentId,
+      provider: 'codex',
+      model: 'gpt-6-luna',
+      effort: 'high',
+      workspace,
+      threadId: 'old-native',
+      turnId: 'old-turn',
+      settled: hostAvailable,
+      status: hostAvailable ? 'completed' : 'running',
+      outputFiles: []
+    };
+    const file = path.join(directory, record.requestId + '.json');
+    await writeFile(file, JSON.stringify(record));
+    const f = await make({
+      parentId,
+      workspace: path.join(workspace, 'moved'),
+      accountType: hostAvailable ? 'chatgpt' : 'api',
+      threadRead: () => ({
+        thread: {
+          id: 'old-native',
+          cwd: workspace,
+          status: {type: 'notLoaded'},
+          turns: [{id: 'old-turn', status: 'completed', items: []}]
+        }
+      })
+    });
+    try {
+      const row = (await f.bridge.list())[0];
+      if (hostAvailable) {
+        assert.equal(row.settled, true);
+        assert.equal((await f.bridge.cancel({requestId: record.requestId})).settled, true);
+        assert.equal(JSON.parse(await readFile(file, 'utf8')).settled, true);
+      } else {
+        assert.equal(row.executionUnowned, true);
+        assert.equal(row.settled, false);
+        await assert.rejects(f.bridge.cancel({requestId: record.requestId}), /主控尚未連線/);
+      }
+      assert.equal(
+        f.fixture.calls.filter(c => ['turn/start', 'turn/interrupt', 'thread/resume'].includes(c.method)).length,
+        0
+      );
+    } finally {
+      await f.bridge.close();
+    }
+  }
+});
+
 test('Gemini wait wakes on quiet attention with current observation, then preserves the same late completion', async () => {
   let finish, started;
   const ready = new Promise(r => (started = r));

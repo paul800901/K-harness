@@ -369,6 +369,7 @@ test('interrupted persisted run reads back uncertain without opening sessions or
   const file = path.join(f.root, '.runtime/discussions/room.json'),
     record = JSON.parse(await readFile(file, 'utf8'));
   record.runs.at(-1).status = 'working';
+  record.messages.at(-1).streaming = true;
   await writeFile(file, JSON.stringify(record));
   let opened = 0;
   const reopened = createDiscussionController({
@@ -380,6 +381,8 @@ test('interrupted persisted run reads back uncertain without opening sessions or
   });
   await reopened.load();
   assert.equal(reopened.state.status, 'uncertain');
+  assert.equal(reopened.messages.at(-1).streaming, false);
+  assert.equal(reopened.messages.at(-1).partial, true);
   assert.equal(opened, 0);
   await assert.rejects(reopened.stop({threadId: 'room', runId: reopened.state.id}), /不能冒稱/);
   assert.equal(reopened.held, false);

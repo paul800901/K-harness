@@ -14,6 +14,38 @@ const knownRooms = async () => ({
 });
 const tempRoot = name => mkdtemp(path.join(scratchBase, `room-schedules-${name}-`));
 
+test('on-time cron ticks keep every legal ten-minute slot despite normal polling delay', async () => {
+  const root = await tempRoot('ten-minute');
+  let currentTime = new Date('2026-10-24T00:00:00Z');
+  const sent = [];
+  const schedules = createRoomSchedules({
+    root,
+    listSessions: knownRooms,
+    now: () => currentTime,
+    deliver: async () => {
+      sent.push(currentTime.toISOString());
+      return {sent: true};
+    }
+  });
+  try {
+    await schedules.add({
+      title: 'ten minutes',
+      text: 'x',
+      cron: '*/10 * * * *',
+      timezone: 'UTC',
+      targetThreadId: 'room-a'
+    });
+    for (const minute of ['10', '20', '30']) {
+      currentTime = new Date(`2026-10-24T00:${minute}:05Z`);
+      await schedules.tick();
+    }
+    assert.equal(sent.length, 3);
+    assert.equal((await schedules.list()).schedules[0].nextRunAt, '2026-10-24T00:40:00.000Z');
+  } finally {
+    await schedules.close();
+  }
+});
+
 test('cron and one-off nextRunAt calculation (Asia/Taipei Saturday 11:00)', async () => {
   const root = await tempRoot('calc');
   let currentTime = new Date('2026-10-24T02:00:00.000Z'); // 2026-10-24 10:00 Asia/Taipei (Saturday)

@@ -55,6 +55,23 @@ test('updates are click-only, retain current cores, select new binaries only on 
   assert.equal(queries, 3);
   await updater.close();
 });
+test('successive prepared releases retain the actually running predecessor until restart', async () => {
+  const f = await fixture();
+  let version = '1.0.1';
+  const updater = createCoreUpdates({...f, release: async () => ({version, file: 'core.exe'})});
+  try {
+    await updater.update('gemini');
+    version = '1.0.2';
+    await updater.update('gemini');
+    const saved = JSON.parse(await readFile(path.join(f.root, 'selected-cores.json'), 'utf8'));
+    assert.equal(saved.gemini.version, '1.0.2');
+    assert.equal(saved.gemini.previous.version, '1.0.0');
+    assert.equal(await f.inspect(path.join(f.root, saved.gemini.previous.file)), '1.0.0');
+  } finally {
+    await updater.close();
+  }
+});
+
 test('same/newer installed version does not download or downgrade; prepared version is not downloaded twice', async () => {
   const f = await fixture();
   let downloads = 0;

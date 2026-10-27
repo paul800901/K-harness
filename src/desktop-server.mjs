@@ -15,6 +15,7 @@ import {createGeminiLogin} from './gemini-login.mjs';
 import {listProjects, addProject, updateProject} from './projects.mjs';
 import {readSelfUpdate} from './self-update.mjs';
 import {createSidebarPreferences} from './sidebar-preferences.mjs';
+import {readPresentedPath} from './desktop-files.mjs';
 import {pickWorkspaceDirectory} from './workspace-picker.mjs';
 import {validateWorkspace} from './workspaces.mjs';
 import {createStateStream} from '../shared/state-stream.mjs';
@@ -523,6 +524,31 @@ export async function startDesktop({
         return json(200, await controller.directories(url.searchParams.get('path') ?? undefined));
       if (req.method === 'GET' && ['/api/artifact', '/api/attachment', '/api/message-file'].includes(url.pathname)) {
         const context = {threadId: url.searchParams.get('threadId')};
+        if (url.pathname !== '/api/attachment') {
+          const file =
+            url.pathname === '/api/artifact'
+              ? await controller.artifactSource(url.searchParams.get('path'), context)
+              : await (async () => {
+                  const target = await controller.messageFilePath(url.searchParams.get('path'), context);
+                  return {path: target, ...(await readPresentedPath(target, {maxBytes: 0}))};
+                })();
+          if (url.searchParams.get('download') === '1' || file.contentType.startsWith('image/')) {
+            if (url.searchParams.get('download') === '1')
+              res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
+            res.setHeader('Content-Type', file.contentType);
+            res.setHeader('Content-Length', String(file.size));
+            await pipeline(createReadStream(file.path), res);
+            return;
+          }
+          const preview = file.isText ? await readPresentedPath(file.path, {maxBytes: 262144}) : file;
+          return json(200, {
+            name: file.name,
+            isText: file.isText,
+            text: file.isText ? preview.bytes.toString('utf8') : null,
+            truncated: file.size > 262144,
+            size: file.size
+          });
+        }
         if (url.pathname === '/api/attachment' && url.searchParams.get('download') === '1') {
           const file = await controller.attachmentSource(url.searchParams.get('id'), context);
           res.writeHead(200, {
@@ -533,17 +559,7 @@ export async function startDesktop({
           await pipeline(createReadStream(file.path), res);
           return;
         }
-        const file =
-          url.pathname === '/api/message-file'
-            ? await controller.messageFile(url.searchParams.get('path'), context)
-            : url.pathname === '/api/artifact'
-              ? await controller.artifact(url.searchParams.get('path'), context)
-              : await controller.attachmentFile(url.searchParams.get('id'), context);
-        if (url.searchParams.get('download') === '1') {
-          res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.name)}`);
-          res.setHeader('Content-Type', file.contentType);
-          return res.end(file.bytes);
-        }
+        const file = await controller.attachmentFile(url.searchParams.get('id'), context);
         if (file.contentType.startsWith('image/')) {
           res.setHeader('Content-Type', file.contentType);
           return res.end(file.bytes);

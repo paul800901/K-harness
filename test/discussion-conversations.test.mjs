@@ -12,6 +12,7 @@ import {scratchBase} from './scratch.mjs';
 const base = scratchBase;
 const models = [
   {model: 'gpt-6.1-sol', displayName: 'Sol', provider: 'codex'},
+  {model: 'gpt-6.1-terra', displayName: 'GPT-6.1 Terra', provider: 'codex'},
   {model: 'claude-opus-5-5', displayName: 'Opus', provider: 'claude'},
   {model: 'gemini-3.8-flash', displayName: 'Flash', provider: 'gemini'}
 ].map(m => ({
@@ -26,7 +27,7 @@ async function fixture({hold = false, discussionApi, closeParticipant = async ()
   const answerPending = new Set();
   const owners = [],
     calls = [];
-  const factory = ({onChange}) => {
+  const factory = ({onChange, prepareHumanSend}) => {
     const state = {
       status: 'idle',
       workspace: root,
@@ -51,6 +52,16 @@ async function fixture({hold = false, discussionApi, closeParticipant = async ()
       async selectWorkspace({path}) {
         state.workspace = path;
       },
+      async moveWorkspace({workspace}) {
+        state.workspace = workspace;
+        await saveMainSession(root, state);
+        return {threadId: state.threadId};
+      },
+      async fork() {
+        state.threadId = `fork-${state.threadId}`;
+        await saveMainSession(root, state);
+        return {threadId: state.threadId};
+      },
       async open(data) {
         state.threadId = data.threadId ?? `room-${++seq}`;
         state.model = data.model;
@@ -63,12 +74,14 @@ async function fixture({hold = false, discussionApi, closeParticipant = async ()
         return [];
       },
       async send(data) {
-        c.sent.push(data);
         // During a held turn a further message waits in the queue, as in the real cores.
         if (c.holdTurns && state.busy) {
           state.queuedMessages.push({text: data.text});
           return {queued: true};
         }
+        const prepared = await prepareHumanSend(data);
+        data = {...data, text: prepared?.text ?? data.text};
+        c.sent.push(data);
         state.messages.push({id: `native-${c.sent.length}`, role: 'user', text: data.text});
         // instantReply models a turn that ends before send() returns.
         if (c.instantReply) {
@@ -154,11 +167,87 @@ async function fixture({hold = false, discussionApi, closeParticipant = async ()
         ...settings
       }
     });
-  return {root, c, a, owner, owners, calls, start};
+  return {root, c, a, owner, owners, calls, start, factory};
 }
 const settled = async f => {
   while (f.c.state.discussion?.busy) await new Promise(r => setTimeout(r, 5));
 };
+
+test('reopened discussion resolves the current host after an idle release or native fork', async () => {
+  for (const mode of ['release', 'fork']) {
+    const f = await fixture();
+    try {
+      if (mode === 'fork') await f.c.fork(f.a);
+      else {
+        for (let i = 0; i < 6; i++) await f.c.open({model: 'gpt-6.1-sol'});
+        for (let i = 0; i < 100 && !f.owner.closed; i++) await new Promise(r => setTimeout(r, 5));
+        assert.equal(f.owner.closed, 1);
+      }
+      await f.c.open({...f.a, model: 'gpt-6.1-sol'});
+      const current = f.owners.findLast(o => o.state.threadId === f.a.threadId);
+      assert.notEqual(current, f.owner);
+      await f.start();
+      await settled(f);
+      assert.equal(f.c.state.discussion.status, 'completed');
+      assert.equal(f.owner.hosted.length, 0);
+      assert.equal(current.hosted.length, 1);
+    } finally {
+      await f.c.close();
+    }
+  }
+});
+
+test('cold workspace move loads discussion projection and failed whole-app close leaves discussions usable', async () => {
+  const f = await fixture();
+  await f.start();
+  await settled(f);
+  const close = f.owner.close;
+  f.owner.close = async () => {
+    throw Error('fake close refusal');
+  };
+  await assert.rejects(f.c.close(), /部分聊天室尚未確認關閉/);
+  await f.start();
+  await settled(f);
+  assert.equal(f.c.state.discussion.status, 'completed');
+  f.owner.close = close;
+  await f.c.close();
+  const reopened = createConversationController({root: f.root, sessionFactory: f.factory});
+  try {
+    await reopened.moveWorkspace({...f.a, workspace: f.root});
+    assert.equal(reopened.state.discussion.status, 'completed');
+    assert.equal(reopened.state.messages.filter(m => m.summary).length, 2);
+  } finally {
+    await reopened.close();
+  }
+});
+
+test('stop reaches a send in preparation without permitting unrelated room mutations', async () => {
+  const f = await fixture(),
+    entered = Promise.withResolvers(),
+    gate = Promise.withResolvers();
+  let stops = 0;
+  f.owner.send = async () => {
+    entered.resolve();
+    await gate.promise;
+    return {sent: false};
+  };
+  f.owner.stop = async () => {
+    stops++;
+    gate.resolve();
+    return {stopped: true};
+  };
+  try {
+    const sent = f.c.send({...f.a, text: 'preparing'});
+    await entered.promise;
+    await assert.rejects(f.c.send({...f.a, text: 'duplicate'}), /重新連線/);
+    assert.deepEqual(await f.c.stop(f.a), {stopped: true});
+    assert.deepEqual(await sent, {sent: false});
+    assert.equal(stops, 1);
+  } finally {
+    gate.resolve();
+    await f.c.close();
+  }
+});
 
 for (const model of ['gpt-6.1-sol', 'claude-opus-5-5'])
   test(`discussion context uses verified inherited ${model} attachment cards`, async () => {
@@ -273,6 +362,24 @@ test('ordinary continuation sends a visible handoff once and does not replace na
   }
 });
 
+test('newly catalogued Terra is accepted as a discussion participant with its native effort', async () => {
+  const f = await fixture();
+  try {
+    await f.start({
+      participants: [
+        {model: 'gpt-6.1-terra', effort: 'high'},
+        {model: 'claude-opus-5-5', effort: 'high'}
+      ]
+    });
+    await settled(f);
+    assert.equal(f.c.state.discussion.participants[0].model, 'gpt-6.1-terra');
+    assert.equal(f.c.state.discussion.participants[0].effort, 'high');
+    assert(f.calls.some(c => c.prompt.includes('議題')));
+  } finally {
+    await f.c.close();
+  }
+});
+
 test('model effort choices come from the actual catalog, with no hard-coded tiers or silent replacement', async () => {
   const f = await fixture();
   try {
@@ -378,6 +485,7 @@ test('a meeting in A survives navigation and idle reclamation; stopping A does n
     assert.equal(f.owners.find(o => o.state.threadId === b).sent.length, 0);
     await f.c.open({...f.a, model: 'gpt-6.1-sol'});
     assert.equal(f.c.state.discussion.status, 'interrupted');
+    assert.equal(f.c.state.discussion.error, null);
     assert(f.c.state.messages.some(m => m.text === '給 A 的補充'));
   } finally {
     await f.c.close();

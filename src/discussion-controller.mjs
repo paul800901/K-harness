@@ -403,6 +403,11 @@ export function createDiscussionController({
           run.status = 'uncertain';
           run.error = '前次討論程序狀態尚未確認；只讀回紀錄，沒有自動續跑。';
         }
+      for (const item of record.messages)
+        if (item.streaming) {
+          item.streaming = false;
+          item.partial = true;
+        }
       changed();
     },
     async start({mode, text, brief, participants, facilitator, workspace, attachments = [], afterMessageId = null}) {
@@ -483,6 +488,7 @@ export function createDiscussionController({
         if (sessions.size) {
           await closeSessions();
           current.status = 'interrupted';
+          current.error = null;
           await save();
           changed();
           return {stopped: true};
@@ -499,8 +505,12 @@ export function createDiscussionController({
     },
     async close() {
       closing = true;
-      if (work || sessions.size) await api.stop({threadId, runId: current.id});
-      await write;
+      try {
+        if (work || sessions.size) await api.stop({threadId, runId: current.id});
+        await write;
+      } finally {
+        closing = false;
+      }
     },
     // note: K's discussion-settings instruction for this turn; shown to the model, not as the person's words.
     async handoff(text, note = '') {
@@ -521,7 +531,13 @@ export function createDiscussionController({
       if (prompt === text) return {text};
       (record.handoffs ??= []).push({prompt, userText: text});
       if (fresh) record.handoffThrough = through;
-      await save();
+      try {
+        await save();
+      } catch (error) {
+        record.handoffThrough = previous;
+        record.handoffs.pop();
+        throw Object.assign(error, {notSent: true});
+      }
       return {
         text: prompt,
         async rejected() {

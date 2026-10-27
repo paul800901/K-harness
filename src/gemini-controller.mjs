@@ -36,7 +36,13 @@ import {
 import {saveMainSession, listMainSessions} from './main-sessions.mjs';
 import {validateWorkspace, listWorkspaceDirectories} from './workspaces.mjs';
 import {saveAttachment, saveAttachmentStream, readPresentedFile} from './desktop-files.mjs';
-import {sessionAttachment, sessionAttachmentSource, sessionArtifact, workspaceGuidance} from './session-workspace.mjs';
+import {
+  sessionAttachment,
+  sessionAttachmentSource,
+  sessionArtifact,
+  sessionArtifactSource,
+  workspaceGuidance
+} from './session-workspace.mjs';
 import {normalizeWorkerPolicy, workerPolicyConfig, MODEL_PROTOCOL_GUIDANCE} from './worker-policy.mjs';
 import {writeGeminiCommonRule} from './common-memory.mjs';
 import {browserSessionKey} from './browser-mcp-config.mjs';
@@ -907,6 +913,10 @@ export function createGeminiController({
     async artifact(name) {
       if (!state.artifacts.includes(name)) throw Error('只開啟本對話已記錄的成果。');
       return sessionArtifact(state.workspace, state.previousWorkspaces, name);
+    },
+    async artifactSource(name) {
+      if (!state.artifacts.includes(name)) throw Error('只開啟本對話已記錄的成果。');
+      return sessionArtifactSource(state.workspace, state.previousWorkspaces, name);
     },
     // `internal` marks a K event turn (worker notice); it is not a user message.
     async send(

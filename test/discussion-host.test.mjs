@@ -7,14 +7,16 @@ import {createDiscussionController} from '../src/discussion-controller.mjs';
 import {roundtableData} from '../frontend/discussion-roundtable-data.mjs';
 import {createDiscussionReader, MAX_DISCUSSION_FILE_BYTES} from '../src/discussion-read-tools.mjs';
 import {scratchBase} from './scratch.mjs';
+import {saveMainSession} from '../src/main-sessions.mjs';
 
-async function fixture({sendFailure} = {}) {
+async function fixture({sendFailure, metadata, prepareHumanSend, stop} = {}) {
   const root = await mkdtemp(path.join(scratchBase, 'host-'));
   let change;
   const calls = [],
     state = {threadId: 'same-native', status: 'ready', busy: false, messages: [], workers: [], questions: []};
   const controller = createUnifiedController({
     root,
+    prepareHumanSend,
     codexFactory: opts => {
       change = opts.onChange;
       return {
@@ -38,7 +40,11 @@ async function fixture({sendFailure} = {}) {
           calls.push({interrupt: id});
         },
         async stop() {
+          if (stop) return stop();
           throw Error('general stop must not be used');
+        },
+        async metadata(data) {
+          return metadata?.(data);
         },
         async close() {}
       };
@@ -53,6 +59,93 @@ async function fixture({sendFailure} = {}) {
   return {root, controller, state, calls, finish, change: () => change()};
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('metadata changes wait before host submission and never invalidate a submitted host turn', async () => {
+  for (const submitted of [false, true]) {
+    const gate = Promise.withResolvers(),
+      entered = Promise.withResolvers();
+    const f = await fixture({
+      metadata: async () => {
+        entered.resolve();
+        await gate.promise;
+      }
+    });
+    await saveMainSession(f.root, {threadId: f.state.threadId, model: 'gpt-6.1-sol', workspace: f.root});
+    const ask = () => f.controller.askHost('host', {id: 'metadata-host', bind: async () => {}});
+    let answer = submitted ? ask() : null;
+    if (submitted) await tick();
+    const rename = f.controller.metadata({threadId: f.state.threadId, title: 'renamed'});
+    await entered.promise;
+    answer ??= ask();
+    f.change();
+    if (submitted) f.finish('metadata-host', 'still valid');
+    else assert.equal(f.calls.length, 0);
+    gate.resolve();
+    await rename;
+    if (!submitted) {
+      await tick();
+      f.finish('metadata-host', 'still valid');
+    }
+    assert.equal(await answer, 'still valid');
+    assert.equal(f.calls.length, 1);
+    await f.controller.close();
+  }
+});
+
+test('queued human text claims discussion handoff only at delivery, and removing a row consumes nothing', async () => {
+  const prepared = [];
+  const f = await fixture({
+    prepareHumanSend: async data => {
+      prepared.push(data.text);
+      return {text: 'discussion context: ' + data.text};
+    }
+  });
+  await f.controller.open({model: 'gpt-6-astra'});
+  f.state.busy = true;
+  f.state.status = 'working';
+  const removed = await f.controller.send({text: 'remove me'});
+  const queued = await f.controller.send({text: 'keep me'});
+  assert.deepEqual(
+    f.controller.state.queuedMessages.map(x => x.text),
+    ['remove me', 'keep me']
+  );
+  await f.controller.queue({id: removed.id, action: 'remove'});
+  assert.deepEqual(prepared, []);
+  f.state.busy = false;
+  f.state.status = 'completed';
+  await f.controller.queue({id: queued.id, action: 'send-now'});
+  assert.deepEqual(prepared, ['keep me']);
+  assert.equal(f.calls[0].text, 'discussion context: keep me');
+  await f.controller.close();
+});
+
+test('stop during discussion preparation restores its claim and never reaches the native core', async () => {
+  const gate = Promise.withResolvers(),
+    entered = Promise.withResolvers();
+  let restored = 0;
+  const f = await fixture({
+    stop: async () => ({stopped: true}),
+    prepareHumanSend: async () => {
+      entered.resolve();
+      await gate.promise;
+      return {
+        text: 'internal handoff',
+        rejected: async () => {
+          restored++;
+        }
+      };
+    }
+  });
+  await f.controller.open({model: 'gpt-6-astra'});
+  const sent = f.controller.send({text: 'human'});
+  await entered.promise;
+  await f.controller.stop();
+  gate.resolve();
+  await assert.rejects(sent, error => error.notSent === true);
+  assert.equal(restored, 1);
+  assert.equal(f.calls.length, 0);
+  await f.controller.close();
+});
 
 test('host waits for native work/notifications and shares the same native identity, without a second session', async () => {
   const f = await fixture(),

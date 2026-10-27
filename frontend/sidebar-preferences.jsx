@@ -34,7 +34,7 @@ export function useSidebarPreferences(state, sessions, onError) {
   }, [shared, missingKey, state.sidebarPreferencesError]);
   useEffect(() => {
     // Retain the existing local keys for migration/recovery; the server is authoritative after migration.
-    if (!shared) return;
+    if (!shared || remoteClient) return;
     try {
       localStorage.setItem('k-sidebar-layout', shared.layout);
       localStorage.setItem('k-sidebar-sort', shared.sort);

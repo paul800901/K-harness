@@ -1304,6 +1304,41 @@ test('native review and file search routes preserve the explicit local POST cont
   }
 });
 
+test('large artifact preview reads only its prefix and download streams without whole-file allocation', async t => {
+  const f = await fixture();
+  await f.c.open({model: 'gpt-6-astra'});
+  const file = path.join(f.root, 'large.txt'),
+    size = 3 * 1024 * 1024;
+  await writeFile(file, Buffer.alloc(size, 65));
+  f.c.state.artifacts = ['large.txt'];
+  const original = fs.readFile;
+  const mock = t.mock.method(fs, 'readFile', async (target, ...args) => {
+    assert.notEqual(path.resolve(String(target)), file, 'HTTP must not buffer the entire artifact');
+    return original(target, ...args);
+  });
+  syncBuiltinESMExports();
+  const app = await startDesktop({root: f.root, executable: 'test', port: 0, controllerFactory: () => f.c});
+  try {
+    const page = await fetch(app.createLaunchUrl(), {redirect: 'manual'});
+    const cookie = page.headers.get('set-cookie').split(';')[0];
+    await page.text();
+    const url = app.origin + '/api/artifact?path=large.txt';
+    const preview = await fetch(url, {headers: {cookie}}).then(r => r.json());
+    assert.equal(preview.size, size);
+    assert.equal(preview.text.length, 262144);
+    assert.equal(preview.truncated, true);
+    const download = await fetch(url + '&download=1', {headers: {cookie}});
+    assert.equal(Number(download.headers.get('content-length')), size);
+    let received = 0;
+    for await (const chunk of download.body) received += chunk.length;
+    assert.equal(received, size);
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+    await app.close();
+  }
+});
+
 test('HTTP attachment upload and artifact preview/download preserve bytes and reject unlisted paths', async () => {
   const f = await fixture();
   await f.c.open({model: 'gpt-6-astra'});

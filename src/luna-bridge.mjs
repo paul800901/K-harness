@@ -380,10 +380,10 @@ export async function createLunaBridge({
       delete record.waitingForApproval; // Saved approval state is not a live pending request.
       // Recovered records have no execution owner in this bridge. Reading them
       // must not adopt an old PID or rewrite the persisted evidence.
-      if (PROCESS_PROVIDERS.includes(record.provider) && !record.settled) {
+      if (!record.settled) {
         record.executionUnowned = true;
         record.status = 'unresolved';
-        record.error ??= 'K 重啟後子代理程序與完成結果無法確認；未重播。';
+        record.error ??= 'K 重啟後子代理執行與完成結果無法確認；未重播。';
       }
       // A saved sub-worker snapshot is not evidence that it is still running; its second layer is never reloaded.
       for (const sub of record.subWorkers ?? []) if (!sub.settled) sub.status = 'unresolved';
@@ -505,7 +505,7 @@ export async function createLunaBridge({
       if (revisions.get(requestId) !== revision) return clone(record);
       if (
         result.thread?.id !== record.threadId ||
-        normalizeWorkspace(result.thread?.cwd) !== normalizeWorkspace(workspace)
+        normalizeWorkspace(result.thread?.cwd) !== normalizeWorkspace(record.workspace ?? workspace)
       ) {
         record.status = 'unresolved';
         record.settled = false;
@@ -513,7 +513,7 @@ export async function createLunaBridge({
         changed(record);
         return clone(record);
       }
-      extractThread(result.thread, workspace, record);
+      extractThread(result.thread, record.workspace ?? workspace, record);
       record.lastReadAt = new Date().toISOString();
       await persist(record);
       changed(record);
@@ -949,6 +949,7 @@ export async function createLunaBridge({
   }
   async function cancel({requestId}) {
     geminiOptions.accounts?.cancelWorkerHandoff?.({parentId, requestId});
+    if (handoffObservations.delete(requestId)) for (const wake of waiters.get(requestId) ?? []) wake();
     for (let i = pendingHandoffs.length - 1; i >= 0; i--) {
       const event = pendingHandoffs[i].event;
       event.requestIds = event.requestIds.filter(id => id !== requestId);
@@ -1008,10 +1009,11 @@ export async function createLunaBridge({
     // Bounded by the host request timeouts of thread/start and turn/start.
     await operations.get(requestId)?.catch(() => {});
     if (!record.threadId) return clone(record);
+    if (!host) throw Error('Codex 工人主控尚未連線；無法確認舊工作停止，未重播。');
     const native = await host.request('thread/read', {threadId: record.threadId, includeTurns: true});
     if (
       native.thread?.id !== record.threadId ||
-      normalizeWorkspace(native.thread?.cwd) !== normalizeWorkspace(workspace)
+      normalizeWorkspace(native.thread?.cwd) !== normalizeWorkspace(record.workspace ?? workspace)
     )
       throw new Error('Luna 原生工作歸屬無法確認，未中止或關閉主控。');
     const active = native.thread.turns?.findLast(turn => turn.status === 'inProgress');
@@ -1026,7 +1028,7 @@ export async function createLunaBridge({
         !['completed', 'interrupted', 'failed'].includes(latest.status)
       )
         throw new Error(`Luna ${requestId} 的未載入工作尚無可確認的結束回合；未關閉主控。`);
-      extractThread(native.thread, workspace, record);
+      extractThread(native.thread, record.workspace ?? workspace, record);
       delete record.cleanupError;
       await persist(record);
       changed(record);

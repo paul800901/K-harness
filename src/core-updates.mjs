@@ -194,7 +194,8 @@ export function createCoreUpdates({
         const directory = await mkdtemp(path.join(root, 'updates', `${provider}-${next.version}-`));
         const file = await download(next, directory, {signal});
         if ((await inspect(file, signal)) !== next.version) throw Error('下載版本讀回不符，原核心保持不變。');
-        let previous = selected[provider] ?? null;
+        let previous =
+          selected[provider]?.version === current ? selected[provider] : (selected[provider]?.previous ?? null);
         // The first Gemini core may be the shared official install. Preserve its binary
         // inside K without altering that installation or any login data.
         if (!previous && provider === 'gemini' && active.gemini) {
