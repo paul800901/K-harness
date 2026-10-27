@@ -4,6 +4,7 @@ import {createHash} from 'node:crypto';
 import path from 'node:path';
 import {atomicWrite} from './atomic-write.mjs';
 import {openCodexHost, disabledCodexMcpServer} from './codex-host.mjs';
+import {CODEX_READING_GUIDANCE} from './codex-reading.mjs';
 import {threadPermissions, turnPermissions} from './desktop-permissions.mjs';
 import {listMainModels} from './main-models.mjs';
 import {stopThreadTerminals} from './background-terminals.mjs';
@@ -597,7 +598,11 @@ export async function createLunaBridge({
       const session = await host.request('thread/start', {
         cwd: workspace,
         model: policy.model,
-        developerInstructions: [effective.config?.developer_instructions, commonMemoryReference(root)]
+        developerInstructions: [
+          effective.config?.developer_instructions,
+          CODEX_READING_GUIDANCE,
+          commonMemoryReference(root)
+        ]
           .filter(Boolean)
           .join('\n'),
         ...permissions,

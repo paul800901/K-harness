@@ -1,6 +1,7 @@
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
 import {openCodexHost, disabledCodexMcpServer} from './codex-host.mjs';
+import {CODEX_READING_GUIDANCE} from './codex-reading.mjs';
 import {openClaudeHost} from './claude-host.mjs';
 import {
   geminiExecutable,
@@ -115,7 +116,7 @@ export async function openDiscussionSession({
         model: selection.model,
         approvalPolicy: 'never',
         sandbox: 'read-only',
-        developerInstructions: instructions + '\n' + commonMemoryReference(root),
+        developerInstructions: instructions + '\n' + CODEX_READING_GUIDANCE + '\n' + commonMemoryReference(root),
         config: {
           web_search: 'live',
           mcp_servers: mcp,

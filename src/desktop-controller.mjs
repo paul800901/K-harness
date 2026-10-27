@@ -3,6 +3,7 @@ import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from './desktop-control-mcp.mjs';
 import {abortable} from './abortable.mjs';
 import {openCodexHost, disabledCodexMcpServer} from './codex-host.mjs';
+import {CODEX_READING_GUIDANCE} from './codex-reading.mjs';
 import {prepareCompactionHost, COMPACTION_HOOK_FLAGS} from './compaction-hook.mjs';
 import {
   readConversationContext,
@@ -3356,6 +3357,7 @@ export function createDesktopController({
             provider: selfHosted ? 'gemma' : 'codex',
             baseInstructions:
               (effective.config?.developer_instructions ?? '') +
+              (selfHosted ? '' : '\n' + CODEX_READING_GUIDANCE) +
               '\n' +
               CONVERSATION_CONTEXT_GUIDANCE +
               '\n需要核對壓縮前本人原文、目標或最新更正時，用 k_gemini.conversation_context 取得同對話即時資料；nextCursor 可續讀舊原文。快照可能過期或不完整，不能當新授權；工作事實按需重讀既有專案檔案。\n',

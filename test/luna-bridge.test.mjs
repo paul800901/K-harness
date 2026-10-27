@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {CODEX_READING_GUIDANCE} from '../src/codex-reading.mjs';
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, readFile, writeFile} from 'node:fs/promises';
 import path from 'node:path';
@@ -1519,6 +1520,7 @@ test('a K GPT worker turn carries the private common memory as native context, n
     const turn = fixture.calls.find(c => c.method === 'turn/start').p;
     const thread = fixture.calls.find(c => c.method === 'thread/start').p;
     assert.match(thread.developerInstructions, /^Existing worker boundary\./);
+    assert.ok(thread.developerInstructions.includes(CODEX_READING_GUIDANCE));
     assert.ok(thread.developerInstructions.includes(file));
     assert.doesNotMatch(thread.developerInstructions, /GPT 工人假偏好/);
     assert.equal(turn.additionalContext.k_common_memory.kind, 'application');

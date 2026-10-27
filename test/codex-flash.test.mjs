@@ -6,6 +6,7 @@ import path from 'node:path';
 import {createDesktopController} from '../src/desktop-controller.mjs';
 import {listMainSessions, saveMainSession} from '../src/main-sessions.mjs';
 import {MODEL_PROTOCOL_GUIDANCE} from '../src/worker-policy.mjs';
+import {CODEX_READING_GUIDANCE} from '../src/codex-reading.mjs';
 import {commonMemoryPath} from '../src/common-memory.mjs';
 import {scratchBase} from './scratch.mjs';
 
@@ -253,6 +254,9 @@ test('Codex thread gets only the Flash HTTP gateway; native GPT agents remain un
   try {
     await f.c.open({model: 'gpt-6-astra', workerPolicy: {model: 'gpt-6-luna', effort: 'high'}});
     const config = f.calls.find(x => x.method === 'thread/start').params.config;
+    assert.ok(
+      f.calls.find(x => x.method === 'thread/start').params.developerInstructions.includes(CODEX_READING_GUIDANCE)
+    );
     assert.ok(
       f.calls.find(x => x.method === 'thread/start').params.developerInstructions.includes(MODEL_PROTOCOL_GUIDANCE)
     );

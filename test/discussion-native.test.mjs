@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {CODEX_READING_GUIDANCE} from '../src/codex-reading.mjs';
 import assert from 'node:assert/strict';
 import {mkdir, mkdtemp, readFile} from 'node:fs/promises';
 import path from 'node:path';
@@ -49,6 +50,7 @@ test('Codex discussion disables inherited MCP and permits sandboxed shell while 
   assert.equal(start.sandbox, 'read-only');
   assert.equal(start.config.web_search, 'live');
   assert.match(start.developerInstructions, /先主動用本輪實際提供的網頁搜尋/);
+  assert.ok(start.developerInstructions.includes(CODEX_READING_GUIDANCE));
   assert.match(start.developerInstructions, /快取／過期頁面不能冒充即時/);
   assert.equal(start.config.mcp_servers.credentialTool.enabled, false);
   assert.equal(start.config.features.shell_tool, undefined);
