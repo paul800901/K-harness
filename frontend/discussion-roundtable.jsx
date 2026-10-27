@@ -1,7 +1,7 @@
 import React, {useMemo, useState, useRef, useLayoutEffect} from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import {discussionModes, discussionStatus} from '../shared/discussion.mjs';
+import {discussionModes} from '../shared/discussion.mjs';
 import {discussionRuns, roundtableData} from './discussion-roundtable-data.mjs';
 import './discussion-roundtable.css';
 const seatColor = i =>
@@ -44,9 +44,9 @@ export function DiscussionEntry({record, state, onOpen}) {
       <strong>{run?.question ?? '多模型討論'}</strong>
       <p>
         {discussionModes[run?.mode] ?? '歷史討論'} · {run?.participants?.length ?? 0} 人 ·{' '}
-        {data.inferred ? '推估 ' : ''}第 {data.last} 批 · {discussionStatus[run?.status] ?? '歷史紀錄'}
+        {data.inferred ? '推估 ' : ''}第 {data.last} 批 · {data.statusText}
       </p>
-      {run?.error && <p className="discussion-run-notice">{run.error}</p>}
+      {data.notice && <p className="discussion-run-notice">{data.notice}</p>}
       <button onClick={() => onOpen?.(record.runId)}>開啟圓桌</button>
     </section>
   );
@@ -141,7 +141,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
           ))}
         </select>
         <span>
-          {discussionModes[run.mode] ?? '歷史討論'} · {discussionStatus[run.status] ?? '歷史紀錄'}
+          {discussionModes[run.mode] ?? '歷史討論'} · {data.statusText}
         </span>
         {live && (
           <button disabled={run.status === 'stopping'} onClick={() => onStop(run.id)}>
@@ -149,7 +149,7 @@ export function DiscussionRoundtable({state, runId, onRun, reader, onReader, onT
           </button>
         )}
       </header>
-      {run.error && <p className="discussion-run-notice">{run.error}</p>}
+      {data.notice && <p className="discussion-run-notice">{data.notice}</p>}
       {data.inferred && <small>舊紀錄：依時間與發言者推估批次；安排未記錄。</small>}
       {cell ? (
         <div className="discussion-roundtable-reader">

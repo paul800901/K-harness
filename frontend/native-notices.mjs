@@ -116,9 +116,14 @@ export function localizeNativeNotice(message, provider, error) {
     message === 'Not logged in · Please run /login'
   )
     return CLAUDE_AUTH_EXPIRED_NOTICE;
+  return claudeSessionLimitText(message) ?? message;
+}
+
+export function claudeSessionLimitText(message) {
+  if (typeof message !== 'string') return null;
   const match =
     /^You've hit your session limit(?: · resets (1[0-2]|[1-9])(?::([0-5]\d))?(am|pm) \(([^()\r\n]+)\))?$/.exec(message);
-  if (!match) return message;
+  if (!match) return null;
   if (!match[1]) return '本時段額度已用完。';
   const hour = String((Number(match[1]) % 12) + (match[3] === 'pm' ? 12 : 0)).padStart(2, '0');
   const zone = match[4] === 'Asia/Taipei' ? '臺灣時間' : match[4];

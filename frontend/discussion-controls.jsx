@@ -1,5 +1,6 @@
-import React, {useState, useEffect} from 'react';
-import {discussionModes, discussionStatus} from '../shared/discussion.mjs';
+import React, {useState, useEffect, useMemo} from 'react';
+import {discussionModes} from '../shared/discussion.mjs';
+import {discussionPresentation} from './discussion-roundtable-data.mjs';
 import {effortName} from './model-picker.jsx';
 import {modelProvider} from '../shared/model-provider.mjs';
 import './discussion.css';
@@ -41,6 +42,7 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
     [apiCatalogError, setApiCatalogError] = useState('');
   const d = state.discussion,
     running = d?.busy;
+  const presentation = useMemo(() => discussionPresentation(d, state.messages), [d, state.messages]);
   useEffect(() => {
     if (running) setExpanded(false);
   }, [running]);
@@ -152,7 +154,7 @@ export function DiscussionControls({state, models = [], config, onChange, loadMo
         {d && (
           <small role="status">
             {!running && '上一場：'}
-            {discussionModes[d.mode]} · {discussionStatus[d.status] ?? d.status}
+            {discussionModes[d.mode]} · {presentation.statusText}
           </small>
         )}
       </div>

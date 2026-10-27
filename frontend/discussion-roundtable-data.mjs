@@ -1,3 +1,46 @@
+import {discussionStatus} from '../shared/discussion.mjs';
+import {modelProvider} from '../shared/model-provider.mjs';
+import {claudeSessionLimitText} from './native-notices.mjs';
+
+const quotaText = (error, participant) =>
+  participant?.route !== 'api' && modelProvider(participant?.model) === 'claude' ? claudeSessionLimitText(error) : null;
+
+// Describe only recorded errors and the current batch; never change the run or retry a participant.
+export function discussionPresentation(run, messages = []) {
+  const participants = run?.participants ?? [];
+  const current = messages.filter(
+    m => m.kind === 'discussion' && m.runId === run?.id && Number.isInteger(m.round) && m.round === run?.round
+  );
+  const limited = current.flatMap(m => {
+    const participant = participants.find(p => p.id === m.participantId);
+    const text = quotaText(m.error, participant);
+    return text ? [`${participant.displayName ?? participant.model}：${text}`] : [];
+  });
+  let statusText = discussionStatus[run?.status] ?? '歷史紀錄';
+  let notice = (run?.error ?? '')
+    .split('\n')
+    .map(line => {
+      const participant = participants.find(p => line.startsWith(`${p.displayName ?? p.model}：`));
+      if (!participant || participant.route === 'api') return line;
+      const prefix = `${participant.displayName ?? participant.model}：`;
+      return prefix + (quotaText(line.slice(prefix.length), participant) ?? line.slice(prefix.length));
+    })
+    .join('\n');
+  if (limited.length) {
+    notice ||= limited.join('\n');
+    if (run.status === 'working') {
+      statusText = '部分參與者額度已用完';
+      const waiting = current
+        .filter(m => m.streaming && !m.partial)
+        .map(m => participants.find(p => p.id === m.participantId))
+        .filter(Boolean)
+        .map(p => p.displayName ?? p.model);
+      if (waiting.length) notice += `\n正在等待 ${waiting.join('、')} 完成本批回覆。`;
+    } else if (run.status === 'failed') statusText = '部分參與者額度已用完，討論受阻';
+  }
+  return {statusText, notice};
+}
+
 // Display-only projection. Legacy records are inferred, never rewritten.
 export function roundtableData(run, messages = []) {
   const original = messages.filter(m => m.kind === 'discussion' && m.runId === run?.id);
@@ -36,18 +79,24 @@ export function roundtableData(run, messages = []) {
         : (run.decisions ?? []).filter(d => !d.superseded && d.nextRound === n).flatMap(d => d.speakers);
     const cells = participants.map(p => {
       const message = batches.get(n)?.get(p.id);
+      const quota = quotaText(message?.error, p);
       const status = message
         ? message.streaming
           ? '回覆中'
           : message.partial
-            ? '未完成'
+            ? quota
+              ? '額度已用完'
+              : '未完成'
             : '已完成'
         : planned.includes(p.id)
           ? live && n === last
             ? '回覆中'
             : '未完成'
           : '本批未點名';
-      return {id: p.id, name: p.displayName ?? p.model, round: n, text: message?.text ?? '', status, message};
+      const text = quota
+        ? [message.text === message.error ? '' : message.text, quota].filter(Boolean).join('\n\n')
+        : (message?.text ?? '');
+      return {id: p.id, name: p.displayName ?? p.model, round: n, text, status, message};
     });
     const text = decisions
       .map(d =>
@@ -122,7 +171,7 @@ export function roundtableData(run, messages = []) {
       m => m.source === 'steer' && (run.interjections ?? []).find(e => e.messageId === m.id)?.afterRound === 0
     )
   };
-  return {rows, zero, summary, inferred, last};
+  return {rows, zero, summary, inferred, last, ...discussionPresentation(run, messages)};
 }
 
 export function discussionRuns(discussion, messages = []) {
