@@ -4,7 +4,7 @@ AI 查過去的修正、部署與決定從這裡開始。每份文件一行，�
 
 ## 目前狀態
 
-- 2026-10-27：[三核心共同記憶（試做，待 Astra 驗收）](common-memory-20261027.md)：本人裁決專案不寫死主腦／執行、分工偏好由 K 集中維護。私人正本 `vault/private-state/agent-home/shared/common-memory.md` 每回合送到三家主房、工人與討論（GPT `additionalContext`、Claude 標記區塊、Gemini 短規則原生引用）；`MODEL_ROLE_GUIDANCE` 只留協定，私人分工移出程式。讀不到時明示未知。完整測試通過，原生熱讀待受控驗證；未合併、未部署。
+- 2026-10-27：[三核心共同記憶（試做，GPT 補丁待 Opus 複查）](common-memory-20261027.md)：私人正本集中維護偏好，三家主房、K 工人與討論各用原生入口；`MODEL_PROTOCOL_GUIDANCE` 只留協定。Astra 補齊 Claude 完成通知刷新、GPT／Claude 原生續行與子代理短指標，保留正文唯一與原生權限。完整測試 1,981／1,981、隔離 Codex prompt-input 讀回通過；Gemini 引用刷新／總預算等原生邊界仍待受控讀回，CaseAgent 24KB 截斷未因此解決。未合併、未部署。
 
 - 2026-10-27：[多核心記憶界線](codex-native-entry-parity-20261027.md#各原生核心與-k-通用記憶的界線)：本人裁決原生記憶各核心獨立，K 通用記憶／規則另分；單核經驗不自動搬到他核或升格通用，新增核心亦同。只記錄架構邊界，不搬記憶、不改核心或重啟 K。
 
