@@ -27,4 +27,13 @@
 - 工作樹 `D:\K-harness-worktrees\composer-model-effort`，基線 `925dffff2f91d07850d0224e469a4230d8a70258`。
 - 已驗收程式版本 `3c22535e4f7b8e80af41f197c99dda09068e036c`；程式與本工程紀錄分開提交，合回 main 後由既有 `.local/update-ready.json` 提供此版本。
 - 已快轉合回 main、主工作樹乾淨、已合併分支刪除；更新標記已寫入並讀回相同完整程式 SHA。未帶桌面登入的直連 `GET /api/self-update` 回覆「請從桌面啟動 K。」，未取得正式按鈕的即時畫面，未繞過登入要求。
-- 正式環境仍為 `9013efdb15d6e59e66cbd9bee9162026f87932a2`。K 內無法更新正在執行的自身，依既有流程待本人按側欄「更新」；未執行自我停止、正式部署或 push。正式畫面讀回與部署後 push 尚未完成；東區未更新。
+- 上次交付停在更新準備；本人本回合回覆「已更新」，正式部署與發布讀回如下。
+
+## 正式部署與發布讀回
+
+- 南區已由本人按鈕更新。`.local/self-update-result.json` 為 `ok:true`，從 `9013efdb15d6e59e66cbd9bee9162026f87932a2` 更新到 `3c22535e4f7b8e80af41f197c99dda09068e036c`，完成時間為臺灣時間 2026-10-28 02:57:08；`.local/runtime.json` 與更新標記均為相同程式 SHA。
+- 更新器既存紀錄 `.local/self-update.log` 顯示完整測試 2,014／2,014、零失敗，並記錄「程式已套用」。這是本回合讀回的更新器結果，並非本回合重跑測試。
+- 11:51 讀回正式 `trusted-runtime`：`frontend/main.jsx`、`frontend/mobile.css`、新增 UI 探針三檔與固定程式版本逐檔一致（僅統一 CRLF／LF 比較）；正式建置 JS／CSS 含推理程度、原生預設、手機強度與長文字換行。收據 `.runtime/archive/composer-model-effort-20261028/deployment-readback.json` 為 `passed:true`。
+- 退版保留三份，`previous` 指向 `before-1793127412982` 且存在；本回合未停止或重啟 K、未修改正式程式或登入資料。
+- push 前檢查待推送範圍僅本批五個來源／文件檔，秘密樣式掃描無命中。第一次 push 成功，遠端 `main` 讀回 `7445afb8ba88211bc01c3730b09d09b5b82cfde8` 與本機一致。本節及索引作純文件收尾提交與推送，不重啟正式 K；最終推送讀回另存於同一證據目錄的 `publication-readback.json`。
+- 本回合確認的是正式檔案與建置產物，未操控本人畫面、未重做正式手機互動；東區未更新。
