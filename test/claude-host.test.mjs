@@ -46,6 +46,7 @@ if (!args.includes('--setting-sources') || args[args.indexOf('--setting-sources'
 if (!args.includes('--include-partial-messages')) process.exit(14);
 if (!args.includes('--forward-subagent-text')) process.exit(15);
 if (!args[args.indexOf('--append-system-prompt')+1].includes(${JSON.stringify(MODEL_PROTOCOL_GUIDANCE)})) process.exit(16);
+if (args[args.indexOf('--system-prompt-snapshot')+1] !== 'off') process.exit(18);
 if (!args.includes('--input-format') || !args.includes('stream-json')) process.exit(12);
 const rl = readline.createInterface({ input: process.stdin });
 let init = false, asked = false;

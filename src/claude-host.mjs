@@ -529,6 +529,10 @@ export async function openClaudeHost({
     'host',
     '--permission-prompt-tool',
     'stdio',
+    // The native default records the first prompt and reuses it on every resume, which would
+    // freeze K's per-launch text (worker catalog, protocol, workspace) at the room's creation.
+    '--system-prompt-snapshot',
+    'off',
     '--append-system-prompt',
     (discussionOnly
       ? '只討論、閱讀與公開資料查證，不執行修改、派工或任何對外操作。意見不是操作授權。'
