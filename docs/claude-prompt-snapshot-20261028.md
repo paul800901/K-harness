@@ -48,4 +48,8 @@
 ## 發布狀態
 
 - 程式版本 `8859fff6169cbfad56c77214bae50339c903af2e`（基線 `aff7b7c`）。程式與本紀錄分開提交，合回 `main` 後寫 `.local/update-ready.json`，由本人按側欄「更新」部署；部署與 push 讀回待補。
+- 南區已由本人按鈕更新：`.local/self-update-result.json` 為 `ok:true`，`3c22535` → `8859fff`，完成於臺灣時間 2026-10-28 21:40:24；`.local/runtime.json` 與更新標記為相同 SHA。更新器紀錄完整測試 2,014／2,014、零失敗（更新器結果，非本回合重跑）。
+- 讀回正式 `trusted-runtime`：`src/claude-host.mjs`、`test/claude-host.test.mjs` 與固定版本逐檔一致（統一 CRLF／LF 比較）；重啟後三個執行中的 Claude 主機程序命令列都帶 `--system-prompt-snapshot off`。退版保留三份，`previous` 指向 `before-1793194809055`。
+- push 前檢查範圍僅本批四檔，秘密樣式掃描無命中；遠端 `main` 讀回 `6efe3059f83973e62a0604255fe3993eaa203652` 與本機一致。本節為純文件收尾，另提交推送、不重啟正式 K。
+- 尚未在考卷房實際送出驗證；該房下一次送出時才會重新啟動並取得現行清單。
 - 東區未更新。考卷房等舊 Claude 聊天室要等南區更新後、下一次啟動該房時才會拿到現行清單。
