@@ -1,8 +1,8 @@
 import {useEffect, useRef, useState} from 'react';
 import {api, readSidebarOrder, readSidebarPreference, remoteClient} from './app-common.jsx';
-import {completeSessionOrder} from './project-groups.mjs';
+import {completeProjectOrder, completeSessionOrder} from './project-groups.mjs';
 
-export function useSidebarPreferences(state, sessions, onError) {
+export function useSidebarPreferences(state, sessions, projects, onError) {
   const [legacy] = useState(() =>
     remoteClient
       ? {layout: 'grouped', sort: 'manual', order: []}
@@ -17,6 +17,7 @@ export function useSidebarPreferences(state, sessions, onError) {
   const shared = state.sidebarPreferences;
   const value = shared ?? legacy;
   const order = completeSessionOrder(value.order, sessions);
+  const projectOrder = completeProjectOrder(value.projectOrder ?? [], projects);
   useEffect(() => {
     if (state.sidebarPreferencesError) onError(state.sidebarPreferencesError);
   }, [state.sidebarPreferencesError]);
@@ -26,11 +27,18 @@ export function useSidebarPreferences(state, sessions, onError) {
     void api('sidebar/preferences', {initialize: true, ...legacy}).catch(e => onError(e.message));
   }, [shared, state.sidebarPreferencesError]);
   const missing = order.filter(id => !value.order.includes(id));
-  const missingKey = JSON.stringify(missing);
+  const missingProjects = projectOrder.filter(key => !(value.projectOrder ?? []).includes(key));
+  const missingKey = JSON.stringify([missing, missingProjects]);
   useEffect(() => {
-    if (!shared || state.sidebarPreferencesError || !missing.length || appended.current === missingKey) return;
+    if (
+      !shared ||
+      state.sidebarPreferencesError ||
+      (!missing.length && !missingProjects.length) ||
+      appended.current === missingKey
+    )
+      return;
     appended.current = missingKey;
-    void api('sidebar/preferences', {append: missing}).catch(e => onError(e.message));
+    void api('sidebar/preferences', {append: missing, appendProjects: missingProjects}).catch(e => onError(e.message));
   }, [shared, missingKey, state.sidebarPreferencesError]);
   useEffect(() => {
     // Retain the existing local keys for migration/recovery; the server is authoritative after migration.
@@ -41,5 +49,5 @@ export function useSidebarPreferences(state, sessions, onError) {
       localStorage.setItem('k-sidebar-manual-order', JSON.stringify(shared.order));
     } catch {}
   }, [shared]);
-  return {...value, order, save: patch => api('sidebar/preferences', patch)};
+  return {...value, order, projectOrder, save: patch => api('sidebar/preferences', patch)};
 }

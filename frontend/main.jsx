@@ -72,6 +72,7 @@ import {
   isVisibleMainSession,
   completeSessionOrder,
   moveSessionOrder,
+  moveProjectOrder,
   searchSessions,
   sortSessions
 } from './project-groups.mjs';
@@ -958,8 +959,9 @@ function App() {
     layout: sidebarLayout,
     sort: sidebarSort,
     order: manualOrder,
+    projectOrder,
     save: saveSidebar
-  } = useSidebarPreferences(receivedState, sessions, setError);
+  } = useSidebarPreferences(receivedState, sessions, projects, setError);
   const roundtableReaderRef = useRef(null),
     seenRuns = useRef(new Map());
   roundtableReaderRef.current = roundtableReader;
@@ -1580,6 +1582,10 @@ function App() {
     void saveSidebar({layout: value}).catch(e => setError(e.message));
     viewMenu.close();
   };
+  const moveProject = (project, direction) =>
+    saveSidebar({projectOrder: moveProjectOrder(projectOrder, projects, project.path, direction)}).catch(e =>
+      setError(e.message)
+    );
   const chooseSort = value => {
     void saveSidebar({
       sort: value,
@@ -1844,7 +1850,7 @@ function App() {
                     <button aria-pressed={sidebarSort === 'manual'} onClick={() => chooseSort('manual')}>
                       {sidebarSort === 'manual' && <Check size={14} />}手動排序
                     </button>
-                    {sidebarSort === 'manual' && <small>在對話選單中使用「上移／下移對話」調整順序。</small>}
+                    {sidebarSort === 'manual' && <small>在工作區或對話選單中使用「上移／下移」調整順序。</small>}
                   </div>
                 </div>
                 <IconButton
@@ -1863,7 +1869,8 @@ function App() {
                 state: page === 'schedules' ? {...state, threadId: null} : state,
                 disabled,
                 modelName,
-                order: manualOrder
+                order: manualOrder,
+                projectOrder
               }}
               openDisabled={!online}
               conversationActivity={
@@ -1881,6 +1888,7 @@ function App() {
               onRename={session => setModal({type: 'rename', session})}
               onMetadata={data => action(() => metadata(data))}
               onMove={moveConversation}
+              onMoveProject={moveProject}
               onMoveWorkspace={moveToWorkspace}
               onChooseWorkspace={session => setModal({type: 'move-workspace', session})}
               onRenameProject={project => setModal({type: 'rename-project', project})}

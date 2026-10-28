@@ -47,15 +47,46 @@ export function moveSessionOrder(order, sessions, visibleSessions, threadId, dir
   return complete;
 }
 
+export function completeProjectOrder(order, projects) {
+  return [...new Set([...order.map(projectKey), ...projects.map(project => projectKey(project.path))])];
+}
+
+export function sortProjects(projects, order = []) {
+  const position = new Map(order.map((key, index) => [projectKey(key), index]));
+  return [...projects].sort(
+    (a, b) =>
+      Number(!!b.pinned) - Number(!!a.pinned) ||
+      (position.get(projectKey(a.path)) ?? Number.MAX_SAFE_INTEGER) -
+        (position.get(projectKey(b.path)) ?? Number.MAX_SAFE_INTEGER)
+  );
+}
+
+export function moveProjectOrder(order, projects, workspace, direction) {
+  const complete = completeProjectOrder(order, projects);
+  const visible = sortProjects(
+    projects.filter(project => !project.archived),
+    complete
+  );
+  const index = visible.findIndex(project => projectKey(project.path) === projectKey(workspace));
+  const current = visible[index],
+    adjacent = visible[index + direction];
+  if (!current || !adjacent || !!current.pinned !== !!adjacent.pinned) return complete;
+  const a = complete.indexOf(projectKey(current.path)),
+    b = complete.indexOf(projectKey(adjacent.path));
+  [complete[a], complete[b]] = [complete[b], complete[a]];
+  return complete;
+}
+
 export function groupProjectSessions(
   projects,
   sessions,
-  {archived = false, query = '', sort = 'recent', order = []} = {}
+  {archived = false, query = '', sort = 'recent', order = [], projectOrder = []} = {}
 ) {
   const search = query.trim().toLocaleLowerCase('zh-TW');
-  return projects
-    .filter(project => !project.archived)
-    .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
+  return sortProjects(
+    projects.filter(project => !project.archived),
+    projectOrder
+  )
     .map(project => {
       const own = sessions.filter(
         s =>

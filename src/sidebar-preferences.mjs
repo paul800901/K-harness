@@ -2,17 +2,21 @@ import path from 'node:path';
 import {readFile} from 'node:fs/promises';
 import {atomicWrite} from './atomic-write.mjs';
 
-const defaults = () => ({layout: 'grouped', sort: 'manual', order: []});
-const validIds = value =>
+const defaults = () => ({layout: 'grouped', sort: 'manual', order: [], projectOrder: []});
+const validIds = (value, maxLength = 300) =>
   Array.isArray(value) &&
   value.length <= 50000 &&
-  value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 300);
+  value.every(id => typeof id === 'string' && id.length > 0 && id.length <= maxLength);
+const projectKey = value => value.replaceAll('\\', '/').replace(/\/+$/, '').toLowerCase();
 function validate(data) {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw Error('側欄排序資料無效。');
   if (data.layout !== undefined && !['grouped', 'flat'].includes(data.layout)) throw Error('側欄分組方式無效。');
   if (data.sort !== undefined && !['manual', 'recent'].includes(data.sort)) throw Error('側欄排序方式無效。');
   for (const key of ['order', 'append'])
     if (data[key] !== undefined && !validIds(data[key])) throw Error('側欄對話順序無效。');
+  for (const key of ['projectOrder', 'appendProjects'])
+    if (data[key] !== undefined && (!validIds(data[key], 32768) || data[key].some(id => !projectKey(id))))
+      throw Error('側欄工作區順序無效。');
 }
 
 // One private setting for every screen connected to this K. Only explicit edits replace order;
@@ -27,7 +31,12 @@ export async function createSidebarPreferences(root) {
     validate(saved);
     if (saved.layout === undefined || saved.sort === undefined || saved.order === undefined)
       throw Error('Incomplete sidebar preferences');
-    value = {layout: saved.layout, sort: saved.sort, order: [...new Set(saved.order)]};
+    value = {
+      layout: saved.layout,
+      sort: saved.sort,
+      order: [...new Set(saved.order)],
+      projectOrder: [...new Set((saved.projectOrder ?? []).map(projectKey))]
+    };
   } catch (cause) {
     if (cause.code !== 'ENOENT') error = '側欄排序無法讀取，原檔已保留；目前未同步排序。';
   }
@@ -46,10 +55,12 @@ export async function createSidebarPreferences(root) {
           validate(data);
           if (data.initialize && value) return value;
           // A phone's discovered rooms must not win the first migration over the desktop's saved order.
-          if (!value && data.append !== undefined) return null;
+          if (!value && (data.append !== undefined || data.appendProjects !== undefined)) return null;
           const next = {...(value ?? defaults())};
-          for (const key of ['layout', 'sort', 'order']) if (data[key] !== undefined) next[key] = data[key];
+          for (const key of ['layout', 'sort', 'order', 'projectOrder'])
+            if (data[key] !== undefined) next[key] = data[key];
           next.order = [...new Set([...next.order, ...(data.append ?? [])])];
+          next.projectOrder = [...new Set([...next.projectOrder, ...(data.appendProjects ?? [])].map(projectKey))];
           if (JSON.stringify(next) === JSON.stringify(value)) return value;
           await atomicWrite(file, JSON.stringify(next, null, 2));
           value = next;

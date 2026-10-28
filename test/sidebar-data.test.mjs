@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   completeSessionOrder,
+  completeProjectOrder,
   groupProjectSessions,
   isVisibleMainSession,
   moveSessionOrder,
+  moveProjectOrder,
   searchSessions,
   sortSessions
 } from '../frontend/project-groups.mjs';
@@ -63,6 +65,49 @@ test('conversation search uses title, workspace and model; includes archived and
     searchSessions(projects, sessions, '').map(s => s.threadId),
     []
   );
+});
+
+test('workspace order preserves hidden positions and appends new paths without following activity or names', () => {
+  const order = completeProjectOrder(['D:/B/', 'd:/missing', 'd:/c'], projects);
+  assert.deepEqual(order, ['d:/b', 'd:/missing', 'd:/c', 'd:/a']);
+  const moved = moveProjectOrder(order, projects, 'D:\\A', -1);
+  assert.deepEqual(moved, ['d:/a', 'd:/missing', 'd:/c', 'd:/b']);
+  const changed = [...projects.map(p => ({...p, name: '改名', archived: false})), {path: 'D:/New', name: '新工作區'}];
+  const complete = completeProjectOrder(moved, changed);
+  assert.deepEqual(complete, [...moved, 'd:/new']);
+  assert.deepEqual(
+    groupProjectSessions(changed, sessions, {projectOrder: complete}).map(p => p.path),
+    ['D:\\A', 'D:\\C', 'D:\\B', 'D:/New']
+  );
+  assert.deepEqual(moveProjectOrder(moved, projects, 'D:/A', -1), moved);
+  assert.deepEqual(moveProjectOrder(moved, projects, 'D:/B', 1), moved);
+  assert.deepEqual(moveProjectOrder(moved, projects, 'D:/C', 1), moved);
+});
+
+test('workspace movement stays inside the pinned group and never changes conversation order', () => {
+  const list = [
+    ...projects.slice(0, 2).map(p => ({...p, pinned: true})),
+    {path: 'D:/D', name: '空工作區'},
+    {path: 'D:/E', name: '另一空工作區'}
+  ];
+  const order = completeProjectOrder([], list);
+  assert.deepEqual(moveProjectOrder(order, list, 'D:/B', 1), order);
+  assert.deepEqual(moveProjectOrder(order, list, 'D:/D', -1), order);
+  const moved = moveProjectOrder(moveProjectOrder(order, list, 'D:/B', -1), list, 'D:/D', 1);
+  const groups = groupProjectSessions(list, sessions, {
+    sort: 'manual',
+    order: ['b', 'e', 'a', 'c'],
+    projectOrder: moved
+  });
+  assert.deepEqual(
+    groups.map(p => p.path),
+    ['D:\\B', 'D:\\A', 'D:/E', 'D:/D']
+  );
+  assert.deepEqual(
+    groups.map(p => p.sessions.map(s => s.threadId)),
+    [['c'], ['b', 'e', 'a'], [], []]
+  );
+  assert.deepEqual(completeProjectOrder(['D:/A', 'd:\\a\\'], list), order);
 });
 
 test('persisted user branches are visible while unmarked native child sessions stay hidden', () => {

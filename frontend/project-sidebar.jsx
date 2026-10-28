@@ -54,9 +54,36 @@ function RowMenu({className, label, title, children}) {
   );
 }
 
-function ProjectMenu({project, onRenameProject, onProjectDetails, onProjectMetadata}) {
+function ProjectMenu({
+  project,
+  previousProject,
+  nextProject,
+  manual,
+  onMoveProject,
+  onRenameProject,
+  onProjectDetails,
+  onProjectMetadata
+}) {
   return (
     <RowMenu className="project-menu" label={`管理工作區 ${project.name}`} title="工作區選項">
+      {manual && (
+        <>
+          <button
+            disabled={!previousProject || !!previousProject.pinned !== !!project.pinned}
+            onClick={() => onMoveProject(project, -1)}
+          >
+            <ArrowUp size={13} />
+            上移工作區
+          </button>
+          <button
+            disabled={!nextProject || !!nextProject.pinned !== !!project.pinned}
+            onClick={() => onMoveProject(project, 1)}
+          >
+            <ArrowDown size={13} />
+            下移工作區
+          </button>
+        </>
+      )}
       <button onClick={() => onProjectDetails(project)}>
         <Folder size={13} />
         工作區詳細資訊
@@ -90,6 +117,10 @@ function ProjectRow({
   onRenameProject,
   onProjectDetails,
   onProjectMetadata,
+  previousProject,
+  nextProject,
+  manual,
+  onMoveProject,
   expandable = true
 }) {
   const [dragOver, setDragOver] = useState(false);
@@ -146,6 +177,10 @@ function ProjectRow({
       </button>
       <ProjectMenu
         project={project}
+        previousProject={previousProject}
+        nextProject={nextProject}
+        manual={manual}
+        onMoveProject={onMoveProject}
         onRenameProject={onRenameProject}
         onProjectDetails={onProjectDetails}
         onProjectMetadata={onProjectMetadata}
@@ -291,12 +326,14 @@ export function ProjectSidebar({
   layout = 'grouped',
   sort = 'recent',
   order = [],
+  projectOrder = [],
   conversationActivity = [],
   onOpen,
   onCreate,
   onRename,
   onMetadata,
   onMove,
+  onMoveProject,
   onMoveWorkspace,
   onChooseWorkspace,
   onRenameProject,
@@ -326,7 +363,7 @@ export function ProjectSidebar({
       return next;
     });
   };
-  const groups = groupProjectSessions(projects, sessions, {sort, order});
+  const groups = groupProjectSessions(projects, sessions, {sort, order, projectOrder});
   if (layout === 'flat') {
     const flat = sortSessions(
       groups.flatMap(project => project.sessions),
@@ -335,11 +372,15 @@ export function ProjectSidebar({
     return (
       <nav className="session-list" aria-label="所有工作區的對話">
         <div className="flat-projects">
-          {groups.map(project => (
+          {groups.map((project, index) => (
             <ProjectRow
               onDropSession={dropSession}
               key={projectKey(project.path)}
               project={project}
+              previousProject={groups[index - 1]}
+              nextProject={groups[index + 1]}
+              manual={sort === 'manual'}
+              onMoveProject={onMoveProject}
               expanded={false}
               containsCurrent={projectKey(state.workspace) === projectKey(project.path)}
               disabled={disabled}
@@ -372,7 +413,7 @@ export function ProjectSidebar({
   }
   return (
     <nav className="session-list" aria-label="工作區與對話">
-      {groups.map(project => {
+      {groups.map((project, index) => {
         const key = projectKey(project.path),
           expanded = !!collapsed.has(key) ? false : true;
         const active = projectKey(state.workspace) === key;
@@ -385,6 +426,10 @@ export function ProjectSidebar({
             <ProjectRow
               onDropSession={dropSession}
               project={project}
+              previousProject={groups[index - 1]}
+              nextProject={groups[index + 1]}
+              manual={sort === 'manual'}
+              onMoveProject={onMoveProject}
               expanded={expanded}
               containsCurrent={active}
               disabled={disabled}
