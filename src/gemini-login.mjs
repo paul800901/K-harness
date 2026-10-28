@@ -2,6 +2,7 @@ import path from 'node:path';
 import {access, mkdir, writeFile} from 'node:fs/promises';
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
+import {antigravityModelNames} from '../shared/antigravity-models.mjs';
 import {geminiExecutable, geminiEnvironment, geminiSettings, geminiProcess, geminiOutcome} from './gemini-worker.mjs';
 
 const exec = promisify(execFile);
@@ -70,14 +71,7 @@ export function createGeminiLogin({
             throw Error(geminiOutcome({}, {...catalog, stderr: `${catalog.stdout}\n${catalog.stderr}`}).error);
           return {
             ...base,
-            models: [
-              ...new Set(
-                catalog.stdout
-                  .split(/\r?\n/u)
-                  .map(line => line.trim().split(/\s/u)[0])
-                  .filter(name => /^gemini-[\w.-]+$/u.test(name))
-              )
-            ]
+            models: antigravityModelNames(catalog.stdout)
           };
         }
         // /usage is answered by the CLI, without a model turn. A successful account

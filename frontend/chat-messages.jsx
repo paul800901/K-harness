@@ -488,7 +488,7 @@ export function AssistantMessage() {
         ? 'codex'
         : record?.model?.startsWith('claude-')
           ? 'claude'
-          : record?.model?.startsWith('gemini-')
+          : providerOf(record?.model) === 'gemini'
             ? 'gemini'
             : 'neutral';
   const replyModel = replyModels?.get(id),

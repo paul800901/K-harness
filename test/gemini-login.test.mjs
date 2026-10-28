@@ -41,6 +41,24 @@ test('Antigravity catalog never claims authenticated status and login opens only
   assert.equal(options.env.HOME, path.join(cwd, 'agent-home/gemini/account'));
 });
 
+test('catalog inspection retains non-Gemini agy models and ignores the fetching status line', async () => {
+  const login = createGeminiLogin({
+    cwd: path.join(scratchBase, 'all-models'),
+    exists: async () => {},
+    executable: path.join(scratchBase, 'agy.exe'),
+    run: async (_binary, args) => ({
+      code: 0,
+      stdout:
+        args[0] === 'models'
+          ? 'Fetching available models...\ngemini-3.8-flash-high\tFlash\nclaude-sonnet-4-6\tSonnet\ngpt-oss-120b-medium\tGPT-OSS'
+          : '1.4.9'
+    })
+  });
+  const status = await login.status({checkAuth: false});
+  assert.deepEqual(status.models, ['gemini-3.8-flash-high', 'claude-sonnet-4-6', 'gpt-oss-120b-medium']);
+  assert.equal(status.auth, undefined);
+});
+
 test('missing agy yields an actionable isolated failure without starting a login process', async () => {
   let invoked = false;
   const cwd = path.join(scratchBase, 'gemini-missing-login');

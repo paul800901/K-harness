@@ -248,6 +248,41 @@ test('historical GPT records use their original workspace and unowned unfinished
   }
 });
 
+test('core-qualified agy models use the Gemini runner and preserve exact worker metadata', async () => {
+  const calls = [];
+  const bridge = await createLunaBridge({
+    root,
+    workspace,
+    parentId: randomUUID(),
+    geminiOnly: true,
+    geminiFactory: () => ({
+      run: async args => {
+        calls.push(args);
+        args.onStart(123);
+        return {status: 'completed', settled: true, output: 'fake result', outputFiles: []};
+      }
+    }),
+    claudeFactory: () => assert.fail('Antigravity model must not start Claude Code')
+  });
+  try {
+    for (const [model, effort] of [
+      ['antigravity:claude-sonnet-4-6', null],
+      ['antigravity:gpt-oss-120b', 'medium']
+    ]) {
+      const requestId = `qualified-${calls.length}`;
+      await bridge.start({requestId, task: 'fake', model, effort});
+      const result = await bridge.wait({requestId, timeoutMs: 3000});
+      assert.equal(result.provider, 'gemini');
+      assert.equal(result.model, model);
+      assert.equal(result.effort, effort);
+      assert.equal(result.status, 'completed');
+      assert.equal(calls.at(-1).model, model);
+    }
+  } finally {
+    await bridge.close();
+  }
+});
+
 test('Gemini wait wakes on quiet attention with current observation, then preserves the same late completion', async () => {
   let finish, started;
   const ready = new Promise(r => (started = r));

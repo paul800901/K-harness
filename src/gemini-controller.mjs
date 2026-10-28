@@ -46,6 +46,7 @@ import {
 import {normalizeWorkerPolicy, workerPolicyConfig, MODEL_PROTOCOL_GUIDANCE} from './worker-policy.mjs';
 import {writeGeminiCommonRule} from './common-memory.mjs';
 import {browserSessionKey} from './browser-mcp-config.mjs';
+import {antigravityModelId, antigravitySupportsMedia} from '../shared/antigravity-models.mjs';
 
 const sessionId = id => typeof id === 'string' && /^gemini-[0-9a-f-]{36}$/iu.test(id);
 const nativeId = id => typeof id === 'string' && /^[0-9a-f-]{36}$/iu.test(id);
@@ -56,8 +57,6 @@ const access = value => {
 };
 const now = () => new Date().toISOString();
 const quota = {status: 'unavailable', windows: [], note: '尚未取得 Antigravity 官方額度。'};
-// Native view_file verified on these catalog models; never infer a future model's support.
-const mediaModels = new Set(['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.1-pro']);
 // agy 1.4.3 expands a rule's @[label](path) include (live probe), so one shared file reaches every room's HOME.
 const memoryGuidance = (file, accessMode) =>
   `長期記憶：本人糾正做法或要求記住時，先寫出要記的規則並取得本人同意再寫入。只適用本工作區的寫進工作區的 AGENTS.md；跨工作區都適用的寫進 ${file}（各 Gemini 聊天室都會讀到）。不要寫進本聊天室的 ~/.gemini/config，那只屬於這個聊天室。本人也可輸入 /learn。${accessMode === 'read-only' ? '目前唯讀，只寫出建議的規則，由本人決定是否改權限後寫入。' : ''}`;
@@ -66,21 +65,28 @@ const memoryGuidance = (file, accessMode) =>
 export function geminiModelsFrom(names) {
   const groups = new Map();
   for (const id of names) {
-    if (!/^gemini-[\w.-]+$/u.test(id)) continue;
+    if (!/^[a-z0-9][\w.-]*$/u.test(id)) continue;
     const match = id.match(/^(.*)-(low|medium|high|xhigh|max)$/u),
-      model = match?.[1] ?? id,
+      native = match?.[1] ?? id,
+      model = antigravityModelId(native),
       effort = match?.[2] ?? null;
     let row = groups.get(model);
     if (!row) {
       row = {
         model,
-        displayName: model
-          .replace(/^gemini-/u, 'Gemini ')
-          .replaceAll('-', ' ')
-          .replace(/\b(flash|pro)\b/gu, s => s[0].toUpperCase() + s.slice(1)),
+        displayName:
+          native
+            .replace(/^gemini-/u, 'Gemini ')
+            .replace(/^claude-/u, 'Claude ')
+            .replace(/^gpt-oss-/u, 'GPT-OSS ')
+            .replace(/(\d)-(?=\d(?:-|$))/gu, '$1.')
+            .replaceAll('-', ' ')
+            .replace(/^GPT OSS (\d+)b/u, 'GPT-OSS $1B')
+            .replace(/\b(flash|pro|sonnet|opus|thinking)\b/gu, s => s[0].toUpperCase() + s.slice(1)) +
+          (native.startsWith('gemini-') ? '' : '（Antigravity）'),
         provider: 'gemini',
         available: true,
-        inputModalities: mediaModels.has(model) ? ['text', 'image', 'pdf', 'audio', 'video'] : ['text'],
+        inputModalities: antigravitySupportsMedia(model) ? ['text', 'image', 'pdf', 'audio', 'video'] : ['text'],
         supportedReasoningEfforts: [],
         defaultReasoningEffort: effort,
         nativeModels: {}

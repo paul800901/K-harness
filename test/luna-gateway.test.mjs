@@ -849,6 +849,38 @@ test('the process-only gateway accepts an api: worker model and lists unfinished
   }
 });
 
+test('Codex gateway accepts core-qualified agy Claude and GPT models without stripping their route', async () => {
+  const f = fixture(),
+    calls = [];
+  f.bridge.start = async args => {
+    calls.push(args);
+    return {requestId: args.requestId, provider: 'gemini', status: 'running', settled: false};
+  };
+  const gateway = await createLunaGateway({bridge: f.bridge, geminiOnly: true});
+  try {
+    const config = gateway.mcpConfig.mcpServers.k_gemini,
+      token = config.headers.Authorization.slice(7);
+    for (const [model, effort] of [
+      ['antigravity:claude-sonnet-4-6', null],
+      ['antigravity:gpt-oss-120b', 'medium']
+    ]) {
+      const args = {requestId: `qualified-${calls.length}`, task: 'bounded fake task', model, effort};
+      const result = await body(
+        await post(config.url, token, {
+          jsonrpc: '2.0',
+          id: calls.length + 1,
+          method: 'tools/call',
+          params: {name: 'gemini_start', arguments: args}
+        })
+      );
+      assert.notEqual(result.result.isError, true);
+      assert.deepEqual(calls.at(-1), args);
+    }
+  } finally {
+    await gateway.close();
+  }
+});
+
 test('a nested-worker gateway tells the worker it receives no completion events and must wait', async () => {
   for (const nestedWorker of [false, true]) {
     const gateway = await createLunaGateway({bridge: fixture().bridge, nestedWorker});

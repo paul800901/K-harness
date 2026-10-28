@@ -470,6 +470,34 @@ test('Gemini model changes keep native history and reject unavailable models or 
   }
 });
 
+test('Antigravity main models retain their core on save, reopen and exact native dispatch', async () => {
+  const nativeNames = ['claude-sonnet-4-6', 'claude-opus-4-6-thinking', 'gpt-oss-120b-medium'];
+  for (const row of geminiModelsFrom(nativeNames)) {
+    const f = await fixture({loginFactory: () => ({status: async () => ({available: true, models: nativeNames})})});
+    try {
+      const {threadId} = await f.controller.open({model: row.model, effort: row.defaultReasoningEffort});
+      await f.controller.send({text: 'bounded fake task'});
+      await finish(f.controller);
+      const args = f.calls[0].args;
+      assert.equal(args[args.indexOf('--model') + 1], row.nativeModels[row.defaultReasoningEffort ?? 'default']);
+      assert.equal(f.controller.state.model, row.model);
+      const sessions = await listMainSessions(f.root);
+      const saved = sessions.sessions.find(s => s.threadId === threadId);
+      assert.equal(saved.provider, 'gemini');
+      const header = JSON.parse(
+        await readFile(path.join(f.root, '.runtime/main-sessions', `${threadId}-current.json`), 'utf8')
+      );
+      assert.equal(header.accountType, 'antigravity');
+      await f.controller.close();
+      await f.controller.open({threadId, model: row.model});
+      assert.equal(f.controller.state.model, row.model);
+      assert.equal(f.calls.length, 1);
+    } finally {
+      await f.controller.close();
+    }
+  }
+});
+
 test('Gemini cancellation waits for native termination and never replays the stopped message', async () => {
   let started, release;
   const seen = new Promise(r => {

@@ -1,3 +1,5 @@
+import {isAntigravityModel} from './antigravity-models.mjs';
+
 // Existing Gemma IDs stay gemma-local/… and gemma-cloud/…; other self-hosted main agents
 // use selfhost-<id>/…. All share the internal 'gemma' provider key (Codex core, no subscription).
 export const gemmaConnection = model => {
@@ -9,7 +11,7 @@ export const modelProvider = model =>
     ? 'gemma'
     : model?.startsWith('claude-')
       ? 'claude'
-      : model?.startsWith('gemini-')
+      : isAntigravityModel(model)
         ? 'gemini'
         : 'codex';
 export const usesCodexCore = provider => provider === 'codex' || provider === 'gemma';

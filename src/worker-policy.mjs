@@ -1,3 +1,5 @@
+import {isAntigravityModel} from '../shared/antigravity-models.mjs';
+
 export const DEFAULT_WORKER_MODEL = 'auto';
 export const DEFAULT_WORKER_EFFORT = 'auto';
 // The native account catalog is the authority, not a K model allowlist. api: rows are the user's own API
@@ -12,7 +14,7 @@ export function availableWorkerModels(
       row.hidden !== true &&
       row.available !== false &&
       (/^gpt-/.test(row.model) ||
-        (geminiGateway && /^gemini-/.test(row.model)) ||
+        (geminiGateway && isAntigravityModel(row.model)) ||
         (claudeGateway && /^claude-/.test(row.model)) ||
         /^api:/.test(row.model))
   );
@@ -46,7 +48,7 @@ export function validateWorkerPolicy(value, models = [], {geminiGateway = false,
   if (policy.model === 'auto' && policy.effort === 'auto') return policy;
   if (policy.model === 'auto' || policy.effort === 'auto')
     throw new Error('子代理模型與推理程度必須同時設為「AI 自動選擇」，或同時指定。');
-  if ((policy.model.startsWith('gemini-') && !geminiGateway) || (policy.model.startsWith('claude-') && !claudeGateway))
+  if ((isAntigravityModel(policy.model) && !geminiGateway) || (policy.model.startsWith('claude-') && !claudeGateway))
     throw Error('子代理需要已接通的 gateway；未自動換模。');
   const selected = availableWorkerModels(models, {geminiGateway, claudeGateway}).find(m => m.model === policy.model);
   if (!selected) throw new Error(`${policy.model} 目前不可用；未自動換模。`);
@@ -88,7 +90,7 @@ export function workerPolicyConfig(
         ? `User-saved API consult model: ${policy.model}, reasoning effort ${policy.effort ?? 'none (pass null)'}. Use it only when the user explicitly asks to consult it, always passing that model and effort explicitly; it is not a default for ordinary delegation. Do not silently substitute on failure.`
         : `User-selected default worker: ${policy.model}, reasoning effort ${policy.effort ?? 'native default'}. Honor this manual choice; choose another model only when the user or an explicit task rule requests it, never merely because you consider it more appropriate. Do not silently substitute on failure.`,
     provider === 'codex'
-      ? `For GPT use native delegation; Pass both choices explicitly. For Gemini or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Never put a non-GPT model in agents.default_subagent_model.`
+      ? `For GPT use native delegation; Pass both choices explicitly. For Gemini, antigravity: models (including Claude/GPT offered by Antigravity), or Claude use ${gateway}, including its existing inspect/list/wait/cancel tools. Keep the full core-qualified model ID. Never put a non-GPT model in agents.default_subagent_model.`
       : provider === 'gemma'
         ? `For K-selected workers of every provider use ${gateway}. GPT workers use K's existing subscription home through this gateway, never the self-hosted inference endpoint or native spawn_agent. Self-hosted models are main-agent options, not K worker choices.`
         : provider === 'gemini'

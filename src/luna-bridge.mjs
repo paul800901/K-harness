@@ -10,6 +10,7 @@ import {listMainModels} from './main-models.mjs';
 import {stopThreadTerminals} from './background-terminals.mjs';
 import {checkedPath} from './files.mjs';
 import {createGeminiWorker, UNKNOWN_OUTPUT_FILES_NOTE} from './gemini-worker.mjs';
+import {isAntigravityModel} from '../shared/antigravity-models.mjs';
 import {createClaudeWorker} from './claude-worker.mjs';
 import {createApiWorker, API_OUTPUT_FILES_NOTE} from './api-worker.mjs';
 import {randomUUID} from 'node:crypto';
@@ -537,9 +538,9 @@ export async function createLunaBridge({
     if (model?.startsWith('api:') && effort === undefined)
       throw Error('API 諮詢工人須明確指定 effort（沒有推理設定時傳 null）；未派工。');
     const choice = {model: model ?? defaults.model, effort: effort !== undefined ? effort : defaults.effort};
-    if (geminiOnly && !/^(gemini-|claude-|api:)/.test(choice.model))
+    if (geminiOnly && !/^(gemini-|antigravity:|claude-|api:)/.test(choice.model))
       throw Error('此入口只提供 Gemini 或 Claude（及 API 諮詢模型）；GPT 子代理仍使用 Codex 原生派工。');
-    if (choice.model.startsWith('gemini-'))
+    if (isAntigravityModel(choice.model))
       return startProcess({provider: 'gemini', requestId, task, accountId, handoffFrom, ...choice});
     if (choice.model.startsWith('claude-')) {
       if (accountId !== undefined || handoffFrom !== undefined) throw Error('帳號選用與接手欄位只適用 Gemini。');

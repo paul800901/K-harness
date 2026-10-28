@@ -176,7 +176,7 @@ async function writeMainSession(
         provider: modelProvider(model),
         accountType: model.startsWith('claude-')
           ? 'claude.ai'
-          : model.startsWith('gemini-')
+          : modelProvider(model) === 'gemini'
             ? 'antigravity'
             : modelProvider(model) === 'gemma'
               ? 'self-hosted'

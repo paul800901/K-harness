@@ -20,6 +20,7 @@ import {
   geminiWriteTarget,
   killGeminiTree,
   geminiInstruction,
+  GEMINI_MEDIA_GUIDANCE,
   GEMINI_BROWSER_GUIDANCE
 } from '../src/gemini-worker.mjs';
 import {createLunaBridge, lunaResult} from '../src/luna-bridge.mjs';
@@ -134,14 +135,21 @@ test('all Gemini families and exact efforts dispatch from the native catalog wit
     ['gemini-3.1-pro', 'low'],
     ['gemini-3.1-pro', 'high'],
     ['gemini-3.7-flash', 'medium'],
-    ['gemini-future', 'native-effort']
+    ['gemini-future', 'native-effort'],
+    ['antigravity:claude-sonnet-4-6', null],
+    ['antigravity:claude-opus-4-6-thinking', null],
+    ['antigravity:gpt-oss-120b', 'medium']
   ]) {
-    const native = `${model}-${effort}`,
+    const native = model.replace(/^antigravity:/u, '') + (effort === null ? '' : `-${effort}`),
       fake = fakeSpawn(success('native family done'), native + '\tNative model');
     const result = await make(fake).run({task: 'bounded fake task', model, effort});
     assert.equal(result.status, 'completed');
     const args = fake.calls.find(call => call.args[0] === '-p').args;
     assert.equal(args[args.indexOf('--model') + 1], native);
+    assert.equal(
+      args[args.indexOf('-p') + 1].includes(GEMINI_MEDIA_GUIDANCE),
+      ['gemini-3.1-pro', 'gemini-3.7-flash'].includes(model)
+    );
   }
   const fake = fakeSpawn(success('must not run'), 'gemini-3.1-pro-low\tPro\ngemini-3.1-pro-high\tPro');
   await assert.rejects(
@@ -152,6 +160,27 @@ test('all Gemini families and exact efforts dispatch from the native catalog wit
     fake.calls.some(call => call.args[0] === '-p'),
     false
   );
+});
+
+test('Antigravity worker rejects a missing native model without inference or fallback', async () => {
+  const fake = fakeSpawn(success('must not run'));
+  await assert.rejects(
+    make(fake).run({task: 'fake', model: 'antigravity:claude-sonnet-4-6', effort: null}),
+    /目前不可用/
+  );
+  assert.equal(
+    fake.calls.some(c => c.args[0] === '-p'),
+    false
+  );
+});
+
+test('Antigravity workers reject noncanonical Gemini aliases before querying or inference', async () => {
+  const fake = fakeSpawn(success('must not run'));
+  await assert.rejects(
+    make(fake).run({task: 'fake', model: 'antigravity:gemini-3.8-flash', effort: 'high'}),
+    /須指定原生模型/
+  );
+  assert.equal(fake.calls.length, 0);
 });
 
 function browserFixture({server = true, closeError = false} = {}) {

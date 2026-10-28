@@ -25,7 +25,7 @@ const taskSchema = z.strictObject({
     .refine(value => value.trim().length > 0)
 });
 const geminiTaskSchema = taskSchema.refine(
-  args => args.model === undefined || /^(gemini-|claude-|api:)/.test(args.model),
+  args => args.model === undefined || /^(gemini-|antigravity:|claude-|api:)/.test(args.model),
   {
     message: 'GPT workers use native Codex delegation.'
   }
@@ -302,7 +302,7 @@ function createMcpServer(
   }
   const policy = bridge.workerPolicy;
   const selectionGuidance = processOnly
-    ? '此入口可派 Gemini 或 Claude 原生訂閱工人；GPT 子代理使用原生派工，不從本入口轉派。明確提供原生模型及其支援的 effort；無推理設定時傳 null。'
+    ? '此入口可派 Antigravity（gemini- 或 antigravity:，含其提供的 Claude／GPT）或 Claude Code 原生訂閱工人；Codex GPT 子代理使用原生派工。保留完整 model ID 並提供原生支援的 effort；無推理設定時傳 null。'
     : policy.model === 'auto'
       ? `AI 自動選擇目前啟用：每次派工都必須明確提供原生目錄的 model 與 effort（沒有推理設定時為 null）；依 K 共同記憶的本人分工偏好逐件選擇；Claude 主對話派出的 Claude 工人可再派一層小工人，其他工人仍不能再派工。當輪明確指定優先，推理程度依官方支援清單。`
       : policy.model.startsWith('api:')
