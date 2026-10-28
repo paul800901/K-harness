@@ -67,6 +67,13 @@ Antigravity 本次實際提供：
 
 ## 發布狀態
 
-程式版本 **`2300e14`** 已驗收，程式與本工程文件分開提交；本批交付為合回 main 的待更新版本，既有 `.local/update-ready.json` 指向完整程式 SHA。正式 K 仍執行於 `2e02f42efd08cae8008528ada08eae3980544125`，不能由本房自行停止或更新；本人按側欄「更新」後才會套用。
+程式版本 **`2300e144ccf69e3911c0c633e5eda28f92cb24fd`** 已由本人按側欄「更新」部署，2026-10-29 **03:24:41（臺灣時間）** 更新器回報成功，由 `2e02f42efd08cae8008528ada08eae3980544125` 更新至本版；更新器內完整測試 **2,024／2,024**，0 fail／cancel／skip。啟動器 03:24:42 記錄正式 K 就緒。
 
-原始碼提交前檢查差異無秘密；公開 push 依專案發布順序，等按鈕部署與正式讀回後再做，這次尚未 push。正式部署、逐檔讀回與遠端 SHA 核對仍待按鈕完成後收尾；東區未更新。
+03:53 正式讀回：
+
+- 17 份變更程式／測試及兩份隨程式提交的既有工程文件，合計 19 檔，Git 正規化後的 blob 全數與固定程式 commit 相同。首次直接 byte 比對不同，已查明全部只差 Git `core.autocrlf=true` 的 Windows CRLF；逐檔另記原始 SHA-256，不冒稱原始 bytes 相同。
+- 正式 built index、JS、CSS、圖示與 manifest 均與最後驗收產物相同；六份公開資源 HTTP 200 且 SHA-256 相同。`/health` 回 200／native，47831 的程序來自 `trusted-runtime` 的 Electron 與正式入口。沒有讀登入憑證或繞過 API 驗證。
+- `.local/runtime.json` 與更新結果指向正確 SHA；`readSelfUpdate` 回 available=null、failed=null，更新提示已消退。退版保留三份，`previous` 是 `before-1793215475882`。
+- 收據：`.runtime/archive/native-model-catalogs-20261029/deployment-readback.json`。仍未逐款送出新增模型真推論，也未把檔案、HTTP 與合成 UI 讀回稱為本人手機互動驗收；東區未更新。
+
+程式與驗收工程紀錄已按發布順序推送，遠端 main SHA 與本機提交一致；推送前檢查每個待推提交及檔案範圍，未納入秘密、本機收據、帳號或對話資料。遠端 SHA 收據保存在 `.runtime/archive/native-model-catalogs-20261029/deployment-push.json`。本次收尾只改工程文件，不重啟正式 K。
