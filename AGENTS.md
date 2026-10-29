@@ -106,3 +106,4 @@
 
 - 只修改任務需要的檔案，保留可恢復性。沒有授權不清理使用者資料，刪除一律走資源回收筒；唯一例外是可依 lockfile 重新取得的 `node_modules`，回收筒放不下時可直接移除。
 - `.runtime` 根層只放現用項目；工程紀錄引用的收據、截圖與讀回集中在 `.runtime/archive/<原名稱>`。`.runtime/uploads` 是以本專案為工作區的聊天室附件，屬使用者資料，不得移動或清理；`.runtime/desktop-logs` 是啟動器紀錄，保留原處；K 自身狀態在 `vault/private-state/.runtime`。測試暫存一律經 `test/scratch.mjs`，跑完自動清除。退版保留最新 3 份（含 `.local/runtime.json` 的 `previous`），舊候選可從 Git 重建。整理原則見 `docs/runtime-cleanup-20261013.md`。
+- K 自身工程診斷集中在 `vault/private-state/.runtime/diagnostics/`：只記不含秘密的失敗與狀態（名稱、時間、大小），長期保存供查因自修，不進 Git、不上傳。
