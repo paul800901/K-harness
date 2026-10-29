@@ -1567,3 +1567,29 @@ test('a K GPT worker turn carries the private common memory as native context, n
     await fs.rm(file);
   }
 });
+
+test('a refused Gemini start without a scheduling wait still records dispatch not-started', {timeout: 4000}, async () => {
+  const parentId = randomUUID();
+  const bridge = await createLunaBridge({
+    root,
+    workspace,
+    parentId,
+    geminiOnly: true,
+    geminiFactory: () => ({
+      run: async () => {
+        throw Object.assign(Error('憑證身分缺失或不唯一，拒絕操作。（current：identity_missing，第 57 行）'), {
+          dispatch: 'not-started'
+        });
+      }
+    })
+  });
+  try {
+    await bridge.start({requestId: 'hard-refusal', task: 'fake', model: 'gemini-3.8-flash', effort: 'high'});
+    const result = await bridge.wait({requestId: 'hard-refusal', timeoutMs: 1000});
+    assert.equal(result.status, 'failed');
+    assert.equal(result.dispatch, 'not-started');
+    assert.equal(result.scheduling, undefined);
+  } finally {
+    await bridge.close();
+  }
+});

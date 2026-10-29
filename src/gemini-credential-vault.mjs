@@ -1,8 +1,10 @@
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
+import {atomicWrite} from './atomic-write.mjs';
 
 const execFileAsync = promisify(execFile);
 const helperPath = fileURLToPath(new URL('../scripts/gemini-credentials.ps1', import.meta.url));
@@ -35,6 +37,7 @@ function parseOutput(stdout, operation) {
   )
     throw Error('Windows 憑證 helper 回傳安全中繼資料無效。');
   const account = {accountId: value.accountId, email: value.email};
+  if (operation === 'current') return {...account, writtenAt: iso(value.writtenAt)};
   if (operation !== 'queryQuota') return account;
   const checkedAt =
     typeof value.checkedAt === 'string' && Number.isFinite(Date.parse(value.checkedAt)) ? value.checkedAt : null;
@@ -62,19 +65,74 @@ function parseOutput(stdout, operation) {
     refreshed: value.refreshed === true
   };
 }
-function safeFailureMessage(error) {
-  let code;
+const HELPER_CODES = ['busy', 'identity', 'credential', 'quota_auth', 'quota_temporary', 'quota_client', 'quota_schema'];
+const DIAGNOSTICS_MAX_BYTES = 1024 * 1024;
+const iso = value => (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null);
+const names = value =>
+  (Array.isArray(value) ? value : typeof value === 'string' ? [value] : [])
+    .filter(name => typeof name === 'string' && /^[A-Za-z0-9_]{1,64}$/u.test(name))
+    .slice(0, 16);
+const oneOf = (value, allowed) => (allowed.includes(value) ? value : null);
+// Rebuild the helper's failure report from known fields only: names, booleans,
+// sizes and times. Anything else the helper might print is dropped.
+function helperFailure(stdout, operation) {
+  let value;
   try {
-    code = JSON.parse(String(error?.stdout ?? '')).errorCode;
+    value = JSON.parse(String(stdout ?? ''));
   } catch {}
-  if (code === 'busy') return 'Antigravity 正在執行；請先關閉官方視窗並等工作停止，再新增、保存、取消或切換帳號。';
-  if (code === 'identity') return '憑證身分缺失或不唯一，拒絕操作。';
-  if (code === 'credential') return 'Windows 憑證操作失敗；未輸出憑證內容。';
-  return 'Windows 憑證 helper 執行失敗；未輸出憑證內容。';
+  if (!value || typeof value !== 'object' || Array.isArray(value)) value = {};
+  const live = value.live && typeof value.live === 'object' && !Array.isArray(value.live) ? value.live : null;
+  const processes = value.processes && typeof value.processes === 'object' ? [value.processes].flat() : null;
+  return {
+    operation,
+    code: oneOf(value.errorCode, HELPER_CODES) ?? 'unknown',
+    reason: typeof value.errorReason === 'string' && /^[a-z_]{1,40}$/u.test(value.errorReason) ? value.errorReason : null,
+    line: Number.isSafeInteger(value.errorLine) && value.errorLine > 0 ? value.errorLine : null,
+    ...(live
+      ? {
+          live: {
+            present: live.present === true,
+            unreadable: live.unreadable === true,
+            bytes: Number.isSafeInteger(live.bytes) ? live.bytes : null,
+            writtenAt: iso(live.writtenAt),
+            json: live.json === 'invalid' ? 'invalid' : null,
+            fields: names(live.fields),
+            tokenFields: names(live.tokenFields),
+            idToken: oneOf(live.idToken, ['absent', 'string', 'other']),
+            idTokenEmail: oneOf(live.idTokenEmail, ['absent', 'valid', 'invalid', 'other']),
+            identityReadable: typeof live.identityReadable === 'boolean' ? live.identityReadable : null
+          }
+        }
+      : {}),
+    ...(processes
+      ? {
+          processes: processes.slice(0, 16).map(row => ({
+            pid: Number.isSafeInteger(row?.pid) ? row.pid : null,
+            name: oneOf(row?.name, ['agy', 'Antigravity', 'Antigravity.exe']),
+            startedAt: iso(row?.startedAt)
+          }))
+        }
+      : {})
+  };
+}
+function safeFailureMessage({code, reason, line, operation}) {
+  const where = `（${operation}：${reason ?? code}${line ? `，第 ${line} 行` : ''}）`;
+  if (code === 'busy')
+    return `Antigravity 正在執行（可能是官方視窗關閉後留下的背景程式）；請等它停止，再新增、保存、取消或切換帳號，未變更登入。${where}`;
+  if (code === 'identity') return `憑證身分缺失或不唯一，拒絕操作。${where}`;
+  if (code === 'credential') return `Windows 憑證操作失敗；未輸出憑證內容。${where}`;
+  return `Windows 憑證 helper 執行失敗；未輸出憑證內容。${where}`;
 }
 
 /** Credentials stay in the Windows helper process; Node receives safe identity/quota only. */
-export function createGeminiCredentialVault({root, env = process.env, execImpl = execFileAsync, enabled = false} = {}) {
+export function createGeminiCredentialVault({
+  root,
+  env = process.env,
+  execImpl = execFileAsync,
+  enabled = false,
+  diagnosticsFile = null,
+  clock = Date.now
+} = {}) {
   if (typeof root !== 'string' || !/^[a-f0-9]{32,64}$/iu.test(root))
     throw Error('Gemini 憑證命名空間必須是外部提供的十六進位 root hash。');
   const namespace = root.toLowerCase();
@@ -88,6 +146,30 @@ export function createGeminiCredentialVault({root, env = process.env, execImpl =
   // Serialize helper reads/refreshes with capture/activation. A quota refresh
   // writes only its existing managed target, never the native live credential.
   let pending = Promise.resolve();
+  // Engineering evidence kept for later repair (no secrets): every helper failure,
+  // and each change of the shared login's last-written time seen by a read.
+  let diagnostics = Promise.resolve(),
+    lastWrittenAt;
+  function diagnose(entry) {
+    if (!diagnosticsFile) return;
+    const line = JSON.stringify({at: new Date(clock()).toISOString(), ...entry}) + '\n';
+    diagnostics = diagnostics.then(async () => {
+      try {
+        let text = '';
+        try {
+          text = await readFile(diagnosticsFile, 'utf8');
+        } catch (error) {
+          if (error.code !== 'ENOENT') return;
+        }
+        text += line;
+        while (Buffer.byteLength(text) > DIAGNOSTICS_MAX_BYTES && text.includes('\n'))
+          text = text.slice(text.indexOf('\n') + 1);
+        await atomicWrite(diagnosticsFile, text);
+      } catch {
+        /* Diagnostics never change a credential operation's result. */
+      }
+    });
+  }
   function invoke(...args) {
     const operation = pending.then(() => invokeHelper(...args));
     pending = operation.catch(() => {});
@@ -123,14 +205,13 @@ export function createGeminiCredentialVault({root, env = process.env, execImpl =
         windowsHide: true,
         encoding: 'utf8',
         timeout: operation === 'queryQuota' ? 60000 : 15000,
-        maxBuffer: 4096
+        maxBuffer: 16384
       });
     } catch (error) {
+      const failure = helperFailure(error?.stdout, operation);
+      diagnose({kind: 'helper_failure', ...failure});
       if (operation === 'queryQuota') {
-        let code;
-        try {
-          code = JSON.parse(error.stdout).errorCode;
-        } catch {}
+        const code = failure.code === 'unknown' ? undefined : failure.code;
         const signedOut = code === 'quota_auth';
         return {
           accountId,
@@ -150,7 +231,10 @@ export function createGeminiCredentialVault({root, env = process.env, execImpl =
                     : '官方額度暫時無法確認；不是額度耗盡。'
         };
       }
-      throw Error(safeFailureMessage(error));
+      throw Object.assign(Error(safeFailureMessage(failure)), {
+        code: `GEMINI_CREDENTIAL_${failure.code.toUpperCase()}`,
+        helperFailure: {operation, code: failure.code, reason: failure.reason, line: failure.line}
+      });
     }
     let payload;
     try {
@@ -174,9 +258,19 @@ export function createGeminiCredentialVault({root, env = process.env, execImpl =
       if (payload === null) return {previousAccountId: null};
       return {previousAccountId: payload.accountId};
     }
+    if (operation === 'current' && payload) {
+      if (payload.writtenAt !== lastWrittenAt) {
+        if (lastWrittenAt !== undefined)
+          diagnose({kind: 'live_login_rewritten', accountId: payload.accountId, writtenAt: payload.writtenAt});
+        lastWrittenAt = payload.writtenAt;
+      }
+      return {accountId: payload.accountId, email: payload.email};
+    }
     return payload;
   }
   return Object.freeze({
+    // Tests wait for queued diagnostic writes.
+    flushDiagnostics: () => diagnostics,
     async current() {
       return invoke('current');
     },

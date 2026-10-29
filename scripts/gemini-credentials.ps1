@@ -95,6 +95,21 @@ function Save-CurrentManaged($Record,[string]$Target){
  }finally{[KGeminiCredentialNative]::ClearRecord($saved)}
 }
 function Assert-Idle {$running=Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @('agy','Antigravity','Antigravity.exe') };if($running){throw 'BUSY:Antigravity is running.'}}
+# Diagnostics for a failed operation: names, booleans, sizes and times only.
+# No credential value, email, token or process command line leaves this helper.
+function Get-WrittenAt($Record){try{$lo=[BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Record.LastWritten.dwLowDateTime),0);$hi=[BitConverter]::ToUInt32([BitConverter]::GetBytes([int]$Record.LastWritten.dwHighDateTime),0);return [DateTime]::FromFileTimeUtc(([long]$hi -shl 32) -bor [long]$lo).ToString('o')}catch{return $null}}
+function Get-SafeNames($Value){if($Value -isnot [PSCustomObject]){return ,@()};return ,@($Value.PSObject.Properties.Name | Where-Object {$_ -match '^[A-Za-z0-9_]{1,64}$'} | Select-Object -First 16)}
+function Get-LiveShape {
+ $live=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $live){return @{present=$false}};$records.Add($live)
+ $shape=@{present=$true;bytes=$live.Blob.Length;writtenAt=(Get-WrittenAt $live)}
+ try{$data=ConvertFrom-Json -InputObject ([Text.UTF8Encoding]::new($false,$true).GetString($live.Blob).TrimEnd([char]0)) -ErrorAction Stop}catch{$shape.json='invalid';return $shape}
+ $shape.fields=Get-SafeNames $data;$shape.tokenFields=Get-SafeNames $data.token
+ $shape.idToken=if($null -eq $data.id_token){'absent'}elseif($data.id_token -is [string]){'string'}else{'other'}
+ $shape.idTokenEmail=if($null -eq $data.id_token_email){'absent'}elseif($data.id_token_email -isnot [string]){'other'}elseif($data.id_token_email -match '^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$'){'valid'}else{'invalid'}
+ $shape.identityReadable=$true;try{Get-Email $live|Out-Null}catch{$shape.identityReadable=$false}
+ return $shape
+}
+function Get-NativeProcesses {try{return ,@(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @('agy','Antigravity','Antigravity.exe') } | Select-Object -First 16 | ForEach-Object {$started=$null;try{$started=$_.StartTime.ToUniversalTime().ToString('o')}catch{};@{pid=$_.Id;name=$_.ProcessName;startedAt=$started}})}catch{return ,@()}}
 
 $records=New-Object 'System.Collections.Generic.List[object]'
 $exitCode=0
@@ -132,7 +147,7 @@ try {
    Write-SafeJson @{accountId=$public.accountId;email=$public.email;checkedAt=[DateTimeOffset]::UtcNow.ToString('o');windows=$quota.windows;refreshed=$quota.refreshed;requiresActivation=$requiresActivation};break
   }
   'assertIdle' {Assert-Idle;Write-SafeJson @{idle=$true};break}
-  'current' {$record=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $record){Write-SafeJson $null}else{$records.Add($record);Write-SafeJson (Get-Public $record)};break}
+  'current' {$record=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $record){Write-SafeJson $null}else{$records.Add($record);$public=Get-Public $record;$public.writtenAt=Get-WrittenAt $record;Write-SafeJson $public};break}
   'capture' {
    Assert-Idle;$record=[KGeminiCredentialNative]::Read($liveTarget);if($null -eq $record){throw 'CREDENTIAL:No live credential.'};$records.Add($record)
    $public=Get-Public $record;$target=Get-ManagedTarget $public.accountId
@@ -166,7 +181,15 @@ try {
 } catch {
  $message=$_.Exception.Message
  if($message -match '^(BUSY|IDENTITY|CREDENTIAL|QUOTA_AUTH|QUOTA_TEMPORARY|QUOTA_CLIENT|QUOTA_SCHEMA):'){$code=$Matches[1].ToLowerInvariant()}else{$code='credential'}
- Write-SafeJson @{errorCode=$code;errorLine=$_.InvocationInfo.ScriptLineNumber;errorType=$_.Exception.GetType().Name}
+ $failure=@{errorCode=$code;errorLine=$_.InvocationInfo.ScriptLineNumber;errorType=$_.Exception.GetType().Name}
+ # Only exact, source-defined messages become public reason codes.
+ $reasons=@{'IDENTITY:Credential identity is missing.'='identity_missing';'IDENTITY:Credential identity JSON is invalid.'='identity_json_invalid';'IDENTITY:Credential id_token email is missing or invalid.'='identity_email_invalid';'IDENTITY:Account required.'='account_required';'IDENTITY:Saved account mismatch.'='saved_account_mismatch';'IDENTITY:Saved account removed.'='saved_account_removed';'BUSY:Antigravity is running.'='native_process_present'}
+ if($reasons.ContainsKey($message)){$failure.errorReason=$reasons[$message]}
+ if($code -in @('identity','busy')){
+  if($nativeLoaded){try{$failure.live=Get-LiveShape}catch{$failure.live=@{unreadable=$true}}}
+  $failure.processes=Get-NativeProcesses
+ }
+ Write-SafeJson $failure
  [Console]::Error.WriteLine('Gemini credential operation failed; no credential data was emitted.')
  $exitCode=1
 } finally {

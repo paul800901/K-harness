@@ -3610,3 +3610,135 @@ test('only one background read of another account runs at a time', async () => {
   await f.accounts.idle();
   assert.deepEqual(reads, [A, D, B]);
 });
+
+const unreadableIdentity = () =>
+  Object.assign(Error('憑證身分缺失或不唯一，拒絕操作。（current：identity_email_invalid，第 76 行）'), {
+    code: 'GEMINI_CREDENTIAL_IDENTITY'
+  });
+const busyNative = () =>
+  Object.assign(Error('Antigravity 正在執行（可能是官方視窗關閉後留下的背景程式）'), {code: 'GEMINI_CREDENTIAL_BUSY'});
+const fakeTimers = () => {
+  const timers = [];
+  return {
+    timers,
+    setTimer: (fn, ms) => {
+      const timer = {fn, ms};
+      timers.push(timer);
+      return timer;
+    },
+    clearTimer: timer => {
+      timer.cancelled = true;
+    }
+  };
+};
+
+test('an unreadable shared login identity waits without starting work, then readies the not-started job', async () => {
+  let now = Date.parse('2026-10-03T12:00:00Z');
+  const {timers, setTimer, clearTimer} = fakeTimers(),
+    events = [];
+  const f = await handoffFixture(() => officialBalance(80), {clock: () => now, setTimer, clearTimer});
+  const read = f.vault.current;
+  let unreadable = true;
+  f.vault.current = async () => {
+    if (unreadable) throw unreadableIdentity();
+    return read();
+  };
+  let started = 0;
+  await assert.rejects(
+    f.accounts.run(handoffOptions('identity-room', 'not-started', events), async () => {
+      started++;
+    }),
+    error => {
+      assert.equal(error.dispatch, 'not-started');
+      assert.equal(error.code, 'GEMINI_QUOTA_WAIT');
+      assert.match(error.message, /暫時讀不出帳號身分.*identity_email_invalid/u);
+      assert.equal(error.scheduling.status, 'waiting');
+      assert.equal(error.scheduling.notificationRegistered, true);
+      return true;
+    }
+  );
+  await eventually(() => timers.length === 1);
+  assert.equal(timers[0].ms, 60000);
+  assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+  unreadable = false;
+  now += 60000;
+  timers[0].fn();
+  await eventually(() => events.some(event => event.status === 'ready'));
+  assert.deepEqual(events.find(event => event.status === 'ready').notStartedIds, ['not-started']);
+  assert.equal(started, 0);
+  assert.deepEqual(f.calls.activate, []);
+});
+
+test('an unreadable identity on the final pre-dispatch check also waits instead of failing hard', async () => {
+  const f = await handoffFixture(() => officialBalance(80)),
+    events = [];
+  const read = f.vault.current;
+  let reads = 0;
+  f.vault.current = async () => {
+    if (++reads === 2) throw unreadableIdentity();
+    return read();
+  };
+  let started = 0;
+  await assert.rejects(
+    f.accounts.run(handoffOptions('final-check-room', 'not-started', events), async () => {
+      started++;
+    }),
+    error => error.code === 'GEMINI_QUOTA_WAIT' && error.scheduling?.notificationRegistered === true
+  );
+  await eventually(() => events.some(event => event.status === 'ready'));
+  assert.equal(started, 0);
+  assert.deepEqual(f.calls.activate, []);
+});
+
+test('leftover Antigravity processes do not block a read-only readiness check but make a switch wait', async () => {
+  let now = Date.parse('2026-10-03T12:00:00Z');
+  const {timers, setTimer, clearTimer} = fakeTimers(),
+    events = [];
+  const f = await handoffFixture(identity => officialBalance(identity.accountId === A ? 0 : 80), {
+    clock: () => now,
+    setTimer,
+    clearTimer
+  });
+  let busy = true,
+    idleChecks = 0;
+  f.vault.assertIdle = async () => {
+    idleChecks++;
+    if (busy) throw busyNative();
+    return true;
+  };
+  const active = await f.accounts.acquire();
+  await f.accounts.run(handoffOptions('busy-room', 'failed', events), async () => limitFailure);
+  await active.release();
+  await eventually(() => timers.length === 1);
+  assert.equal(idleChecks, 1, 'only the switch write checked idle');
+  assert.deepEqual(f.calls.activate, []);
+  assert.equal(f.current.accountId, A);
+  assert.equal(
+    events.some(event => event.status === 'blocked'),
+    false,
+    'busy native processes are a wait, not a hard block'
+  );
+  busy = false;
+  now += 60000;
+  timers[0].fn();
+  await eventually(() => events.some(event => event.status === 'ready'));
+  assert.deepEqual(f.calls.activate, [B]);
+  assert.equal(events.find(event => event.status === 'ready').accountId, B);
+});
+
+test('a positive readiness check completes while leftover Antigravity processes remain', async () => {
+  const f = await handoffFixture(() => officialBalance(80)),
+    events = [];
+  let idleChecks = 0;
+  f.vault.assertIdle = async () => {
+    idleChecks++;
+    throw busyNative();
+  };
+  const active = await f.accounts.acquire();
+  await f.accounts.run(handoffOptions('positive-room', 'failed', events), async () => limitFailure);
+  await active.release();
+  await eventually(() => events.some(event => event.status === 'blocked'));
+  assert.match(events.find(event => event.status === 'blocked').reason, /官方仍有額度/u);
+  assert.equal(idleChecks, 0);
+  assert.deepEqual(f.calls.activate, []);
+});

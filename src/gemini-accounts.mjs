@@ -163,8 +163,18 @@ export function createGeminiAccounts({
     if (data.loginPending) throw Error('請先完成或取消另一帳號的登入。');
     if (data.uncertain) throw Error('Gemini 程序停止尚未確認，不可切換或再派工作。');
   }
+  // A read-only check of the shared login that cannot name its account (Antigravity
+  // may be mid-rewrite) waits and rechecks; no job starts and no login is changed.
+  async function liveIdentity() {
+    try {
+      return await vault.current();
+    } catch (error) {
+      if (error.code !== 'GEMINI_CREDENTIAL_IDENTITY') throw error;
+      throw quotaWait(`目前 Gemini 登入暫時讀不出帳號身分；K 等待重查，未開始工作或變更登入。${error.message}`);
+    }
+  }
   async function current() {
-    const identity = await vault.current();
+    const identity = await liveIdentity();
     if (identity && find(identity.accountId)) {
       data.activeAccountId = identity.accountId;
       return find(identity.accountId);
@@ -448,11 +458,9 @@ export function createGeminiAccounts({
         changing = true;
         ownsChange = true;
         onChange();
-        try {
-          await vault.assertIdle();
-        } catch {
-          throw quotaWait('仍有 Gemini 程序，K 等待停止，不強制結束。');
-        }
+        // Identity and quota reads leave the shared login untouched, so leftover
+        // Antigravity processes do not block them. Every write (activate) still
+        // requires idle and waits on BUSY below.
         original = await current();
         if (
           !original ||
@@ -493,6 +501,7 @@ export function createGeminiAccounts({
         let nextQueryAt = allRecheckAt();
         const temporary =
           error.code === 'GEMINI_QUOTA_WAIT' ||
+          error.code === 'GEMINI_CREDENTIAL_BUSY' ||
           (error.code === 'GEMINI_ACCOUNTS_EXHAUSTED' && !data.uncertain && !(nextQueryAt > clock()));
         const waiting =
           temporary ||
@@ -967,7 +976,7 @@ export function createGeminiAccounts({
               if (running) throw quotaWait('登入權杖已更新，等待既有 Gemini 程序停止後同步同一帳號；未派工。');
               await activate(chosen.id, {refreshQuota: false});
             }
-            if ((await vault.current())?.accountId !== chosen.id) throw Error('派工前共用登入身分已改變；未開始工作。');
+            if ((await liveIdentity())?.accountId !== chosen.id) throw Error('派工前共用登入身分已改變；未開始工作。');
           } else if (accountId) throw Error('Gemini 帳號尚未加入 K。');
           running++;
         } finally {
@@ -1024,7 +1033,9 @@ export function createGeminiAccounts({
         error.dispatch = 'not-started';
         if (
           options.worker &&
-          ['GEMINI_HANDOFF_WAIT', 'GEMINI_ACCOUNTS_EXHAUSTED', 'GEMINI_QUOTA_WAIT'].includes(error.code)
+          ['GEMINI_HANDOFF_WAIT', 'GEMINI_ACCOUNTS_EXHAUSTED', 'GEMINI_QUOTA_WAIT', 'GEMINI_CREDENTIAL_BUSY'].includes(
+            error.code
+          )
         ) {
           const registered = registerHandoff(options, error.accountId ?? data.activeAccountId, {notStarted: true});
           error.scheduling = {

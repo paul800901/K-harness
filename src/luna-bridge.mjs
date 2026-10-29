@@ -850,7 +850,9 @@ export async function createLunaBridge({
                   status: error.settled === false ? 'unresolved' : controller.signal.aborted ? 'cancelled' : 'failed',
                   settled: error.settled !== false,
                   error: error.message,
-                  ...(error.scheduling ? {scheduling: clone(error.scheduling), dispatch: error.dispatch} : {})
+                  // A refused start keeps its not-started proof even without a scheduling wait.
+                  ...(error.dispatch === 'not-started' ? {dispatch: 'not-started'} : {}),
+                  ...(error.scheduling ? {scheduling: clone(error.scheduling)} : {})
                 });
               if (nestedError) {
                 // Keep the second layer so a later cancel or close can retry confirming its stop; never replay.

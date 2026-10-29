@@ -331,3 +331,147 @@ Write-SafeJson $null
     });
   }
 );
+
+test('helper failures keep operation, reason and line and record only sanitized shape in the diagnostics file', async () => {
+  const {mkdtemp, mkdir} = await import('node:fs/promises');
+  const {join} = await import('node:path');
+  const {scratchBase} = await import('./scratch.mjs');
+  await mkdir(scratchBase, {recursive: true});
+  const diagnosticsFile = join(await mkdtemp(join(scratchBase, 'gemini-diag-')), 'diagnostics', 'gemini-credential.jsonl');
+  const vault = createGeminiCredentialVault({
+    root,
+    env: {SystemRoot: 'C:\\Windows'},
+    enabled: true,
+    diagnosticsFile,
+    clock: () => Date.parse('2026-10-29T07:36:40Z'),
+    execImpl: async () => {
+      throw Object.assign(new Error('native details secret-blob'), {
+        stdout: JSON.stringify({
+          errorCode: 'identity',
+          errorLine: 76,
+          errorType: 'RuntimeException',
+          errorReason: 'identity_email_invalid',
+          email: 'leak@example.test',
+          live: {
+            present: true,
+            bytes: 812,
+            writtenAt: '2026-10-29T07:35:58.0000000Z',
+            fields: ['token', 'auth_method', 'secret value with spaces'],
+            tokenFields: ['access_token', 'refresh_token', 'expiry'],
+            idToken: 'absent',
+            idTokenEmail: 'absent',
+            identityReadable: false,
+            access_token: 'secret-access-token'
+          },
+          processes: [{pid: 4242, name: 'Antigravity', startedAt: '2026-10-29T06:47:48Z', commandLine: 'secret-arg'}]
+        }),
+        stderr: 'secret-stderr'
+      });
+    }
+  });
+  await assert.rejects(vault.current(), error => {
+    assert.equal(error.code, 'GEMINI_CREDENTIAL_IDENTITY');
+    assert.match(error.message, /憑證身分缺失或不唯一.*（current：identity_email_invalid，第 76 行）/u);
+    assert.deepEqual(error.helperFailure, {operation: 'current', code: 'identity', reason: 'identity_email_invalid', line: 76});
+    return true;
+  });
+  await vault.flushDiagnostics();
+  const lines = (await readFile(diagnosticsFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(lines.length, 1);
+  assert.deepEqual(lines[0], {
+    at: '2026-10-29T07:36:40.000Z',
+    kind: 'helper_failure',
+    operation: 'current',
+    code: 'identity',
+    reason: 'identity_email_invalid',
+    line: 76,
+    live: {
+      present: true,
+      unreadable: false,
+      bytes: 812,
+      writtenAt: '2026-10-29T07:35:58.0000000Z',
+      json: null,
+      fields: ['token', 'auth_method'],
+      tokenFields: ['access_token', 'refresh_token', 'expiry'],
+      idToken: 'absent',
+      idTokenEmail: 'absent',
+      identityReadable: false
+    },
+    processes: [{pid: 4242, name: 'Antigravity', startedAt: '2026-10-29T06:47:48Z'}]
+  });
+  assert.doesNotMatch(await readFile(diagnosticsFile, 'utf8'), /secret|leak@/u);
+});
+
+test('reads record each change of the shared login write time without returning it to callers', async () => {
+  const {mkdtemp, mkdir} = await import('node:fs/promises');
+  const {join} = await import('node:path');
+  const {scratchBase} = await import('./scratch.mjs');
+  await mkdir(scratchBase, {recursive: true});
+  const diagnosticsFile = join(await mkdtemp(join(scratchBase, 'gemini-diag-')), 'gemini-credential.jsonl');
+  const times = ['2026-10-29T06:00:00Z', '2026-10-29T06:00:00Z', '2026-10-29T07:40:12Z'];
+  const vault = createGeminiCredentialVault({
+    root,
+    env: {SystemRoot: 'C:\\Windows'},
+    enabled: true,
+    diagnosticsFile,
+    execImpl: async () => ({stdout: JSON.stringify({...metadata, writtenAt: times.shift()})})
+  });
+  for (let i = 0; i < 3; i++) assert.deepEqual(await vault.current(), metadata);
+  await vault.flushDiagnostics();
+  const lines = (await readFile(diagnosticsFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  assert.deepEqual(
+    lines.map(({kind, accountId: id, writtenAt}) => ({kind, id, writtenAt})),
+    [{kind: 'live_login_rewritten', id: accountId, writtenAt: '2026-10-29T07:40:12Z'}]
+  );
+});
+
+test('busy helper failures carry a waitable code without a diagnostics file configured', async () => {
+  const vault = createGeminiCredentialVault({
+    root,
+    env: {SystemRoot: 'C:\\Windows'},
+    enabled: true,
+    execImpl: async () => {
+      throw Object.assign(new Error('x'), {stdout: '{"errorCode":"busy","errorReason":"native_process_present"}'});
+    }
+  });
+  await assert.rejects(vault.activate(accountId), error => {
+    assert.equal(error.code, 'GEMINI_CREDENTIAL_BUSY');
+    assert.match(error.message, /Antigravity 正在執行（可能是官方視窗關閉後留下的背景程式）/u);
+    return true;
+  });
+});
+
+test(
+  'PowerShell 5.1 diagnostic helpers emit only safe names and a UTC write time',
+  {skip: process.platform !== 'win32'},
+  async () => {
+    const helper = fileURLToPath(new URL('../scripts/gemini-credentials.ps1', import.meta.url));
+    const helperB64 = Buffer.from(helper, 'utf8').toString('base64');
+    const command = String.raw`
+$ErrorActionPreference='Stop'
+$path=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${helperB64}'))
+$tokens=$null;$parseErrors=$null;$ast=[System.Management.Automation.Language.Parser]::ParseFile($path,[ref]$tokens,[ref]$parseErrors)
+if($parseErrors.Count){throw 'PowerShell parse failed.'}
+$functions=$ast.FindAll({param($n)$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in @('Get-SafeNames','Get-WrittenAt','Write-SafeJson')},$true)
+foreach($function in $functions){Invoke-Expression $function.Extent.Text}
+$data=ConvertFrom-Json '{"token":{"access_token":"fake-secret"},"auth_method":"oauth","bad name":"x"}'
+$ft=New-Object System.Runtime.InteropServices.ComTypes.FILETIME
+$value=[DateTime]::Parse('2026-10-29T07:35:58Z').ToUniversalTime().ToFileTimeUtc()
+$ft.dwLowDateTime=[BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]($value -band [long]4294967295)),0)
+$ft.dwHighDateTime=[BitConverter]::ToInt32([BitConverter]::GetBytes([uint32]($value -shr 32)),0)
+$record=[PSCustomObject]@{LastWritten=$ft}
+Write-SafeJson @{fields=(Get-SafeNames $data);tokenFields=(Get-SafeNames $data.token);none=(Get-SafeNames $null);writtenAt=(Get-WrittenAt $record)}
+`;
+    const ps = await execFileAsync(
+      `${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`,
+      ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+      {windowsHide: true, encoding: 'utf8', timeout: 15000, maxBuffer: 4096}
+    );
+    const result = JSON.parse(ps.stdout.trim());
+    assert.deepEqual([result.fields].flat(), ['token', 'auth_method']);
+    assert.deepEqual([result.tokenFields].flat(), ['access_token']);
+    assert.deepEqual([result.none ?? []].flat(), []);
+    assert.equal(Date.parse(result.writtenAt), Date.parse('2026-10-29T07:35:58Z'));
+    assert.doesNotMatch(ps.stdout, /fake-secret|oauth/u);
+  }
+);

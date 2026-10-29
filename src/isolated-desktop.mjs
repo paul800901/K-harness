@@ -79,7 +79,9 @@ export async function startIsolatedDesktop({
     vault: createGeminiCredentialVault({
       root: createHash('sha256').update(stateRoot.toLowerCase()).digest('hex'),
       env,
-      enabled: allowLogin
+      enabled: allowLogin,
+      // K's own engineering diagnostics (no secrets), kept for later repair.
+      diagnosticsFile: path.join(stateRoot, '.runtime', 'diagnostics', 'gemini-credential.jsonl')
     })
   });
   // The room router hands selection to a provider controller restricted below,
