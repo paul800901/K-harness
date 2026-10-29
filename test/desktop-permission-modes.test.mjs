@@ -229,6 +229,7 @@ test('native fork requires confirmation only when raising permissions', async ()
         };
       if (method === 'config/read') return {config: {developer_instructions: ''}};
       if (method === 'thread/backgroundTerminals/list') return {data: [], nextCursor: null};
+      if (method === 'thread/loaded/list') return {data: ['test-thread']};
       if (method === 'model/list')
         return {
           data: [

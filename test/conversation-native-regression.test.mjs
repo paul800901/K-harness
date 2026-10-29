@@ -16,7 +16,9 @@ async function fixture() {
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'conversation-native-'));
   const codexHosts = [],
-    claudeHosts = [];
+    claudeHosts = [],
+    history = new Map(),
+    owners = new Map();
   let codexId = 0;
   const codexFactory = options => {
     let resolveClosed;
@@ -26,6 +28,7 @@ async function fixture() {
         resolveClosed = resolve;
       }),
       calls: [],
+      closeCalls: 0,
       notify() {},
       async request(method, params = {}) {
         this.calls.push({method, params});
@@ -42,6 +45,11 @@ async function fixture() {
                 inputModalities: ['text']
               },
               {
+                model: 'gpt-6.1-terra',
+                supportedReasoningEfforts: [{reasoningEffort: 'high'}],
+                defaultReasoningEffort: 'high'
+              },
+              {
                 model: 'gpt-6-luna',
                 displayName: 'GPT-6 Luna',
                 hidden: false,
@@ -52,8 +60,20 @@ async function fixture() {
             ],
             nextCursor: null
           };
-        if (method === 'thread/start') return {thread: {id: `codex-room-${++codexId}`}};
-        if (method === 'thread/read') return {thread: {turns: []}};
+        if (method === 'thread/start' || method === 'thread/fork' || method === 'thread/resume') {
+          const id = method === 'thread/resume' ? params.threadId : `codex-room-${++codexId}`;
+          if (owners.has(id) && owners.get(id) !== host)
+            throw Object.assign(Error('Codex request thread/resume failed (code -32600).'), {
+              protocolMessage: 'thread already has a writer'
+            });
+          owners.set(id, host);
+          if (method === 'thread/fork') history.set(id, structuredClone(history.get(params.threadId) ?? []));
+          return {thread: {id}};
+        }
+        if (method === 'thread/read')
+          return {thread: {id: params.threadId, turns: structuredClone(history.get(params.threadId) ?? [])}};
+        if (method === 'thread/loaded/list')
+          return {data: [...owners].filter(([, owner]) => owner === host).map(([id]) => id)};
         if (method === 'thread/backgroundTerminals/list') return {data: [], nextCursor: null};
         if (method === 'turn/start') {
           options.onEvent({
@@ -72,6 +92,8 @@ async function fixture() {
         return {};
       },
       async close() {
+        this.closeCalls++;
+        for (const [id, owner] of owners) if (owner === host) owners.delete(id);
         resolveClosed();
       }
     };
@@ -130,8 +152,52 @@ async function fixture() {
         gatewayFactory: async () => ({mcpConfig: {mcpServers: {}}, async close() {}})
       })
   });
-  return {root, pool, codexHosts, claudeHosts};
+  return {root, pool, codexHosts, claudeHosts, history, owners};
 }
+
+test('Codex manual fork releases the parent writer so both rooms can work and stop independently', async () => {
+  const f = await fixture();
+  try {
+    const parent = await f.pool.open({model: 'gpt-6.1-terra'});
+    await f.pool.send({...parent, text: 'source request'});
+    const sourceHost = f.owners.get(parent.threadId),
+      turnId = `turn-${parent.threadId}`,
+      answer = {id: 'fork-answer', type: 'agentMessage', text: 'source conclusion'};
+    f.history.set(parent.threadId, [{id: turnId, status: 'completed', items: [answer]}]);
+    sourceHost.options.onEvent({method: 'item/completed', params: {threadId: parent.threadId, turnId, item: answer}});
+    sourceHost.options.onEvent({
+      method: 'turn/completed',
+      params: {threadId: parent.threadId, turn: {id: turnId, status: 'completed'}}
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    const child = await f.pool.fork({
+      threadId: parent.threadId,
+      messageId: answer.id,
+      model: 'gpt-6-astra',
+      nextInstruction: 'child request'
+    });
+    const childHost = f.owners.get(child.threadId);
+    assert.equal(f.pool.state.busy, true, 'the child is working when navigating back');
+    await f.pool.open({...parent, model: 'gpt-6.1-terra'});
+    assert.equal(sourceHost.closeCalls, 1);
+    assert.notEqual(childHost, sourceHost);
+    assert.equal(f.pool.state.threadId, parent.threadId);
+    assert.ok(f.pool.state.messages.some(m => m.text === 'source conclusion'));
+    const reopenedParent = f.owners.get(parent.threadId);
+    assert.notEqual(reopenedParent, childHost);
+    await f.pool.send({...parent, text: 'new parent request'});
+    await f.pool.open({threadId: child.threadId, model: 'gpt-6-astra'});
+    await f.pool.stop({threadId: child.threadId});
+    assert.equal(childHost.calls.filter(c => c.method === 'turn/interrupt').length, 1);
+    assert.equal(reopenedParent.calls.filter(c => c.method === 'turn/interrupt').length, 0);
+    assert.equal(reopenedParent.closeCalls, 0);
+    assert.equal(sourceHost.calls.filter(c => c.method === 'turn/start').length, 1);
+    assert.equal(childHost.calls.filter(c => c.method === 'turn/start').length, 1);
+    assert.equal(reopenedParent.calls.filter(c => c.method === 'turn/start').length, 1);
+  } finally {
+    await f.pool.close();
+  }
+});
 
 for (const provider of ['codex', 'claude'])
   test(`${provider} retained view of an idle-closing owner rejects offline sends without restarting or replaying`, async () => {

@@ -71,6 +71,7 @@ async function fixture() {
           return {thread: structuredClone(thread)};
         }
         if (method === 'thread/backgroundTerminals/list') return {data: [], nextCursor: null};
+        if (method === 'thread/loaded/list') return {data: [...loaded.keys()]};
         if (method === 'turn/start' || method === 'review/start') {
           assert.ok(loaded.has(p.threadId));
           const row = (await listMainSessions(root)).sessions.find(r => r.codexSession?.nativeThreadId === p.threadId);

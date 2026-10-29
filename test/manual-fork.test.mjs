@@ -9,7 +9,14 @@ import {saveMainSession, listMainSessions} from '../src/main-sessions.mjs';
 import {isVisibleMainSession} from '../frontend/project-groups.mjs';
 import {scratchBase} from './scratch.mjs';
 
-async function fixture({failure, accessMode = 'read-only', sourceWorker = false, backgroundCommand = false} = {}) {
+async function fixture({
+  failure,
+  accessMode = 'read-only',
+  sourceWorker = false,
+  backgroundCommand = false,
+  activeGoal = false,
+  workerCommand = false
+} = {}) {
   const base = scratchBase;
   await mkdir(base, {recursive: true});
   const root = await mkdtemp(path.join(base, 'manual-fork-')),
@@ -97,9 +104,14 @@ async function fixture({failure, accessMode = 'read-only', sourceWorker = false,
             };
           return {thread: {id: 'parent', turns: structuredClone(turns)}};
         }
+        if (method === 'thread/goal/get') return {goal: activeGoal ? {status: 'active'} : null};
+        if (method === 'thread/loaded/list') return {data: ['parent', 'old-worker']};
         if (method === 'thread/backgroundTerminals/list')
           return {
-            data: backgroundCommand ? [{id: 'command', threadId: 'parent', status: 'running'}] : [],
+            data:
+              (backgroundCommand && p.threadId === 'parent') || (workerCommand && p.threadId === 'old-worker')
+                ? [{id: 'command', threadId: p.threadId, status: 'running'}]
+                : [],
             nextCursor: null
           };
         if (method === 'thread/resume') return {thread: {id: p.threadId}};
@@ -130,6 +142,8 @@ async function fixture({failure, accessMode = 'read-only', sourceWorker = false,
     visibleAtReadiness,
     finishBackground: () => {
       backgroundCommand = false;
+      workerCommand = false;
+      activeGoal = false;
     }
   };
 }
@@ -242,6 +256,41 @@ test('manual fork rejects a live background command without terminating it or cr
     );
   } finally {
     f.finishBackground();
+    await f.c.close();
+  }
+});
+
+for (const options of [{activeGoal: true}, {sourceWorker: true, workerCommand: true}])
+  test(`manual fork preserves source work before host release: ${JSON.stringify(options)}`, async () => {
+    const f = await fixture(options);
+    try {
+      await assert.rejects(f.c.fork({messageId: 'answer'}), /目標仍在執行|背景命令尚未結束/);
+      assert.equal(f.c.state.threadId, 'parent');
+      assert.equal(
+        f.calls.some(x =>
+          ['thread/fork', 'thread/goal/set', 'turn/interrupt', 'thread/backgroundTerminals/terminate'].includes(
+            x.method
+          )
+        ),
+        false
+      );
+    } finally {
+      f.finishBackground();
+      await f.c.close();
+    }
+  });
+
+test('manual fork leaves a pending goal update and its source host untouched', async () => {
+  const f = await fixture();
+  try {
+    f.c.state.goalPending = true;
+    const before = f.calls.length;
+    await assert.rejects(f.c.fork({messageId: 'answer'}), /請先結束目前工作/);
+    assert.equal(f.calls.length, before, 'no native request is made while the goal update is pending');
+    assert.equal(f.c.state.threadId, 'parent');
+    assert.equal(f.c.state.status, 'ready');
+  } finally {
+    f.c.state.goalPending = false;
     await f.c.close();
   }
 });

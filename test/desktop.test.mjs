@@ -105,6 +105,7 @@ async function fixture({catalog, modelPages, browser = false, browserState, self
           }
         };
       if (method === 'thread/backgroundTerminals/list') return {data: [], nextCursor: null};
+      if (method === 'thread/loaded/list') return {data: ['test-thread']};
       if (method === 'turn/start') {
         hooks.onEvent({method: 'turn/started', params: {threadId: 'test-thread', turn: {id: 'turn-1'}}});
         return {turn: {id: 'turn-1'}};
@@ -1802,7 +1803,7 @@ test('Codex gives Desktop Control only in full access and replaces the host when
   }
 });
 
-test('a read-only Codex fork does not hide that its full-access parent is still loaded with Desktop Control', async () => {
+test('a read-only Codex fork releases the full-access parent host before creating the child', async () => {
   const f = await fixture();
   try {
     const exe = path.join(f.root, 'windows-mcp.exe');
@@ -1824,12 +1825,14 @@ test('a read-only Codex fork does not hide that its full-access parent is still 
         };
       return request(method, p);
     };
+    const beforeFork = f.hostFactoryCalls;
     await f.c.fork({messageId: 'fork-point', accessMode: 'read-only'});
+    assert.equal(f.hostFactoryCalls, beforeFork + 1);
     assert.equal(f.calls.find(c => c.method === 'thread/fork').p.config.mcp_servers.k_desktop.enabled, false);
 
     const hosts = f.hostFactoryCalls;
     await f.c.open({model: 'gpt-6-astra', threadId: 'test-thread', accessMode: 'read-only'});
-    assert.equal(f.hostFactoryCalls, hosts + 1);
+    assert.equal(f.hostFactoryCalls, hosts, 'the old full-access parent is no longer loaded on the child host');
     const reopen = f.calls.findLast(c => c.method === 'thread/start' || c.method === 'thread/resume').p;
     assert.equal(reopen.config.mcp_servers.k_desktop.enabled, false);
   } finally {

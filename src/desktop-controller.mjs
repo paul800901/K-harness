@@ -2697,7 +2697,7 @@ export function createDesktopController({
       permissionConfirmed,
       messageId
     }) {
-      if (!host || state.busy || opening || closing || stopping || state.questions.length)
+      if (!host || state.busy || state.goalPending || opening || closing || stopping || state.questions.length)
         throw Error('請先結束目前工作與核准。');
       const point = state.messages.find(m => m.id === messageId && m.role === 'assistant');
       if (!point?.turnId || point.partial) throw Error('找不到已完成的可原生分支結論。');
@@ -2715,9 +2715,11 @@ export function createDesktopController({
         permissionConfirmed !== true
       )
         throw Error('切換到此高權限模式前，必須明確確認 permissionConfirmed:true；分支未建立。');
-      // Configure MCP on the native fork itself. Resuming an already loaded fork
-      // does not apply new MCP configuration or emit its startup notifications.
-      if ((await listTerminals(host, parent)).length) throw Error('背景命令尚未結束；分支未建立。');
+      // The branch gets a fresh host below. Do not close a source with native
+      // goal continuation or background commands (including settled workers).
+      if ((await host.request('thread/goal/get', {threadId: parent})).goal?.status === 'active')
+        throw Error('原對話目標仍在執行；請先暫停目標，再建立分支。');
+      if (await this.backgroundCommands()) throw Error('背景命令尚未結束；分支未建立。');
       return this.open(
         {model, effort, serviceTier: 'default', accessMode: access, permissionConfirmed},
         {
@@ -3070,10 +3072,14 @@ export function createDesktopController({
           const desktop = await desktopControlMcp({root, fullAccess: access === 'danger-full-access'});
           // Resuming a thread already loaded on this app-server keeps its MCP processes,
           // so adding or removing desktop control needs a fresh host; history stays native.
+          // A manual fork repurposes this controller for the child. Release the
+          // settled source first: otherwise this host keeps its writer lock,
+          // while the room pool opens the source on another host on navigation.
           if (
             host &&
-            threadId &&
-            (relocation || browserRecoveryThreadId === threadId || hostDesktop.get(threadId) === !desktop)
+            (manualFork ||
+              (threadId &&
+                (relocation || browserRecoveryThreadId === threadId || hostDesktop.get(threadId) === !desktop)))
           ) {
             await closeFlashGateway();
             const previous = host;

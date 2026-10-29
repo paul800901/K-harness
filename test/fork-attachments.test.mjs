@@ -105,6 +105,7 @@ async function fixture({
           };
         }
         if (method === 'thread/backgroundTerminals/list') return {data: []};
+        if (method === 'thread/loaded/list') return {data: [nativeParent]};
         if (method === 'thread/fork') {
           const id = ++forks === 1 ? 'child' : 'grandchild',
             source = history.get(local(p.threadId)),
