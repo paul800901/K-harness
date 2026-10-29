@@ -1,6 +1,6 @@
 import {execFile} from 'node:child_process';
 import {createHash} from 'node:crypto';
-import {readFile} from 'node:fs/promises';
+import {appendFile, mkdir, readFile, stat} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {promisify} from 'node:util';
@@ -67,10 +67,25 @@ function parseOutput(stdout, operation) {
 }
 const HELPER_CODES = ['busy', 'identity', 'credential', 'quota_auth', 'quota_temporary', 'quota_client', 'quota_schema'];
 const DIAGNOSTICS_MAX_BYTES = 1024 * 1024;
-const iso = value => (typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : null);
+const HELPER_REASONS = [
+  'identity_missing',
+  'identity_json_invalid',
+  'identity_email_invalid',
+  'account_required',
+  'saved_account_mismatch',
+  'saved_account_removed',
+  'native_process_present'
+];
+// Re-serialize instead of keeping the helper's text, so a time field cannot carry other content.
+const iso = value => {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value))
+    return null;
+  const time = Date.parse(value);
+  return Number.isFinite(time) ? new Date(time).toISOString() : null;
+};
 const names = value =>
   (Array.isArray(value) ? value : typeof value === 'string' ? [value] : [])
-    .filter(name => typeof name === 'string' && /^[A-Za-z0-9_]{1,64}$/u.test(name))
+    .filter(name => typeof name === 'string' && /^[a-z][a-z0-9_]{0,31}$/u.test(name))
     .slice(0, 16);
 const oneOf = (value, allowed) => (allowed.includes(value) ? value : null);
 // Rebuild the helper's failure report from known fields only: names, booleans,
@@ -86,7 +101,7 @@ function helperFailure(stdout, operation) {
   return {
     operation,
     code: oneOf(value.errorCode, HELPER_CODES) ?? 'unknown',
-    reason: typeof value.errorReason === 'string' && /^[a-z_]{1,40}$/u.test(value.errorReason) ? value.errorReason : null,
+    reason: oneOf(value.errorReason, HELPER_REASONS),
     line: Number.isSafeInteger(value.errorLine) && value.errorLine > 0 ? value.errorLine : null,
     ...(live
       ? {
@@ -155,14 +170,11 @@ export function createGeminiCredentialVault({
     const line = JSON.stringify({at: new Date(clock()).toISOString(), ...entry}) + '\n';
     diagnostics = diagnostics.then(async () => {
       try {
-        let text = '';
-        try {
-          text = await readFile(diagnosticsFile, 'utf8');
-        } catch (error) {
-          if (error.code !== 'ENOENT') return;
-        }
-        text += line;
-        while (Buffer.byteLength(text) > DIAGNOSTICS_MAX_BYTES && text.includes('\n'))
+        await mkdir(path.dirname(diagnosticsFile), {recursive: true});
+        await appendFile(diagnosticsFile, line, 'utf8');
+        if ((await stat(diagnosticsFile)).size <= DIAGNOSTICS_MAX_BYTES) return;
+        let text = await readFile(diagnosticsFile, 'utf8');
+        while (Buffer.byteLength(text) > DIAGNOSTICS_MAX_BYTES / 2 && text.includes('\n'))
           text = text.slice(text.indexOf('\n') + 1);
         await atomicWrite(diagnosticsFile, text);
       } catch {

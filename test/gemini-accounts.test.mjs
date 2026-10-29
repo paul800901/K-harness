@@ -2585,14 +2585,14 @@ test('all-zero accounts with unknown or past resets retry quietly; a later posit
         /未開始工作|未送出/
       );
       await eventually(() => timers.length === 1);
-      assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+      assert.equal(events.filter(event => event.status === 'waiting' && !event.quiet).length, 1);
       assert.deepEqual(f.calls.activate, []);
       assert.equal(timers[0].ms, 60000);
       now += 60000;
       positive = true;
       timers[0].fn();
       await eventually(() => events.filter(event => event.status === 'ready').length === 1);
-      assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+      assert.equal(events.filter(event => event.status === 'waiting' && !event.quiet).length, 1);
       assert.equal(events.filter(event => event.status === 'ready').length, 1);
       assert.equal(events.at(-1).accountId, B);
       assert.deepEqual(f.calls.activate, [B]);
@@ -2711,7 +2711,7 @@ test(
       throw Error(`temporary ${id}`);
     };
     await f.accounts.run(handoffOptions('retry-room', 'failed', events), async () => limitFailure);
-    assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+    assert.equal(events.filter(event => event.status === 'waiting' && !event.quiet).length, 1);
     await active.release();
     await eventually(() => timers.length === 1);
     const delays = [60000, 120000, 240000, 480000, 600000];
@@ -2736,7 +2736,7 @@ test(
     await eventually(() => events.filter(event => event.status === 'blocked').length === 1);
     assert.equal(reads, 6, 'one shared drain query, four failed retries, and one successful retry');
     assert.equal(
-      events.filter(event => event.status === 'waiting').length,
+      events.filter(event => event.status === 'waiting' && !event.quiet).length,
       1,
       'temporary retries do not repeatedly wake the same room'
     );
@@ -2796,7 +2796,7 @@ test(
     assert.deepEqual(queried, [A, B, B, B, B, B, B]);
     assert.deepEqual(f.calls.activate, [B]);
     assert.equal(f.current.accountId, B);
-    assert.equal(events.filter(event => event.parentId === 'waiting-room' && event.status === 'waiting').length, 1);
+    assert.equal(events.filter(event => event.parentId === 'waiting-room' && event.status === 'waiting' && !event.quiet).length, 1);
     assert.equal(events.filter(event => event.parentId === 'waiting-room' && event.status === 'ready').length, 1);
     f.accounts.cancelWorkerHandoff({parentId: 'failed-room'});
   }
@@ -3659,7 +3659,10 @@ test('an unreadable shared login identity waits without starting work, then read
   );
   await eventually(() => timers.length === 1);
   assert.equal(timers[0].ms, 60000);
-  assert.equal(events.filter(event => event.status === 'waiting').length, 1);
+  assert.equal(events.filter(event => event.status === 'waiting' && !event.quiet).length, 1);
+  const update = events.findLast(event => event.status === 'waiting' && event.quiet);
+  assert.match(update.reason, /暫時讀不出帳號身分/u);
+  assert.equal(update.nextQueryAt, now + 60000);
   unreadable = false;
   now += 60000;
   timers[0].fn();
@@ -3740,5 +3743,26 @@ test('a positive readiness check completes while leftover Antigravity processes 
   await eventually(() => events.some(event => event.status === 'blocked'));
   assert.match(events.find(event => event.status === 'blocked').reason, /官方仍有額度/u);
   assert.equal(idleChecks, 0);
+  assert.deepEqual(f.calls.activate, []);
+});
+
+test('a login changed outside K while quota is read never produces a stale ready notice', async () => {
+  const f = await handoffFixture(() => officialBalance(80)),
+    events = [];
+  const active = await f.accounts.acquire();
+  await f.accounts.run(handoffOptions('swap-room', 'failed', events), async () => limitFailure);
+  const status = f.login.status;
+  f.login.status = async account => {
+    // The shared login becomes another saved account during the official read.
+    f.current = {accountId: B, email: 'b@example.test'};
+    return status(account);
+  };
+  await active.release();
+  await eventually(() => events.some(event => event.status !== 'waiting'));
+  assert.equal(
+    events.some(event => event.status === 'ready' || /官方仍有額度/u.test(event.reason ?? '')),
+    false
+  );
+  assert.match(events.find(event => event.status === 'blocked').reason, /共用登入已在 K 外變更/u);
   assert.deepEqual(f.calls.activate, []);
 });

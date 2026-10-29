@@ -389,7 +389,7 @@ test('helper failures keep operation, reason and line and record only sanitized 
       present: true,
       unreadable: false,
       bytes: 812,
-      writtenAt: '2026-10-29T07:35:58.0000000Z',
+      writtenAt: '2026-10-29T07:35:58.000Z',
       json: null,
       fields: ['token', 'auth_method'],
       tokenFields: ['access_token', 'refresh_token', 'expiry'],
@@ -397,7 +397,7 @@ test('helper failures keep operation, reason and line and record only sanitized 
       idTokenEmail: 'absent',
       identityReadable: false
     },
-    processes: [{pid: 4242, name: 'Antigravity', startedAt: '2026-10-29T06:47:48Z'}]
+    processes: [{pid: 4242, name: 'Antigravity', startedAt: '2026-10-29T06:47:48.000Z'}]
   });
   assert.doesNotMatch(await readFile(diagnosticsFile, 'utf8'), /secret|leak@/u);
 });
@@ -421,7 +421,7 @@ test('reads record each change of the shared login write time without returning 
   const lines = (await readFile(diagnosticsFile, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(
     lines.map(({kind, accountId: id, writtenAt}) => ({kind, id, writtenAt})),
-    [{kind: 'live_login_rewritten', id: accountId, writtenAt: '2026-10-29T07:40:12Z'}]
+    [{kind: 'live_login_rewritten', id: accountId, writtenAt: '2026-10-29T07:40:12.000Z'}]
   );
 });
 
@@ -475,3 +475,46 @@ Write-SafeJson @{fields=(Get-SafeNames $data);tokenFields=(Get-SafeNames $data.t
     assert.doesNotMatch(ps.stdout, /fake-secret|oauth/u);
   }
 );
+
+test('diagnostics drop helper text outside fixed reasons and strict timestamps, and keep every concurrent line', async () => {
+  const {mkdtemp, mkdir} = await import('node:fs/promises');
+  const {join} = await import('node:path');
+  const {scratchBase} = await import('./scratch.mjs');
+  await mkdir(scratchBase, {recursive: true});
+  const diagnosticsFile = join(await mkdtemp(join(scratchBase, 'gemini-diag-')), 'gemini-credential.jsonl');
+  const makeVault = stdout =>
+    createGeminiCredentialVault({
+      root,
+      env: {SystemRoot: 'C:\\Windows'},
+      enabled: true,
+      diagnosticsFile,
+      execImpl: async () => {
+        throw Object.assign(Error('x'), {stdout});
+      }
+    });
+  const hostile = makeVault(
+    JSON.stringify({
+      errorCode: 'identity',
+      errorReason: 'fake_refresh_secret',
+      live: {present: true, writtenAt: 'Thu, 29 Oct 2026 07:35:58 GMT (fake_refresh_secret)', fields: ['Ya29SecretToken']},
+      processes: [{pid: 1, name: 'Antigravity', startedAt: '2026-10-29T06:47:48Z fake_refresh_secret'}]
+    })
+  );
+  await assert.rejects(hostile.current(), error => {
+    assert.doesNotMatch(error.message, /fake_refresh_secret/u);
+    assert.equal(error.helperFailure.reason, null);
+    return true;
+  });
+  await hostile.flushDiagnostics();
+  const vaults = Array.from({length: 8}, () => makeVault('{"errorCode":"busy","errorReason":"native_process_present"}'));
+  await Promise.all(vaults.map(vault => vault.current().catch(() => {})));
+  await Promise.all(vaults.map(vault => vault.flushDiagnostics()));
+  const text = await readFile(diagnosticsFile, 'utf8');
+  assert.doesNotMatch(text, /fake_refresh_secret|Ya29SecretToken/u);
+  const lines = text.trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(lines.length, 9);
+  assert.equal(lines[0].live.writtenAt, null);
+  assert.deepEqual(lines[0].live.fields, []);
+  assert.equal(lines[0].processes[0].startedAt, null);
+  assert.equal(lines.filter(line => line.reason === 'native_process_present').length, 8);
+});

@@ -481,7 +481,12 @@ export function createGeminiAccounts({
         if (original.auth?.status !== 'authenticated') throw quotaWait(authFailure(original));
         if (original.auth?.requiresActivation) await activate(original.id, {refreshQuota: false});
         if (!exhausted(original) && !officialZero(original)) {
-          if (available(original)) return {status: 'positive', detail: {accountId: original.id}};
+          if (available(original)) {
+            // The shared login may change while quota is read; never announce a stale account.
+            if ((await liveIdentity())?.accountId !== original.id)
+              throw Error('查核期間共用登入已在 K 外變更，未發出就緒或切換。');
+            return {status: 'positive', detail: {accountId: original.id}};
+          }
           throw quotaWait('官方額度尚未確認；K 保留等待，未換帳號或派工。');
         }
         const chosen = await nextWorkerAccount(original, {
@@ -515,7 +520,6 @@ export function createGeminiAccounts({
         }
         return {
           status: waiting ? 'waiting' : 'blocked',
-          quiet: temporary,
           detail: {accountId: data.uncertain ? null : data.activeAccountId, reason: error.message, nextQueryAt}
         };
       } finally {
@@ -534,7 +538,9 @@ export function createGeminiAccounts({
     // Clear the account lock before calling the room. A ready callback may enqueue
     // a new, explicitly reviewed job; it must not re-enter its own drain promise.
     if (result) {
-      if (!result.quiet) publishHandoff(result.status, result.detail);
+      // A room already told it is waiting gets a quiet update (latest reason and
+      // next recheck) from publishHandoff, not a second wake-up.
+      publishHandoff(result.status, result.detail);
       if (result.status === 'waiting' && result.detail.nextQueryAt > clock() && handoffWaiters.size) {
         clearReset();
         resetTimer = setTimer(
