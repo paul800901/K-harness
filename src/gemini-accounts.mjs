@@ -423,6 +423,8 @@ export function createGeminiAccounts({
     handoffWaiters.set(key, {...options, accountId, notStarted, needsQuotaCheck: !notStarted});
     publishHandoff('waiting', {
       accountId,
+      accountAvailable: notStarted && available(find(accountId)),
+      busy: running > 0,
       reason: '等待既有 Gemini 工作自然結束，再查核官方額度；尚未確認耗盡，未換帳號。'
     });
     if (!running && !changing && !acquiring && !handoffPending) void drainHandoff();

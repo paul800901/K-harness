@@ -84,6 +84,18 @@ export function geminiAccountWait(value) {
     : null;
 }
 
+export function geminiHandoffNotice(event, mainBlocked = false) {
+  if (event.status === 'waiting')
+    return event.accountAvailable === true && event.busy === true
+      ? 'Gemini 帳號上次查核有可用額度，目前忙碌；等待現有工作結束後通知主代理核對。'
+      : `Gemini 排程等待中：${event.reason ?? '等待現有工作結束，再查核帳號額度；原工單未重播。'}`;
+  if (event.status === 'ready')
+    return mainBlocked
+      ? 'Gemini 帳號已就緒；Codex 主代理額度不足，等待恢復後核對成果。'
+      : 'Gemini 帳號已就緒，等待主代理核對工人與成果；尚未接續原工作。';
+  return `Gemini 帳號交接未完成：${event.reason ?? '官方額度或停止狀態未確認。'}`;
+}
+
 export function geminiHandoffText(event) {
   if (event.status === 'blocked')
     return (

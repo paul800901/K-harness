@@ -661,6 +661,34 @@ test('quota refresh is a coalesced read, accepts account events without thread I
   }
 });
 
+test('a delayed quota read cannot overwrite a newer native credit recovery notification', async () => {
+  const f = await fixture();
+  let release;
+  try {
+    await f.c.open({model: 'gpt-6-astra'});
+    await f.c.usage();
+    const original = f.host.request;
+    f.host.request = async (method, p) => {
+      if (method === 'account/rateLimits/read') return new Promise(resolve => (release = resolve));
+      return original(method, p);
+    };
+    const pending = f.c.usage(true);
+    await new Promise(resolve => setImmediate(resolve));
+    const secondary = {usedPercent: 100, resetsAt: Date.now() / 1000 + 86400};
+    f.hooks.onEvent({
+      method: 'account/rateLimits/updated',
+      params: {rateLimits: {secondary, credits: {hasCredits: true}}}
+    });
+    release({rateLimits: {secondary, credits: {hasCredits: false}}});
+    await pending;
+    assert.equal(f.c.state.usage.codex.credits.hasCredits, true);
+    assert.equal(f.c.state.usage.codex.status, 'available');
+  } finally {
+    release?.({});
+    await f.c.close();
+  }
+});
+
 test('desktop attachment scope and restored display survive reopen without exposing generated context', async () => {
   const f = await fixture();
   try {

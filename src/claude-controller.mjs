@@ -7,7 +7,8 @@ import {
   mergeGeminiHandoff,
   consumeGeminiHandoff,
   geminiWaitingJobs,
-  geminiHandoffText
+  geminiHandoffText,
+  geminiHandoffNotice
 } from './gemini-handoff.mjs';
 import {googleOpsMcp} from './google-ops-mcp.mjs';
 import {desktopControlMcp, DESKTOP_CONTROL_GUIDANCE} from './desktop-control-mcp.mjs';
@@ -290,12 +291,7 @@ export function createClaudeController({
       id: randomUUID(),
       kind: 'gemini-handoff',
       level: event.status === 'blocked' ? 'warning' : 'info',
-      message:
-        event.status === 'waiting'
-          ? 'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。'
-          : event.status === 'ready'
-            ? 'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。'
-            : `Gemini 帳號交接未完成：${event.reason ?? '官方額度或停止狀態未確認。'}`,
+      message: geminiHandoffNotice(event),
       createdAt: new Date().toISOString()
     });
     if (event.status !== 'waiting') scheduleWorkers();

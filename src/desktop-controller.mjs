@@ -28,9 +28,10 @@ import {
   consumeGeminiHandoff,
   geminiAccountWait,
   geminiWaitingJobs,
-  geminiHandoffText
+  geminiHandoffText,
+  geminiHandoffNotice
 } from './gemini-handoff.mjs';
-import {codexQuota} from './usage.mjs';
+import {codexQuota, codexExecutionBlockedUntil} from './usage.mjs';
 import {quotaZeroUntil, quotaZeroRecheckDue} from './quota-zero.mjs';
 import {validateWorkspace, listWorkspaceDirectories} from './workspaces.mjs';
 import {
@@ -514,8 +515,15 @@ export function createDesktopController({
   function event(e, sourceEpoch = hostEpoch) {
     if (sourceEpoch !== hostEpoch) return;
     if (e.method === 'account/rateLimits/updated') {
+      // Use the pushed native observation even while a prior zero suppresses
+      // periodic reads; otherwise replenished credits can never unblock a room.
+      const bucket = e.params?.rateLimits;
+      if (bucket && (!bucket.limitId || bucket.limitId === 'codex'))
+        state.usage.codex = {...codexQuota(e.params), resetCredits: state.usage.codex.resetCredits};
       quotaReadAt = 0;
       void usage();
+      queueMicrotask(() => void deliverFlashResults());
+      changed();
       return;
     }
     if (e.method === 'account/updated') {
@@ -912,6 +920,9 @@ export function createDesktopController({
       // Only a currently owned native turn can supply a new terminal event, not a duplicate or foreign ID.
       if (turnId) nativeCompletionVersion++;
       if (turnId && geminiHandoff?.waitForNativeTurn) delete geminiHandoff.waitForNativeTurn;
+      for (const notice of state.notices)
+        if (notice.kind === 'gemini-handoff' && notice.phase === 'reviewing' && notice.turnId === completedTurnId)
+          notice.resolved = true;
       const ownership = goalTurn;
       goalTurn = null;
       const audit = goalRecovery?.turnId === completedTurnId;
@@ -1087,6 +1098,7 @@ export function createDesktopController({
       if (force || quotaZeroRecheckDue(state.usage.codex) || Date.now() - quotaReadAt >= (host ? 60000 : 300000)) {
         let reader = active,
           temporary = false;
+        const observed = state.usage.codex;
         try {
           if (!reader) {
             temporary = true;
@@ -1099,12 +1111,12 @@ export function createDesktopController({
             {excludeResetCreditDetails: false, supportsLunaReserve: false},
             15000
           );
-          if (host === active) {
+          if (host === active && state.usage.codex === observed) {
             state.usage.codex = codexQuota(result);
             quotaReadAt = Date.now();
           }
         } catch {
-          if (host === active) {
+          if (host === active && state.usage.codex === observed) {
             state.usage.codex = {...state.usage.codex, status: state.usage.codex.checkedAt ? 'stale' : 'unavailable'};
             quotaReadAt = Date.now();
           }
@@ -1432,6 +1444,15 @@ export function createDesktopController({
     flashArmed.delete(requestId);
     flashQueue.delete(requestId);
   };
+  const showGeminiHandoffNotice = event => {
+    for (const n of state.notices) if (n.kind === 'gemini-handoff' && n.phase !== 'reviewing') n.resolved = true;
+    if (event)
+      addNotice(
+        event.status === 'blocked' ? 'warning' : 'info',
+        geminiHandoffNotice(event, !!codexExecutionBlockedUntil(state.usage.codex)),
+        'gemini-handoff'
+      );
+  };
   const recordGeminiHandoff = event => {
     if (
       !event ||
@@ -1446,21 +1467,12 @@ export function createDesktopController({
     const requestIds = (event.requestIds ?? []).filter(id => geminiHandoffJobs.has(id)),
       queryIds = event.queryIds ?? [];
     if (!requestIds.length && !queryIds.length) return;
+    showGeminiHandoffNotice(event);
     if (event.status === 'waiting') {
       geminiHandoff = mergeGeminiHandoff(geminiHandoff, {...event, requestIds, queryIds, epoch: requestEpoch});
-      if (!state.notices.some(n => n.kind === 'gemini-handoff' && !n.resolved))
-        addNotice('info', 'Gemini 正等待現有工人自然結束，再查核帳號額度；未重播原工單。', 'gemini-handoff');
     } else if (['ready', 'blocked'].includes(event.status)) {
-      for (const n of state.notices) if (n.kind === 'gemini-handoff') n.resolved = true;
       for (const id of requestIds) geminiHandoffJobs.delete(id);
       geminiHandoff = mergeGeminiHandoff(geminiHandoff, {...event, requestIds, queryIds, epoch: requestEpoch});
-      addNotice(
-        event.status === 'ready' ? 'info' : 'warning',
-        event.status === 'ready'
-          ? 'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。'
-          : `Gemini 帳號交接未完成：${event.reason ?? '官方額度或停止狀態未確認。'}`,
-        'gemini-handoff'
-      );
       if (
         event.status === 'blocked' &&
         waitingWorkerRecovery() &&
@@ -1906,7 +1918,7 @@ export function createDesktopController({
           !state.goalPending &&
           !submission &&
           !state.questions.length &&
-          !quotaZeroUntil(state.usage.codex) &&
+          !codexExecutionBlockedUntil(state.usage.codex) &&
           (recoveryRead === null || workerRead === recoveryRead))) &&
       (!recovery ||
         (recoveryCurrent(recovery) &&
@@ -1915,7 +1927,7 @@ export function createDesktopController({
           !state.goalPending &&
           !submission &&
           !state.questions.length &&
-          !quotaZeroUntil(state.usage.codex) &&
+          !codexExecutionBlockedUntil(state.usage.codex) &&
           (recoveryRead === null || workerRead === recoveryRead)));
     let attempted = false,
       completed = false,
@@ -1923,7 +1935,7 @@ export function createDesktopController({
     try {
       if (recovery) {
         if (recovery.notBefore > Date.now()) return;
-        if (!current() || state.questions.length || quotaZeroUntil(state.usage.codex)) return;
+        if (!current() || state.questions.length || codexExecutionBlockedUntil(state.usage.codex)) return;
         const goal = (await active.request('thread/goal/get', {threadId: parent})).goal;
         if (!current()) return;
         if (
@@ -2099,6 +2111,10 @@ export function createDesktopController({
         if (tool) tool.turnId = deliveredTurnId;
       }
       if (state.busy) turnId = deliveredTurnId;
+      if (handoff && deliveredTurnId && state.busy)
+        addNotice('info', '主代理已接續，正核對工人與已保存成果，再處理剩餘工作。', 'gemini-handoff', deliveredTurnId, {
+          phase: 'reviewing'
+        });
       const attention = batch.some(record => !record.settled);
       if (batch.length)
         state.tools.push({
@@ -2226,8 +2242,7 @@ export function createDesktopController({
     } finally {
       if (handoff && attempted && !requeued) {
         geminiHandoff = consumeGeminiHandoff(geminiHandoff, handoff);
-        if (geminiHandoff?.status !== 'ready')
-          for (const n of state.notices) if (n.kind === 'gemini-handoff' && n.level === 'info') n.resolved = true;
+        showGeminiHandoffNotice(geminiHandoff);
       }
       // A preflight cancellation is not a model-send attempt. Undo markers on every early return, not only throws.
       if ((recovery || handoff) && !attempted && batch.length && host === active && state.threadId === parent) {
@@ -2763,7 +2778,7 @@ export function createDesktopController({
       opening = true;
       try {
         sourceCurrent?.();
-        if (quotaZeroUntil(state.usage.codex)) throw Error('目前官方額度確認為零，未建立或送出交接工作。');
+        if (codexExecutionBlockedUntil(state.usage.codex)) throw Error('目前官方額度確認為零，未建立或送出交接工作。');
         const goalResult = await host.request('thread/goal/get', {threadId: parent});
         if (goalResult.goal?.status === 'active' || goalResult.goal?.tokenBudget != null)
           throw Error('原生目標仍在執行或帶有預算限制，不能另建目標繞過用量；未建立新聊天室。');
@@ -2774,7 +2789,7 @@ export function createDesktopController({
         const stored = await host.request('thread/read', {threadId: parent, includeTurns: true}),
           last = stored.thread?.turns?.at(-1);
         sourceCurrent?.(goalResult.goal, currentWorkers);
-        if (quotaZeroUntil(state.usage.codex)) throw Error('目前官方額度確認為零，未建立或送出交接工作。');
+        if (codexExecutionBlockedUntil(state.usage.codex)) throw Error('目前官方額度確認為零，未建立或送出交接工作。');
         const failed =
           mode === 'fresh' &&
           last?.status === 'failed' &&

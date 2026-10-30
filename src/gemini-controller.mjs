@@ -5,7 +5,8 @@ import {
   consumeGeminiHandoff,
   consumeGeminiWaitResult,
   geminiWaitingJobs,
-  geminiHandoffText
+  geminiHandoffText,
+  geminiHandoffNotice
 } from './gemini-handoff.mjs';
 import {lunaResult} from './luna-bridge.mjs';
 import {approvalRequest} from './desktop-permissions.mjs';
@@ -351,12 +352,7 @@ export function createGeminiController({
       id: randomUUID(),
       kind: 'gemini-handoff',
       level: event.status === 'blocked' ? 'warning' : 'info',
-      message:
-        event.status === 'waiting'
-          ? 'Gemini 正等待現有工作自然結束，再查核帳號額度；未重播原工單。'
-          : event.status === 'ready'
-            ? 'Gemini 帳號已就緒，待核對本房工人與成果；原工單未重播。'
-            : `Gemini 帳號交接未完成：${event.reason ?? '官方額度或停止狀態未確認。'}`,
+      message: geminiHandoffNotice(event),
       createdAt: now()
     });
     if (event.status !== 'waiting') scheduleWorkers();

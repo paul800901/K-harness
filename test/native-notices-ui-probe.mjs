@@ -140,6 +140,40 @@ try {
   assert.equal(await page.getByText(handoffs[0].message, {exact: true}).count(), 0);
   await page.screenshot({path: path.join(output, 'worker-handoffs-hidden.png'), fullPage: true});
 
+  // Account readiness, a later busy wait, and accepted audit are distinct UI
+  // states. Resolving an old receipt must remove its banner on desktop/mobile.
+  for (const width of [1920, 390]) {
+    await page.setViewportSize({width, height: 1080});
+    if (width < 600) await page.getByRole('button', {name: '收合側欄', exact: true}).click();
+    const phases = [
+      'Gemini 帳號已就緒，等待主代理核對工人與成果；尚未接續原工作。',
+      'Gemini 帳號上次查核有可用額度，目前忙碌；等待現有工作結束後通知主代理核對。',
+      '主代理已接續，正核對工人與已保存成果，再處理剩餘工作。'
+    ];
+    for (let i = 0; i < phases.length; i++) {
+      await page.evaluate(s => window.testState(s), {
+        ...state,
+        threadId: 'quota-handoff',
+        provider: 'codex',
+        model: 'gpt-6-astra',
+        accessMode: 'danger-full-access',
+        status: i === 2 ? 'working' : 'completed',
+        busy: i === 2,
+        error: null,
+        notices: phases
+          .slice(0, i + 1)
+          .map((message, j) => ({id: `quota-${j}`, kind: 'gemini-handoff', level: 'info', message, resolved: j < i}))
+      });
+      await page.getByText(phases[i], {exact: true}).waitFor();
+      const rect = await page.locator('.native-notices').boundingBox();
+      assert(rect.x >= 0 && rect.x + rect.width <= width && rect.y >= 0 && rect.y + rect.height <= 1080);
+      assert.equal(await page.locator('.native-notices > *').count(), 1);
+      for (const old of phases.slice(0, i)) assert.equal(await page.getByText(old, {exact: true}).count(), 0);
+      await page.screenshot({path: path.join(output, `gemini-${width}-${i}.png`), fullPage: true});
+    }
+  }
+  await page.setViewportSize({width: 1920, height: 1080});
+
   const retainedNotices = [
     {id: 'unknown-warning', kind: 'warning', level: 'warning', message: 'Important native warning'},
     {id: 'guardian-warning', kind: 'guardianWarning', level: 'warning', message: 'Guardian policy warning'},
@@ -201,6 +235,7 @@ try {
       'hidden notices leave no blank region or dismiss buttons',
       'unknown warning, guardian warning, model reroute, and native error retained',
       'unknown native details preserved',
+      'Gemini ready, busy and resumed-audit banners replace old receipts on desktop and mobile',
       'no POST or model work'
     ]
   };

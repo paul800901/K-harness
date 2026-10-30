@@ -117,6 +117,29 @@ test('passive account observation while busy uses dated evidence without switchi
     await lease.release();
   }
 });
+
+test('a quota failure waits for recheck, while a later positive busy observation identifies its real wait', async () => {
+  const f = await fixture({identity: {accountId: A, email}}),
+    events = [];
+  await f.accounts.capture();
+  const lease = await f.accounts.acquire();
+  try {
+    await f.accounts.run(
+      {worker: true, parentId: 'room', requestId: 'failed', onHandoff: e => events.push(e)},
+      async () => ({status: 'failed', settled: true, quotaCheckNeeded: true})
+    );
+    assert.equal(events[0].status, 'waiting');
+    assert.equal(events[0].accountAvailable, false, 'pre-error evidence is not proof of recovered quota');
+    const result = await f.accounts.observe({parentId: 'room', requestId: 'query', onHandoff: e => events.push(e)});
+    assert.equal(result.scheduling.status, 'waiting');
+    assert.equal(result.scheduling.notificationRegistered, true);
+    assert.equal(events.at(-1).accountAvailable, true);
+    assert.equal(events.at(-1).busy, true);
+  } finally {
+    f.accounts.cancelWorkerHandoff({parentId: 'room'});
+    await lease.release();
+  }
+});
 test('aged positive observations are refreshed read-only across four busy rooms and admit new work on same identity', async () => {
   let now = Date.parse('2026-10-03T12:00:00Z');
   const f = await fixture({
@@ -2796,7 +2819,10 @@ test(
     assert.deepEqual(queried, [A, B, B, B, B, B, B]);
     assert.deepEqual(f.calls.activate, [B]);
     assert.equal(f.current.accountId, B);
-    assert.equal(events.filter(event => event.parentId === 'waiting-room' && event.status === 'waiting' && !event.quiet).length, 1);
+    assert.equal(
+      events.filter(event => event.parentId === 'waiting-room' && event.status === 'waiting' && !event.quiet).length,
+      1
+    );
     assert.equal(events.filter(event => event.parentId === 'waiting-room' && event.status === 'ready').length, 1);
     f.accounts.cancelWorkerHandoff({parentId: 'failed-room'});
   }

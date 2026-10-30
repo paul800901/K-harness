@@ -1,3 +1,13 @@
+import {quotaZeroUntil} from './quota-zero.mjs';
+
+// The subscription window is also used to suppress redundant quota reads. It
+// is not an execution veto when the same native account reports usable credits.
+// No purchase, reset-credit redemption or billing/account switch happens here.
+export function codexExecutionBlockedUntil(quota, now = Date.now()) {
+  if (quota?.credits?.hasCredits === true || quota?.credits?.unlimited === true) return null;
+  return quotaZeroUntil(quota, now);
+}
+
 export function codexQuota(result, checkedAt = new Date().toISOString()) {
   const bucket = result?.rateLimitsByLimitId ? result.rateLimitsByLimitId.codex : result?.rateLimits;
   const windows = ['primary', 'secondary'].map(key => {
@@ -12,7 +22,11 @@ export function codexQuota(result, checkedAt = new Date().toISOString()) {
   const c = bucket?.credits ?? result?.rateLimits?.credits;
   const credits =
     c && typeof c === 'object'
-      ? {balance: typeof c.balance === 'string' ? c.balance : null, unlimited: c.unlimited === true}
+      ? {
+          balance: typeof c.balance === 'string' ? c.balance : null,
+          unlimited: c.unlimited === true,
+          hasCredits: c.hasCredits === true
+        }
       : null;
   const r = result?.rateLimitResetCredits;
   const resetCredits = Number.isFinite(r?.availableCount)

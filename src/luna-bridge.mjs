@@ -275,6 +275,8 @@ export async function createLunaBridge({
         status: event.status,
         accountId: event.accountId,
         reason: event.reason,
+        accountAvailable: event.accountAvailable,
+        busy: event.busy,
         ...(event.nextQueryAt ? {nextQueryAt: event.nextQueryAt} : {}),
         notificationRegistered: event.status === 'waiting'
       });

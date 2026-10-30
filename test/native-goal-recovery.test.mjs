@@ -5,6 +5,7 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {listMainSessions} from '../src/main-sessions.mjs';
 import {createDesktopController} from '../src/desktop-controller.mjs';
+import {codexQuota} from '../src/usage.mjs';
 import {scratchBase} from './scratch.mjs';
 const error = {
   message: 'fixture native remote compact terminal error',
@@ -1925,9 +1926,55 @@ test('Codex Gemini ready is consumed and its ready info resolved after completed
     f.bridgeHooks.onGeminiHandoff({parentId: 'parent', requestIds: ['quota'], status: 'ready', accountId: 'fake'});
     // The ready notice is resolved asynchronously just after delivery; wait for both, not delivery alone.
     const unresolvedReady = () =>
-      f.c.state.notices.some(n => n.kind === 'gemini-handoff' && n.level === 'info' && !n.resolved);
+      f.c.state.notices.some(
+        n => n.kind === 'gemini-handoff' && n.phase !== 'reviewing' && n.level === 'info' && !n.resolved
+      );
     await wait(() => f.deliveries().length === 1 && !unresolvedReady());
     assert.equal(unresolvedReady(), false);
+    assert.match(f.c.state.notices.find(n => n.phase === 'reviewing' && !n.resolved)?.message ?? '', /主代理已接續/);
+    f.end('completed');
+    await tick();
+    assert.equal(f.deliveries().length, 1);
+    assert.equal(
+      f.c.state.notices.some(n => n.kind === 'gemini-handoff' && !n.resolved),
+      false
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('Gemini quota recovery wakes a completed Codex room without a goal when native credits remain', async () => {
+  const f = await fixture();
+  try {
+    await f.c.goal({clear: true});
+    await f.gateway.bridge.start({requestId: 'quota'});
+    const row = {
+      parentId: 'parent',
+      provider: 'gemini',
+      requestId: 'quota',
+      status: 'failed',
+      settled: true,
+      output: 'partial saved files must be checked',
+      quotaCheckNeeded: true
+    };
+    f.setFlashRows([row]);
+    f.c.state.usage.codex = codexQuota({
+      rateLimits: {
+        secondary: {usedPercent: 100, resetsAt: Date.now() / 1000 + 86400},
+        credits: {hasCredits: true, unlimited: false, balance: '123.5'}
+      }
+    });
+    f.bridgeHooks.onGeminiHandoff({parentId: 'parent', requestIds: ['quota'], status: 'waiting'});
+    f.end('completed');
+    f.bridgeHooks.onChange(row);
+    f.bridgeHooks.onGeminiHandoff({parentId: 'parent', requestIds: ['quota'], status: 'ready', switched: true});
+    await wait(() => f.deliveries().length === 1);
+    assert.equal(f.c.state.goal, null);
+    assert.notEqual(f.deliveries()[0].p.toolOutput.name, 'k_native_goal_recovery');
+    assert.match(f.deliveries()[0].p.toolOutput.output, /conversation_context/);
+    assert.match(f.deliveries()[0].p.toolOutput.output, /partial saved files must be checked/);
+    assert.match(f.deliveries()[0].p.toolOutput.output, /新的 requestId/);
     f.end('completed');
     await tick();
     assert.equal(f.deliveries().length, 1);
@@ -1935,6 +1982,95 @@ test('Codex Gemini ready is consumed and its ready info resolved after completed
     await f.cleanup();
   }
 });
+
+test('a new Gemini busy wait replaces an old ready banner while preserving its undelivered receipt', async () => {
+  const f = await fixture();
+  try {
+    await f.gateway.bridge.start({requestId: 'quota'});
+    f.c.state.usage.codex = codexQuota({
+      rateLimits: {
+        secondary: {
+          usedPercent: 100,
+          resetsAt: Date.now() / 1000 + 86400
+        }
+      }
+    });
+    f.end('completed');
+    f.bridgeHooks.onGeminiHandoff({parentId: 'parent', requestIds: ['quota'], status: 'ready', switched: true});
+    await tick();
+    assert.match(
+      f.c.state.notices.findLast(n => n.kind === 'gemini-handoff' && !n.resolved).message,
+      /Codex 主代理額度不足/
+    );
+    f.bridgeHooks.onGeminiHandoff({
+      parentId: 'parent',
+      requestIds: [],
+      queryIds: ['account-query'],
+      status: 'waiting',
+      accountAvailable: true,
+      busy: true
+    });
+    const visible = f.c.state.notices.filter(n => n.kind === 'gemini-handoff' && !n.resolved);
+    assert.equal(visible.length, 1);
+    assert.match(visible[0].message, /有可用額度.*忙碌/);
+    assert.equal(f.deliveries().length, 0);
+    f.emit('account/rateLimits/updated', {
+      rateLimits: {
+        secondary: {
+          usedPercent: 100,
+          resetsAt: Date.now() / 1000 + 86400
+        },
+        credits: {hasCredits: true}
+      }
+    });
+    await wait(() => f.deliveries().length === 1);
+    assert.match(f.deliveries()[0].p.toolOutput.output, /"quota"/);
+    const receipt = JSON.parse(f.deliveries()[0].p.toolOutput.output.split('\n')[1]);
+    assert.deepEqual(receipt.queryIds, []);
+    assert.equal(receipt.events.find(e => e.queryIds.includes('account-query')).status, 'waiting');
+    f.end('completed');
+    await tick();
+    assert.equal(f.deliveries().length, 1);
+    assert.match(
+      f.c.state.notices.findLast(n => n.kind === 'gemini-handoff' && !n.resolved).message,
+      /有可用額度.*忙碌/
+    );
+  } finally {
+    await f.cleanup();
+  }
+});
+
+for (const action of ['stop', 'pause', 'human-send'])
+  test('native credit recovery cannot revive revoked Gemini notification after ' + action, async () => {
+    const f = await fixture();
+    try {
+      await f.gateway.bridge.start({requestId: 'quota'});
+      f.c.state.usage.codex = codexQuota({
+        rateLimits: {
+          secondary: {
+            usedPercent: 100,
+            resetsAt: Date.now() / 1000 + 86400
+          }
+        }
+      });
+      f.end('completed');
+      const callback = f.bridgeHooks.onGeminiHandoff;
+      callback({parentId: 'parent', requestIds: ['quota'], status: 'ready', switched: true});
+      await tick();
+      if (action === 'stop') await f.c.stop();
+      if (action === 'pause') await f.c.goal({status: 'paused'});
+      if (action === 'human-send') {
+        await f.c.send({text: 'new intent'});
+        f.end('completed');
+      }
+      f.emit('account/rateLimits/updated', {rateLimits: {secondary: {usedPercent: 100}, credits: {hasCredits: true}}});
+      callback({parentId: 'parent', requestIds: ['quota'], status: 'ready', switched: true});
+      await tick();
+      assert.equal(f.deliveries().length, 0);
+    } finally {
+      await f.cleanup();
+    }
+  });
 
 test('Codex new human steer suppresses old account-ready callback', async () => {
   const f = await fixture();
