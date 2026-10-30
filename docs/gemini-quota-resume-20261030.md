@@ -50,6 +50,8 @@
 
 ## 發布狀態
 
-工作分支 `fix/gemini-quota-resume-20261030`，基底 `8f9aec4`，初版程式 `6af1378`，Opus 意見修正後固定程式 **`230dc3f6035d5a5ffd1152024f4e2c5d07da0ed3`**。已完成驗收並合回 main；`.local/update-ready.json` 已指向此完整程式 SHA，沿介面實際使用的 `readSelfUpdate` 讀回 `available` 為此版、`failed=null`，現有「更新」入口已具備可更新版本。正式 runtime 仍讀回舊版，沒有在 K 內啟動更新或停止其他工作。
+工作分支 `fix/gemini-quota-resume-20261030`，基底 `8f9aec4`，初版程式 `6af1378`，Opus 意見修正後固定程式 **`230dc3f6035d5a5ffd1152024f4e2c5d07da0ed3`**。完成驗收並合回 main 後，`.local/update-ready.json` 指向此完整程式 SHA；準備更新時，沿介面實際使用的 `readSelfUpdate` 讀回 `available` 為此版、`failed=null`，正式 runtime 當時仍為舊版，沒有在 K 內啟動更新或停止其他工作。
 
-正式版仍為 `0d157293cb23b49ce69b095413288dff445e2542`，尚未部署、東區未更新。本房在正式 K 內執行，不能自行停止／替換該 runtime；由本人使用現有「更新」按鈕，閒置檢查通過才套用。來源房接續仍由原代理負責，本批沒有以歷史通知重啟它。公開差異只含程式、測試與本工程說明；原始對話、帳號資料、點數值及本機收據不進 Git。
+初次交付時正式版為 `0d157293cb23b49ce69b095413288dff445e2542`，由本人使用現有「更新」按鈕，閒置檢查通過才套用；本房沒有自行停止／替換 runtime。來源房接續仍由原代理負責，本批沒有以歷史通知重啟它。公開差異只含程式、測試與本工程說明；原始對話、帳號資料、點數值及本機收據不進 Git。
+
+**南區已部署**：本人回報更新後，讀回 `self-update-result.json` 為 `ok=true`，2026-10-30 **18:38:22**（臺灣時間）由舊版更新到上述完整程式 SHA；`.local/runtime.json` 版本一致。更新器實際完整測試 **2,049／2,049**、失敗／取消／略過均為 0，末尾記錄「程式已套用」。正式 runtime 的七個修改來源檔，統一 CRLF/LF 後 SHA-256 與固定 Git 版本全部相符；18:38:23 啟動的正式啟動程序仍在，`/health` 正常回應。`readSelfUpdate` 讀回 `available=null`、`failed=null`，已無待套用更新。退版保留三份，`previous` 指向 `before-1793356697529`。部署讀回收據及更新紀錄保留於本機 `.runtime/archive/gemini-quota-resume-20261030/deployment/`。原始碼與更新準備紀錄已 push，遠端先前讀回 `68380e013a64ec1966ff18e3d0bcea357e2d0bd2`；本段純文件收尾另行推送，不重啟 K。東區未更新；來源房實際接續仍未由本房操作或驗證。
