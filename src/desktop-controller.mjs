@@ -520,6 +520,9 @@ export function createDesktopController({
       const bucket = e.params?.rateLimits;
       if (bucket && (!bucket.limitId || bucket.limitId === 'codex'))
         state.usage.codex = {...codexQuota(e.params), resetCredits: state.usage.codex.resetCredits};
+      for (const notice of state.notices)
+        if (notice.kind === 'gemini-handoff' && notice.handoffStatus === 'ready' && !notice.resolved)
+          notice.message = geminiHandoffNotice({status: 'ready'}, !!codexExecutionBlockedUntil(state.usage.codex));
       quotaReadAt = 0;
       void usage();
       queueMicrotask(() => void deliverFlashResults());
@@ -1450,7 +1453,9 @@ export function createDesktopController({
       addNotice(
         event.status === 'blocked' ? 'warning' : 'info',
         geminiHandoffNotice(event, !!codexExecutionBlockedUntil(state.usage.codex)),
-        'gemini-handoff'
+        'gemini-handoff',
+        null,
+        {handoffStatus: event.status}
       );
   };
   const recordGeminiHandoff = event => {
@@ -2111,7 +2116,7 @@ export function createDesktopController({
         if (tool) tool.turnId = deliveredTurnId;
       }
       if (state.busy) turnId = deliveredTurnId;
-      if (handoff && deliveredTurnId && state.busy)
+      if (handoff?.status === 'ready' && deliveredTurnId && state.busy)
         addNotice('info', '主代理已接續，正核對工人與已保存成果，再處理剩餘工作。', 'gemini-handoff', deliveredTurnId, {
           phase: 'reviewing'
         });
@@ -2242,7 +2247,9 @@ export function createDesktopController({
     } finally {
       if (handoff && attempted && !requeued) {
         geminiHandoff = consumeGeminiHandoff(geminiHandoff, handoff);
-        showGeminiHandoffNotice(geminiHandoff);
+        // Delivery of a blocker informs the main agent; it does not resolve the
+        // human action still required. Keep that warning until a later event.
+        if (handoff.status === 'ready' || geminiHandoff) showGeminiHandoffNotice(geminiHandoff);
       }
       // A preflight cancellation is not a model-send attempt. Undo markers on every early return, not only throws.
       if ((recovery || handoff) && !attempted && batch.length && host === active && state.threadId === parent) {

@@ -1918,6 +1918,51 @@ for (const action of ['native-takeover', 'human-send', 'goal-edit'])
     }
   });
 
+test('blocked account delivery retains the actionable warning and never claims work resumed', async () => {
+  const f = await fixture();
+  try {
+    await f.gateway.bridge.list();
+    f.end('completed');
+    f.bridgeHooks.onGeminiHandoff({
+      parentId: 'parent',
+      requestIds: [],
+      queryIds: ['needs-login'],
+      status: 'blocked',
+      reason: '需要本人登入'
+    });
+    await wait(() => f.deliveries().length === 1 && f.c.state.busy);
+    await tick();
+    const visible = () => f.c.state.notices.filter(n => n.kind === 'gemini-handoff' && !n.resolved);
+    assert(visible().some(n => n.level === 'warning' && n.message.includes('需要本人登入')));
+    assert(!visible().some(n => n.message.includes('已接續')));
+    f.end('completed');
+    await tick();
+    assert(visible().some(n => n.level === 'warning' && n.message.includes('需要本人登入')));
+    assert.equal(f.deliveries().length, 1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('native credit recovery refreshes the pending ready banner even while the main turn is busy', async () => {
+  const f = await fixture();
+  try {
+    await f.gateway.bridge.start({requestId: 'quota'});
+    const secondary = {usedPercent: 100, resetsAt: Date.now() / 1000 + 86400};
+    f.c.state.usage.codex = codexQuota({rateLimits: {secondary}});
+    f.bridgeHooks.onGeminiHandoff({parentId: 'parent', requestIds: ['quota'], status: 'ready', switched: true});
+    assert.match(f.c.state.notices.findLast(n => !n.resolved).message, /額度不足/);
+    f.emit('account/rateLimits/updated', {rateLimits: {secondary, credits: {hasCredits: true}}});
+    await tick();
+    assert.equal(f.deliveries().length, 0);
+    assert.match(f.c.state.notices.findLast(n => !n.resolved).message, /等待主代理核對/);
+    f.end('completed');
+    await wait(() => f.deliveries().length === 1);
+  } finally {
+    await f.cleanup();
+  }
+});
+
 test('Codex Gemini ready is consumed and its ready info resolved after completed-room notification', async () => {
   const f = await fixture();
   try {
